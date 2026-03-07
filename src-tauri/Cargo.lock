@@ -2624,7 +2624,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "quill-scaffold"
+name = "quill"
 version = "0.1.0"
 dependencies = [
  "serde",
