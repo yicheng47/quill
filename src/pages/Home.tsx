@@ -1,41 +1,100 @@
-import { useState, useMemo } from "react";
-import { Search, Grid3x3, List, Settings } from "lucide-react";
+import { useState, useEffect, useRef } from "react";
+import { Search, Grid3x3, List, Settings, Plus, Upload, BookOpen } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import Sidebar from "../components/Sidebar";
 import BookGrid from "../components/BookGrid";
 import BookList from "../components/BookList";
 import Button from "../components/ui/Button";
 import Input from "../components/ui/Input";
-import { mockBooks } from "../data/mockBooks";
+import { useBooks, importBookDialog, type Book } from "../hooks/useBooks";
+import { useCollections } from "../hooks/useCollections";
 
 export default function Home() {
   const [activeFilter, setActiveFilter] = useState("all");
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [searchQuery, setSearchQuery] = useState("");
+  const [isDragging, setIsDragging] = useState(false);
+  const collections = useCollections();
   const navigate = useNavigate();
 
-  const filteredBooks = useMemo(() => {
-    let books = mockBooks;
+  // For collection filters, we need to fetch the book IDs in the collection
+  // then filter client-side
+  const isCollectionFilter = activeFilter.startsWith("collection:");
+  const statusFilter = !isCollectionFilter && activeFilter !== "all" ? activeFilter : undefined;
+  const searchParam = searchQuery || undefined;
 
-    if (activeFilter === "reading") {
-      books = books.filter((b) => b.status === "reading");
-    } else if (activeFilter === "finished") {
-      books = books.filter((b) => b.status === "finished");
-    } else if (activeFilter !== "all") {
-      books = books.filter((b) => b.genre === activeFilter);
+  const { books, loading, refresh } = useBooks(statusFilter, searchParam);
+  const allBooks = useBooks();
+
+  // Collection-filtered books
+  const [collectionBookIds, setCollectionBookIds] = useState<string[]>([]);
+  useEffect(() => {
+    if (!isCollectionFilter) {
+      setCollectionBookIds([]);
+      return;
     }
+    const collectionId = activeFilter.replace("collection:", "");
+    invoke<string[]>("list_books_in_collection", { collectionId })
+      .then(setCollectionBookIds)
+      .catch(() => setCollectionBookIds([]));
+  }, [activeFilter, isCollectionFilter]);
 
-    if (searchQuery) {
-      const q = searchQuery.toLowerCase();
-      books = books.filter(
-        (b) =>
-          b.title.toLowerCase().includes(q) ||
-          b.author.toLowerCase().includes(q)
-      );
+  // Keep stable refs for refresh functions so the drag-drop effect doesn't re-register
+  const refreshRef = useRef(refresh);
+  const allBooksRefreshRef = useRef(allBooks.refresh);
+  useEffect(() => { refreshRef.current = refresh; }, [refresh]);
+  useEffect(() => { allBooksRefreshRef.current = allBooks.refresh; }, [allBooks.refresh]);
+
+  // Listen for Tauri file drag-and-drop events
+  useEffect(() => {
+    let cancelled = false;
+    const unlisten = getCurrentWebview().onDragDropEvent(async (event) => {
+      if (cancelled) return;
+      if (event.payload.type === "over" || event.payload.type === "enter") {
+        setIsDragging(true);
+      } else if (event.payload.type === "drop") {
+        setIsDragging(false);
+        const epubs = event.payload.paths.filter((p) =>
+          p.toLowerCase().endsWith(".epub")
+        );
+        for (const filePath of epubs) {
+          try {
+            await invoke<Book>("import_book", { filePath });
+          } catch (err) {
+            console.error("Failed to import dropped book:", err);
+          }
+        }
+        if (epubs.length > 0) {
+          refreshRef.current();
+          allBooksRefreshRef.current();
+        }
+      } else {
+        setIsDragging(false);
+      }
+    });
+    return () => {
+      cancelled = true;
+      unlisten.then((fn) => fn());
+    };
+  }, []);
+
+  const displayBooks = isCollectionFilter
+    ? allBooks.books.filter((b) => collectionBookIds.includes(b.id))
+    : books;
+
+  const handleImport = async () => {
+    try {
+      const book = await importBookDialog();
+      if (book) {
+        refresh();
+        allBooks.refresh();
+      }
+    } catch (err) {
+      console.error("Failed to import book:", err);
     }
-
-    return books;
-  }, [activeFilter, searchQuery]);
+  };
 
   const title =
     activeFilter === "all"
@@ -44,11 +103,18 @@ export default function Home() {
         ? "Currently Reading"
         : activeFilter === "finished"
           ? "Finished"
-          : activeFilter;
+          : isCollectionFilter
+            ? "Collection"
+            : activeFilter;
 
   return (
-    <div className="flex h-screen bg-bg-surface">
-      <Sidebar activeFilter={activeFilter} onFilterChange={setActiveFilter} />
+    <div className="relative flex h-screen bg-bg-surface">
+      <Sidebar
+        activeFilter={activeFilter}
+        onFilterChange={setActiveFilter}
+        books={allBooks.books}
+        collections={collections}
+      />
 
       <main className="flex-1 flex flex-col min-w-0">
         <div className="border-b border-border px-page pt-page pb-section">
@@ -93,14 +159,56 @@ export default function Home() {
           />
         </div>
 
-        <div className="flex-1 overflow-auto p-page">
-          {viewMode === "grid" ? (
-            <BookGrid books={filteredBooks} />
+        <div className="flex-1 overflow-auto p-page pb-20">
+          {loading ? (
+            <p className="text-text-muted text-[14px]">Loading...</p>
+          ) : displayBooks.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-full gap-4">
+              <p className="text-text-muted text-[14px]">
+                {searchQuery
+                  ? "No results found"
+                  : isCollectionFilter
+                    ? "No books in this collection"
+                    : activeFilter !== "all"
+                      ? `No ${activeFilter} books`
+                      : "No books yet"}
+              </p>
+              {activeFilter === "all" && !searchQuery && (
+                <Button variant="primary" size="md" onClick={handleImport}>
+                  <Plus size={16} />
+                  Import EPUB
+                </Button>
+              )}
+            </div>
+          ) : viewMode === "grid" ? (
+            <BookGrid books={displayBooks} onBooksChanged={() => { refresh(); allBooks.refresh(); collections.refresh(); }} />
           ) : (
-            <BookList books={filteredBooks} />
+            <BookList books={displayBooks} onBooksChanged={() => { refresh(); allBooks.refresh(); collections.refresh(); }} />
           )}
         </div>
+
+        <button
+          onClick={handleImport}
+          className="shrink-0 mx-page mb-page rounded-lg border border-dashed border-border py-4 flex items-center justify-center gap-2 text-[14px] text-text-muted hover:border-text-muted transition-colors cursor-pointer"
+        >
+          <Upload size={16} />
+          Drop files or click to import more books
+        </button>
       </main>
+
+      {isDragging && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm">
+          <div className="flex flex-col items-center gap-4 rounded-2xl border-2 border-dashed border-blue-500 bg-white px-16 py-12">
+            <div className="flex h-14 w-14 items-center justify-center rounded-full bg-blue-50">
+              <BookOpen size={28} className="text-blue-500" />
+            </div>
+            <p className="text-[18px] font-semibold text-text-primary">
+              Drop to add to your library
+            </p>
+            <p className="text-[14px] text-text-muted">EPUB</p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

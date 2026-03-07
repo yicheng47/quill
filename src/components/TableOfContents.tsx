@@ -58,14 +58,14 @@ export default function TableOfContents({
   return (
     <div
       ref={positionPopover}
-      className="fixed z-50 bg-bg-surface border border-border rounded-xl shadow-popover w-[280px] flex flex-col"
+      className="fixed z-50 bg-bg-surface border border-border rounded-xl shadow-popover w-[320px] flex flex-col"
     >
       <div className="border-b border-border-light px-4 pt-3 pb-2">
         <h3 className="text-[14px] font-medium text-text-primary tracking-[-0.15px]">
           Table of Contents
         </h3>
       </div>
-      <div className="flex flex-col pt-1 pb-1 overflow-auto max-h-[300px]">
+      <div className="flex flex-col py-1 overflow-auto max-h-[300px]">
         {chapters.map((chapter) => {
           const isActive = currentPage === chapter.page;
           return (
@@ -75,22 +75,22 @@ export default function TableOfContents({
                 onNavigate(chapter.page);
                 onClose();
               }}
-              className={`flex items-center justify-between px-4 h-10 cursor-pointer transition-colors ${
+              className={`flex items-center justify-between px-4 py-2 cursor-pointer transition-colors ${
                 isActive
-                  ? "bg-[rgba(239,246,255,0.5)]"
+                  ? "bg-blue-50"
                   : "hover:bg-border-light"
               }`}
             >
               <span
                 className={`text-[14px] font-medium tracking-[-0.15px] truncate ${
-                  isActive ? "text-link" : "text-[#3f3f47]"
+                  isActive ? "text-[#155dfc]" : "text-[#3f3f47]"
                 }`}
               >
                 {chapter.title}
               </span>
               <span
                 className={`text-[12px] font-medium shrink-0 ml-2 ${
-                  isActive ? "text-link-light" : "text-[#9f9fa9]"
+                  isActive ? "text-[#2b7fff]" : "text-[#9f9fa9]"
                 }`}
               >
                 p. {chapter.page}
