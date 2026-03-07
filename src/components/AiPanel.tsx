@@ -1,42 +1,39 @@
-import { useState } from "react";
-import { Sparkles, Send } from "lucide-react";
+import { useState, useEffect, useRef } from "react";
+import { Sparkles, Send, Loader2 } from "lucide-react";
+import Markdown from "react-markdown";
+import { useAiChat } from "../hooks/useAiChat";
 
-interface Message {
-  id: string;
-  role: "assistant" | "user";
-  content: string;
+interface AiPanelProps {
+  context?: string;
+  onContextConsumed?: () => void;
 }
 
-const initialMessages: Message[] = [
-  {
-    id: "1",
-    role: "assistant",
-    content:
-      "Hello! I'm your reading assistant. I can help you understand the content, answer questions, summarize sections, and more. What would you like to know?",
-  },
-];
-
-export default function AiPanel() {
-  const [messages, setMessages] = useState<Message[]>(initialMessages);
+export default function AiPanel({ context, onContextConsumed }: AiPanelProps) {
+  const { messages, streaming, send, initialize } = useAiChat();
   const [input, setInput] = useState("");
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Initialize AI on first open
+  useEffect(() => {
+    initialize();
+  }, [initialize]);
+
+  // Auto-scroll to bottom on new messages
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  // Handle context from "Ask AI" in context menu — auto-send
+  useEffect(() => {
+    if (context && !streaming) {
+      send(`Explain this passage: "${context}"`);
+      onContextConsumed?.();
+    }
+  }, [context, onContextConsumed, send, streaming]);
 
   const handleSend = () => {
-    if (!input.trim()) return;
-
-    const userMessage: Message = {
-      id: Date.now().toString(),
-      role: "user",
-      content: input.trim(),
-    };
-
-    const aiResponse: Message = {
-      id: (Date.now() + 1).toString(),
-      role: "assistant",
-      content:
-        "This is a mock response. In the full implementation, this will connect to your configured AI provider to answer questions about the book.",
-    };
-
-    setMessages((prev) => [...prev, userMessage, aiResponse]);
+    if (!input.trim() || streaming) return;
+    send(input.trim());
     setInput("");
   };
 
@@ -66,9 +63,19 @@ export default function AiPanel() {
                 key={msg.id}
                 className="bg-bg-surface border border-border rounded-lg px-[13px] py-[13px] max-w-[85%]"
               >
-                <p className="text-[14px] text-text-primary leading-5 tracking-[-0.15px]">
-                  {msg.content}
-                </p>
+                {streaming && !msg.content && msg === messages[messages.length - 1] ? (
+                  <span className="flex items-center gap-1.5 text-[14px] text-text-muted">
+                    <Loader2 size={14} className="animate-spin" />
+                    Thinking...
+                  </span>
+                ) : (
+                  <div className="prose prose-sm max-w-none text-[14px] text-text-primary leading-5 tracking-[-0.15px] [&_h1]:text-[16px] [&_h2]:text-[15px] [&_h3]:text-[14px] [&_h1]:font-semibold [&_h2]:font-semibold [&_h3]:font-semibold [&_h1]:mt-3 [&_h1]:mb-1 [&_h2]:mt-3 [&_h2]:mb-1 [&_h3]:mt-2 [&_h3]:mb-1 [&_p]:my-1.5 [&_ul]:my-1 [&_ol]:my-1 [&_li]:my-0.5 [&_blockquote]:border-l-2 [&_blockquote]:border-border [&_blockquote]:pl-3 [&_blockquote]:italic [&_blockquote]:text-text-muted [&_code]:bg-bg-muted [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_code]:text-[13px] [&_pre]:bg-bg-muted [&_pre]:p-3 [&_pre]:rounded-lg [&_pre]:overflow-x-auto [&_strong]:font-semibold [&_em]:italic [&_hr]:border-border [&_a]:text-accent [&_a]:underline">
+                    <Markdown>{msg.content}</Markdown>
+                    {streaming && msg.content && msg === messages[messages.length - 1] && (
+                      <Loader2 size={14} className="inline-block ml-1 animate-spin text-text-muted" />
+                    )}
+                  </div>
+                )}
               </div>
             ) : (
               <div key={msg.id} className="flex justify-end">
@@ -78,8 +85,9 @@ export default function AiPanel() {
                   </p>
                 </div>
               </div>
-            ),
+            )
           )}
+          <div ref={messagesEndRef} />
         </div>
       </div>
 
@@ -96,12 +104,16 @@ export default function AiPanel() {
           />
           <button
             onClick={handleSend}
-            disabled={!input.trim()}
+            disabled={!input.trim() || streaming}
             className={`size-[60px] shrink-0 rounded-lg flex items-center justify-center cursor-pointer bg-dark text-white ${
-              !input.trim() ? "opacity-50" : ""
+              !input.trim() || streaming ? "opacity-50" : ""
             }`}
           >
-            <Send size={16} />
+            {streaming ? (
+              <Loader2 size={16} className="animate-spin" />
+            ) : (
+              <Send size={16} />
+            )}
           </button>
         </div>
         <p className="text-[12px] text-text-muted">

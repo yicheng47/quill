@@ -1,10 +1,17 @@
+import { useState } from "react";
 import { Library, BookOpen, CheckCircle2, Sparkles, Plus } from "lucide-react";
 import Button from "./ui/Button";
-import { mockBooks } from "../data/mockBooks";
+import type { Book } from "../hooks/useBooks";
+import type { Collection } from "../hooks/useCollections";
 
 interface SidebarProps {
   activeFilter: string;
   onFilterChange: (filter: string) => void;
+  books: Book[];
+  collections: {
+    collections: Collection[];
+    create: (name: string) => Promise<Collection>;
+  };
 }
 
 const libraryFilters = [
@@ -13,14 +20,24 @@ const libraryFilters = [
   { id: "finished", label: "Finished", icon: CheckCircle2 },
 ];
 
-export default function Sidebar({ activeFilter, onFilterChange }: SidebarProps) {
-  const allGenres = [...new Set(mockBooks.map((b) => b.genre))];
+export default function Sidebar({ activeFilter, onFilterChange, books, collections: collectionsHook }: SidebarProps) {
+  const { collections, create } = collectionsHook;
+  const [isCreating, setIsCreating] = useState(false);
+  const [newName, setNewName] = useState("");
 
   const getCount = (filterId: string) => {
-    if (filterId === "all") return mockBooks.length;
-    if (filterId === "reading") return mockBooks.filter((b) => b.status === "reading").length;
-    if (filterId === "finished") return mockBooks.filter((b) => b.status === "finished").length;
-    return mockBooks.filter((b) => b.genre === filterId).length;
+    if (filterId === "all") return books.length;
+    if (filterId === "reading") return books.filter((b) => b.status === "reading").length;
+    if (filterId === "finished") return books.filter((b) => b.status === "finished").length;
+    return 0;
+  };
+
+  const handleCreateCollection = async () => {
+    const name = newName.trim();
+    if (!name) return;
+    await create(name);
+    setNewName("");
+    setIsCreating(false);
   };
 
   return (
@@ -68,17 +85,50 @@ export default function Sidebar({ activeFilter, onFilterChange }: SidebarProps) 
           <h2 className="text-[12px] font-semibold uppercase tracking-[0.3px] text-text-muted">
             Collections
           </h2>
-          <Button variant="icon" size="sm" className="size-5">
+          <Button
+            variant="icon"
+            size="sm"
+            className="size-5"
+            onClick={() => setIsCreating(true)}
+          >
             <Plus size={16} />
           </Button>
         </div>
+
+        {isCreating && (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleCreateCollection();
+            }}
+            className="px-1"
+          >
+            <input
+              autoFocus
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              onBlur={() => {
+                if (!newName.trim()) setIsCreating(false);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") {
+                  setNewName("");
+                  setIsCreating(false);
+                }
+              }}
+              placeholder="Collection name..."
+              className="w-full h-9 px-3 rounded-lg bg-bg-input text-[14px] text-text-primary placeholder:text-text-placeholder outline-none border border-accent"
+            />
+          </form>
+        )}
+
         <div className="flex flex-col gap-1">
-          {allGenres.map((genre) => {
-            const isActive = activeFilter === genre;
+          {collections.map((collection) => {
+            const isActive = activeFilter === `collection:${collection.id}`;
             return (
               <button
-                key={genre}
-                onClick={() => onFilterChange(genre)}
+                key={collection.id}
+                onClick={() => onFilterChange(`collection:${collection.id}`)}
                 className={`flex items-center justify-between px-3 h-9 rounded-lg w-full cursor-pointer ${
                   isActive ? "bg-accent-bg" : "hover:bg-bg-input"
                 }`}
@@ -93,11 +143,11 @@ export default function Sidebar({ activeFilter, onFilterChange }: SidebarProps) 
                       isActive ? "text-accent-text" : "text-[#3f3f47]"
                     }`}
                   >
-                    {genre}
+                    {collection.name}
                   </span>
                 </div>
                 <span className="text-[12px] font-medium text-text-muted">
-                  {getCount(genre)}
+                  {collection.book_count}
                 </span>
               </button>
             );

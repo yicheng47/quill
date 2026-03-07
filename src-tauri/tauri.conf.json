@@ -13,12 +13,16 @@
     "windows": [
       {
         "title": "Quill",
-        "width": 800,
-        "height": 600
+        "width": 1280,
+        "height": 860
       }
     ],
     "security": {
-      "csp": null
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["$APPDATA/**"]
+      }
     }
   },
   "bundle": {

@@ -1,39 +1,86 @@
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Book } from "../data/mockBooks";
+import { convertFileSrc } from "@tauri-apps/api/core";
+import type { Book } from "../hooks/useBooks";
+import { deleteBook, markFinished } from "../hooks/useBooks";
+import BookContextMenu from "./BookContextMenu";
 
 interface BookGridProps {
   books: Book[];
+  onBooksChanged?: () => void;
 }
 
-export default function BookGrid({ books }: BookGridProps) {
+export default function BookGrid({ books, onBooksChanged }: BookGridProps) {
   const navigate = useNavigate();
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+    book: Book;
+  } | null>(null);
+
+  const handleContextMenu = (e: React.MouseEvent, book: Book) => {
+    e.preventDefault();
+    setContextMenu({ x: e.clientX, y: e.clientY, book });
+  };
 
   return (
-    <div className="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-6">
-      {books.map((book) => (
-        <button
-          key={book.id}
-          onClick={() => navigate(`/reader/${book.id}`)}
-          className="text-left cursor-pointer group"
-        >
-          <div className="relative bg-border rounded-lg overflow-hidden shadow-card aspect-[3/4]">
-            <img
-              src={book.cover}
-              alt={book.title}
-              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
-            />
-            {book.status === "finished" && (
-              <div className="absolute top-2 right-2 bg-success text-white text-[12px] px-2 py-1 rounded-full">
-                Finished
-              </div>
-            )}
-          </div>
-          <h3 className="mt-3 text-[14px] font-semibold text-text-primary tracking-[-0.15px] truncate">
-            {book.title}
-          </h3>
-          <p className="text-[12px] text-text-secondary truncate">{book.author}</p>
-        </button>
-      ))}
-    </div>
+    <>
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-6">
+        {books.map((book) => (
+          <button
+            key={book.id}
+            onClick={() => navigate(`/reader/${book.id}`)}
+            onContextMenu={(e) => handleContextMenu(e, book)}
+            className="text-left cursor-pointer group"
+          >
+            <div className="relative bg-border rounded-lg overflow-hidden shadow-card aspect-[3/4]">
+              {book.cover_path ? (
+                <img
+                  src={convertFileSrc(book.cover_path)}
+                  alt={book.title}
+                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
+                />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center bg-bg-muted">
+                  <span className="text-[14px] text-text-muted text-center px-4">
+                    {book.title}
+                  </span>
+                </div>
+              )}
+              {book.status === "finished" && (
+                <div className="absolute top-2 right-2 bg-success text-white text-[12px] px-2 py-1 rounded-full">
+                  Finished
+                </div>
+              )}
+            </div>
+            <h3 className="mt-3 text-[14px] font-semibold text-text-primary tracking-[-0.15px] truncate">
+              {book.title}
+            </h3>
+            <p className="text-[12px] text-text-secondary truncate">{book.author}</p>
+          </button>
+        ))}
+      </div>
+
+      {contextMenu && (
+        <BookContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          bookId={contextMenu.book.id}
+          bookStatus={contextMenu.book.status}
+          onClose={() => setContextMenu(null)}
+          onMarkFinished={async () => {
+            await markFinished(contextMenu.book.id);
+            setContextMenu(null);
+            onBooksChanged?.();
+          }}
+          onDelete={async () => {
+            await deleteBook(contextMenu.book.id);
+            setContextMenu(null);
+            onBooksChanged?.();
+          }}
+          onBooksChanged={onBooksChanged}
+        />
+      )}
+    </>
   );
 }
