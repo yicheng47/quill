@@ -18,7 +18,23 @@ Built with Tauri 2 (Rust) and React.
 - **Drag & Drop Import** — Drop EPUB files to add them to your library
 - **Reading Progress** — Auto-saves your position and tracks progress
 
+## Download
+
+Grab the latest `.dmg` from the [Releases](https://github.com/yicheng47/quill/releases) page:
+
+| File | Platform |
+|------|----------|
+| `Quill_x.x.x_aarch64.dmg` | macOS Apple Silicon (M1/M2/M3/M4) |
+| `Quill_x.x.x_x64.dmg` | macOS Intel |
+
+Open the `.dmg` and drag **Quill.app** to your Applications folder.
+
+> **Note:** The app is not code-signed. On first launch, right-click → Open, then click "Open" in the dialog to bypass Gatekeeper.
+
 ## Install from Source
+
+<details>
+<summary>Click to expand</summary>
 
 ### Prerequisites
 
@@ -66,7 +82,7 @@ src-tauri/target/release/bundle/
 
 To install, open the `.dmg` and drag **Quill.app** to your Applications folder.
 
-## All Commands
+### All Commands
 
 | Command | Description |
 |---------|-------------|
@@ -79,6 +95,8 @@ To install, open the `.dmg` and drag **Quill.app** to your Applications folder.
 | `make typecheck` | Type-check TypeScript |
 | `make clean` | Remove debug build artifacts |
 | `make clean-all` | Remove all build artifacts including release |
+
+</details>
 
 ## AI Setup
 
