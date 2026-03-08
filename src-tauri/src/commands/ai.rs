@@ -65,7 +65,12 @@ pub async fn ai_chat(
     tauri::async_runtime::spawn(async move {
         let result = match provider.as_str() {
             "anthropic" => {
-                crate::ai::anthropic::stream_chat(&app_clone, &api_key, &model, temperature, &api_messages).await
+                let url = base_url.unwrap_or_else(|| "https://api.anthropic.com".to_string());
+                crate::ai::anthropic::stream_chat(&app_clone, &url, &api_key, &model, temperature, &api_messages, false).await
+            }
+            "minimax" => {
+                let url = base_url.unwrap_or_else(|| "https://api.minimax.io/anthropic".to_string());
+                crate::ai::anthropic::stream_chat(&app_clone, &url, &api_key, &model, temperature, &api_messages, true).await
             }
             _ => {
                 let url = base_url.unwrap_or_else(|| "http://localhost:11434".to_string());

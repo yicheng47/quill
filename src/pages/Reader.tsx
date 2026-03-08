@@ -1,6 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import ePub, { type Book as EpubBook, type Rendition, type NavItem } from "epubjs";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import {
   ArrowLeft,
@@ -18,6 +17,56 @@ import ReaderContextMenu from "../components/ReaderContextMenu";
 import TableOfContents from "../components/TableOfContents";
 import { getBook, updateReadingProgress, type Book } from "../hooks/useBooks";
 import { getAllSettings } from "../hooks/useSettings";
+import type { Highlight } from "../hooks/useBookmarks";
+
+// foliate-js <foliate-view> web component interface
+interface FoliateView extends HTMLElement {
+  open(file: string | File | Blob): Promise<void>;
+  init(opts: { lastLocation?: string; showTextStart?: boolean }): Promise<void>;
+  goTo(target: string | number): Promise<any>;
+  prev(): Promise<void>;
+  next(): Promise<void>;
+  close(): void;
+  book: any;
+  renderer: any;
+  lastLocation: any;
+  getCFI(index: number, range: Range): string;
+  addAnnotation(annotation: { value: string; color?: string }): Promise<any>;
+  deleteAnnotation(annotation: { value: string }): Promise<void>;
+}
+
+const getReaderCSS = (settings: ReaderSettingsState) => {
+  const themeColors = getThemeStyles(settings.theme);
+  const fontFamily = getFontFamily(settings.font);
+  const letterSpacing = settings.charSpacing === 0 ? "normal" : `${settings.charSpacing * 0.01}em`;
+  const wordSpacing = settings.wordSpacing === 0 ? "normal" : `${settings.wordSpacing * 0.01}em`;
+  return `
+    body {
+      background-color: ${themeColors.body} !important;
+      color: ${themeColors.text} !important;
+      font-family: ${fontFamily} !important;
+      font-size: ${settings.fontSize}px !important;
+      line-height: ${settings.lineSpacing} !important;
+      letter-spacing: ${letterSpacing} !important;
+      word-spacing: ${wordSpacing} !important;
+    }
+    p, span, div, li, td, th, h1, h2, h3, h4, h5, h6 {
+      color: ${themeColors.text} !important;
+      font-family: ${fontFamily} !important;
+      line-height: ${settings.lineSpacing} !important;
+    }
+    img, svg, video {
+      max-width: 100% !important;
+      height: auto !important;
+      object-fit: contain !important;
+      box-sizing: border-box !important;
+    }
+    figure {
+      max-width: 100% !important;
+      overflow: hidden !important;
+    }
+  `;
+};
 
 const PANEL_MIN_WIDTH = 320;
 const PANEL_MAX_WIDTH = 700;
@@ -29,6 +78,14 @@ interface TocChapter {
   title: string;
   href: string;
 }
+
+const highlightColorMap: Record<string, string> = {
+  yellow: "rgba(251, 191, 36, 0.3)",
+  green: "rgba(52, 211, 153, 0.3)",
+  blue: "rgba(96, 165, 250, 0.3)",
+  pink: "rgba(244, 114, 182, 0.3)",
+  purple: "rgba(167, 139, 250, 0.3)",
+};
 
 export default function Reader() {
   const { bookId } = useParams();
@@ -44,7 +101,7 @@ export default function Reader() {
   const [progress, setProgress] = useState(0);
   const [pageInfo, setPageInfo] = useState<{ current: number; total: number } | null>(null);
   const currentCfiRef = useRef<string | null>(null);
-  const [locationsReady, setLocationsReady] = useState(false);
+  const [bookReady, setBookReady] = useState(false);
   const [contextMenu, setContextMenu] = useState<{
     x: number;
     y: number;
@@ -57,6 +114,7 @@ export default function Reader() {
     font: "georgia",
     fontSize: 26,
     brightness: 100,
+    readingMode: "scrolling",
     lineSpacing: 1.8,
     charSpacing: 0,
     wordSpacing: 0,
@@ -66,11 +124,10 @@ export default function Reader() {
   const settingsAnchorRef = useRef<HTMLButtonElement>(null);
   const tocAnchorRef = useRef<HTMLButtonElement>(null);
   const viewerRef = useRef<HTMLDivElement>(null);
-  const renditionRef = useRef<Rendition | null>(null);
-  const epubRef = useRef<EpubBook | null>(null);
+  const viewRef = useRef<FoliateView | null>(null);
   const isDragging = useRef(false);
   const chaptersRef = useRef<TocChapter[]>([]);
-  const selectedCfiRef = useRef<string | null>(null);
+  const selectedTextRef = useRef<{ text: string; cfi: string } | null>(null);
 
   // Load book metadata and default settings from DB
   useEffect(() => {
@@ -85,6 +142,7 @@ export default function Reader() {
         ...prev,
         font: (s.font_family as ReaderSettingsState["font"]) || prev.font,
         fontSize: s.font_size ? parseInt(s.font_size) : prev.fontSize,
+        readingMode: (s.reading_mode as ReaderSettingsState["readingMode"]) || prev.readingMode,
         lineSpacing: s.line_spacing ? parseFloat(s.line_spacing) : prev.lineSpacing,
         charSpacing: s.char_spacing ? parseInt(s.char_spacing) : prev.charSpacing,
         wordSpacing: s.word_spacing ? parseInt(s.word_spacing) : prev.wordSpacing,
@@ -93,295 +151,254 @@ export default function Reader() {
     }).catch(() => {});
   }, [bookId]);
 
-  // Initialize epub.js when book data is loaded
+  // Initialize foliate-js when book data is loaded
   useEffect(() => {
     if (!book || !viewerRef.current) return;
 
     const container = viewerRef.current;
-    const { clientWidth, clientHeight } = container;
+    container.innerHTML = "";
+    setBookReady(false);
 
-    const epubUrl = convertFileSrc(book.file_path);
-    const epubBook = ePub(epubUrl);
-    epubRef.current = epubBook;
+    let cancelled = false;
 
-    const rendition = epubBook.renderTo(container, {
-      width: clientWidth,
-      height: clientHeight,
-      spread: "none",
-      flow: "paginated",
-      manager: "continuous",
-      allowScriptedContent: true,
-    });
-
-    renditionRef.current = rendition;
-
-    // Inject styles into each epub iframe BEFORE column layout.
-    // epub.js columns() sets body height to the rendition height and adds
-    // 20px padding top + bottom (see contents.js line 1084-1086).
-    // In the iframe: 100vh = iframe height = body height (set by epub.js).
-    // Available content height = 100vh - 40px (the padding).
-    // Images must fit within this to avoid being clipped by CSS columns.
-    rendition.hooks.content.register((contents: { document: Document }) => {
-      const style = contents.document.createElement("style");
-      style.textContent = `
-        body { overflow: hidden !important; }
-        img, svg, image {
-          max-width: 100% !important;
-          max-height: calc(100vh - 40px) !important;
-          height: auto !important;
-          object-fit: contain !important;
-          box-sizing: border-box !important;
-        }
-        figure {
-          max-width: 100% !important;
-          overflow: hidden !important;
-        }
-      `;
-      contents.document.head.appendChild(style);
-    });
-
-    // Display from saved position or start
-    if (book.current_cfi) {
-      rendition.display(book.current_cfi);
-    } else {
-      rendition.display();
-    }
-
-    // Generate locations for accurate progress tracking and total pages
-    // Try to load cached locations first, otherwise generate
-    const locationsKey = `locations_${bookId}`;
-    epubBook.ready.then(async () => {
-      try {
-        const cached = localStorage.getItem(locationsKey);
-        if (cached) {
-          epubBook.locations.load(cached);
-        } else {
-          await epubBook.locations.generate(1600);
-          localStorage.setItem(locationsKey, epubBook.locations.save());
-        }
-      } catch {
-        await epubBook.locations.generate(1600);
-        try { localStorage.setItem(locationsKey, epubBook.locations.save()); } catch {}
+    const initFoliate = async () => {
+      // Load foliate-js web components (from public/ dir, loaded as native ES module)
+      if (!customElements.get("foliate-view")) {
+        await new Promise<void>((resolve, reject) => {
+          const script = document.createElement("script");
+          script.type = "module";
+          script.src = "/foliate-js/view.js";
+          script.onload = () => resolve();
+          script.onerror = () => reject(new Error("Failed to load foliate-js"));
+          document.head.appendChild(script);
+        });
+        // Wait for custom element to be defined
+        await customElements.whenDefined("foliate-view");
       }
 
-      const totalPages = epubBook.locations.length();
-      if (bookId && totalPages > 0) {
-        invoke("update_book_pages", { id: bookId, pages: totalPages }).catch(() => {});
+      if (cancelled) return;
+
+      const view = document.createElement("foliate-view") as FoliateView;
+      view.style.width = "100%";
+      view.style.height = "100%";
+      container.appendChild(view);
+      viewRef.current = view;
+
+      // Fetch EPUB as blob for foliate-js
+      const epubUrl = convertFileSrc(book.file_path);
+      const response = await fetch(epubUrl);
+      const blob = new File([await response.blob()], "book.epub");
+      await view.open(blob);
+
+      if (cancelled) return;
+
+      // Set reading mode and layout
+      const isScrolling = readerSettings.readingMode === "scrolling";
+      view.renderer.setAttribute("flow", isScrolling ? "scrolled" : "paginated");
+      view.renderer.setAttribute("gap", "5%");
+      view.renderer.setAttribute("max-inline-size", "1000px");
+      view.renderer.setAttribute("max-column-count", "2");
+
+      // Apply styles
+      view.renderer.setStyles?.(getReaderCSS(readerSettings));
+
+      // Load TOC
+      const toc = view.book.toc;
+      if (toc) {
+        const flattenToc = (items: any[]): TocChapter[] =>
+          items.flatMap((item: any) => [
+            { title: item.label?.trim() || "", href: item.href },
+            ...(item.subitems ? flattenToc(item.subitems) : []),
+          ]);
+        const chs = flattenToc(toc);
+        chaptersRef.current = chs;
+        setChapters(chs);
       }
-      // Update page info now that locations are available
-      const cfi = currentCfiRef.current;
-      if (cfi) {
-        const currentLoc = epubBook.locations.locationFromCfi(cfi);
-        const pct = Math.round(epubBook.locations.percentageFromCfi(cfi) * 100);
+
+      // Listen for location changes
+      view.addEventListener("relocate", ((e: CustomEvent) => {
+        const { fraction, location, tocItem, cfi } = e.detail;
+
+        const pct = Math.round((fraction ?? 0) * 100);
         setProgress(pct);
-        setPageInfo({ current: currentLoc + 1, total: totalPages });
+        currentCfiRef.current = cfi;
+
+        if (location) {
+          setPageInfo({ current: location.current + 1, total: location.total });
+        }
+
+        if (tocItem) {
+          const idx = chaptersRef.current.findIndex((c) => c.href === tocItem.href);
+          if (idx !== -1) setCurrentChapterIndex(idx);
+        }
+
         if (bookId) {
           updateReadingProgress(bookId, pct, cfi).catch(() => {});
         }
-      }
-      setLocationsReady(true);
-    });
+      }) as EventListener);
 
-    // Load TOC
-    epubBook.loaded.navigation.then((nav) => {
-      const flattenToc = (items: NavItem[]): TocChapter[] => {
-        const result: TocChapter[] = [];
-        for (const item of items) {
-          result.push({ title: item.label.trim(), href: item.href });
-          if (item.subitems) {
-            result.push(...flattenToc(item.subitems));
+      // Handle section loads — text selection, keyboard, highlights
+      view.addEventListener("load", ((e: CustomEvent) => {
+        const { doc, index } = e.detail;
+
+        // Text selection tracking
+        doc.addEventListener("mouseup", () => {
+          const sel = doc.getSelection?.();
+          const text = sel?.toString().trim();
+          if (text && sel.rangeCount > 0) {
+            const range = sel.getRangeAt(0);
+            const cfi = view.getCFI(index, range);
+            selectedTextRef.current = { text, cfi };
           }
-        }
-        return result;
-      };
-      const chs = flattenToc(nav.toc);
-      chaptersRef.current = chs;
-      setChapters(chs);
-    });
-
-    // Track location changes for progress and page info
-    rendition.on("relocated", (location: any) => {
-      if (location.start?.cfi) {
-        currentCfiRef.current = location.start.cfi;
-      }
-      const totalLocs = epubBook.locations?.length() || 0;
-      if (totalLocs > 0 && location.start?.cfi) {
-        const currentLoc = epubBook.locations.locationFromCfi(location.start.cfi);
-        const pct = Math.round(epubBook.locations.percentageFromCfi(location.start.cfi) * 100);
-        setProgress(pct);
-        setPageInfo({ current: currentLoc + 1, total: totalLocs });
-        if (bookId) {
-          updateReadingProgress(bookId, pct, location.start.cfi).catch(() => {});
-        }
-      } else {
-        // Locations not ready yet, use chapter-level info
-        const pct = Math.round((location.start?.percentage ?? 0) * 100);
-        setProgress(pct);
-        const displayed = location.start?.displayed;
-        if (displayed) {
-          setPageInfo({ current: displayed.page, total: displayed.total });
-        }
-        if (bookId) {
-          updateReadingProgress(bookId, pct, location.start?.cfi).catch(() => {});
-        }
-      }
-    });
-
-    // Track current chapter index
-    rendition.on("rendered", (section: { href: string }) => {
-      const idx = chaptersRef.current.findIndex((c) => section.href.includes(c.href) || c.href.includes(section.href));
-      if (idx !== -1) setCurrentChapterIndex(idx);
-    });
-
-    // Handle text selection for context menu with CFI range
-    rendition.on("selected", (cfiRange: string, _contents: any) => {
-      // Store the cfiRange so it's available when context menu opens
-      selectedCfiRef.current = cfiRange;
-    });
-
-    // Keyboard + focus handling inside epub iframes
-    const iframeKeyHandler = (e: KeyboardEvent) => {
-      if (e.key === "ArrowLeft") rendition.prev();
-      else if (e.key === "ArrowRight") rendition.next();
-    };
-    // When user clicks inside iframe, pull focus back to parent so
-    // the parent document keydown listener works for subsequent keys
-    const iframeClickHandler = () => {
-      window.focus();
-      document.body.focus();
-    };
-    const iframeContextMenuHandler = function(this: Document, e: MouseEvent) {
-      const sel = this.getSelection?.();
-      const text = sel?.toString().trim();
-      if (text) {
-        e.preventDefault();
-        e.stopPropagation();
-        // e.clientX/Y are relative to iframe viewport
-        // Find the iframe element in the parent to get its offset
-        const iframes = container.querySelectorAll("iframe");
-        let offsetX = 0;
-        let offsetY = 0;
-        for (const iframe of iframes) {
-          if (iframe.contentDocument === this) {
-            const rect = iframe.getBoundingClientRect();
-            offsetX = rect.left;
-            offsetY = rect.top;
-            break;
-          }
-        }
-        setContextMenu({
-          x: e.clientX + offsetX,
-          y: e.clientY + offsetY,
-          text,
-          cfiRange: selectedCfiRef.current || undefined,
         });
-      }
-    };
-    rendition.hooks.content.register((contents: { document: Document }) => {
-      contents.document.addEventListener("keydown", iframeKeyHandler);
-      contents.document.addEventListener("click", iframeClickHandler);
-      contents.document.addEventListener("contextmenu", iframeContextMenuHandler.bind(contents.document));
-    });
 
-    // Resize rendition when container size changes (window resize)
-    let resizeTimer: ReturnType<typeof setTimeout>;
-    const resizeObserver = new ResizeObserver(() => {
-      clearTimeout(resizeTimer);
-      resizeTimer = setTimeout(() => {
-        try {
-          if (container && renditionRef.current?.manager) {
-            renditionRef.current.resize(container.clientWidth, container.clientHeight);
+        // Context menu inside content
+        // foliate-js renders in iframes; clientX/Y are relative to the
+        // iframe viewport. Use frameElement to get the iframe's offset.
+        doc.addEventListener("contextmenu", (ev: MouseEvent) => {
+          const sel = doc.getSelection?.();
+          const text = sel?.toString().trim();
+          if (text) {
+            ev.preventDefault();
+            const iframe = doc.defaultView?.frameElement as HTMLElement | null;
+            let offsetX = 0, offsetY = 0;
+            if (iframe) {
+              const rect = iframe.getBoundingClientRect();
+              offsetX = rect.left;
+              offsetY = rect.top;
+            }
+            setContextMenu({
+              x: ev.clientX + offsetX,
+              y: ev.clientY + offsetY,
+              text,
+              cfiRange: selectedTextRef.current?.cfi,
+            });
           }
-        } catch (_) { /* manager not ready */ }
-      }, 100);
+        });
+
+        // Keyboard navigation inside content docs
+        doc.addEventListener("keydown", (ev: KeyboardEvent) => {
+          if (ev.key === "ArrowLeft") view.prev();
+          else if (ev.key === "ArrowRight") view.next();
+        });
+
+        // Click to dismiss context menu
+        doc.addEventListener("click", () => {
+          setContextMenu(null);
+        });
+      }) as EventListener);
+
+      // Highlight overlay system
+      view.addEventListener("create-overlay", ((e: CustomEvent) => {
+        const { index: _sectionIndex } = e.detail;
+        // Load highlights for this section
+        if (bookId) {
+          invoke<Highlight[]>("list_highlights", { bookId }).then((hls) => {
+            for (const hl of hls) {
+              try {
+                view.addAnnotation({ value: hl.cfi_range, color: hl.color });
+              } catch {
+                // Invalid CFI
+              }
+            }
+          }).catch(() => {});
+        }
+      }) as EventListener);
+
+      view.addEventListener("draw-annotation", ((e: CustomEvent) => {
+        const { draw, annotation } = e.detail;
+        // Overlayer is already loaded as a dependency of view.js
+        // The draw function accepts a static method and options
+        const color = highlightColorMap[annotation.color] || highlightColorMap.yellow;
+        // Use the highlight draw function: filled rectangles over text ranges
+        draw((rects: DOMRectList) => {
+          const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+          g.setAttribute("fill", color);
+          g.style.opacity = "0.3";
+          g.style.mixBlendMode = "multiply";
+          for (const { left, top, height, width } of rects) {
+            const el = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+            el.setAttribute("x", String(left));
+            el.setAttribute("y", String(top));
+            el.setAttribute("height", String(height));
+            el.setAttribute("width", String(width));
+            g.append(el);
+          }
+          return g;
+        });
+      }) as EventListener);
+
+      view.addEventListener("show-annotation", ((e: CustomEvent) => {
+        // Could show note popup here
+        const { value } = e.detail;
+        console.log("Annotation clicked:", value);
+      }) as EventListener);
+
+      // Navigate to saved position
+      const startCfi = book.current_cfi;
+      await view.init({ lastLocation: startCfi || undefined, showTextStart: !startCfi });
+
+      if (cancelled) return;
+
+      // Apply brightness
+      if (viewerRef.current) {
+        viewerRef.current.style.filter = `brightness(${readerSettings.brightness / 100})`;
+      }
+
+      setBookReady(true);
+    };
+
+    initFoliate().catch((err) => {
+      console.error("Failed to initialize foliate-js:", err);
+      setBookReady(true); // Remove loading overlay even on error
     });
-    resizeObserver.observe(container);
 
     return () => {
-      resizeObserver.disconnect();
-      clearTimeout(resizeTimer);
-      rendition.destroy();
-      epubBook.destroy();
-      renditionRef.current = null;
-      epubRef.current = null;
+      cancelled = true;
+      if (viewRef.current) {
+        viewRef.current.close();
+        viewRef.current.remove();
+        viewRef.current = null;
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [book]);
 
-  // Apply reader settings to epub rendition
+  // Apply reader settings reactively
   useEffect(() => {
-    const rendition = renditionRef.current;
-    if (!rendition) return;
+    const view = viewRef.current;
+    if (!view?.renderer) return;
 
-    const themeColors = getThemeStyles(readerSettings.theme);
-    const fontFamily = getFontFamily(readerSettings.font);
+    // Update styles (theme, font, spacing)
+    view.renderer.setStyles?.(getReaderCSS(readerSettings));
 
-    const letterSpacing = readerSettings.charSpacing === 0 ? "normal" : `${readerSettings.charSpacing * 0.01}em`;
-    const wordSpacing = readerSettings.wordSpacing === 0 ? "normal" : `${readerSettings.wordSpacing * 0.01}em`;
-    rendition.themes.default({
-      body: {
-        "overflow": "hidden !important",
-        "background-color": `${themeColors.body} !important`,
-        "color": `${themeColors.text} !important`,
-        "font-family": `${fontFamily} !important`,
-        "font-size": `${readerSettings.fontSize}px !important`,
-        "line-height": `${readerSettings.lineSpacing} !important`,
-        "letter-spacing": `${letterSpacing} !important`,
-        "word-spacing": `${wordSpacing} !important`,
-      },
-      "p, span, div, li, td, th, h1, h2, h3, h4, h5, h6": {
-        "color": `${themeColors.text} !important`,
-        "font-family": `${fontFamily} !important`,
-        "line-height": `${readerSettings.lineSpacing} !important`,
-      },
-    });
+    // Update reading mode — foliate-js supports instant switching
+    view.renderer.setAttribute("flow",
+      readerSettings.readingMode === "scrolling" ? "scrolled" : "paginated"
+    );
 
-    // Apply brightness and margins on the viewer container
+    // Update max-inline-size for margins (narrower content = more margin)
+    const baseWidth = 1000;
+    const marginOffset = readerSettings.margins * 2;
+    view.renderer.setAttribute("max-inline-size", `${Math.max(400, baseWidth - marginOffset)}px`);
+
+    // Update brightness
     if (viewerRef.current) {
       viewerRef.current.style.filter = `brightness(${readerSettings.brightness / 100})`;
     }
-
-    // Resize rendition to account for margins
-    setTimeout(() => {
-      try {
-        if (viewerRef.current && renditionRef.current?.manager) {
-          const { clientWidth, clientHeight } = viewerRef.current;
-          const marginPx = readerSettings.margins;
-          renditionRef.current.resize(clientWidth - marginPx * 2, clientHeight);
-          // Center the rendition container
-          const container = viewerRef.current.firstElementChild as HTMLElement;
-          if (container) {
-            container.style.margin = "0 auto";
-          }
-        }
-      } catch (_) { /* manager not ready */ }
-    }, 50);
   }, [readerSettings]);
 
   const togglePanel = (panel: "ai" | "bookmarks") => {
     setSidePanel((prev) => (prev === panel ? null : panel));
   };
 
-  // Resize rendition when side panel opens/closes
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      try {
-        if (viewerRef.current && renditionRef.current?.manager) {
-          const { clientWidth, clientHeight } = viewerRef.current;
-          renditionRef.current.resize(clientWidth, clientHeight);
-        }
-      } catch (_) { /* manager not ready */ }
-    }, 100);
-    return () => clearTimeout(timer);
-  }, [sidePanel]);
-
-  // Keyboard navigation — parent document listener (works when parent has focus)
+  // Keyboard navigation — parent document listener
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA") return;
-      if (e.key === "ArrowLeft") renditionRef.current?.prev();
-      else if (e.key === "ArrowRight") renditionRef.current?.next();
+      if (e.key === "ArrowLeft") viewRef.current?.prev();
+      else if (e.key === "ArrowRight") viewRef.current?.next();
     };
     document.addEventListener("keydown", handleKeyDown);
     return () => {
@@ -398,7 +415,7 @@ export default function Reader() {
         x: e.clientX,
         y: e.clientY,
         text,
-        cfiRange: selectedCfiRef.current || undefined,
+        cfiRange: selectedTextRef.current?.cfi || undefined,
       });
     }
   }, []);
@@ -437,13 +454,6 @@ export default function Reader() {
         Math.max(PANEL_MIN_WIDTH, startWidth + delta)
       );
       setPanelWidth(finalWidth);
-      // Resize after React re-render settles
-      setTimeout(() => {
-        if (viewerRef.current && renditionRef.current) {
-          const { clientWidth, clientHeight } = viewerRef.current;
-          renditionRef.current.resize(clientWidth, clientHeight);
-        }
-      }, 50);
     };
 
     document.body.style.cursor = "col-resize";
@@ -453,7 +463,11 @@ export default function Reader() {
   }, []);
 
   const navigateToChapter = useCallback((href: string) => {
-    renditionRef.current?.display(href);
+    viewRef.current?.goTo(href);
+  }, []);
+
+  const navigateToCfi = useCallback((cfi: string) => {
+    viewRef.current?.goTo(cfi);
   }, []);
 
   if (loading) {
@@ -488,7 +502,7 @@ export default function Reader() {
             <ArrowLeft size={16} />
           </Button>
           <div className="w-px h-6 bg-border" />
-          <div className="size-10 rounded-lg bg-[#8b5cf6] flex items-center justify-center">
+          <div className="size-10 rounded-lg bg-accent flex items-center justify-center">
             <BookOpen size={18} className="text-white" />
           </div>
           <div className="flex flex-col">
@@ -590,12 +604,15 @@ export default function Reader() {
       <div className="flex flex-1 overflow-hidden">
         <div className="flex-1 flex flex-col min-w-0">
           <main
-            className="flex-1 overflow-hidden bg-bg-surface relative"
+            className="flex-1 bg-bg-surface relative overflow-hidden"
             onContextMenu={handleContextMenu}
             onClick={() => { setTocOpen(false); setSettingsOpen(false); }}
           >
-            <div ref={viewerRef} className="w-full h-full overflow-x-hidden" />
-            {!locationsReady && (
+            <div
+              ref={viewerRef}
+              className="w-full h-full"
+            />
+            {!bookReady && (
               <div className="absolute inset-0 z-20 bg-bg-surface flex items-center justify-center">
                 <div className="flex flex-col items-center gap-3">
                   <Loader2 size={24} className="animate-spin text-text-muted" />
@@ -603,7 +620,6 @@ export default function Reader() {
                 </div>
               </div>
             )}
-{/* needsRefocus overlay removed — iframe click handler refocuses parent */}
           </main>
 
           {/* Bottom progress bar */}
@@ -641,7 +657,22 @@ export default function Reader() {
             <AiPanel context={aiContext} onContextConsumed={() => setAiContext(undefined)} />
           </div>
           {sidePanel === "bookmarks" && bookId && (
-            <BookmarksPanel bookId={bookId} />
+            <BookmarksPanel
+              bookId={bookId}
+              onNavigate={navigateToCfi}
+              getCurrentCfi={() => currentCfiRef.current}
+              getCurrentLabel={() => {
+                const idx = currentChapterIndex;
+                return idx >= 0 && idx < chapters.length
+                  ? chapters[idx].title
+                  : "Bookmark";
+              }}
+              getPageFromCfi={() => {
+                // foliate-js uses fraction-based progress, not location indices
+                // Return page info from current state if available
+                return pageInfo?.current ?? null;
+              }}
+            />
           )}
         </div>
       </div>
@@ -654,19 +685,6 @@ export default function Reader() {
           onClose={() => setContextMenu(null)}
           onCopy={() => {
             navigator.clipboard.writeText(contextMenu.text);
-            setContextMenu(null);
-          }}
-          onHighlight={(color) => {
-            const cfiRange = contextMenu.cfiRange;
-            if (cfiRange && bookId) {
-              invoke("add_highlight", {
-                bookId,
-                cfiRange,
-                color,
-                note: null,
-                textContent: contextMenu.text,
-              }).catch((err) => console.error("Failed to add highlight:", err));
-            }
             setContextMenu(null);
           }}
           onAskAI={() => {

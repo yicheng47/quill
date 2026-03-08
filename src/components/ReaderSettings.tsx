@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Sun, Check } from "lucide-react";
+import { Sun, Check, ScrollText, BookOpen } from "lucide-react";
 import Select from "./ui/Select";
 
 const sliderClass =
@@ -23,11 +23,14 @@ const fonts = [
 export type ReaderTheme = (typeof themes)[number]["id"];
 export type ReaderFont = (typeof fonts)[number]["id"];
 
+export type ReadingMode = "scrolling" | "paginated";
+
 export interface ReaderSettingsState {
   theme: ReaderTheme;
   font: ReaderFont;
   fontSize: number; // px
   brightness: number; // 0-100
+  readingMode: ReadingMode;
   lineSpacing: number; // multiplier, e.g. 1.5
   charSpacing: number; // percentage, 0 = normal
   wordSpacing: number; // percentage, 0 = normal
@@ -169,6 +172,35 @@ export default function ReaderSettings({ open, onClose, anchorRef, settings, onS
           onChange={(v) => update({ font: v as ReaderFont })}
           options={fonts.map((f) => ({ value: f.id, label: f.label }))}
         />
+      </div>
+
+      {/* Reading Mode */}
+      <div className="px-4 py-3 border-b border-border-light">
+        <p className="text-[11px] font-medium text-text-muted tracking-[0.5px] uppercase mb-2">Reading Mode</p>
+        <div className="flex gap-2">
+          <button
+            onClick={() => update({ readingMode: "scrolling" })}
+            className={`flex-1 flex flex-col items-center gap-1.5 py-2.5 rounded-lg border cursor-pointer transition-colors ${
+              settings.readingMode === "scrolling"
+                ? "border-link-light bg-[#eff6ff] text-link-light"
+                : "border-border bg-bg-surface text-text-primary hover:bg-bg-input"
+            }`}
+          >
+            <ScrollText size={20} />
+            <span className="text-[12px] font-medium">Scrolling</span>
+          </button>
+          <button
+            onClick={() => update({ readingMode: "paginated" })}
+            className={`flex-1 flex flex-col items-center gap-1.5 py-2.5 rounded-lg border cursor-pointer transition-colors ${
+              settings.readingMode === "paginated"
+                ? "border-link-light bg-[#eff6ff] text-link-light"
+                : "border-border bg-bg-surface text-text-primary hover:bg-bg-input"
+            }`}
+          >
+            <BookOpen size={20} />
+            <span className="text-[12px] font-medium">Page Turning</span>
+          </button>
+        </div>
       </div>
 
       {/* Layout section */}

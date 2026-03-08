@@ -3,6 +3,10 @@ import { useBookmarks, useHighlights } from "../hooks/useBookmarks";
 
 interface BookmarksPanelProps {
   bookId: string;
+  onNavigate?: (cfi: string) => void;
+  getCurrentCfi?: () => string | null;
+  getCurrentLabel?: () => string;
+  getPageFromCfi?: (cfi: string) => number | null;
 }
 
 function timeAgo(dateStr: string): string {
@@ -17,13 +21,15 @@ function timeAgo(dateStr: string): string {
   return `${days}d ago`;
 }
 
-export default function BookmarksPanel({ bookId }: BookmarksPanelProps) {
+export default function BookmarksPanel({ bookId, onNavigate, getCurrentCfi, getCurrentLabel, getPageFromCfi }: BookmarksPanelProps) {
   const { bookmarks, add: addBookmark, remove: removeBookmark } = useBookmarks(bookId);
-  const { highlights } = useHighlights(bookId);
+  const { highlights, remove: removeHighlight } = useHighlights(bookId);
 
   const handleAddBookmark = async () => {
-    // Add a bookmark at current position (placeholder CFI)
-    await addBookmark("epubcfi(/)", "Current position");
+    const cfi = getCurrentCfi?.();
+    if (!cfi) return;
+    const label = getCurrentLabel?.() || "Bookmark";
+    await addBookmark(cfi, label);
   };
 
   return (
@@ -56,9 +62,10 @@ export default function BookmarksPanel({ bookId }: BookmarksPanelProps) {
         ) : (
           <>
             {bookmarks.map((bookmark) => (
-              <div
+              <button
                 key={bookmark.id}
-                className="flex items-start gap-0 pl-[18px] pr-4 pt-3 pb-3 w-full text-left border-l-2 border-transparent hover:bg-bg-input group"
+                onClick={() => onNavigate?.(bookmark.cfi)}
+                className="flex items-start gap-0 pl-[18px] pr-4 pt-3 pb-3 w-full text-left border-l-2 border-transparent hover:bg-bg-input group cursor-pointer"
               >
                 <Bookmark size={16} className="shrink-0 mt-0.5 text-text-muted" />
                 <div className="ml-3 min-w-0 flex-1">
@@ -66,25 +73,34 @@ export default function BookmarksPanel({ bookId }: BookmarksPanelProps) {
                     {bookmark.label || "Bookmark"}
                   </span>
                   <div className="flex items-center gap-3 mt-1.5">
+                    {getPageFromCfi && (() => {
+                      const page = getPageFromCfi(bookmark.cfi);
+                      return page != null ? (
+                        <span className="text-[11px] text-[#9f9fa9] tracking-[0.06px]">
+                          Page {page}
+                        </span>
+                      ) : null;
+                    })()}
                     <span className="flex items-center gap-1 text-[11px] text-[#9f9fa9] tracking-[0.06px]">
                       <Clock size={12} />
                       {timeAgo(bookmark.created_at)}
                     </span>
                   </div>
                 </div>
-                <button
-                  onClick={() => removeBookmark(bookmark.id)}
+                <div
+                  onClick={(e) => { e.stopPropagation(); removeBookmark(bookmark.id); }}
                   className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-bg-surface transition-opacity"
                 >
                   <Trash2 size={14} className="text-text-muted" />
-                </button>
-              </div>
+                </div>
+              </button>
             ))}
 
             {highlights.map((highlight) => (
-              <div
+              <button
                 key={highlight.id}
-                className="flex items-start gap-0 pl-[18px] pr-4 pt-3 pb-3 w-full text-left border-l-2 border-transparent hover:bg-bg-input"
+                onClick={() => onNavigate?.(highlight.cfi_range)}
+                className="flex items-start gap-0 pl-[18px] pr-4 pt-3 pb-3 w-full text-left border-l-2 border-transparent hover:bg-bg-input group cursor-pointer"
                 style={{ borderLeftColor: highlight.color }}
               >
                 <div
@@ -102,12 +118,28 @@ export default function BookmarksPanel({ bookId }: BookmarksPanelProps) {
                       {highlight.note}
                     </p>
                   )}
-                  <span className="flex items-center gap-1 text-[11px] text-[#9f9fa9] tracking-[0.06px] mt-1.5">
-                    <Clock size={12} />
-                    {timeAgo(highlight.created_at)}
-                  </span>
+                  <div className="flex items-center gap-3 mt-1.5">
+                    {getPageFromCfi && (() => {
+                      const page = getPageFromCfi(highlight.cfi_range);
+                      return page != null ? (
+                        <span className="text-[11px] text-[#9f9fa9] tracking-[0.06px]">
+                          Page {page}
+                        </span>
+                      ) : null;
+                    })()}
+                    <span className="flex items-center gap-1 text-[11px] text-[#9f9fa9] tracking-[0.06px]">
+                      <Clock size={12} />
+                      {timeAgo(highlight.created_at)}
+                    </span>
+                  </div>
                 </div>
-              </div>
+                <div
+                  onClick={(e) => { e.stopPropagation(); removeHighlight(highlight.id); }}
+                  className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-bg-surface transition-opacity"
+                >
+                  <Trash2 size={14} className="text-text-muted" />
+                </div>
+              </button>
             ))}
           </>
         )}

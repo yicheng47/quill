@@ -36,7 +36,7 @@ export default function BookContextMenu({
   const [newName, setNewName] = useState("");
   const [creatingNew, setCreatingNew] = useState(false);
   const { collections, create, addBook } = useCollections();
-  const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
+  const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const submenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {

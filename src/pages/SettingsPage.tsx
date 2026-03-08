@@ -138,11 +138,15 @@ export default function SettingsPage() {
                     setModel("gpt-4o");
                   } else if (p === "anthropic") {
                     setModel("claude-sonnet-4-20250514");
+                  } else if (p === "minimax") {
+                    setBaseUrl("https://api.minimax.io/anthropic");
+                    setModel("MiniMax-M2.5");
                   }
                 }}
                 options={[
                   { value: "openai", label: "OpenAI" },
                   { value: "anthropic", label: "Anthropic" },
+                  { value: "minimax", label: "MiniMax" },
                   { value: "google", label: "Google AI" },
                   { value: "ollama", label: "Ollama (Local)" },
                 ]}
@@ -150,7 +154,7 @@ export default function SettingsPage() {
               <p className="-mt-3 text-[12px] text-text-muted">Choose your preferred AI service provider</p>
 
               {/* Base URL (for Ollama / OpenAI Compatible) */}
-              {(provider === "ollama" || provider === "openai") && (
+              {(provider === "ollama" || provider === "openai" || provider === "minimax" || provider === "anthropic") && (
                 <div>
                   <label className="block text-[14px] font-semibold text-text-primary mb-1.5">
                     Base URL
@@ -167,7 +171,7 @@ export default function SettingsPage() {
               )}
 
               {/* API Key (for Anthropic / OpenAI Compatible) */}
-              {(provider === "anthropic" || provider === "openai") && (
+              {(provider === "anthropic" || provider === "openai" || provider === "minimax") && (
                 <div>
                   <label className="block text-[14px] font-semibold text-text-primary mb-1.5">
                     API Key
@@ -195,6 +199,7 @@ export default function SettingsPage() {
                   placeholder={
                     provider === "ollama" ? "llama3.2" :
                     provider === "anthropic" ? "claude-sonnet-4-20250514" :
+                    provider === "minimax" ? "MiniMax-M2.5" :
                     provider === "google" ? "gemini-2.0-flash" :
                     "gpt-4o"
                   }
@@ -240,7 +245,7 @@ export default function SettingsPage() {
           {/* Default Layout */}
           <section className="bg-bg-surface rounded-xl border border-border p-6">
             <div className="flex items-center gap-2 mb-1">
-              <SlidersHorizontal size={20} className="text-[#8b5cf6]" />
+              <SlidersHorizontal size={20} className="text-accent" />
               <h2 className="text-[16px] font-semibold text-text-primary">
                 Default Layout
               </h2>

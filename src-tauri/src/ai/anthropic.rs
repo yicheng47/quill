@@ -6,10 +6,12 @@ use crate::error::{AppError, AppResult};
 
 pub async fn stream_chat(
     app: &AppHandle,
+    base_url: &str,
     api_key: &str,
     model: &str,
     temperature: f64,
     messages: &[ChatMessage],
+    use_bearer_auth: bool,
 ) -> AppResult<()> {
     let client = reqwest::Client::new();
 
@@ -41,11 +43,18 @@ pub async fn stream_chat(
         "stream": true,
     });
 
-    let response = client
-        .post("https://api.anthropic.com/v1/messages")
-        .header("x-api-key", api_key)
+    let mut request = client
+        .post(format!("{}/v1/messages", base_url.trim_end_matches('/')))
         .header("anthropic-version", "2023-06-01")
-        .header("content-type", "application/json")
+        .header("content-type", "application/json");
+
+    if use_bearer_auth {
+        request = request.bearer_auth(api_key);
+    } else {
+        request = request.header("x-api-key", api_key);
+    }
+
+    let response = request
         .json(&body)
         .send()
         .await
