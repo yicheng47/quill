@@ -55,6 +55,7 @@ pub fn run() {
             commands::collections::list_books_in_collection,
             // AI
             commands::ai::ai_chat,
+            commands::ai::ai_quick_explain,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
