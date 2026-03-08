@@ -12,6 +12,8 @@ pub async fn stream_chat(
     temperature: f64,
     messages: &[ChatMessage],
     keep_alive: Option<&str>,
+    event_name: &str,
+    max_tokens_override: Option<u32>,
 ) -> AppResult<()> {
     let client = reqwest::Client::new();
     let url = format!("{}/v1/chat/completions", base_url.trim_end_matches('/'));
@@ -27,6 +29,9 @@ pub async fn stream_chat(
     });
     if let Some(ka) = keep_alive {
         body["keep_alive"] = serde_json::json!(ka);
+    }
+    if let Some(mt) = max_tokens_override {
+        body["max_tokens"] = serde_json::json!(mt);
     }
 
     let mut request = client.post(&url).json(&body);
@@ -60,7 +65,7 @@ pub async fn stream_chat(
             if line.starts_with("data: ") {
                 let data = &line[6..];
                 if data == "[DONE]" {
-                    let _ = app.emit("ai-stream-chunk", AiStreamChunk {
+                    let _ = app.emit(event_name, AiStreamChunk {
                         delta: String::new(),
                         done: true,
                     });
@@ -69,7 +74,7 @@ pub async fn stream_chat(
 
                 if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data) {
                     if let Some(delta) = parsed["choices"][0]["delta"]["content"].as_str() {
-                        let _ = app.emit("ai-stream-chunk", AiStreamChunk {
+                        let _ = app.emit(event_name, AiStreamChunk {
                             delta: delta.to_string(),
                             done: false,
                         });
@@ -79,7 +84,7 @@ pub async fn stream_chat(
         }
     }
 
-    let _ = app.emit("ai-stream-chunk", AiStreamChunk {
+    let _ = app.emit(event_name, AiStreamChunk {
         delta: String::new(),
         done: true,
     });

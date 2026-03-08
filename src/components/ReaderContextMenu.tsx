@@ -2,23 +2,30 @@ import { useEffect, useRef } from "react";
 import {
   Copy,
   Bot,
+  Sparkles,
 } from "lucide-react";
 
 interface ReaderContextMenuProps {
   x: number;
   y: number;
+  text: string;
   onClose: () => void;
   onCopy: () => void;
   onAskAI: () => void;
+  onQuickExplain: () => void;
 }
 
 export default function ReaderContextMenu({
   x,
   y,
+  text,
   onClose,
   onCopy,
   onAskAI,
+  onQuickExplain,
 }: ReaderContextMenuProps) {
+  const wordCount = text.trim().split(/\s+/).length;
+  const showQuickExplain = wordCount <= 5;
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -84,6 +91,19 @@ export default function ReaderContextMenu({
           Ask AI Assistant
         </span>
       </button>
+
+      {/* Quick Explain (short selections only) */}
+      {showQuickExplain && (
+        <button
+          onClick={onQuickExplain}
+          className="flex items-center gap-3 w-[calc(100%-8px)] mx-1 px-3 h-[31.5px] rounded-sm text-left cursor-pointer hover:bg-bg-input transition-colors"
+        >
+          <Sparkles size={16} className="text-text-muted" />
+          <span className="flex-1 text-[13px] font-medium text-[#27272a] tracking-[-0.08px]">
+            Quick Explain
+          </span>
+        </button>
+      )}
     </div>
   );
 }

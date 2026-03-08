@@ -14,6 +14,7 @@ import AiPanel from "../components/AiPanel";
 import BookmarksPanel from "../components/BookmarksPanel";
 import ReaderSettings, { type ReaderSettingsState, getFontFamily, getThemeStyles } from "../components/ReaderSettings";
 import ReaderContextMenu from "../components/ReaderContextMenu";
+import QuickExplainPopover from "../components/QuickExplainPopover";
 import TableOfContents from "../components/TableOfContents";
 import { getBook, updateReadingProgress, type Book } from "../hooks/useBooks";
 import { getAllSettings } from "../hooks/useSettings";
@@ -106,9 +107,18 @@ export default function Reader() {
     x: number;
     y: number;
     text: string;
+    sentence: string;
     cfiRange?: string;
   } | null>(null);
   const [aiContext, setAiContext] = useState<string | undefined>();
+  const [quickExplain, setQuickExplain] = useState<{
+    x: number;
+    y: number;
+    word: string;
+    sentence: string;
+    bookTitle?: string;
+    chapter?: string;
+  } | null>(null);
   const [readerSettings, setReaderSettings] = useState<ReaderSettingsState>({
     theme: "original",
     font: "georgia",
@@ -267,10 +277,28 @@ export default function Reader() {
               offsetX = rect.left;
               offsetY = rect.top;
             }
+            // Extract surrounding context from the containing block element
+            let sentence = text;
+            if (sel.rangeCount > 0) {
+              const range = sel.getRangeAt(0);
+              let node: Node | null = range.startContainer;
+              // Walk up to the nearest block-level element
+              const blockTags = new Set(["P", "DIV", "LI", "BLOCKQUOTE", "TD", "TH", "H1", "H2", "H3", "H4", "H5", "H6", "SECTION", "ARTICLE", "ASIDE", "FIGCAPTION", "DT", "DD"]);
+              while (node && node !== doc.body && !(node.nodeType === 1 && blockTags.has((node as Element).tagName))) {
+                node = node.parentNode;
+              }
+              // Fall back to body if no block element found
+              const contextNode = node && node !== doc.body ? node : range.startContainer.parentElement;
+              if (contextNode) {
+                const blockText = (contextNode as Element).textContent?.trim() || "";
+                sentence = blockText.length > 500 ? blockText.slice(0, 500) : blockText;
+              }
+            }
             setContextMenu({
               x: ev.clientX + offsetX,
               y: ev.clientY + offsetY,
               text,
+              sentence,
               cfiRange: selectedTextRef.current?.cfi,
             });
           }
@@ -411,10 +439,24 @@ export default function Reader() {
     const text = selection?.toString().trim();
     if (text) {
       e.preventDefault();
+      let sentence = text;
+      if (selection && selection.rangeCount > 0) {
+        const range = selection.getRangeAt(0);
+        let node: Node | null = range.startContainer;
+        const blockTags = new Set(["P", "DIV", "LI", "BLOCKQUOTE", "TD", "TH", "H1", "H2", "H3", "H4", "H5", "H6"]);
+        while (node && !(node.nodeType === 1 && blockTags.has((node as Element).tagName))) {
+          node = node.parentNode;
+        }
+        if (node) {
+          const blockText = (node as Element).textContent?.trim() || "";
+          sentence = blockText.length > 500 ? blockText.slice(0, 500) : blockText;
+        }
+      }
       setContextMenu({
         x: e.clientX,
         y: e.clientY,
         text,
+        sentence,
         cfiRange: selectedTextRef.current?.cfi || undefined,
       });
     }
@@ -682,6 +724,7 @@ export default function Reader() {
         <ReaderContextMenu
           x={contextMenu.x}
           y={contextMenu.y}
+          text={contextMenu.text}
           onClose={() => setContextMenu(null)}
           onCopy={() => {
             navigator.clipboard.writeText(contextMenu.text);
@@ -692,6 +735,32 @@ export default function Reader() {
             setSidePanel("ai");
             setContextMenu(null);
           }}
+          onQuickExplain={() => {
+            const chapterTitle = currentChapterIndex >= 0 && currentChapterIndex < chapters.length
+              ? chapters[currentChapterIndex].title
+              : undefined;
+            setQuickExplain({
+              x: contextMenu.x,
+              y: contextMenu.y,
+              word: contextMenu.text,
+              sentence: contextMenu.sentence,
+              bookTitle: book?.title,
+              chapter: chapterTitle,
+            });
+            setContextMenu(null);
+          }}
+        />
+      )}
+
+      {quickExplain && (
+        <QuickExplainPopover
+          x={quickExplain.x}
+          y={quickExplain.y}
+          word={quickExplain.word}
+          sentence={quickExplain.sentence}
+          bookTitle={quickExplain.bookTitle}
+          chapter={quickExplain.chapter}
+          onClose={() => setQuickExplain(null)}
         />
       )}
     </div>

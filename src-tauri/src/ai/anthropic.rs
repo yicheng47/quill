@@ -12,6 +12,8 @@ pub async fn stream_chat(
     temperature: f64,
     messages: &[ChatMessage],
     use_bearer_auth: bool,
+    event_name: &str,
+    max_tokens_override: Option<u32>,
 ) -> AppResult<()> {
     let client = reqwest::Client::new();
 
@@ -36,7 +38,7 @@ pub async fn stream_chat(
 
     let body = serde_json::json!({
         "model": model,
-        "max_tokens": 4096,
+        "max_tokens": max_tokens_override.unwrap_or(4096),
         "system": system_msg,
         "messages": api_messages,
         "temperature": temperature,
@@ -84,14 +86,14 @@ pub async fn stream_chat(
                     match event_type {
                         "content_block_delta" => {
                             if let Some(text) = parsed["delta"]["text"].as_str() {
-                                let _ = app.emit("ai-stream-chunk", AiStreamChunk {
+                                let _ = app.emit(event_name, AiStreamChunk {
                                     delta: text.to_string(),
                                     done: false,
                                 });
                             }
                         }
                         "message_stop" => {
-                            let _ = app.emit("ai-stream-chunk", AiStreamChunk {
+                            let _ = app.emit(event_name, AiStreamChunk {
                                 delta: String::new(),
                                 done: true,
                             });
@@ -104,7 +106,7 @@ pub async fn stream_chat(
         }
     }
 
-    let _ = app.emit("ai-stream-chunk", AiStreamChunk {
+    let _ = app.emit(event_name, AiStreamChunk {
         delta: String::new(),
         done: true,
     });
