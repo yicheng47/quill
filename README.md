@@ -4,7 +4,10 @@ A modern eBook reader with a built-in AI reading assistant. Import EPUB files, o
 
 Built with Tauri 2 (Rust) and React.
 
-<!-- ![Quill Screenshot](docs/screenshot.png) -->
+<p>
+  <img src="assets/library.png" width="49%" />
+  <img src="assets/reader.png" width="49%" />
+</p>
 
 ## Features
 
