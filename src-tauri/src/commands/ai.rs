@@ -26,7 +26,7 @@ pub async fn ai_quick_explain(
     db: State<'_, Db>,
 ) -> AppResult<()> {
     // Read provider settings
-    let (provider, api_key, model, base_url, keep_alive) = {
+    let (provider, api_key, model, base_url, keep_alive, auth_mode) = {
         let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
         let get = |key: &str| -> Option<String> {
             conn.query_row(
@@ -42,7 +42,15 @@ pub async fn ai_quick_explain(
             get("ai_model").unwrap_or_else(|| "llama3.2".to_string()),
             get("ai_base_url"),
             get("ai_keep_alive").unwrap_or_else(|| "30m".to_string()),
+            get("ai_auth_mode").unwrap_or_else(|| "api_key".to_string()),
         )
+    };
+
+    let (api_key, oauth_account_id) = if auth_mode == "oauth" && provider == "openai" {
+        let (token, acct_id) = crate::ai::oauth::get_valid_token(&db).await?;
+        (token, acct_id)
+    } else {
+        (api_key, None)
     };
 
     let mut user_content = format!("Word/phrase: \"{}\"\nSurrounding text: \"{}\"", word, sentence);
@@ -66,6 +74,7 @@ pub async fn ai_quick_explain(
 
     let event_name = "ai-quick-explain-chunk";
 
+    let use_responses_api = auth_mode == "oauth" && provider == "openai";
     let app_clone = app.clone();
     tauri::async_runtime::spawn(async move {
         let result = match provider.as_str() {
@@ -76,6 +85,10 @@ pub async fn ai_quick_explain(
             "minimax" => {
                 let url = base_url.unwrap_or_else(|| "https://api.minimax.io/anthropic".to_string());
                 crate::ai::anthropic::stream_chat(&app_clone, &url, &api_key, &model, 0.3, &messages, true, event_name, Some(256)).await
+            }
+            _ if use_responses_api => {
+                let url = "https://chatgpt.com/backend-api/codex".to_string();
+                crate::ai::openai_responses::stream_chat(&app_clone, &url, &api_key, &model, &messages, oauth_account_id.as_deref(), event_name).await
             }
             _ => {
                 let url = base_url.unwrap_or_else(|| "http://localhost:11434".to_string());
@@ -106,7 +119,7 @@ pub async fn ai_chat(
     db: State<'_, Db>,
 ) -> AppResult<()> {
     // Read provider settings
-    let (provider, api_key, model, base_url, temperature, keep_alive) = {
+    let (provider, api_key, model, base_url, temperature, keep_alive, auth_mode) = {
         let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
         let get = |key: &str| -> Option<String> {
             conn.query_row(
@@ -125,7 +138,15 @@ pub async fn ai_chat(
                 .and_then(|v| v.parse::<f64>().ok())
                 .unwrap_or(0.3),
             get("ai_keep_alive").unwrap_or_else(|| "30m".to_string()),
+            get("ai_auth_mode").unwrap_or_else(|| "api_key".to_string()),
         )
+    };
+
+    let (api_key, oauth_account_id) = if auth_mode == "oauth" && provider == "openai" {
+        let (token, acct_id) = crate::ai::oauth::get_valid_token(&db).await?;
+        (token, acct_id)
+    } else {
+        (api_key, None)
     };
 
     // Build messages with optional context
@@ -143,6 +164,7 @@ pub async fn ai_chat(
     api_messages.extend(messages);
 
     // Spawn streaming in a background task so events emit immediately
+    let use_responses_api = auth_mode == "oauth" && provider == "openai";
     let app_clone = app.clone();
     tauri::async_runtime::spawn(async move {
         let result = match provider.as_str() {
@@ -153,6 +175,10 @@ pub async fn ai_chat(
             "minimax" => {
                 let url = base_url.unwrap_or_else(|| "https://api.minimax.io/anthropic".to_string());
                 crate::ai::anthropic::stream_chat(&app_clone, &url, &api_key, &model, temperature, &api_messages, true, "ai-stream-chunk", None).await
+            }
+            _ if use_responses_api => {
+                let url = "https://chatgpt.com/backend-api/codex".to_string();
+                crate::ai::openai_responses::stream_chat(&app_clone, &url, &api_key, &model, &api_messages, oauth_account_id.as_deref(), "ai-stream-chunk").await
             }
             _ => {
                 let url = base_url.unwrap_or_else(|| "http://localhost:11434".to_string());
