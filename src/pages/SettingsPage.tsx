@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowLeft, Bot, BookOpen, SlidersHorizontal, Palette, Save } from "lucide-react";
+import { invoke } from "@tauri-apps/api/core";
+import { ArrowLeft, Bot, BookOpen, SlidersHorizontal, Palette, Save, KeyRound, Shield } from "lucide-react";
 import Button from "../components/ui/Button";
 import Select from "../components/ui/Select";
 import Input from "../components/ui/Input";
@@ -22,6 +23,13 @@ export default function SettingsPage() {
   const [baseUrl, setBaseUrl] = useState("http://localhost:11434");
   const [temperature, setTemperature] = useState(0.3);
   const [keepAlive, setKeepAlive] = useState("30m");
+
+  // OAuth
+  const [authMode, setAuthMode] = useState<"api_key" | "oauth">("api_key");
+  const [oauthStatus, setOauthStatus] = useState<{ connected: boolean; account_id: string | null }>({ connected: false, account_id: null });
+  const [oauthLoading, setOauthLoading] = useState(false);
+  const [oauthError, setOauthError] = useState<string | null>(null);
+  const [oauthToast, setOauthToast] = useState(false);
 
   // Reading preferences
   const [autoSave, setAutoSave] = useState(true);
@@ -46,6 +54,7 @@ export default function SettingsPage() {
     if (settings.ai_base_url) setBaseUrl(settings.ai_base_url);
     if (settings.ai_temperature) setTemperature(parseFloat(settings.ai_temperature));
     if (settings.ai_keep_alive) setKeepAlive(settings.ai_keep_alive);
+    if (settings.ai_auth_mode) setAuthMode(settings.ai_auth_mode as "api_key" | "oauth");
     if (settings.font_size) setFontSize(parseInt(settings.font_size));
     if (settings.font_family) setFontFamily(settings.font_family);
     if (settings.line_spacing) setLineSpacing(parseFloat(settings.line_spacing));
@@ -56,6 +65,15 @@ export default function SettingsPage() {
     if (settings.theme) setTheme(settings.theme);
   }, [settings, loading]);
 
+  // Fetch OAuth status when provider is OpenAI
+  useEffect(() => {
+    if (provider === "openai") {
+      invoke<{ connected: boolean; account_id: string | null }>("openai_oauth_status")
+        .then(setOauthStatus)
+        .catch(() => setOauthStatus({ connected: false, account_id: null }));
+    }
+  }, [provider]);
+
   const handleSave = async () => {
     try {
       await saveBulk({
@@ -65,6 +83,7 @@ export default function SettingsPage() {
         ai_base_url: baseUrl,
         ai_temperature: String(temperature),
         ai_keep_alive: keepAlive,
+        ai_auth_mode: authMode,
         font_size: String(fontSize),
         font_family: fontFamily,
         line_spacing: String(lineSpacing),
@@ -79,6 +98,30 @@ export default function SettingsPage() {
       setTimeout(() => setShowToast(false), 2000);
     } catch (err) {
       console.error("Failed to save settings:", err);
+    }
+  };
+
+  const handleOAuthLogin = async () => {
+    setOauthLoading(true);
+    setOauthError(null);
+    try {
+      const result = await invoke<{ connected: boolean; account_id: string | null }>("openai_oauth_login");
+      setOauthStatus(result);
+      setOauthToast(true);
+      setTimeout(() => setOauthToast(false), 2000);
+    } catch (err) {
+      setOauthError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setOauthLoading(false);
+    }
+  };
+
+  const handleOAuthLogout = async () => {
+    try {
+      await invoke("openai_oauth_logout");
+      setOauthStatus({ connected: false, account_id: null });
+    } catch (err) {
+      console.error("Failed to logout:", err);
     }
   };
 
@@ -153,8 +196,98 @@ export default function SettingsPage() {
               />
               <p className="-mt-3 text-[12px] text-text-muted">Choose your preferred AI service provider</p>
 
+              {/* Authentication Method (OpenAI only) */}
+              {provider === "openai" && (
+                <div>
+                  <label className="block text-[14px] font-semibold text-text-primary mb-1.5">
+                    Authentication Method
+                  </label>
+                  <div className="flex rounded-lg border border-border overflow-hidden">
+                    <button
+                      type="button"
+                      className={`flex-1 flex items-center justify-center gap-2 h-9 text-[13px] font-medium transition-colors ${
+                        authMode === "api_key"
+                          ? "bg-dark text-white"
+                          : "bg-bg-page text-text-secondary hover:bg-bg-input"
+                      }`}
+                      onClick={() => { setAuthMode("api_key"); setModel("gpt-4o"); }}
+                    >
+                      <KeyRound size={14} />
+                      API Key
+                    </button>
+                    <button
+                      type="button"
+                      className={`flex-1 flex items-center justify-center gap-2 h-9 text-[13px] font-medium transition-colors ${
+                        authMode === "oauth"
+                          ? "bg-dark text-white"
+                          : "bg-bg-page text-text-secondary hover:bg-bg-input"
+                      }`}
+                      onClick={() => { setAuthMode("oauth"); setModel("gpt-5.3-codex"); }}
+                    >
+                      <Shield size={14} />
+                      OAuth Login
+                    </button>
+                  </div>
+                  <p className="text-[12px] text-text-muted mt-1.5">Choose how to authenticate with OpenAI</p>
+                </div>
+              )}
+
+              {/* OAuth Login Panel (OpenAI + OAuth mode) */}
+              {provider === "openai" && authMode === "oauth" && (
+                <div>
+                  {oauthStatus.connected ? (
+                    <div className="flex items-center justify-between rounded-lg border border-border px-3 py-2.5">
+                      <div className="flex items-center gap-2">
+                        <span className="size-2 rounded-full bg-accent" />
+                        <span className="size-2 rounded-full bg-green-500" />
+                        <span className="text-[13px] text-text-primary font-medium">
+                          Connected: {oauthStatus.account_id ?? "Unknown"}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        className="text-[13px] font-medium text-red-500 hover:text-red-600 transition-colors"
+                        onClick={handleOAuthLogout}
+                      >
+                        Logout
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <Button
+                        variant="primary"
+                        size="lg"
+                        className="w-full justify-center"
+                        disabled={oauthLoading}
+                        onClick={handleOAuthLogin}
+                      >
+                        {oauthLoading ? "Waiting for authentication..." : "Login with OpenAI"}
+                      </Button>
+                      {oauthError ? (
+                        <div className="flex items-center justify-between mt-2 px-3 py-2 rounded-lg bg-red-50 dark:bg-red-950/30">
+                          <span className="text-[12px] text-red-600 dark:text-red-400">
+                            Authentication failed. Please try again.
+                          </span>
+                          <button
+                            type="button"
+                            className="text-[12px] font-medium text-red-600 dark:text-red-400 hover:underline"
+                            onClick={handleOAuthLogin}
+                          >
+                            Retry
+                          </button>
+                        </div>
+                      ) : (
+                        <p className="text-[12px] text-text-muted mt-1.5">
+                          Sign in with your OpenAI account. A browser window will open for authentication.
+                        </p>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
+
               {/* Base URL (for Ollama / OpenAI Compatible) */}
-              {(provider === "ollama" || provider === "openai" || provider === "minimax" || provider === "anthropic") && (
+              {(provider === "ollama" || (provider === "openai" && authMode === "api_key") || provider === "minimax" || provider === "anthropic") && (
                 <div>
                   <label className="block text-[14px] font-semibold text-text-primary mb-1.5">
                     Base URL
@@ -170,8 +303,8 @@ export default function SettingsPage() {
                 </div>
               )}
 
-              {/* API Key (for Anthropic / OpenAI Compatible) */}
-              {(provider === "anthropic" || provider === "openai" || provider === "minimax") && (
+              {/* API Key (for Anthropic / OpenAI Compatible — hidden when OpenAI + OAuth) */}
+              {(provider === "anthropic" || (provider === "openai" && authMode === "api_key") || provider === "minimax") && (
                 <div>
                   <label className="block text-[14px] font-semibold text-text-primary mb-1.5">
                     API Key
@@ -201,6 +334,7 @@ export default function SettingsPage() {
                     provider === "anthropic" ? "claude-sonnet-4-20250514" :
                     provider === "minimax" ? "MiniMax-M2.5" :
                     provider === "google" ? "gemini-2.0-flash" :
+                    (provider === "openai" && authMode === "oauth") ? "gpt-5.3-codex" :
                     "gpt-4o"
                   }
                 />
@@ -393,6 +527,11 @@ export default function SettingsPage() {
       {showToast && (
         <div className="fixed top-6 left-1/2 -translate-x-1/2 z-50 bg-dark text-white text-[14px] font-medium px-4 py-2.5 rounded-lg shadow-popover">
           Settings saved successfully
+        </div>
+      )}
+      {oauthToast && (
+        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-50 bg-dark text-white text-[14px] font-medium px-4 py-2.5 rounded-lg shadow-popover flex items-center gap-2">
+          Successfully authenticated with OpenAI
         </div>
       )}
     </div>

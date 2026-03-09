@@ -30,5 +30,8 @@ uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 thiserror = "1"
 reqwest = { version = "0.12", features = ["json", "stream"] }
-tokio = { version = "1", features = ["sync", "macros", "rt-multi-thread"] }
+tokio = { version = "1", features = ["sync", "macros", "rt-multi-thread", "net", "io-util"] }
 futures = "0.3"
+sha2 = "0.10"
+base64 = "0.22"
+rand = "0.8"
