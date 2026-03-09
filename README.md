@@ -29,7 +29,11 @@ Grab the latest `.dmg` from the [Releases](https://github.com/yicheng47/quill/re
 
 Open the `.dmg` and drag **Quill.app** to your Applications folder.
 
-> **Note:** The app is not code-signed. On first launch, right-click → Open, then click "Open" in the dialog to bypass Gatekeeper.
+> **Note:** The app is not code-signed. After copying to Applications, run:
+> ```bash
+> xattr -cr /Applications/Quill.app
+> ```
+> Then open the app normally. This clears the macOS quarantine flag that blocks unsigned apps.
 
 ## Install from Source
 
