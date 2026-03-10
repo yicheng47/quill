@@ -14,13 +14,14 @@ import AiPanel from "../components/AiPanel";
 import BookmarksPanel from "../components/BookmarksPanel";
 import ReaderSettings, { type ReaderSettingsState, getFontFamily, getThemeStyles } from "../components/ReaderSettings";
 import ReaderContextMenu from "../components/ReaderContextMenu";
-import QuickExplainPopover from "../components/QuickExplainPopover";
+import LookupPopover from "../components/LookupPopover";
 import TableOfContents from "../components/TableOfContents";
 import { getBook, updateReadingProgress, type Book } from "../hooks/useBooks";
 import { getAllSettings } from "../hooks/useSettings";
 import type { Highlight } from "../hooks/useBookmarks";
 
 // foliate-js <foliate-view> web component interface
+/* eslint-disable @typescript-eslint/no-explicit-any -- foliate-js has no TS definitions */
 interface FoliateView extends HTMLElement {
   open(file: string | File | Blob): Promise<void>;
   init(opts: { lastLocation?: string; showTextStart?: boolean }): Promise<void>;
@@ -35,6 +36,7 @@ interface FoliateView extends HTMLElement {
   addAnnotation(annotation: { value: string; color?: string }): Promise<any>;
   deleteAnnotation(annotation: { value: string }): Promise<void>;
 }
+/* eslint-enable @typescript-eslint/no-explicit-any */
 
 const getReaderCSS = (settings: ReaderSettingsState) => {
   const themeColors = getThemeStyles(settings.theme);
@@ -111,7 +113,7 @@ export default function Reader() {
     cfiRange?: string;
   } | null>(null);
   const [aiContext, setAiContext] = useState<string | undefined>();
-  const [quickExplain, setQuickExplain] = useState<{
+  const [lookup, setLookup] = useState<{
     x: number;
     y: number;
     word: string;
@@ -215,7 +217,9 @@ export default function Reader() {
       // Load TOC
       const toc = view.book.toc;
       if (toc) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const flattenToc = (items: any[]): TocChapter[] =>
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           items.flatMap((item: any) => [
             { title: item.label?.trim() || "", href: item.href },
             ...(item.subitems ? flattenToc(item.subitems) : []),
@@ -318,7 +322,7 @@ export default function Reader() {
 
       // Highlight overlay system
       view.addEventListener("create-overlay", ((e: CustomEvent) => {
-        const { index: _sectionIndex } = e.detail;
+        const { index: _sectionIndex } = e.detail; // eslint-disable-line @typescript-eslint/no-unused-vars
         // Load highlights for this section
         if (bookId) {
           invoke<Highlight[]>("list_highlights", { bookId }).then((hls) => {
@@ -735,11 +739,11 @@ export default function Reader() {
             setSidePanel("ai");
             setContextMenu(null);
           }}
-          onQuickExplain={() => {
+          onLookup={() => {
             const chapterTitle = currentChapterIndex >= 0 && currentChapterIndex < chapters.length
               ? chapters[currentChapterIndex].title
               : undefined;
-            setQuickExplain({
+            setLookup({
               x: contextMenu.x,
               y: contextMenu.y,
               word: contextMenu.text,
@@ -752,15 +756,15 @@ export default function Reader() {
         />
       )}
 
-      {quickExplain && (
-        <QuickExplainPopover
-          x={quickExplain.x}
-          y={quickExplain.y}
-          word={quickExplain.word}
-          sentence={quickExplain.sentence}
-          bookTitle={quickExplain.bookTitle}
-          chapter={quickExplain.chapter}
-          onClose={() => setQuickExplain(null)}
+      {lookup && (
+        <LookupPopover
+          x={lookup.x}
+          y={lookup.y}
+          word={lookup.word}
+          sentence={lookup.sentence}
+          bookTitle={lookup.bookTitle}
+          chapter={lookup.chapter}
+          onClose={() => setLookup(null)}
         />
       )}
     </div>
