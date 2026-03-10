@@ -55,7 +55,7 @@ pub fn run() {
             commands::collections::list_books_in_collection,
             // AI
             commands::ai::ai_chat,
-            commands::ai::ai_quick_explain,
+            commands::ai::ai_lookup,
             // OAuth
             commands::oauth::openai_oauth_login,
             commands::oauth::openai_oauth_status,

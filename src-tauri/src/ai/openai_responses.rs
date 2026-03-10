@@ -78,8 +78,7 @@ pub async fn stream_chat(
             let line = buffer[..line_end].trim().to_string();
             buffer = buffer[line_end + 1..].to_string();
 
-            if line.starts_with("data: ") {
-                let data = &line[6..];
+            if let Some(data) = line.strip_prefix("data: ") {
                 if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data) {
                     let event_type = parsed["type"].as_str().unwrap_or("");
                     match event_type {

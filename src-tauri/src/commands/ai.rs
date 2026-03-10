@@ -17,11 +17,12 @@ pub struct AiStreamChunk {
 }
 
 #[tauri::command]
-pub async fn ai_quick_explain(
+pub async fn ai_lookup(
     word: String,
     sentence: String,
     book_title: Option<String>,
     chapter: Option<String>,
+    request_id: String,
     app: AppHandle,
     db: State<'_, Db>,
 ) -> AppResult<()> {
@@ -64,7 +65,7 @@ pub async fn ai_quick_explain(
     let messages = vec![
         ChatMessage {
             role: "system".to_string(),
-            content: "You are a reading assistant. The user selected a word or phrase from a book and wants a brief explanation. Explain the meaning in 2-3 sentences, considering the context of the surrounding text and the book. If it's a literary device, idiom, or domain-specific term, note that. Be concise.".to_string(),
+            content: "You are a reading assistant embedded in an ebook reader. The user selected a word or phrase and wants to understand it.\n\nRespond in two parts:\n\n1. **Definition** — Give a dictionary-style entry: the word, pronunciation in IPA (if it's an English word), part of speech, and a concise definition in one sentence.\n\n2. **In context** — Explain how the word is used in the given passage. Consider the author's intent, tone, or any literary/idiomatic significance. Keep it to 2–3 sentences.\n\nIf the selection is a proper noun (person, place, historical event), replace the dictionary definition with a brief factual identification, then explain its relevance in context.\n\nDo not use headers or labels like \"Definition:\" or \"In context:\". Separate the two parts with a line break. Be concise.".to_string(),
         },
         ChatMessage {
             role: "user".to_string(),
@@ -72,7 +73,7 @@ pub async fn ai_quick_explain(
         },
     ];
 
-    let event_name = "ai-quick-explain-chunk";
+    let event_name = format!("ai-lookup-chunk-{}", request_id);
 
     let use_responses_api = auth_mode == "oauth" && provider == "openai";
     let app_clone = app.clone();
@@ -80,28 +81,28 @@ pub async fn ai_quick_explain(
         let result = match provider.as_str() {
             "anthropic" => {
                 let url = base_url.unwrap_or_else(|| "https://api.anthropic.com".to_string());
-                crate::ai::anthropic::stream_chat(&app_clone, &url, &api_key, &model, 0.3, &messages, false, event_name, Some(256)).await
+                crate::ai::anthropic::stream_chat(&app_clone, &url, &api_key, &model, 0.3, &messages, false, &event_name, Some(256)).await
             }
             "minimax" => {
                 let url = base_url.unwrap_or_else(|| "https://api.minimax.io/anthropic".to_string());
-                crate::ai::anthropic::stream_chat(&app_clone, &url, &api_key, &model, 0.3, &messages, true, event_name, Some(256)).await
+                crate::ai::anthropic::stream_chat(&app_clone, &url, &api_key, &model, 0.3, &messages, true, &event_name, Some(256)).await
             }
             _ if use_responses_api => {
                 let url = "https://chatgpt.com/backend-api/codex".to_string();
-                crate::ai::openai_responses::stream_chat(&app_clone, &url, &api_key, &model, &messages, oauth_account_id.as_deref(), event_name).await
+                crate::ai::openai_responses::stream_chat(&app_clone, &url, &api_key, &model, &messages, oauth_account_id.as_deref(), &event_name).await
             }
             _ => {
                 let url = base_url.unwrap_or_else(|| "http://localhost:11434".to_string());
                 let ka = if provider == "ollama" { Some(keep_alive.clone()) } else { None };
-                crate::ai::openai_compat::stream_chat(&app_clone, &url, &api_key, &model, 0.3, &messages, ka.as_deref(), event_name, Some(256)).await
+                crate::ai::openai_compat::stream_chat(&app_clone, &url, &api_key, &model, 0.3, &messages, ka.as_deref(), &event_name, Some(256)).await
             }
         };
         if let Err(e) = result {
-            let _ = app_clone.emit(event_name, AiStreamChunk {
+            let _ = app_clone.emit(&event_name, AiStreamChunk {
                 delta: format!("Error: {}", e),
                 done: false,
             });
-            let _ = app_clone.emit(event_name, AiStreamChunk {
+            let _ = app_clone.emit(&event_name, AiStreamChunk {
                 delta: String::new(),
                 done: true,
             });

@@ -12,7 +12,7 @@ interface ReaderContextMenuProps {
   onClose: () => void;
   onCopy: () => void;
   onAskAI: () => void;
-  onQuickExplain: () => void;
+  onLookup: () => void;
 }
 
 export default function ReaderContextMenu({
@@ -22,10 +22,10 @@ export default function ReaderContextMenu({
   onClose,
   onCopy,
   onAskAI,
-  onQuickExplain,
+  onLookup,
 }: ReaderContextMenuProps) {
   const wordCount = text.trim().split(/\s+/).length;
-  const showQuickExplain = wordCount <= 5;
+  const showLookup = wordCount <= 5;
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -65,6 +65,23 @@ export default function ReaderContextMenu({
       className="fixed z-50 bg-white/95 border border-border/80 rounded-lg py-1 w-[240px] backdrop-blur-sm shadow-context"
       style={{ left: x, top: y }}
     >
+      {/* Look Up (short selections only) */}
+      {showLookup && (
+        <>
+          <button
+            onClick={onLookup}
+            className="flex items-center gap-3 w-[calc(100%-8px)] mx-1 px-3 h-[31.5px] rounded-sm text-left cursor-pointer hover:bg-bg-input transition-colors"
+          >
+            <Sparkles size={16} className="text-text-muted" />
+            <span className="flex-1 text-[13px] font-medium text-[#27272a] tracking-[-0.08px]">
+              Look Up
+            </span>
+          </button>
+
+          <div className="mx-3 my-1 h-px bg-border/80" />
+        </>
+      )}
+
       {/* Copy */}
       <button
         onClick={onCopy}
@@ -79,8 +96,6 @@ export default function ReaderContextMenu({
         </span>
       </button>
 
-      <div className="mx-3 my-1 h-px bg-border/80" />
-
       {/* Ask AI Assistant */}
       <button
         onClick={onAskAI}
@@ -91,19 +106,6 @@ export default function ReaderContextMenu({
           Ask AI Assistant
         </span>
       </button>
-
-      {/* Quick Explain (short selections only) */}
-      {showQuickExplain && (
-        <button
-          onClick={onQuickExplain}
-          className="flex items-center gap-3 w-[calc(100%-8px)] mx-1 px-3 h-[31.5px] rounded-sm text-left cursor-pointer hover:bg-bg-input transition-colors"
-        >
-          <Sparkles size={16} className="text-text-muted" />
-          <span className="flex-1 text-[13px] font-medium text-[#27272a] tracking-[-0.08px]">
-            Quick Explain
-          </span>
-        </button>
-      )}
     </div>
   );
 }

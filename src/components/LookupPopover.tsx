@@ -4,7 +4,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { X, Loader2, Sparkles } from "lucide-react";
 import Markdown from "react-markdown";
 
-interface QuickExplainPopoverProps {
+interface LookupPopoverProps {
   x: number;
   y: number;
   word: string;
@@ -14,7 +14,7 @@ interface QuickExplainPopoverProps {
   onClose: () => void;
 }
 
-export default function QuickExplainPopover({
+export default function LookupPopover({
   x,
   y,
   word,
@@ -22,7 +22,7 @@ export default function QuickExplainPopover({
   bookTitle,
   chapter,
   onClose,
-}: QuickExplainPopoverProps) {
+}: LookupPopoverProps) {
   const contentRef = useRef("");
   const [content, setContent] = useState("");
   const [streaming, setStreaming] = useState(true);
@@ -52,8 +52,10 @@ export default function QuickExplainPopover({
     let cancelled = false;
 
     const run = async () => {
+      const requestId = crypto.randomUUID();
+
       unlistenRef.current = await listen<{ delta: string; done: boolean }>(
-        "ai-quick-explain-chunk",
+        `ai-lookup-chunk-${requestId}`,
         (event) => {
           if (cancelled) return;
           if (event.payload.done) {
@@ -68,11 +70,12 @@ export default function QuickExplainPopover({
       );
 
       try {
-        await invoke("ai_quick_explain", {
+        await invoke("ai_lookup", {
           word,
           sentence,
           bookTitle: bookTitle || null,
           chapter: chapter || null,
+          requestId,
         });
       } catch (err) {
         if (!cancelled) {
@@ -89,7 +92,7 @@ export default function QuickExplainPopover({
       unlistenRef.current?.();
       unlistenRef.current = null;
     };
-  }, [word, sentence]);
+  }, [word, sentence, bookTitle, chapter]);
 
   // Dismiss on Escape
   useEffect(() => {
@@ -103,13 +106,12 @@ export default function QuickExplainPopover({
   // Dismiss on click outside — delay registration to avoid catching the
   // context-menu click that opened us
   useEffect(() => {
-    let id: number;
     const handler = (e: MouseEvent) => {
       if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
         onClose();
       }
     };
-    id = requestAnimationFrame(() => {
+    const id = requestAnimationFrame(() => {
       document.addEventListener("mousedown", handler);
     });
     return () => {
@@ -121,7 +123,7 @@ export default function QuickExplainPopover({
   return (
     <div
       ref={popoverRef}
-      className="fixed z-50 w-[320px] bg-white/95 border border-border/80 rounded-xl backdrop-blur-sm shadow-context"
+      className="fixed z-50 w-[360px] bg-white/95 border border-border/80 rounded-xl backdrop-blur-sm shadow-context"
       style={{ left: pos.left, top: pos.top }}
     >
       {/* Header */}
@@ -129,7 +131,7 @@ export default function QuickExplainPopover({
         <div className="flex items-center gap-1.5">
           <Sparkles size={14} className="text-text-muted" />
           <span className="text-[12px] font-semibold text-text-muted uppercase tracking-wide">
-            Quick Explain
+            Look Up
           </span>
         </div>
         <button
