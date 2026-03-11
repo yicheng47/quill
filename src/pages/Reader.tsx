@@ -14,6 +14,7 @@ import AiPanel from "../components/AiPanel";
 import BookmarksPanel from "../components/BookmarksPanel";
 import ReaderSettings, { type ReaderSettingsState, getFontFamily, getThemeStyles } from "../components/ReaderSettings";
 import ReaderContextMenu from "../components/ReaderContextMenu";
+import HighlightToolbar from "../components/HighlightToolbar";
 import LookupPopover from "../components/LookupPopover";
 import TableOfContents from "../components/TableOfContents";
 import { getBook, updateReadingProgress, type Book } from "../hooks/useBooks";
@@ -83,11 +84,11 @@ interface TocChapter {
 }
 
 const highlightColorMap: Record<string, string> = {
-  yellow: "rgba(251, 191, 36, 0.3)",
-  green: "rgba(52, 211, 153, 0.3)",
-  blue: "rgba(96, 165, 250, 0.3)",
-  pink: "rgba(244, 114, 182, 0.3)",
-  purple: "rgba(167, 139, 250, 0.3)",
+  yellow: "rgba(251, 191, 36, 0.5)",
+  green: "rgba(52, 211, 153, 0.5)",
+  blue: "rgba(96, 165, 250, 0.5)",
+  pink: "rgba(244, 114, 182, 0.5)",
+  purple: "rgba(167, 139, 250, 0.5)",
 };
 
 export default function Reader() {
@@ -120,6 +121,13 @@ export default function Reader() {
     sentence: string;
     bookTitle?: string;
     chapter?: string;
+  } | null>(null);
+  const [highlightToolbar, setHighlightToolbar] = useState<{
+    x: number;
+    y: number;
+    highlightId: string;
+    cfiRange: string;
+    color: string;
   } | null>(null);
   const [readerSettings, setReaderSettings] = useState<ReaderSettingsState>({
     theme: "original",
@@ -346,7 +354,6 @@ export default function Reader() {
         draw((rects: DOMRectList) => {
           const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
           g.setAttribute("fill", color);
-          g.style.opacity = "0.3";
           g.style.mixBlendMode = "multiply";
           for (const { left, top, height, width } of rects) {
             const el = document.createElementNS("http://www.w3.org/2000/svg", "rect");
@@ -361,9 +368,31 @@ export default function Reader() {
       }) as EventListener);
 
       view.addEventListener("show-annotation", ((e: CustomEvent) => {
-        // Could show note popup here
-        const { value } = e.detail;
-        console.log("Annotation clicked:", value);
+        const { value, range } = e.detail;
+        // Find the highlight in the DB to get its id and color
+        if (bookId) {
+          invoke<Highlight[]>("list_highlights", { bookId }).then((hls) => {
+            const hl = hls.find((h) => h.cfi_range === value);
+            if (hl && range) {
+              const rect = range.getBoundingClientRect();
+              // The range is inside an iframe, offset to main viewport
+              const iframe = range.startContainer?.ownerDocument?.defaultView?.frameElement as HTMLElement | null;
+              let offsetX = 0, offsetY = 0;
+              if (iframe) {
+                const iframeRect = iframe.getBoundingClientRect();
+                offsetX = iframeRect.left;
+                offsetY = iframeRect.top;
+              }
+              setHighlightToolbar({
+                x: rect.left + offsetX + rect.width / 2,
+                y: rect.top + offsetY,
+                highlightId: hl.id,
+                cfiRange: hl.cfi_range,
+                color: hl.color,
+              });
+            }
+          }).catch(() => {});
+        }
       }) as EventListener);
 
       // Navigate to saved position
@@ -753,6 +782,20 @@ export default function Reader() {
             });
             setContextMenu(null);
           }}
+          onHighlight={(color) => {
+            const cfiRange = contextMenu.cfiRange;
+            if (cfiRange && bookId) {
+              invoke<Highlight>("add_highlight", {
+                bookId,
+                cfiRange,
+                color,
+                textContent: contextMenu.text,
+              }).then((hl) => {
+                viewRef.current?.addAnnotation({ value: hl.cfi_range, color: hl.color });
+              }).catch((err) => console.error("Failed to add highlight:", err));
+            }
+            setContextMenu(null);
+          }}
         />
       )}
 
@@ -765,6 +808,33 @@ export default function Reader() {
           bookTitle={lookup.bookTitle}
           chapter={lookup.chapter}
           onClose={() => setLookup(null)}
+        />
+      )}
+
+      {highlightToolbar && (
+        <HighlightToolbar
+          x={highlightToolbar.x}
+          y={highlightToolbar.y}
+          currentColor={highlightToolbar.color}
+          onChangeColor={(color) => {
+            invoke("update_highlight_color", { id: highlightToolbar.highlightId, color })
+              .then(() => {
+                // Remove old annotation and add with new color
+                viewRef.current?.deleteAnnotation({ value: highlightToolbar.cfiRange });
+                viewRef.current?.addAnnotation({ value: highlightToolbar.cfiRange, color });
+                setHighlightToolbar((prev) => prev ? { ...prev, color } : null);
+              })
+              .catch((err) => console.error("Failed to update highlight color:", err));
+          }}
+          onDelete={() => {
+            invoke("remove_highlight", { id: highlightToolbar.highlightId })
+              .then(() => {
+                viewRef.current?.deleteAnnotation({ value: highlightToolbar.cfiRange });
+                setHighlightToolbar(null);
+              })
+              .catch((err) => console.error("Failed to remove highlight:", err));
+          }}
+          onClose={() => setHighlightToolbar(null)}
         />
       )}
     </div>

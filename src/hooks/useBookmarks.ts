@@ -108,5 +108,12 @@ export function useHighlights(bookId: string) {
     );
   }, []);
 
-  return { highlights, refresh, add, remove, updateNote };
+  const updateColor = useCallback(async (id: string, color: string) => {
+    await invoke("update_highlight_color", { id, color });
+    setHighlights((prev) =>
+      prev.map((h) => (h.id === id ? { ...h, color } : h))
+    );
+  }, []);
+
+  return { highlights, refresh, add, remove, updateNote, updateColor };
 }

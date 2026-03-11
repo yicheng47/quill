@@ -59,6 +59,7 @@ pub fn run() {
             commands::bookmarks::remove_highlight,
             commands::bookmarks::list_highlights,
             commands::bookmarks::update_highlight_note,
+            commands::bookmarks::update_highlight_color,
             // Collections
             commands::collections::list_collections,
             commands::collections::create_collection,

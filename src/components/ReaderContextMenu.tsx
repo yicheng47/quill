@@ -3,7 +3,16 @@ import {
   Copy,
   Bot,
   Sparkles,
+  Highlighter,
 } from "lucide-react";
+
+const HIGHLIGHT_COLORS = [
+  { name: "yellow", hex: "#FBBF24" },
+  { name: "green", hex: "#34D399" },
+  { name: "blue", hex: "#60A5FA" },
+  { name: "pink", hex: "#F472B6" },
+  { name: "purple", hex: "#A78BFA" },
+];
 
 interface ReaderContextMenuProps {
   x: number;
@@ -13,6 +22,7 @@ interface ReaderContextMenuProps {
   onCopy: () => void;
   onAskAI: () => void;
   onLookup: () => void;
+  onHighlight?: (color: string) => void;
 }
 
 export default function ReaderContextMenu({
@@ -23,6 +33,7 @@ export default function ReaderContextMenu({
   onCopy,
   onAskAI,
   onLookup,
+  onHighlight,
 }: ReaderContextMenuProps) {
   const wordCount = text.trim().split(/\s+/).length;
   const showLookup = wordCount <= 5;
@@ -67,17 +78,50 @@ export default function ReaderContextMenu({
     >
       {/* Look Up (short selections only) */}
       {showLookup && (
-        <>
-          <button
-            onClick={onLookup}
-            className="flex items-center gap-3 w-[calc(100%-8px)] mx-1 px-3 h-[31.5px] rounded-sm text-left cursor-pointer hover:bg-bg-input transition-colors"
-          >
-            <Sparkles size={16} className="text-text-muted" />
-            <span className="flex-1 text-[13px] font-medium text-[#27272a] tracking-[-0.08px]">
-              Look Up
-            </span>
-          </button>
+        <button
+          onClick={onLookup}
+          className="flex items-center gap-3 w-[calc(100%-8px)] mx-1 px-3 h-[31.5px] rounded-sm text-left cursor-pointer hover:bg-bg-input transition-colors"
+        >
+          <Sparkles size={16} className="text-text-muted" />
+          <span className="flex-1 text-[13px] font-medium text-[#27272a] tracking-[-0.08px]">
+            Look Up
+          </span>
+        </button>
+      )}
 
+      {/* Ask AI Assistant */}
+      <button
+        onClick={onAskAI}
+        className="flex items-center gap-3 w-[calc(100%-8px)] mx-1 px-3 h-[31.5px] rounded-sm text-left cursor-pointer hover:bg-bg-input transition-colors"
+      >
+        <Bot size={16} className="text-text-muted" />
+        <span className="flex-1 text-[13px] font-medium text-[#27272a] tracking-[-0.08px]">
+          Ask AI Assistant
+        </span>
+      </button>
+
+      {/* Highlight with color dots */}
+      {onHighlight && (
+        <>
+          <div className="mx-3 my-1 h-px bg-border/80" />
+          <button
+            className="flex items-center gap-3 w-[calc(100%-8px)] mx-1 px-3 h-[31.5px] rounded-sm text-left cursor-default"
+          >
+            <Highlighter size={16} className="text-text-muted" />
+            <span className="text-[13px] font-medium text-[#27272a] tracking-[-0.08px]">
+              Highlight
+            </span>
+            <div className="flex items-center gap-1.5 ml-auto">
+              {HIGHLIGHT_COLORS.map((c) => (
+                <div
+                  key={c.name}
+                  onClick={(e) => { e.stopPropagation(); onHighlight(c.name); }}
+                  className="w-[14px] h-[14px] rounded-full cursor-pointer hover:scale-125 transition-transform"
+                  style={{ backgroundColor: c.hex }}
+                />
+              ))}
+            </div>
+          </button>
           <div className="mx-3 my-1 h-px bg-border/80" />
         </>
       )}
@@ -93,17 +137,6 @@ export default function ReaderContextMenu({
         </span>
         <span className="text-[11px] font-medium text-[#9f9fa9] tracking-[0.06px]">
           ⌘C
-        </span>
-      </button>
-
-      {/* Ask AI Assistant */}
-      <button
-        onClick={onAskAI}
-        className="flex items-center gap-3 w-[calc(100%-8px)] mx-1 px-3 h-[31.5px] rounded-sm text-left cursor-pointer hover:bg-bg-input transition-colors"
-      >
-        <Bot size={16} className="text-text-muted" />
-        <span className="flex-1 text-[13px] font-medium text-[#27272a] tracking-[-0.08px]">
-          Ask AI Assistant
         </span>
       </button>
     </div>

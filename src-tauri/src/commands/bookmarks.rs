@@ -145,3 +145,13 @@ pub fn update_highlight_note(id: String, note: String, db: State<'_, Db>) -> App
     )?;
     Ok(())
 }
+
+#[tauri::command]
+pub fn update_highlight_color(id: String, color: String, db: State<'_, Db>) -> AppResult<()> {
+    let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
+    conn.execute(
+        "UPDATE highlights SET color = ?1 WHERE id = ?2",
+        params![color, id],
+    )?;
+    Ok(())
+}
