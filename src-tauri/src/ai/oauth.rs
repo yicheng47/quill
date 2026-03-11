@@ -1,14 +1,13 @@
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use rand::RngCore;
-use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use crate::db::Db;
 use crate::error::{AppError, AppResult};
+use crate::secrets::Secrets;
 
 // OpenAI OAuth constants (public PKCE client, matches Codex CLI / pi-mono)
 const CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
@@ -219,52 +218,35 @@ pub fn decode_jwt_account_id(access_token: &str) -> Option<String> {
         .map(String::from)
 }
 
-pub fn save_tokens(conn: &rusqlite::Connection, tokens: &OAuthTokens) -> AppResult<()> {
-    let upsert =
-        "INSERT INTO settings (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = ?2";
-    conn.execute(upsert, params!["oauth_access_token", &tokens.access_token])?;
-    conn.execute(upsert, params!["oauth_refresh_token", &tokens.refresh_token])?;
-    conn.execute(
-        upsert,
-        params!["oauth_expires_at", tokens.expires_at.to_string()],
-    )?;
+pub fn save_tokens(secrets: &Secrets, tokens: &OAuthTokens) -> AppResult<()> {
+    secrets.set("oauth_access_token", &tokens.access_token)?;
+    secrets.set("oauth_refresh_token", &tokens.refresh_token)?;
+    secrets.set("oauth_expires_at", &tokens.expires_at.to_string())?;
     if let Some(ref id) = tokens.account_id {
-        conn.execute(upsert, params!["oauth_account_id", id])?;
+        secrets.set("oauth_account_id", id)?;
     }
     Ok(())
 }
 
-pub fn load_tokens(conn: &rusqlite::Connection) -> Option<OAuthTokens> {
-    let get = |key: &str| -> Option<String> {
-        conn.query_row(
-            "SELECT value FROM settings WHERE key = ?1",
-            params![key],
-            |row| row.get(0),
-        )
-        .ok()
-    };
+pub fn load_tokens(secrets: &Secrets) -> Option<OAuthTokens> {
     Some(OAuthTokens {
-        access_token: get("oauth_access_token")?,
-        refresh_token: get("oauth_refresh_token")?,
-        expires_at: get("oauth_expires_at")?.parse().ok()?,
-        account_id: get("oauth_account_id"),
+        access_token: secrets.get("oauth_access_token")?,
+        refresh_token: secrets.get("oauth_refresh_token")?,
+        expires_at: secrets.get("oauth_expires_at")?.parse().ok()?,
+        account_id: secrets.get("oauth_account_id"),
     })
 }
 
-pub fn clear_tokens(conn: &rusqlite::Connection) -> AppResult<()> {
-    conn.execute("DELETE FROM settings WHERE key LIKE 'oauth_%'", [])?;
+pub fn clear_tokens(secrets: &Secrets) -> AppResult<()> {
+    secrets.delete_prefix("oauth_")?;
     Ok(())
 }
 
 /// Get a valid access token and account ID, auto-refreshing if expired.
 /// This is the main entry point called by AI commands.
 /// Returns (access_token, account_id).
-pub async fn get_valid_token(db: &Db) -> AppResult<(String, Option<String>)> {
-    let tokens = {
-        let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
-        load_tokens(&conn)
-    };
-    let tokens = tokens.ok_or_else(|| {
+pub async fn get_valid_token(secrets: &Secrets) -> AppResult<(String, Option<String>)> {
+    let tokens = load_tokens(secrets).ok_or_else(|| {
         AppError::Other("Not authenticated with OpenAI. Please log in via OAuth.".to_string())
     })?;
 
@@ -282,10 +264,7 @@ pub async fn get_valid_token(db: &Db) -> AppResult<(String, Option<String>)> {
         account_id: decode_jwt_account_id(&response.access_token).or(tokens.account_id),
     };
 
-    {
-        let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
-        save_tokens(&conn, &new_tokens)?;
-    }
+    save_tokens(secrets, &new_tokens)?;
 
     Ok((new_tokens.access_token, new_tokens.account_id))
 }
@@ -400,14 +379,10 @@ mod tests {
 
     #[test]
     fn test_save_load_clear_tokens() {
-        let conn = rusqlite::Connection::open_in_memory().unwrap();
-        conn.execute_batch(
-            "CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);",
-        )
-        .unwrap();
+        let secrets = Secrets::init_in_memory().unwrap();
 
         // Initially empty
-        assert!(load_tokens(&conn).is_none());
+        assert!(load_tokens(&secrets).is_none());
 
         // Save and load
         let tokens = OAuthTokens {
@@ -416,9 +391,9 @@ mod tests {
             expires_at: 1700000000,
             account_id: Some("acct_789".to_string()),
         };
-        save_tokens(&conn, &tokens).unwrap();
+        save_tokens(&secrets, &tokens).unwrap();
 
-        let loaded = load_tokens(&conn).unwrap();
+        let loaded = load_tokens(&secrets).unwrap();
         assert_eq!(loaded.access_token, "access_123");
         assert_eq!(loaded.refresh_token, "refresh_456");
         assert_eq!(loaded.expires_at, 1700000000);
@@ -431,26 +406,22 @@ mod tests {
             expires_at: 1800000000,
             account_id: None,
         };
-        save_tokens(&conn, &tokens2).unwrap();
+        save_tokens(&secrets, &tokens2).unwrap();
 
-        let loaded2 = load_tokens(&conn).unwrap();
+        let loaded2 = load_tokens(&secrets).unwrap();
         assert_eq!(loaded2.access_token, "new_access");
         assert_eq!(loaded2.expires_at, 1800000000);
         // account_id still has old value since save_tokens only writes Some
         assert_eq!(loaded2.account_id, Some("acct_789".to_string()));
 
         // Clear
-        clear_tokens(&conn).unwrap();
-        assert!(load_tokens(&conn).is_none());
+        clear_tokens(&secrets).unwrap();
+        assert!(load_tokens(&secrets).is_none());
     }
 
     #[test]
     fn test_save_tokens_without_account_id() {
-        let conn = rusqlite::Connection::open_in_memory().unwrap();
-        conn.execute_batch(
-            "CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);",
-        )
-        .unwrap();
+        let secrets = Secrets::init_in_memory().unwrap();
 
         let tokens = OAuthTokens {
             access_token: "at".to_string(),
@@ -458,9 +429,9 @@ mod tests {
             expires_at: 999,
             account_id: None,
         };
-        save_tokens(&conn, &tokens).unwrap();
+        save_tokens(&secrets, &tokens).unwrap();
 
-        let loaded = load_tokens(&conn).unwrap();
+        let loaded = load_tokens(&secrets).unwrap();
         assert_eq!(loaded.access_token, "at");
         assert_eq!(loaded.account_id, None);
     }

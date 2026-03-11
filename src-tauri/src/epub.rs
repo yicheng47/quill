@@ -50,7 +50,8 @@ fn extract_cover(doc: &mut EpubDoc<std::io::BufReader<std::fs::File>>, covers_di
 
     fs::write(&cover_path, &data).ok()?;
 
-    Some(cover_path.to_string_lossy().to_string())
+    // Return relative path for DB storage
+    Some(format!("covers/{}", cover_filename))
 }
 
 pub fn count_chapters(epub_path: &Path) -> AppResult<usize> {

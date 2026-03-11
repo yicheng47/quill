@@ -3,8 +3,10 @@ mod commands;
 mod db;
 mod epub;
 mod error;
+mod secrets;
 
 use db::Db;
+use secrets::Secrets;
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -20,7 +22,18 @@ pub fn run() {
                 .expect("failed to resolve app data dir");
 
             let db = Db::init(&app_data_dir).expect("failed to initialize database");
+
+            // Secrets DB always lives at the local app_data_dir (never syncs to iCloud)
+            let secrets =
+                Secrets::init(&app_data_dir).expect("failed to initialize secrets store");
+
+            // One-time migration: move sensitive keys from settings to secrets
+            secrets
+                .migrate_from_settings(&db)
+                .expect("failed to migrate secrets");
+
             app.manage(db);
+            app.manage(secrets);
 
             Ok(())
         })

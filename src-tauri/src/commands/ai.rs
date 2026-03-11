@@ -3,6 +3,7 @@ use tauri::{AppHandle, Emitter, State};
 
 use crate::db::Db;
 use crate::error::{AppError, AppResult};
+use crate::secrets::Secrets;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ChatMessage {
@@ -25,9 +26,10 @@ pub async fn ai_lookup(
     request_id: String,
     app: AppHandle,
     db: State<'_, Db>,
+    secrets: State<'_, Secrets>,
 ) -> AppResult<()> {
     // Read provider settings
-    let (provider, api_key, model, base_url, keep_alive, auth_mode) = {
+    let (provider, model, base_url, keep_alive, auth_mode) = {
         let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
         let get = |key: &str| -> Option<String> {
             conn.query_row(
@@ -39,7 +41,6 @@ pub async fn ai_lookup(
         };
         (
             get("ai_provider").unwrap_or_else(|| "ollama".to_string()),
-            get("ai_api_key").unwrap_or_default(),
             get("ai_model").unwrap_or_else(|| "llama3.2".to_string()),
             get("ai_base_url"),
             get("ai_keep_alive").unwrap_or_else(|| "30m".to_string()),
@@ -47,8 +48,11 @@ pub async fn ai_lookup(
         )
     };
 
+    // Read API key from secrets store
+    let api_key = secrets.get("ai_api_key").unwrap_or_default();
+
     let (api_key, oauth_account_id) = if auth_mode == "oauth" && provider == "openai" {
-        let (token, acct_id) = crate::ai::oauth::get_valid_token(&db).await?;
+        let (token, acct_id) = crate::ai::oauth::get_valid_token(&secrets).await?;
         (token, acct_id)
     } else {
         (api_key, None)
@@ -118,9 +122,10 @@ pub async fn ai_chat(
     context: Option<String>,
     app: AppHandle,
     db: State<'_, Db>,
+    secrets: State<'_, Secrets>,
 ) -> AppResult<()> {
     // Read provider settings
-    let (provider, api_key, model, base_url, temperature, keep_alive, auth_mode) = {
+    let (provider, model, base_url, temperature, keep_alive, auth_mode) = {
         let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
         let get = |key: &str| -> Option<String> {
             conn.query_row(
@@ -132,7 +137,6 @@ pub async fn ai_chat(
         };
         (
             get("ai_provider").unwrap_or_else(|| "ollama".to_string()),
-            get("ai_api_key").unwrap_or_default(),
             get("ai_model").unwrap_or_else(|| "llama3.2".to_string()),
             get("ai_base_url"),
             get("ai_temperature")
@@ -143,8 +147,11 @@ pub async fn ai_chat(
         )
     };
 
+    // Read API key from secrets store
+    let api_key = secrets.get("ai_api_key").unwrap_or_default();
+
     let (api_key, oauth_account_id) = if auth_mode == "oauth" && provider == "openai" {
-        let (token, acct_id) = crate::ai::oauth::get_valid_token(&db).await?;
+        let (token, acct_id) = crate::ai::oauth::get_valid_token(&secrets).await?;
         (token, acct_id)
     } else {
         (api_key, None)

@@ -7,11 +7,11 @@ use crate::ai::oauth::{
     self, build_auth_url, clear_tokens, decode_jwt_account_id, exchange_code, generate_pkce,
     generate_state, load_tokens, save_tokens, OAuthStatus, OAuthTokens,
 };
-use crate::db::Db;
 use crate::error::{AppError, AppResult};
+use crate::secrets::Secrets;
 
 #[tauri::command]
-pub async fn openai_oauth_login(app: AppHandle, db: State<'_, Db>) -> AppResult<OAuthStatus> {
+pub async fn openai_oauth_login(app: AppHandle, secrets: State<'_, Secrets>) -> AppResult<OAuthStatus> {
     let (verifier, challenge) = generate_pkce();
     let state = generate_state();
     let auth_url = build_auth_url(&challenge, &state);
@@ -36,10 +36,7 @@ pub async fn openai_oauth_login(app: AppHandle, db: State<'_, Db>) -> AppResult<
         account_id: account_id.clone(),
     };
 
-    {
-        let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
-        save_tokens(&conn, &tokens)?;
-    }
+    save_tokens(&secrets, &tokens)?;
 
     Ok(OAuthStatus {
         connected: true,
@@ -48,9 +45,8 @@ pub async fn openai_oauth_login(app: AppHandle, db: State<'_, Db>) -> AppResult<
 }
 
 #[tauri::command]
-pub async fn openai_oauth_status(db: State<'_, Db>) -> AppResult<OAuthStatus> {
-    let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
-    match load_tokens(&conn) {
+pub async fn openai_oauth_status(secrets: State<'_, Secrets>) -> AppResult<OAuthStatus> {
+    match load_tokens(&secrets) {
         Some(tokens) => Ok(OAuthStatus {
             connected: true,
             account_id: tokens.account_id,
@@ -63,8 +59,7 @@ pub async fn openai_oauth_status(db: State<'_, Db>) -> AppResult<OAuthStatus> {
 }
 
 #[tauri::command]
-pub async fn openai_oauth_logout(db: State<'_, Db>) -> AppResult<()> {
-    let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
-    clear_tokens(&conn)?;
+pub async fn openai_oauth_logout(secrets: State<'_, Secrets>) -> AppResult<()> {
+    clear_tokens(&secrets)?;
     Ok(())
 }

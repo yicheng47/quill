@@ -1,7 +1,7 @@
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use std::fs;
-use tauri::{Manager, State};
+use tauri::State;
 
 use crate::db::Db;
 use crate::epub;
@@ -24,14 +24,34 @@ pub struct Book {
     pub updated_at: String,
 }
 
+/// Resolve relative paths in a Book to absolute using data_dir.
+fn resolve_book_paths(book: &mut Book, db: &Db) {
+    if !std::path::Path::new(&book.file_path).is_absolute() {
+        book.file_path = db
+            .resolve_path(&book.file_path)
+            .to_string_lossy()
+            .to_string();
+    }
+    if let Some(ref cover) = book.cover_path {
+        if !std::path::Path::new(cover).is_absolute() {
+            book.cover_path = Some(
+                db.resolve_path(cover)
+                    .to_string_lossy()
+                    .to_string(),
+            );
+        }
+    }
+}
+
 #[tauri::command]
-pub async fn import_book(file_path: String, app: tauri::AppHandle, db: State<'_, Db>) -> AppResult<Book> {
-    let app_data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e: tauri::Error| AppError::Other(e.to_string()))?;
-    let books_dir = app_data_dir.join("books");
-    let covers_dir = app_data_dir.join("covers");
+pub async fn import_book(file_path: String, db: State<'_, Db>) -> AppResult<Book> {
+    let data_dir = db
+        .data_dir
+        .lock()
+        .map_err(|e| AppError::Other(e.to_string()))?
+        .clone();
+    let books_dir = data_dir.join("books");
+    let covers_dir = data_dir.join("covers");
 
     let book_id = uuid::Uuid::new_v4().to_string();
     let src = std::path::Path::new(&file_path);
@@ -45,15 +65,17 @@ pub async fn import_book(file_path: String, app: tauri::AppHandle, db: State<'_,
     fs::copy(src, &dest)?;
 
     let now = chrono::Utc::now().to_rfc3339();
-    let dest_str = dest.to_string_lossy().to_string();
+
+    // Store relative path in DB
+    let rel_file_path = format!("books/{}.epub", book_id);
 
     let book = Book {
         id: book_id,
         title: metadata.title,
         author: metadata.author,
         description: metadata.description,
-        cover_path: metadata.cover_path,
-        file_path: dest_str,
+        cover_path: metadata.cover_path, // already relative from epub.rs
+        file_path: rel_file_path,
         genre: None,
         pages: Some(pages),
         status: "unread".to_string(),
@@ -84,7 +106,10 @@ pub async fn import_book(file_path: String, app: tauri::AppHandle, db: State<'_,
         ],
     )?;
 
-    Ok(book)
+    // Return book with absolute paths for the frontend
+    let mut result = book;
+    resolve_book_paths(&mut result, &db);
+    Ok(result)
 }
 
 
@@ -133,7 +158,7 @@ pub fn list_books(
     let params_refs: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|p| p.as_ref()).collect();
 
     let mut stmt = conn.prepare(&sql)?;
-    let books = stmt.query_map(params_refs.as_slice(), |row| {
+    let mut books = stmt.query_map(params_refs.as_slice(), |row| {
         Ok(Book {
             id: row.get(0)?,
             title: row.get(1)?,
@@ -152,13 +177,18 @@ pub fn list_books(
     })?
     .collect::<Result<Vec<_>, _>>()?;
 
+    // Resolve relative paths to absolute for the frontend
+    for book in &mut books {
+        resolve_book_paths(book, &db);
+    }
+
     Ok(books)
 }
 
 #[tauri::command]
 pub fn get_book(id: String, db: State<'_, Db>) -> AppResult<Book> {
     let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
-    let book = conn.query_row(
+    let mut book = conn.query_row(
         "SELECT id, title, author, description, cover_path, file_path, genre, pages, status, progress, current_cfi, created_at, updated_at FROM books WHERE id = ?1",
         params![id],
         |row| {
@@ -179,6 +209,8 @@ pub fn get_book(id: String, db: State<'_, Db>) -> AppResult<Book> {
             })
         },
     )?;
+
+    resolve_book_paths(&mut book, &db);
     Ok(book)
 }
 
@@ -186,7 +218,7 @@ pub fn get_book(id: String, db: State<'_, Db>) -> AppResult<Book> {
 pub fn delete_book(id: String, db: State<'_, Db>) -> AppResult<()> {
     let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
 
-    // Get file paths before deleting
+    // Get file paths before deleting (stored as relative)
     let (file_path, cover_path): (String, Option<String>) = conn.query_row(
         "SELECT file_path, cover_path FROM books WHERE id = ?1",
         params![id],
@@ -195,10 +227,12 @@ pub fn delete_book(id: String, db: State<'_, Db>) -> AppResult<()> {
 
     conn.execute("DELETE FROM books WHERE id = ?1", params![id])?;
 
-    // Clean up files (best-effort)
-    let _ = fs::remove_file(&file_path);
+    // Resolve to absolute for file deletion
+    let abs_file = db.resolve_path(&file_path);
+    let _ = fs::remove_file(&abs_file);
     if let Some(cover) = cover_path {
-        let _ = fs::remove_file(&cover);
+        let abs_cover = db.resolve_path(&cover);
+        let _ = fs::remove_file(&abs_cover);
     }
 
     Ok(())
