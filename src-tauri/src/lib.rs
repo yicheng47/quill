@@ -74,6 +74,15 @@ pub fn run() {
             commands::oauth::openai_oauth_login,
             commands::oauth::openai_oauth_status,
             commands::oauth::openai_oauth_logout,
+            // Vocabulary
+            commands::vocab::add_vocab_word,
+            commands::vocab::remove_vocab_word,
+            commands::vocab::list_vocab_words,
+            commands::vocab::check_vocab_exists,
+            commands::vocab::list_all_vocab_words,
+            commands::vocab::update_vocab_mastery,
+            commands::vocab::list_vocab_due_for_review,
+            commands::vocab::get_vocab_stats,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
