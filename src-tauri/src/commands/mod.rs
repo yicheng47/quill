@@ -4,3 +4,4 @@ pub mod books;
 pub mod collections;
 pub mod oauth;
 pub mod settings;
+pub mod vocab;
