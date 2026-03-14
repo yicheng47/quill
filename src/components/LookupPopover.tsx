@@ -30,8 +30,6 @@ function useStreamingLookup(
   useEffect(() => {
     let cancelled = false;
     contentRef.current = "";
-    setContent("");
-    setStreaming(true);
 
     const run = async () => {
       const requestId = crypto.randomUUID();

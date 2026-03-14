@@ -17,6 +17,7 @@ pub struct AiStreamChunk {
     pub done: bool,
 }
 
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn ai_lookup(
     word: String,

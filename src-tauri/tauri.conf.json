@@ -14,7 +14,9 @@
       {
         "title": "Quill",
         "width": 1440,
-        "height": 960
+        "height": 960,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true
       }
     ],
     "security": {

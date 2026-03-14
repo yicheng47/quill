@@ -44,8 +44,8 @@ export default function Sidebar({ activeFilter, onFilterChange, books, collectio
   };
 
   return (
-    <aside className="w-[224px] shrink-0 bg-bg-muted border-r border-border h-full flex flex-col gap-6 px-4 pt-4">
-      <div className="flex items-center gap-2.5 pb-2">
+    <aside className="w-[224px] shrink-0 bg-bg-muted border-r border-border h-full flex flex-col gap-6 px-4 pt-11">
+      <div className="flex items-center gap-2.5 pb-2" data-tauri-drag-region>
         <QuillLogo size={28} />
         <span className="text-[18px] font-semibold tracking-[0.5px] text-text-primary" style={{ fontFamily: "Georgia, 'Times New Roman', serif" }}>
           Quill

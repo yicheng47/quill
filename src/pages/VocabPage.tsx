@@ -98,7 +98,7 @@ export default function VocabPage() {
   return (
     <div className="flex flex-col h-screen bg-white">
       {/* Header */}
-      <header className="flex items-center justify-between px-section pt-6 pb-4 shrink-0">
+      <header data-tauri-drag-region className="flex items-center justify-between px-section pt-11 pb-4 shrink-0">
         <div className="flex items-center gap-3">
           <button
             onClick={() => navigate("/")}
