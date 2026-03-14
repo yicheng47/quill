@@ -117,7 +117,7 @@ export default function Home() {
       />
 
       <main className="flex-1 flex flex-col min-w-0">
-        <div className="border-b border-border px-page pt-page pb-section">
+        <div data-tauri-drag-region className="border-b border-border px-page pt-11 pb-section">
           <div className="flex items-center justify-between mb-4">
             <h1 className="text-[24px] font-semibold text-text-primary tracking-[0.07px]">
               {title}

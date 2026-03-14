@@ -102,20 +102,20 @@ export default function BookContextMenu({
   };
 
   // Compute submenu position
-  const getSubmenuStyle = (): React.CSSProperties => {
-    if (!menuRef.current) return { left: x + 200, top: y };
+  const [submenuStyle, setSubmenuStyle] = useState<React.CSSProperties>({ left: x + 200, top: y });
+  useEffect(() => {
+    if (!showCollections || !menuRef.current) return;
     const rect = menuRef.current.getBoundingClientRect();
     const vw = window.innerWidth;
-    // Find the "Add to Collection" button position
     const collectionBtn = menuRef.current.querySelector("[data-collection-trigger]");
     const btnRect = collectionBtn?.getBoundingClientRect();
     const top = btnRect ? btnRect.top : rect.top;
-    // Show to the right, or left if not enough space
     if (rect.right + 200 > vw) {
-      return { left: rect.left - 200, top };
+      setSubmenuStyle({ left: rect.left - 200, top });
+    } else {
+      setSubmenuStyle({ left: rect.right, top });
     }
-    return { left: rect.right, top };
-  };
+  }, [showCollections, x, y]);
 
   return (
     <>
@@ -185,7 +185,7 @@ export default function BookContextMenu({
         <div
           ref={submenuRef}
           className="fixed z-[51] bg-white/95 border border-border/80 rounded-[10px] py-1 w-[200px] backdrop-blur-sm shadow-[0px_20px_25px_0px_rgba(0,0,0,0.15),0px_8px_10px_0px_rgba(0,0,0,0.15)]"
-          style={getSubmenuStyle()}
+          style={submenuStyle}
           onMouseEnter={() => {
             if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
           }}

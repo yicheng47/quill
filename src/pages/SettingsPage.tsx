@@ -128,7 +128,7 @@ export default function SettingsPage() {
   return (
     <div className="flex flex-col h-screen bg-bg-page">
       {/* Header */}
-      <header className="flex items-center justify-between px-page h-16 bg-bg-surface border-b border-border shrink-0">
+      <header data-tauri-drag-region className="flex items-center justify-between px-page pt-8 pb-2 bg-bg-surface border-b border-border shrink-0">
         <div className="flex items-center gap-4">
           <Button variant="icon" size="md" onClick={() => navigate(-1)}>
             <ArrowLeft size={16} />
