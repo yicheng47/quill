@@ -1,8 +1,8 @@
 # Vocabulary Management System
 
-**Version:** 0.1
-**Date:** March 12, 2026
-**Status:** Design
+**Version:** 0.2
+**Date:** March 14, 2026
+**Status:** Design (backend complete, frontend pending)
 
 ---
 
@@ -14,17 +14,17 @@ Quill's AI Lookup lets users right-click a word in the reader to get an AI-power
 
 ## Architecture
 
-- **Per-book vocab tab** in the existing BookmarksPanel (alongside Bookmarks/Highlights) — no new SidePanel type needed
-- **Global `/vocab` page** accessible from Home sidebar — cross-book browsing, stats, flashcard review
 - **Save from LookupPopover** — primary entry point, captures word + AI definition + context sentence + CFI
+- **Per-book VocabPanel** in the reader sidebar (new panel type alongside AI + Bookmarks)
+- **Global `/vocab` page** accessible from Home sidebar — cross-book browsing, sorting, search
 
 ---
 
-## Phase 1: Core Save & List
+## Backend (Complete)
 
-### 1.1 Database Schema
+All backend infrastructure is already implemented and registered.
 
-**Create: `src-tauri/migrations/002_vocab.sql`**
+### Database Schema — `src-tauri/migrations/002_vocab.sql`
 
 ```sql
 CREATE TABLE IF NOT EXISTS vocab_words (
@@ -40,151 +40,294 @@ CREATE TABLE IF NOT EXISTS vocab_words (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
-
-CREATE INDEX IF NOT EXISTS idx_vocab_book_id ON vocab_words(book_id);
-CREATE INDEX IF NOT EXISTS idx_vocab_mastery ON vocab_words(mastery);
 ```
 
-**Modify: `src-tauri/src/db.rs`** — load second migration after `001_init.sql`:
-```rust
-let schema2 = include_str!("../migrations/002_vocab.sql");
-conn.execute_batch(schema2)?;
-```
+### Commands — `src-tauri/src/commands/vocab.rs`
 
-### 1.2 Backend Commands
+| Command | Signature | Notes |
+|---------|-----------|-------|
+| `add_vocab_word` | `(book_id, word, definition, context_sentence?, cfi?) → VocabWord` | Dedup by word+book_id (case-insensitive) |
+| `remove_vocab_word` | `(id) → ()` | |
+| `list_vocab_words` | `(book_id) → Vec<VocabWord>` | Per-book, ordered by created_at DESC |
+| `check_vocab_exists` | `(book_id, word) → Option<String>` | Returns id if exists |
+| `list_all_vocab_words` | `() → Vec<VocabWord>` | Cross-book, ordered by created_at DESC |
+| `update_vocab_mastery` | `(id, mastery, next_review_at?) → ()` | Increments review_count |
+| `list_vocab_due_for_review` | `() → Vec<VocabWord>` | Where next_review_at <= now |
+| `get_vocab_stats` | `() → VocabStats` | { total, new_count, learning_count, mastered_count, due_for_review } |
 
-**Create: `src-tauri/src/commands/vocab.rs`**
+---
 
-Follow the exact pattern from `bookmarks.rs` (struct + `#[tauri::command]` + `State<'_, Db>` + `AppResult<T>`):
+## Frontend Implementation Plan
 
-```rust
-pub struct VocabWord {
-    id, book_id, word, definition, context_sentence, cfi,
-    mastery, review_count, next_review_at, created_at, updated_at
-}
+Based on six Figma designs:
+- **Design 1** (108:225): Home sidebar with "Vocabulary" under new "Tools" section
+- **Design 2** (108:429): Global `/vocab` page — card view (grouped by book, Newest/Oldest sort)
+- **Design 3** (108:2): Reader with LookupPopover footer + VocabPanel in sidebar
+- **Design 4** (109:572): Global vocab page — empty state
+- **Design 5** (109:788): Reader VocabPanel — empty state
+- **Design 6** (110:941): Global vocab page — A-Z list view (alphabetical grouping)
 
-pub fn add_vocab_word(book_id, word, definition, context_sentence, cfi, db) -> AppResult<VocabWord>
-  // Dedup: check if same word+book_id exists, return existing if so
-pub fn remove_vocab_word(id, db) -> AppResult<()>
-pub fn list_vocab_words(book_id, db) -> AppResult<Vec<VocabWord>>
-pub fn check_vocab_exists(book_id, word, db) -> AppResult<Option<String>>
-  // Returns the id if exists, None otherwise — used by LookupPopover
-```
+### Phase 1: Hook + LookupPopover Save
 
-**Modify: `src-tauri/src/commands/mod.rs`** — add `pub mod vocab;`
-
-**Modify: `src-tauri/src/lib.rs`** — register 4 commands under `// Vocabulary` section
-
-### 1.3 Frontend Hook
-
-**Create: `src/hooks/useVocab.ts`**
+#### 1.1 Create `src/hooks/useVocab.ts`
 
 Follow `useBookmarks.ts` pattern (useState + useCallback + invoke):
 
 ```typescript
-interface VocabWord { id, book_id, word, definition, context_sentence, cfi, mastery, review_count, next_review_at, created_at, updated_at }
+interface VocabWord {
+  id: string; book_id: string; word: string; definition: string;
+  context_sentence: string | null; cfi: string | null;
+  mastery: string; review_count: number;
+  next_review_at: string | null; created_at: string; updated_at: string;
+}
 
-function useVocab(bookId: string) → { words, refresh, add, remove }
+// Per-book hook (for VocabPanel in reader sidebar)
+function useVocab(bookId: string) → { words, refresh, add, remove, checkExists }
+
+// Global hook (for VocabPage)
+function useAllVocab() → { words, refresh, remove }
 ```
 
-### 1.4 LookupPopover Integration
+#### 1.2 Modify `src/components/LookupPopover.tsx`
 
-**Modify: `src/components/LookupPopover.tsx`**
+Add footer bar with "Save to Vocab" and "Copy" buttons (from Design 3).
 
-- Add props: `bookId: string`, `cfi?: string`
-- Add state: `saved: boolean`, `vocabId: string | null`
-- On mount: call `check_vocab_exists(bookId, word)` — if exists, show "Saved" immediately
-- After streaming completes (`!streaming && content`): show footer bar with "Save to Vocab" button
-- On save: call `add_vocab_word(...)` capturing `contentRef.current` as definition
-- After save: button changes to "Saved" checkmark (non-interactive)
+**New props:**
+```typescript
+interface LookupPopoverProps {
+  // ... existing props
+  bookId: string;
+  cfi?: string;
+}
+```
 
-**Modify: `src/pages/Reader.tsx`**
+**Behavior:**
+- Footer bar appears below content, separated by `border-t`, subtle bg `bg-[#fafafa]/50`
+- Two buttons in footer: "Save to Vocab" (left, purple text `#9810fa`, BookmarkPlus icon 12px) + "Copy" (right, muted text, Copy icon 12px)
+- Both buttons are 28.5px tall, rounded-lg, 11px medium font
+- On mount: call `check_vocab_exists(bookId, word)` — if exists, show "Saved" with check icon instead
+- "Save to Vocab" captures `contentRef.current` as definition, calls `add_vocab_word(...)`
+- After save: button becomes "Saved" with green check, non-interactive
+- "Copy" copies the definition text to clipboard
+
+**Layout change:**
+- Current: header + scrollable content
+- New: header + scrollable content + footer (sticky at bottom)
+
+#### 1.3 Modify `src/pages/Reader.tsx`
 
 - Extend `lookup` state to include `cfi`: grab from `contextMenu.cfiRange`
 - Pass `bookId={bookId}` and `cfi={lookup.cfi}` to `<LookupPopover>`
 
-### 1.5 BookmarksPanel Vocab Tab
+---
 
-**Modify: `src/components/BookmarksPanel.tsx`**
+### Phase 2: VocabPanel in Reader Sidebar
 
-- Extend tab type: `type Tab = "bookmarks" | "highlights" | "vocab"`
-- Add third tab button "Vocab" with same styling
-- Import and use `useVocab(bookId)` hook
-- Vocab tab content:
-  - Filter bar: mastery chips (All / New / Learning / Mastered) as rounded-full pills + search input (same layout as highlights filter bar)
-  - Word list: each item shows word (14px semibold), mastery badge (small colored pill), definition preview (13px, 2-line clamp), timestamp
-  - Click → `onNavigate(cfi)` to jump to the word location in book
-  - Hover → trash icon to delete
-  - Footer: word count
+#### 2.1 Create `src/components/VocabPanel.tsx`
+
+New reader sidebar panel (from Design 3). Replaces the existing BookmarksPanel when the vocab tab is selected.
+
+**Layout (same dimensions as BookmarksPanel):**
+
+```
+┌─ Header (45px) ─────────────────────────────┐
+│ [purple gradient icon] "Vocabulary"  "N word" │
+├─ Search (49px) ──────────────────────────────┤
+│ [search icon] Search vocabulary...            │
+├─ Scrollable word list ───────────────────────┤
+│ [purple left-border] word entry               │
+│   word (14px semibold)                        │
+│   definition (12px, 2-line clamp)             │
+│   context sentence (11px italic, 1-line)      │
+│   [book] Book Title  [page] p.1  [clock] 6m  │
+├─ Footer (37.5px) ────────────────────────────┤
+│              "N word"                         │
+└──────────────────────────────────────────────┘
+```
+
+**Styling details from Figma:**
+- Header: purple gradient 20px icon (linear-gradient 135deg, #AD46FF → #7F22FE), "Vocabulary" 14px semibold, "N word" 11px muted right-aligned
+- Search: bg-[#f4f4f5] border-[rgba(228,228,231,0.6)], 12px placeholder, rounded-lg, 28px tall, search icon 12px
+- Word entry: left border 2px `#c27aff`, pl-[18px] pr-4, pt-3
+  - Word: 14px semibold text-text-primary
+  - Definition: 12px regular text-text-body, 2-line clamp
+  - Context: 11px italic text-[#9f9fa9], 1-line clamp
+  - Metadata row: book icon 12px + book title (11px muted), page icon 12px + "p. N", clock icon 12px + timeAgo
+- Footer: border-t, 11px center-aligned "N word"
+- Hover: trash icon on hover (same as BookmarksPanel)
+- Click word → `onNavigate(cfi)` to jump to location
+
+**Empty state (from Design 5):**
+- Centered vertically in the scrollable area
+- 48px circle, bg-[#f4f4f5], containing BookOpen icon 20px muted
+- "No saved words yet" — 14px regular text-[#71717b]
+- `Use "Look Up" on selected text and tap Save` — 12px regular text-[#9f9fa9]
+
+#### 2.2 Modify `src/pages/Reader.tsx`
+
+- Change `SidePanel` type: `type SidePanel = "ai" | "bookmarks" | "vocab" | null`
+- Add vocab button to toolbar (purple sparkles icon from Figma, between bookmark and AI Assistant)
+- Toggle: `setSidePanel(sidePanel === "vocab" ? null : "vocab")`
+- Render `<VocabPanel>` when `sidePanel === "vocab"`
+- VocabPanel props: `bookId`, `onNavigate` (same pattern as BookmarksPanel)
 
 ---
 
-## Phase 2: Global Vocab Page + Sidebar
+### Phase 3: Home Sidebar + Global Vocab Page
 
-### 2.1 Additional Backend Commands
+#### 3.1 Modify `src/components/Sidebar.tsx`
 
-**Modify: `src-tauri/src/commands/vocab.rs`** — add:
+Add new "Tools" section between Library and Collections (from Design 1):
 
-```rust
-pub fn list_all_vocab_words(db) -> AppResult<Vec<VocabWord>>
-pub fn update_vocab_mastery(id, mastery, next_review_at, db) -> AppResult<()>
-pub fn list_vocab_due_for_review(db) -> AppResult<Vec<VocabWord>>
-  // WHERE next_review_at IS NOT NULL AND next_review_at <= datetime('now')
-pub fn get_vocab_stats(db) -> AppResult<VocabStats>
-  // VocabStats { total, new_count, learning_count, mastered_count, due_for_review }
+```
+LIBRARY
+  All Books (6)
+  Currently Reading (4)
+  Finished (1)
+
+TOOLS                    ← new section
+  Vocabulary             ← navigates to /vocab
+
+COLLECTIONS
+  ...
 ```
 
-**Modify: `src-tauri/src/lib.rs`** — register 4 additional commands
+- "TOOLS" heading: same 12px semibold uppercase muted style as "Library"/"Collections"
+- "Vocabulary" button: same h-9 rounded-lg style, icon from lucide-react (`Languages` or `BookA`)
+- On click: `navigate("/vocab")` via react-router
 
-### 2.2 Global Vocab Hook
+#### 3.2 Modify `src/App.tsx`
 
-**Modify: `src/hooks/useVocab.ts`** — add:
+Add route:
+```tsx
+<Route path="/vocab" element={<VocabPage />} />
+```
 
+#### 3.3 Create `src/pages/VocabPage.tsx`
+
+Full-page vocabulary view (from Design 2). No sidebar — standalone page with back button.
+
+**Layout:**
+
+```
+┌─ Header ─────────────────────────────────────┐
+│ [←] [purple icon] Vocabulary    [Newest|Oldest|A-Z] │
+│                   N words saved               │
+├─ Search ─────────────────────────────────────┤
+│ [🔍] Search words, definitions, or books...   │
+├─ Book Filter Pills ──────────────────────────┤
+│ [All Books N] [Book Title 1 N] [Book Title 2 N] │
+├─ Scrollable Content ─────────────────────────┤
+│                                               │
+│ 📖 BOOK TITLE (UPPERCASE)  (count)           │
+│ ┌─ Word Card ───────────────────────────────┐│
+│ │ word (15px semibold)                      ││
+│ │ definition (13px, 2-3 line clamp)         ││
+│ │ ┃ context sentence (11px italic, purple   ││
+│ │ ┃ left border #e9d4ff, 2px)               ││
+│ │ [page] p.1  [clock] 6m ago               ││
+│ └───────────────────────────────────────────┘│
+└──────────────────────────────────────────────┘
+```
+
+**Header (from Figma):**
+- Back button: 36px, rounded-lg, ArrowLeft icon 16px → navigates to `/`
+- Purple gradient icon: 32px rounded-[14px], linear-gradient(135deg, #AD46FF → #7F22FE), sparkles icon 16px white
+- Title: "Vocabulary" 20px semibold
+- Subtitle: "N words saved" 12px muted
+
+**Sort control (top-right):**
+- Segmented pill: bg-[#f4f4f5] rounded-[10px], 32.5px tall
+- Three options: "Newest" (icon + label), "Oldest" (icon + label), "A-Z" (label only)
+- Active tab: white bg, rounded-lg, shadow-sm
+- Inactive: text-muted
+- 11px medium font
+
+**Search:**
+- bg-[#f3f3f5], rounded-lg, 36px tall, search icon 16px left, 14px placeholder
+- Width: 448px (same as Home search)
+
+**Book filter pills (horizontal row, overflow-x):**
+- "All Books" active: bg-[#faf5ff] border-[#e9d4ff], text-[#8200db], book icon 12px purple, count 11px purple
+- Per-book inactive: bg-white border-[#e4e4e7], text-[#52525c], book icon 12px, count 11px muted
+- Pill shape: h-[32px] rounded-full, 12px medium font, px-[13px], gap-[6px]
+- Pills generated from words grouped by book — only show books that have vocab words
+
+**Word list (grouped by book):**
+- Section header: book icon 14px + "BOOK TITLE" 12px semibold uppercase muted + "(count)" 11px text-[#d4d4d8]
+- gap-[24px] between book groups, gap-[12px] between header and cards
+- Word card: max-w-[525px], bg-[#fafafa], border-[rgba(228,228,231,0.6)], rounded-[14px], p-[17px]
+  - Word: 15px semibold text-primary
+  - Definition: 13px regular text-[#52525c], line-height 20.15px, multi-line
+  - Context: 2px left-border #e9d4ff, pl-[8px], 11px italic text-[#9f9fa9], 2-line clamp
+  - Footer: gap-[12px], page icon 12px + "p. N" 11px muted, clock icon 12px + timeAgo 11px muted
+- Card hover: could add delete action (trash on hover)
+
+**View toggle (from Design 6):**
+
+A grid/list toggle sits to the LEFT of the sort control in the top-right header area:
+- Two icon buttons in a bg-[#f4f4f5] rounded-[10px] pill, 30px tall, 56px wide
+  - Grid icon (card view) — left
+  - List icon (list view) — right
+  - Active state: white bg, shadow-sm, rounded-lg
+- **List view is the default**
+
+**A-Z list view (default, from Design 6):**
+
+The default layout is a compact alphabetical list:
+- No book filter pills row (only shown in card view)
+- **Letter section headers**: letter in 18px bold text-[#ad46ff], followed by 1px divider bg-[#f4f4f5], count in 11px text-[#d4d4d8] right-aligned
+- **Word rows** (full-width, horizontal layout):
+  - Left column (~160px fixed): word (14px semibold) + book icon 10px + book title (11px muted) below
+  - Middle (flex-1): definition (13px regular text-[#52525c], single line truncated) + context sentence (11px italic text-[#9f9fa9], single line truncated) below
+  - Right: timestamp "4m ago" (11px text-[#d4d4d8])
+  - Row: rounded-[10px], px-[12px], pt-[12px], gap-[16px], ~64px tall
+  - Hover: bg-bg-input (same as other list items)
+- More scannable and space-efficient than card view for large vocab lists
+
+**Card view (from Design 2):**
+
+Toggled via the grid icon. Shows book filter pills + words grouped by book in card layout (see card view section above).
+
+**Empty state (from Design 4):**
+- Centered in the scrollable content area (both vertically and horizontally)
+- 64px circle, bg-[#f4f4f5], containing sparkles/vocab icon 28px muted
+- "Start Building Your Vocabulary" — 18px medium text-primary
+- `Select a word while reading, use "Look Up" to see its definition, then tap "Save to Vocab" to add it here.` — 14px regular text-[#71717b], max-w-[296px], text-center
+- No book filter pills shown when empty (header shows "0 words saved")
+
+**Data flow:**
 ```typescript
-function useAllVocab() → { words, stats, refresh, remove, updateMastery, dueForReview }
+const { words, refresh, remove } = useAllVocab();
+// Group by book_id, need book titles → join or separate fetch
+// Sort: newest (default, created_at DESC), oldest (created_at ASC), A-Z (word ASC)
+// Search: filter by word/definition containing search text
+// Book filter: filter by book_id
 ```
 
-### 2.3 Vocab Page
+**Note: Need book title for display.** Current `list_all_vocab_words` returns `book_id` but not book title. Options:
+1. Add a SQL JOIN to include book title in the vocab query (backend change)
+2. Fetch books separately and join on frontend
 
-**Create: `src/pages/VocabPage.tsx`**
-
-Layout matches Home.tsx (224px sidebar + main content):
-- Header: "Vocabulary" title + row of 5 stat cards (Total, New, Learning, Mastered, Due)
-- Filters: book dropdown, mastery chips, search input
-- Word list: expandable cards — collapsed shows word + book title + mastery badge; expanded shows full definition + context sentence + "Open in Book" button
-- "Review" button in header (launches Phase 3 flashcards)
-
-### 2.4 Navigation
-
-**Modify: `src/components/Sidebar.tsx`** — add "Vocabulary" item (BookA icon from lucide-react) below Library section, navigates to `/vocab`
-
-**Modify: `src/App.tsx`** — add `<Route path="/vocab" element={<VocabPage />} />`
+Recommend option 1: modify `list_all_vocab_words` to JOIN with books table and return `book_title` as an additional field.
 
 ---
 
-## Phase 3: Flashcard Review
+## Backend Additions Needed
 
-### 3.1 Flashcard Component
+### Join book title for global vocab list
 
-**Create: `src/components/FlashcardReview.tsx`**
+Add `book_title` field to `VocabWord` (optional, only populated for cross-book queries):
 
-Full-viewport overlay with centered card (max 480px wide):
-- **Front**: word (24px semibold) + context sentence (14px italic, word highlighted)
-- **Back** (click/spacebar): full AI definition with markdown rendering
-- **Actions**: "Still Learning" (amber) + "I Know This" (green)
-- Progress bar at top ("3 of 12")
+**Option A** — add a new command `list_all_vocab_words_with_books`:
+```rust
+pub fn list_all_vocab_words(db) -> AppResult<Vec<VocabWordWithBook>>
+// SELECT v.*, b.title as book_title FROM vocab_words v JOIN books b ON v.book_id = b.id
+```
 
-Spaced repetition scheduling (frontend logic):
-- new → learning: next_review = +1 day
-- learning → learning: next_review = +3 days
-- learning → mastered: next_review = +7 days
-- mastered review: next_review = +30 days
+**Option B** — add `book_title: Option<String>` to `VocabWord` struct, populate via JOIN only in `list_all_vocab_words`.
 
-### 3.2 Integration
-
-- VocabPage: "Review (N due)" button launches FlashcardReview overlay
-- BookmarksPanel vocab tab: "Review" quick-action for per-book review
-- Sidebar: badge on Vocabulary item showing due-for-review count
+Recommend Option B for simplicity — single struct, `book_title` is `None` for per-book queries and `Some(...)` for global queries.
 
 ---
 
@@ -192,64 +335,60 @@ Spaced repetition scheduling (frontend logic):
 
 | Action | File | Phase |
 |--------|------|-------|
-| Create | `src-tauri/migrations/002_vocab.sql` | 1 |
-| Create | `src-tauri/src/commands/vocab.rs` | 1+2 |
-| Create | `src/hooks/useVocab.ts` | 1+2 |
-| Create | `src/pages/VocabPage.tsx` | 2 |
-| Create | `src/components/FlashcardReview.tsx` | 3 |
-| Modify | `src-tauri/src/db.rs` — load 002 migration | 1 |
-| Modify | `src-tauri/src/commands/mod.rs` — add vocab module | 1 |
-| Modify | `src-tauri/src/lib.rs` — register vocab commands | 1+2 |
-| Modify | `src/components/LookupPopover.tsx` — add Save button + bookId/cfi props | 1 |
-| Modify | `src/pages/Reader.tsx` — pass bookId/cfi to LookupPopover | 1 |
-| Modify | `src/components/BookmarksPanel.tsx` — add Vocab tab | 1 |
-| Modify | `src/components/Sidebar.tsx` — add Vocabulary nav item | 2 |
-| Modify | `src/App.tsx` — add /vocab route | 2 |
+| Create | `src/hooks/useVocab.ts` | 1 |
+| Create | `src/components/VocabPanel.tsx` | 2 |
+| Create | `src/pages/VocabPage.tsx` | 3 |
+| Modify | `src/components/LookupPopover.tsx` — add footer with Save + Copy buttons | 1 |
+| Modify | `src/pages/Reader.tsx` — pass bookId/cfi to LookupPopover, add vocab SidePanel | 1+2 |
+| Modify | `src/components/Sidebar.tsx` — add "Tools" section with Vocabulary item | 3 |
+| Modify | `src/App.tsx` — add `/vocab` route | 3 |
+| Modify | `src-tauri/src/commands/vocab.rs` — add book_title to VocabWord, JOIN in list_all | 3 |
+
+Backend files already complete (no changes needed for phases 1-2):
+- `src-tauri/migrations/002_vocab.sql` ✅
+- `src-tauri/src/commands/vocab.rs` ✅ (8 commands registered)
+- `src-tauri/src/commands/mod.rs` ✅
+- `src-tauri/src/lib.rs` ✅
 
 ---
 
-## Figma Design Prompts
+## Spaced Repetition Schedule
 
-### LookupPopover Save Button
-> The current Look Up popover is a 360px-wide fixed-position panel with frosted glass background (white at 95% opacity, backdrop blur, rounded-xl, shadow). It has a header with "Look Up" label and close button, and a scrollable content area showing a markdown AI definition. **Add a footer bar** below the content, separated by a 1px border-t. The footer is 36px tall with 12px horizontal padding. It contains a single button on the right: "Save to Vocab" pill (rounded-lg, bg-accent, text-white, 12px font, medium weight, BookmarkPlus icon 14px). When already saved: muted "Saved" label with green checkmark icon, no click action. Button only appears after streaming completes.
-
-### BookmarksPanel Vocab Tab
-> The current side panel has a two-tab bar: "Bookmarks" and "Highlights" with underline active indicators. **Add a third tab "Vocab"** with the same styling. When active, show a filter bar (45px height): mastery chips as small rounded-full pills ("All" filled, "New" gray, "Learning" amber, "Mastered" green) and a compact search input on the right (same as highlights search). Below: a scrollable word list. Each word card is a full-width row (hover:bg-bg-input) showing: word in 14px semibold, small mastery badge pill (colored by level), definition truncated to 2 lines in 13px text-muted, timestamp in 11px muted. Hover shows trash icon. Footer shows word count. Match existing bookmark/highlight card styling exactly.
-
-### Vocabulary Page (Global)
-> Design a full-page vocabulary management view. Layout matches the Home page: 224px sidebar on left (same Sidebar component, "Vocabulary" highlighted), main content area. Header: "Vocabulary" title (24px semibold), row of 5 compact stat cards (Total/New/Learning/Mastered/Due — each a rounded-lg card with count in 20px bold and label in 12px muted, color-coded: gray/blue/amber/green/red). Below: filter row with book dropdown, mastery chips, search input. Word list uses expandable cards: collapsed shows word + book title pill + mastery badge + timestamp; expanded shows full markdown definition, context sentence in italic, "Open in Book" button. Top-right: "Review" primary button with Layers icon and due-count badge.
-
-### Flashcard Review Modal
-> Full-viewport overlay with semi-transparent dark backdrop. Centered card (max 480px wide, min 300px tall, rounded-2xl, white bg). Top: thin accent progress bar + "3 of 12" text + close X button. **Front state**: word in 24px semibold centered, context sentence in 14px muted italic below (word bold within sentence), "Show Definition" hint in 13px muted. **Back state** (click/spacebar): fades in the full AI definition in 14px markdown below the word. Bottom: two action buttons — "Still Learning" (amber outline, RotateCcw icon) and "I Know This" (green filled, Check icon), both 44px tall.
+Mastery transitions and review intervals (for future flashcard feature):
+- new → learning: next_review = +1 day
+- learning → learning: next_review = +3 days
+- learning → mastered: next_review = +7 days
+- mastered review: next_review = +30 days
 
 ---
 
 ## Verification
 
-### Phase 1
-- [ ] `cargo build` passes, `cargo test` passes
-- [ ] Select word in reader → Look Up popover shows AI definition
-- [ ] After streaming completes, "Save to Vocab" button appears in popover footer
-- [ ] Click "Save" → button changes to "Saved" checkmark
-- [ ] Re-open Look Up for same word in same book → shows "Saved" immediately
-- [ ] BookmarksPanel has "Vocab" tab alongside Bookmarks and Highlights
-- [ ] Vocab tab shows saved words with word, definition preview, mastery badge
-- [ ] Search and mastery filter work in vocab tab
+### Phase 1 — LookupPopover Save
+- [ ] "Save to Vocab" button appears in LookupPopover footer after streaming completes
+- [ ] Click Save → word stored to DB with definition + context_sentence + cfi
+- [ ] Re-open Look Up for same word → shows "Saved" immediately
+- [ ] "Copy" button copies definition to clipboard
+- [ ] Dedup: saving same word+book twice returns existing record
+
+### Phase 2 — VocabPanel in Reader
+- [ ] Purple vocab icon appears in reader toolbar
+- [ ] Clicking it opens VocabPanel in sidebar (replaces bookmarks/AI)
+- [ ] VocabPanel shows saved words for current book with search
 - [ ] Click word → reader navigates to CFI location
 - [ ] Delete word via hover trash → removed from list
-- [ ] Delete a book → its vocab words cascade-deleted
+- [ ] Footer shows correct word count
+- [ ] Empty state: "No saved words yet" with icon + hint text when no words saved for this book
 
-### Phase 2
-- [ ] "Vocabulary" item in Home sidebar navigates to `/vocab`
-- [ ] VocabPage shows correct stats across all books
-- [ ] Book filter dropdown lists only books with vocab words
-- [ ] Word card expands to show full definition + context
-- [ ] "Open in Book" navigates to reader at the correct location
-
-### Phase 3
-- [ ] "Review" button shows correct due count
-- [ ] Flashcard shows word + context on front
-- [ ] Click/spacebar reveals definition
-- [ ] "Still Learning" / "I Know This" update mastery and schedule next review
-- [ ] Progress bar tracks review session
-- [ ] Words don't reappear until their next_review_at date
+### Phase 3 — Global Vocab Page
+- [ ] "Vocabulary" item appears under "Tools" in Home sidebar
+- [ ] Clicking navigates to `/vocab`
+- [ ] **Card view (Newest/Oldest)**: words grouped by book with correct book titles, card layout
+- [ ] **List view (A-Z)**: words grouped by letter, compact row layout with word/book/definition/timestamp
+- [ ] View toggle switches between card and list layouts
+- [ ] Sort works: Newest / Oldest / A-Z (A-Z forces list view)
+- [ ] Search filters by word and definition text in both views
+- [ ] Book filter pills show per-book counts in card view
+- [ ] Back arrow navigates to Home
+- [ ] Delete a book → its vocab words cascade-deleted from page
+- [ ] Empty state: "Start Building Your Vocabulary" with icon + instructional text when no words saved globally

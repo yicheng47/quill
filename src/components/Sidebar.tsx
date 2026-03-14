@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { Library, BookOpen, CheckCircle2, Sparkles, Plus } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { Library, BookOpen, CheckCircle2, Sparkles, BookA, Plus } from "lucide-react";
 import Button from "./ui/Button";
 import QuillLogo from "./QuillLogo";
 import type { Book } from "../hooks/useBooks";
@@ -22,6 +23,7 @@ const libraryFilters = [
 ];
 
 export default function Sidebar({ activeFilter, onFilterChange, books, collections: collectionsHook }: SidebarProps) {
+  const navigate = useNavigate();
   const { collections, create } = collectionsHook;
   const [isCreating, setIsCreating] = useState(false);
   const [newName, setNewName] = useState("");
@@ -85,6 +87,23 @@ export default function Sidebar({ activeFilter, onFilterChange, books, collectio
               </button>
             );
           })}
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-3">
+        <h2 className="text-[12px] font-semibold uppercase tracking-[0.3px] text-text-muted">
+          Tools
+        </h2>
+        <div className="flex flex-col gap-1">
+          <button
+            onClick={() => navigate("/vocab")}
+            className="flex items-center gap-2 px-3 h-9 rounded-lg w-full cursor-pointer hover:bg-bg-input"
+          >
+            <BookA size={16} className="text-text-muted" />
+            <span className="text-[14px] font-medium tracking-[-0.15px] text-[#3f3f47]">
+              Vocabulary
+            </span>
+          </button>
         </div>
       </div>
 

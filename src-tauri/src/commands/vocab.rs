@@ -18,6 +18,8 @@ pub struct VocabWord {
     pub next_review_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub book_title: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -42,6 +44,24 @@ fn row_to_vocab(row: &rusqlite::Row) -> rusqlite::Result<VocabWord> {
         next_review_at: row.get(8)?,
         created_at: row.get(9)?,
         updated_at: row.get(10)?,
+        book_title: None,
+    })
+}
+
+fn row_to_vocab_with_book(row: &rusqlite::Row) -> rusqlite::Result<VocabWord> {
+    Ok(VocabWord {
+        id: row.get(0)?,
+        book_id: row.get(1)?,
+        word: row.get(2)?,
+        definition: row.get(3)?,
+        context_sentence: row.get(4)?,
+        cfi: row.get(5)?,
+        mastery: row.get(6)?,
+        review_count: row.get(7)?,
+        next_review_at: row.get(8)?,
+        created_at: row.get(9)?,
+        updated_at: row.get(10)?,
+        book_title: row.get(11)?,
     })
 }
 
@@ -94,6 +114,7 @@ pub fn add_vocab_word(
         next_review_at: None,
         created_at: now.clone(),
         updated_at: now,
+        book_title: None,
     })
 }
 
@@ -137,12 +158,11 @@ pub fn check_vocab_exists(
 #[tauri::command]
 pub fn list_all_vocab_words(db: State<'_, Db>) -> AppResult<Vec<VocabWord>> {
     let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
-    let mut stmt = conn.prepare(&format!(
-        "SELECT {} FROM vocab_words ORDER BY created_at DESC",
-        SELECT_COLS
-    ))?;
+    let mut stmt = conn.prepare(
+        "SELECT v.id, v.book_id, v.word, v.definition, v.context_sentence, v.cfi, v.mastery, v.review_count, v.next_review_at, v.created_at, v.updated_at, b.title FROM vocab_words v LEFT JOIN books b ON v.book_id = b.id ORDER BY v.created_at DESC"
+    )?;
     let words = stmt
-        .query_map([], row_to_vocab)?
+        .query_map([], row_to_vocab_with_book)?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(words)
 }

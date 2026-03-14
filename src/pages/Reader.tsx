@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import {
   ArrowLeft,
@@ -7,6 +7,7 @@ import {
   List,
   Bookmark,
   Bot,
+  Languages,
   Loader2,
 } from "lucide-react";
 import Button from "../components/ui/Button";
@@ -16,6 +17,7 @@ import ReaderSettings, { type ReaderSettingsState, getFontFamily, getThemeStyles
 import ReaderContextMenu from "../components/ReaderContextMenu";
 import HighlightToolbar from "../components/HighlightToolbar";
 import LookupPopover from "../components/LookupPopover";
+import VocabPanel from "../components/VocabPanel";
 import TableOfContents from "../components/TableOfContents";
 import { getBook, updateReadingProgress, type Book } from "../hooks/useBooks";
 import { getAllSettings } from "../hooks/useSettings";
@@ -76,7 +78,7 @@ const PANEL_MIN_WIDTH = 320;
 const PANEL_MAX_WIDTH = 700;
 const PANEL_DEFAULT_WIDTH = 525;
 
-type SidePanel = "ai" | "bookmarks" | null;
+type SidePanel = "ai" | "bookmarks" | "vocab" | null;
 
 interface TocChapter {
   title: string;
@@ -94,6 +96,7 @@ const highlightColorMap: Record<string, string> = {
 export default function Reader() {
   const { bookId } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const [book, setBook] = useState<Book | null>(null);
   const [loading, setLoading] = useState(true);
   const [sidePanel, setSidePanel] = useState<SidePanel>(null);
@@ -121,6 +124,7 @@ export default function Reader() {
     sentence: string;
     bookTitle?: string;
     chapter?: string;
+    cfi?: string;
   } | null>(null);
   const [highlightToolbar, setHighlightToolbar] = useState<{
     x: number;
@@ -449,7 +453,7 @@ export default function Reader() {
     }
   }, [readerSettings]);
 
-  const togglePanel = (panel: "ai" | "bookmarks") => {
+  const togglePanel = (panel: "ai" | "bookmarks" | "vocab") => {
     setSidePanel((prev) => (prev === panel ? null : panel));
   };
 
@@ -544,6 +548,24 @@ export default function Reader() {
   const navigateToCfi = useCallback((cfi: string) => {
     viewRef.current?.goTo(cfi);
   }, []);
+
+  // Handle navigation state from VocabPage ("Open in Reader")
+  useEffect(() => {
+    const state = location.state as { openVocab?: boolean; cfi?: string } | null;
+    if (!state?.openVocab || !bookReady) return;
+    setSidePanel("vocab");
+    if (state.cfi) {
+      const cfi = state.cfi;
+      viewRef.current?.goTo(cfi).then(() => {
+        viewRef.current?.addAnnotation({ value: cfi, color: "#c27aff" });
+        setTimeout(() => {
+          viewRef.current?.deleteAnnotation({ value: cfi });
+        }, 3000);
+      });
+    }
+    // Clear the state so it doesn't re-trigger
+    navigate(location.pathname, { replace: true });
+  }, [bookReady, location.state, location.pathname, navigate]);
 
   if (loading) {
     return (
@@ -650,6 +672,25 @@ export default function Reader() {
             </Button>
           )}
 
+          {sidePanel === "vocab" ? (
+            <Button
+              variant="icon"
+              size="md"
+              active
+              onClick={() => togglePanel("vocab")}
+            >
+              <Languages size={16} className="text-white" />
+            </Button>
+          ) : (
+            <Button
+              variant="icon"
+              size="md"
+              onClick={() => togglePanel("vocab")}
+            >
+              <Languages size={16} className="text-text-body" />
+            </Button>
+          )}
+
           <div className="w-px h-6 bg-border mx-1" />
 
           {sidePanel === "ai" ? (
@@ -727,7 +768,7 @@ export default function Reader() {
           >
           </div>
         )}
-        <div ref={panelRef} className={sidePanel ? "shrink-0" : "hidden"} style={{ width: panelWidth }}>
+        <div ref={panelRef} className={sidePanel ? "shrink-0 h-full" : "hidden"} style={{ width: panelWidth }}>
           <div className={sidePanel === "ai" ? "h-full" : "hidden"}>
             <AiPanel context={aiContext} onContextConsumed={() => setAiContext(undefined)} />
           </div>
@@ -747,6 +788,20 @@ export default function Reader() {
                 // Return page info from current state if available
                 return pageInfo?.current ?? null;
               }}
+            />
+          )}
+          {sidePanel === "vocab" && bookId && (
+            <VocabPanel
+              bookId={bookId}
+              onNavigate={(cfi) => {
+                viewRef.current?.goTo(cfi).then(() => {
+                  viewRef.current?.addAnnotation({ value: cfi, color: "#c27aff" });
+                  setTimeout(() => {
+                    viewRef.current?.deleteAnnotation({ value: cfi });
+                  }, 3000);
+                });
+              }}
+              getPageFromCfi={() => pageInfo?.current ?? null}
             />
           )}
         </div>
@@ -779,6 +834,7 @@ export default function Reader() {
               sentence: contextMenu.sentence,
               bookTitle: book?.title,
               chapter: chapterTitle,
+              cfi: contextMenu.cfiRange,
             });
             setContextMenu(null);
           }}
@@ -807,6 +863,8 @@ export default function Reader() {
           sentence={lookup.sentence}
           bookTitle={lookup.bookTitle}
           chapter={lookup.chapter}
+          bookId={bookId!}
+          cfi={lookup.cfi}
           onClose={() => setLookup(null)}
         />
       )}

@@ -1,8 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { X, Loader2, Sparkles } from "lucide-react";
-import Markdown from "react-markdown";
+import { X, Loader2, Sparkles, Volume2, BookmarkPlus, Check, Copy } from "lucide-react";
 
 interface LookupPopoverProps {
   x: number;
@@ -11,45 +10,28 @@ interface LookupPopoverProps {
   sentence: string;
   bookTitle?: string;
   chapter?: string;
+  bookId: string;
+  cfi?: string;
   onClose: () => void;
 }
 
-export default function LookupPopover({
-  x,
-  y,
-  word,
-  sentence,
-  bookTitle,
-  chapter,
-  onClose,
-}: LookupPopoverProps) {
+function useStreamingLookup(
+  word: string,
+  sentence: string,
+  bookTitle: string | undefined,
+  chapter: string | undefined,
+  kind: "definition" | "context"
+) {
   const contentRef = useRef("");
   const [content, setContent] = useState("");
   const [streaming, setStreaming] = useState(true);
-  const popoverRef = useRef<HTMLDivElement>(null);
   const unlistenRef = useRef<UnlistenFn | null>(null);
 
-  // Position clamping — run once on mount
-  const [pos, setPos] = useState({ left: x, top: y });
-
-  useEffect(() => {
-    if (!popoverRef.current) return;
-    const rect = popoverRef.current.getBoundingClientRect();
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-    let left = x;
-    let top = y;
-    if (left + rect.width > vw - 16) left = vw - rect.width - 16;
-    if (left < 16) left = 16;
-    if (top + rect.height > vh - 16) top = y - rect.height - 8;
-    if (top < 16) top = 16;
-    setPos({ left, top });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Stream AI response
   useEffect(() => {
     let cancelled = false;
+    contentRef.current = "";
+    setContent("");
+    setStreaming(true);
 
     const run = async () => {
       const requestId = crypto.randomUUID();
@@ -76,6 +58,7 @@ export default function LookupPopover({
           bookTitle: bookTitle || null,
           chapter: chapter || null,
           requestId,
+          kind,
         });
       } catch (err) {
         if (!cancelled) {
@@ -92,7 +75,84 @@ export default function LookupPopover({
       unlistenRef.current?.();
       unlistenRef.current = null;
     };
-  }, [word, sentence, bookTitle, chapter]);
+  }, [word, sentence, bookTitle, chapter, kind]);
+
+  return { content, contentRef, streaming };
+}
+
+export default function LookupPopover({
+  x,
+  y,
+  word,
+  sentence,
+  bookTitle,
+  chapter,
+  bookId,
+  cfi,
+  onClose,
+}: LookupPopoverProps) {
+  const [saved, setSaved] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const popoverRef = useRef<HTMLDivElement>(null);
+
+  // Two concurrent AI streams
+  const definition = useStreamingLookup(word, sentence, bookTitle, chapter, "definition");
+  const context = useStreamingLookup(word, sentence, bookTitle, chapter, "context");
+
+  const allDone = !definition.streaming && !context.streaming;
+  const hasContent = definition.content || context.content;
+
+  // Position clamping — run once on mount
+  const [pos, setPos] = useState({ left: x, top: y });
+
+  useEffect(() => {
+    if (!popoverRef.current) return;
+    const rect = popoverRef.current.getBoundingClientRect();
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    let left = x;
+    let top = y;
+    if (left + rect.width > vw - 16) left = vw - rect.width - 16;
+    if (left < 16) left = 16;
+    if (top + rect.height > vh - 16) top = y - rect.height - 8;
+    if (top < 16) top = 16;
+    setPos({ left, top });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Check if word is already saved
+  useEffect(() => {
+    invoke<string | null>("check_vocab_exists", { bookId, word }).then((id) => {
+      if (id) setSaved(true);
+    }).catch(() => {});
+  }, [bookId, word]);
+
+  const handleSave = async () => {
+    try {
+      const fullDefinition = [definition.contentRef.current, context.contentRef.current]
+        .filter(Boolean)
+        .join("\n\n");
+      await invoke("add_vocab_word", {
+        bookId,
+        word,
+        definition: fullDefinition,
+        contextSentence: sentence || null,
+        cfi: cfi || null,
+      });
+      setSaved(true);
+    } catch (err) {
+      console.error("Failed to save vocab word:", err);
+    }
+  };
+
+  const handleCopy = () => {
+    const fullText = [definition.contentRef.current, context.contentRef.current]
+      .filter(Boolean)
+      .join("\n\n");
+    navigator.clipboard.writeText(fullText);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
 
   // Dismiss on Escape
   useEffect(() => {
@@ -123,41 +183,91 @@ export default function LookupPopover({
   return (
     <div
       ref={popoverRef}
-      className="fixed z-50 w-[360px] bg-white/95 border border-border/80 rounded-xl backdrop-blur-sm shadow-context"
+      className="fixed z-50 w-[440px] bg-white border border-border/80 rounded-xl shadow-context"
       style={{ left: pos.left, top: pos.top }}
     >
-      {/* Header */}
-      <div className="flex items-center justify-between px-3 pt-2.5 pb-1.5">
-        <div className="flex items-center gap-1.5">
-          <Sparkles size={14} className="text-text-muted" />
-          <span className="text-[12px] font-semibold text-text-muted uppercase tracking-wide">
+      {/* Header — purple tint */}
+      <div className="flex items-center justify-between px-4 pt-3 pb-2.5 bg-[#f0e6ff]/60 rounded-t-xl border-b border-[#e9d4ff]/40">
+        <div className="flex items-center gap-2">
+          <Sparkles size={16} className="text-[#9810fa]" />
+          <span className="text-[14px] font-medium text-[#9810fa] tracking-[-0.15px]">
             Look Up
           </span>
         </div>
         <button
           onClick={onClose}
-          className="size-5 flex items-center justify-center rounded hover:bg-bg-input cursor-pointer"
+          className="size-6 flex items-center justify-center rounded hover:bg-white/60 cursor-pointer"
         >
-          <X size={12} className="text-text-muted" />
+          <X size={14} className="text-[#9f9fa9]" />
         </button>
       </div>
 
       {/* Content */}
-      <div className="px-3 pb-3 max-h-[240px] overflow-auto">
-        {streaming && !content ? (
-          <div className="flex items-center gap-1.5 py-2">
+      <div className="px-4 pb-2 max-h-[360px] overflow-auto">
+        {/* Word heading */}
+        <div className="flex items-center gap-2 pt-3 pb-2">
+          <h3 className="text-[20px] font-bold text-text-primary leading-6">{word}</h3>
+          <Volume2 size={18} className="text-[#d4d4d8] shrink-0" />
+        </div>
+
+        {/* Definition section */}
+        {definition.streaming && !definition.content ? (
+          <div className="flex items-center gap-1.5 py-1">
             <Loader2 size={14} className="animate-spin text-text-muted" />
-            <span className="text-[13px] text-text-muted">Thinking...</span>
+            <span className="text-[13px] text-text-muted">Looking up...</span>
           </div>
         ) : (
-          <div className="prose prose-sm max-w-none text-[13px] text-text-primary leading-[1.5] [&_p]:my-1 [&_strong]:font-semibold [&_em]:italic">
-            <Markdown>{content || "No explanation available."}</Markdown>
-            {streaming && (
+          <p className="text-[13px] text-text-primary leading-[1.55]">
+            {definition.content}
+            {definition.streaming && (
               <Loader2 size={12} className="inline-block ml-0.5 animate-spin text-text-muted" />
+            )}
+          </p>
+        )}
+
+        {/* In this context — card */}
+        {(context.content || context.streaming) && (
+          <div className="mt-3 mb-1 p-3 rounded-lg bg-[#f9f9fa] border border-[rgba(228,228,231,0.5)]">
+            <span className="block text-[12px] font-medium text-[#9f9fa9] mb-1">
+              In this context
+            </span>
+            {context.streaming && !context.content ? (
+              <div className="flex items-center gap-1.5 py-0.5">
+                <Loader2 size={12} className="animate-spin text-text-muted" />
+                <span className="text-[12px] text-text-muted">Analyzing...</span>
+              </div>
+            ) : (
+              <p className="text-[13px] text-[#52525c] leading-[1.5]">
+                {context.content}
+                {context.streaming && (
+                  <Loader2 size={12} className="inline-block ml-0.5 animate-spin text-text-muted" />
+                )}
+              </p>
             )}
           </div>
         )}
       </div>
+
+      {/* Footer — Save & Copy */}
+      {allDone && hasContent && (
+        <div className="flex items-center justify-between px-4 py-2.5 border-t border-border/40">
+          <button
+            onClick={handleSave}
+            disabled={saved}
+            className="flex items-center gap-1.5 text-[13px] font-medium cursor-pointer text-[#9810fa] hover:opacity-70 disabled:opacity-50 disabled:cursor-default"
+          >
+            {saved ? <Check size={14} /> : <BookmarkPlus size={14} />}
+            {saved ? "Saved" : "Save to Vocab"}
+          </button>
+          <button
+            onClick={handleCopy}
+            className="flex items-center gap-1.5 text-[13px] font-medium cursor-pointer text-[#9f9fa9] hover:opacity-70"
+          >
+            {copied ? <Check size={14} /> : <Copy size={14} />}
+            {copied ? "Copied" : "Copy"}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

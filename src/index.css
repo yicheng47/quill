@@ -56,7 +56,7 @@
 
   /* ── Spacing ── */
   --spacing-page: 24px;
-  --spacing-section: 16px;
+  --spacing-section: max(24px, 1.5%);
   --spacing-header-h: 56px;
 }
 

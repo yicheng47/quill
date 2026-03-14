@@ -24,6 +24,7 @@ pub async fn ai_lookup(
     book_title: Option<String>,
     chapter: Option<String>,
     request_id: String,
+    kind: Option<String>,
     app: AppHandle,
     db: State<'_, Db>,
     secrets: State<'_, Secrets>,
@@ -66,10 +67,24 @@ pub async fn ai_lookup(
         user_content.push_str(&format!("\nChapter: \"{}\"", ch));
     }
 
+    let kind = kind.unwrap_or_else(|| "full".to_string());
+
+    let system_prompt = match kind.as_str() {
+        "definition" => "You are a reading assistant embedded in an ebook reader. The user selected a word or phrase and wants a dictionary-style definition.\n\nGive: pronunciation in IPA (if English), part of speech, and a concise definition in 1–2 sentences.\n\nIf the selection is a proper noun (person, place, historical event), give a brief factual identification instead.\n\nBe concise. No headers or labels.".to_string(),
+        "context" => "You are a reading assistant embedded in an ebook reader. The user selected a word or phrase and wants to understand how it's used in the surrounding passage.\n\nExplain how the word is used in context. Consider the author's intent, tone, or any literary/idiomatic significance. Keep it to 2–3 sentences.\n\nBe concise. No headers or labels.".to_string(),
+        _ => "You are a reading assistant embedded in an ebook reader. The user selected a word or phrase and wants to understand it.\n\nRespond in two parts:\n\n1. **Definition** — Give a dictionary-style entry: the word, pronunciation in IPA (if it's an English word), part of speech, and a concise definition in one sentence.\n\n2. **In context** — Explain how the word is used in the given passage. Consider the author's intent, tone, or any literary/idiomatic significance. Keep it to 2–3 sentences.\n\nIf the selection is a proper noun (person, place, historical event), replace the dictionary definition with a brief factual identification, then explain its relevance in context.\n\nDo not use headers or labels like \"Definition:\" or \"In context:\". Separate the two parts with a line break. Be concise.".to_string(),
+    };
+
+    let max_tokens = match kind.as_str() {
+        "definition" => Some(128),
+        "context" => Some(192),
+        _ => Some(256),
+    };
+
     let messages = vec![
         ChatMessage {
             role: "system".to_string(),
-            content: "You are a reading assistant embedded in an ebook reader. The user selected a word or phrase and wants to understand it.\n\nRespond in two parts:\n\n1. **Definition** — Give a dictionary-style entry: the word, pronunciation in IPA (if it's an English word), part of speech, and a concise definition in one sentence.\n\n2. **In context** — Explain how the word is used in the given passage. Consider the author's intent, tone, or any literary/idiomatic significance. Keep it to 2–3 sentences.\n\nIf the selection is a proper noun (person, place, historical event), replace the dictionary definition with a brief factual identification, then explain its relevance in context.\n\nDo not use headers or labels like \"Definition:\" or \"In context:\". Separate the two parts with a line break. Be concise.".to_string(),
+            content: system_prompt,
         },
         ChatMessage {
             role: "user".to_string(),
@@ -85,11 +100,11 @@ pub async fn ai_lookup(
         let result = match provider.as_str() {
             "anthropic" => {
                 let url = base_url.unwrap_or_else(|| "https://api.anthropic.com".to_string());
-                crate::ai::anthropic::stream_chat(&app_clone, &url, &api_key, &model, 0.3, &messages, false, &event_name, Some(256)).await
+                crate::ai::anthropic::stream_chat(&app_clone, &url, &api_key, &model, 0.3, &messages, false, &event_name, max_tokens).await
             }
             "minimax" => {
                 let url = base_url.unwrap_or_else(|| "https://api.minimax.io/anthropic".to_string());
-                crate::ai::anthropic::stream_chat(&app_clone, &url, &api_key, &model, 0.3, &messages, true, &event_name, Some(256)).await
+                crate::ai::anthropic::stream_chat(&app_clone, &url, &api_key, &model, 0.3, &messages, true, &event_name, max_tokens).await
             }
             _ if use_responses_api => {
                 let url = "https://chatgpt.com/backend-api/codex".to_string();
@@ -98,7 +113,7 @@ pub async fn ai_lookup(
             _ => {
                 let url = base_url.unwrap_or_else(|| "http://localhost:11434".to_string());
                 let ka = if provider == "ollama" { Some(keep_alive.clone()) } else { None };
-                crate::ai::openai_compat::stream_chat(&app_clone, &url, &api_key, &model, 0.3, &messages, ka.as_deref(), &event_name, Some(256)).await
+                crate::ai::openai_compat::stream_chat(&app_clone, &url, &api_key, &model, 0.3, &messages, ka.as_deref(), &event_name, max_tokens).await
             }
         };
         if let Err(e) = result {
