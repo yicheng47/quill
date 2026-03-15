@@ -19,15 +19,16 @@
   --color-border: #e4e4e7;
   --color-border-light: #f4f4f5;
 
-  --color-accent: #4f46e5;
-  --color-accent-bg: #e0e7ff;
-  --color-accent-text: #4f46e5;
+  /* ── Brand Palette (from Figma design system) ── */
+  --color-accent: #7c3aed;         /* Deep Purple */
+  --color-accent-bg: #f3e8ff;      /* Mist */
+  --color-accent-text: #7c3aed;    /* Deep Purple */
 
-  --color-indigo: #4f46e5;
-  --color-violet: #7c3aed;
+  --color-deep-purple: #7c3aed;
   --color-purple: #a855f7;
   --color-lavender: #c084fc;
-  --color-ice: #e0e7ff;
+  --color-soft-lilac: #d8b4fe;
+  --color-mist: #f3e8ff;
 
   --color-dark: #030213;
 
@@ -64,4 +65,12 @@ body {
   margin: 0;
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
+}
+
+[data-tauri-drag-region] {
+  cursor: grab;
+}
+
+[data-tauri-drag-region]:active {
+  cursor: grabbing;
 }

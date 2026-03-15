@@ -593,7 +593,8 @@ export default function Reader() {
         />
       )}
       {/* Header */}
-      <header data-tauri-drag-region className="flex items-center justify-between px-section pt-8 pb-2 bg-bg-surface border-b border-border shrink-0">
+      <header className="flex items-center justify-between px-section pt-8 pb-2 bg-bg-surface border-b border-border shrink-0 relative">
+        <div data-tauri-drag-region className="absolute top-0 left-0 right-0 h-8" />
         <div className="flex items-center gap-3">
           <Button variant="icon" size="md" onClick={() => navigate("/")}>
             <ArrowLeft size={16} />
