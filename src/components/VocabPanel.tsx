@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { BookOpen, Search, Trash2, Clock, Volume2, FileText, ArrowRight, Sparkles } from "lucide-react";
+import { BookOpen, Search, Trash2, Clock, FileText, ArrowRight, Sparkles } from "lucide-react";
 import { useVocab } from "../hooks/useVocab";
 import { timeAgo } from "../utils/timeAgo";
 
