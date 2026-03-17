@@ -79,7 +79,7 @@ export default function AiPanel({ context, onContextConsumed }: AiPanelProps) {
               </div>
             ) : (
               <div key={msg.id} className="flex justify-end">
-                <div className="bg-dark rounded-lg px-[13px] py-[13px] max-w-[85%]">
+                <div className="bg-accent rounded-lg px-[13px] py-[13px] max-w-[85%]">
                   <p className="text-[14px] text-white leading-5 tracking-[-0.15px]">
                     {msg.content}
                   </p>
@@ -105,7 +105,7 @@ export default function AiPanel({ context, onContextConsumed }: AiPanelProps) {
           <button
             onClick={handleSend}
             disabled={!input.trim() || streaming}
-            className={`size-[60px] shrink-0 rounded-lg flex items-center justify-center cursor-pointer bg-dark text-white ${
+            className={`size-[60px] shrink-0 rounded-lg flex items-center justify-center cursor-pointer bg-accent text-white ${
               !input.trim() || streaming ? "opacity-50" : ""
             }`}
           >

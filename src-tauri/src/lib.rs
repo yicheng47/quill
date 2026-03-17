@@ -3,6 +3,7 @@ mod commands;
 mod db;
 mod epub;
 mod error;
+mod icloud;
 mod secrets;
 
 use db::Db;
@@ -11,21 +12,34 @@ use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .setup(|app| {
-            let app_data_dir = app
+            let local_dir = app
                 .path()
                 .app_data_dir()
                 .expect("failed to resolve app data dir");
 
-            let db = Db::init(&app_data_dir).expect("failed to initialize database");
+            // If iCloud sync is enabled and available, use the iCloud directory
+            let data_dir = if icloud::is_icloud_enabled(&local_dir) {
+                match icloud::icloud_data_dir() {
+                    Some(dir) => {
+                        let _ = icloud::ensure_downloaded(&dir);
+                        dir
+                    }
+                    None => local_dir.clone(),
+                }
+            } else {
+                local_dir.clone()
+            };
+
+            let db = Db::init(&data_dir).expect("failed to initialize database");
 
             // Secrets DB always lives at the local app_data_dir (never syncs to iCloud)
             let secrets =
-                Secrets::init(&app_data_dir).expect("failed to initialize secrets store");
+                Secrets::init(&local_dir).expect("failed to initialize secrets store");
 
             // One-time migration: move sensitive keys from settings to secrets
             secrets
@@ -83,7 +97,19 @@ pub fn run() {
             commands::vocab::update_vocab_mastery,
             commands::vocab::list_vocab_due_for_review,
             commands::vocab::get_vocab_stats,
+            // iCloud
+            commands::icloud::icloud_status,
+            commands::icloud::icloud_enable,
+            commands::icloud::icloud_disable,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    app.run(|app_handle, event| {
+        if let tauri::RunEvent::ExitRequested { .. } = event {
+            if let Some(db) = app_handle.try_state::<Db>() {
+                let _ = icloud::wal_checkpoint(&db);
+            }
+        }
+    });
 }

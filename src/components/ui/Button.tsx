@@ -11,7 +11,7 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 
 const variantStyles: Record<ButtonVariant, string> = {
   primary:
-    "bg-dark text-white hover:bg-[#1a1a2e] font-medium",
+    "bg-accent text-white hover:opacity-90 font-medium",
   secondary:
     "border border-border text-[#3f3f47] hover:bg-bg-input font-medium",
   ghost:
@@ -37,7 +37,7 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(
     const base = "inline-flex items-center shrink-0 cursor-pointer transition-colors disabled:opacity-50 disabled:pointer-events-none";
     const variantClass = active
       ? variant === "icon"
-        ? "bg-dark text-white justify-center"
+        ? "text-accent-text justify-center"
         : "bg-accent-bg text-accent-text font-medium"
       : variantStyles[variant];
     const sizeClass = variant === "icon" ? iconSizeStyles[size] : sizeStyles[size];

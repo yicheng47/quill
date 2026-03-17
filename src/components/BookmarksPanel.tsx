@@ -49,7 +49,7 @@ export default function BookmarksPanel({ bookId, onNavigate, getCurrentCfi, getC
           onClick={() => setTab("bookmarks")}
           className={`flex-1 h-[45px] text-[14px] font-medium tracking-[-0.15px] cursor-pointer transition-colors ${
             tab === "bookmarks"
-              ? "text-text-primary border-b-2 border-text-primary"
+              ? "text-text-primary border-b-2 border-accent"
               : "text-text-muted hover:text-text-body"
           }`}
         >
@@ -59,7 +59,7 @@ export default function BookmarksPanel({ bookId, onNavigate, getCurrentCfi, getC
           onClick={() => setTab("highlights")}
           className={`flex-1 h-[45px] text-[14px] font-medium tracking-[-0.15px] cursor-pointer transition-colors ${
             tab === "highlights"
-              ? "text-text-primary border-b-2 border-text-primary"
+              ? "text-text-primary border-b-2 border-accent"
               : "text-text-muted hover:text-text-body"
           }`}
         >
@@ -74,10 +74,10 @@ export default function BookmarksPanel({ bookId, onNavigate, getCurrentCfi, getC
           <div className="flex items-center justify-end px-4 h-[45px] shrink-0">
             <button
               onClick={handleAddBookmark}
-              className="flex items-center gap-1.5 h-8 px-2.5 rounded-lg bg-[#eceef2] hover:bg-[#e0e2e7] cursor-pointer"
+              className="flex items-center gap-1.5 h-8 px-2.5 rounded-lg bg-bg-input hover:bg-border cursor-pointer"
             >
-              <BookmarkPlus size={16} className="text-dark" />
-              <span className="text-[14px] font-medium text-dark tracking-[-0.15px]">
+              <BookmarkPlus size={16} className="text-text-primary" />
+              <span className="text-[14px] font-medium text-text-primary tracking-[-0.15px]">
                 Saved
               </span>
             </button>
@@ -104,12 +104,12 @@ export default function BookmarksPanel({ bookId, onNavigate, getCurrentCfi, getC
                       {getPageFromCfi && (() => {
                         const page = getPageFromCfi(bookmark.cfi);
                         return page != null ? (
-                          <span className="text-[11px] text-[#9f9fa9] tracking-[0.06px]">
+                          <span className="text-[11px] text-text-muted tracking-[0.06px]">
                             Page {page}
                           </span>
                         ) : null;
                       })()}
-                      <span className="flex items-center gap-1 text-[11px] text-[#9f9fa9] tracking-[0.06px]">
+                      <span className="flex items-center gap-1 text-[11px] text-text-muted tracking-[0.06px]">
                         <Clock size={12} />
                         {timeAgo(bookmark.created_at)}
                       </span>
@@ -127,7 +127,7 @@ export default function BookmarksPanel({ bookId, onNavigate, getCurrentCfi, getC
           </div>
 
           <div className="border-t border-border px-4 pt-[11px] pb-3 shrink-0">
-            <p className="text-[11px] text-[#9f9fa9] tracking-[0.06px] text-center">
+            <p className="text-[11px] text-text-muted tracking-[0.06px] text-center">
               {bookmarks.length} bookmark{bookmarks.length !== 1 ? "s" : ""}
             </p>
           </div>
@@ -143,8 +143,8 @@ export default function BookmarksPanel({ bookId, onNavigate, getCurrentCfi, getC
               onClick={() => setColorFilter(null)}
               className={`px-2.5 h-[26px] rounded-full text-[12px] font-medium cursor-pointer transition-colors ${
                 colorFilter === null
-                  ? "bg-text-primary text-white"
-                  : "bg-[#eceef2] text-text-muted hover:bg-[#e0e2e7]"
+                  ? "bg-accent text-white"
+                  : "bg-bg-input text-text-muted hover:bg-border"
               }`}
             >
               All
@@ -154,19 +154,19 @@ export default function BookmarksPanel({ bookId, onNavigate, getCurrentCfi, getC
                 key={c.name}
                 onClick={() => setColorFilter(colorFilter === c.name ? null : c.name)}
                 className={`w-[18px] h-[18px] rounded-full cursor-pointer transition-transform ${
-                  colorFilter === c.name ? "ring-2 ring-offset-1 ring-text-primary scale-110" : "hover:scale-110"
+                  colorFilter === c.name ? "ring-2 ring-offset-1 ring-accent ring-offset-bg-muted scale-110" : "hover:scale-110"
                 }`}
                 style={{ backgroundColor: c.hex }}
               />
             ))}
-            <div className="flex-1 flex items-center gap-1.5 ml-auto h-[28px] px-2 rounded-md bg-[#eceef2]">
-              <Search size={12} className="text-[#9f9fa9] shrink-0" />
+            <div className="flex-1 flex items-center gap-1.5 ml-auto h-[28px] px-2 rounded-md bg-bg-input">
+              <Search size={12} className="text-text-muted shrink-0" />
               <input
                 type="text"
                 placeholder="Search..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="flex-1 text-[12px] text-text-primary bg-transparent outline-none placeholder:text-[#9f9fa9]"
+                className="flex-1 text-[12px] text-text-primary bg-transparent outline-none placeholder:text-text-placeholder"
               />
             </div>
           </div>
@@ -199,12 +199,12 @@ export default function BookmarksPanel({ bookId, onNavigate, getCurrentCfi, getC
                       {getPageFromCfi && (() => {
                         const page = getPageFromCfi(highlight.cfi_range);
                         return page != null ? (
-                          <span className="text-[11px] text-[#9f9fa9] tracking-[0.06px]">
+                          <span className="text-[11px] text-text-muted tracking-[0.06px]">
                             Page {page}
                           </span>
                         ) : null;
                       })()}
-                      <span className="flex items-center gap-1 text-[11px] text-[#9f9fa9] tracking-[0.06px]">
+                      <span className="flex items-center gap-1 text-[11px] text-text-muted tracking-[0.06px]">
                         <Clock size={12} />
                         {timeAgo(highlight.created_at)}
                       </span>
@@ -222,7 +222,7 @@ export default function BookmarksPanel({ bookId, onNavigate, getCurrentCfi, getC
           </div>
 
           <div className="border-t border-border px-4 pt-[11px] pb-3 shrink-0">
-            <p className="text-[11px] text-[#9f9fa9] tracking-[0.06px] text-center">
+            <p className="text-[11px] text-text-muted tracking-[0.06px] text-center">
               {filteredHighlights.length} highlight{filteredHighlights.length !== 1 ? "s" : ""}
             </p>
           </div>

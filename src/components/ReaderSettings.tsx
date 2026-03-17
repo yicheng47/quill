@@ -3,13 +3,13 @@ import { Sun, Check, ScrollText, BookOpen } from "lucide-react";
 import Select from "./ui/Select";
 
 const sliderClass =
-  "w-full h-1 cursor-pointer appearance-none rounded-full bg-[#d4d4d8] [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3.5 [&::-webkit-slider-thumb]:h-3.5 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:border [&::-webkit-slider-thumb]:border-[#d4d4d8] [&::-webkit-slider-thumb]:shadow-sm";
+  "w-full h-1 cursor-pointer appearance-none rounded-full bg-border [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3.5 [&::-webkit-slider-thumb]:h-3.5 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-bg-surface [&::-webkit-slider-thumb]:border [&::-webkit-slider-thumb]:border-border [&::-webkit-slider-thumb]:shadow-sm";
 
 const themes = [
   { id: "original", label: "Original", color: "bg-white border border-[#d4d4d8]" },
   { id: "paper", label: "Paper", color: "bg-[#fef3c6]" },
-  { id: "quiet", label: "Quiet", color: "bg-text-muted" },
-  { id: "night", label: "Night", color: "bg-text-primary" },
+  { id: "quiet", label: "Quiet", color: "bg-[#71717b]" },
+  { id: "night", label: "Night", color: "bg-[#18181b] border border-[#3f3f46]" },
 ] as const;
 
 const fonts = [
@@ -60,6 +60,10 @@ export function getThemeStyles(themeId: ReaderTheme) {
     default:
       return { body: "#ffffff", text: "#0a0a0a" };
   }
+}
+
+export function getDefaultReaderTheme(): ReaderTheme {
+  return document.documentElement.classList.contains("dark") ? "night" : "original";
 }
 
 export default function ReaderSettings({ open, onClose, anchorRef, settings, onSettingsChange }: ReaderSettingsProps) {
@@ -147,13 +151,13 @@ export default function ReaderSettings({ open, onClose, anchorRef, settings, onS
           >
             <div
               className={`size-8 rounded-full ${theme.color} flex items-center justify-center ${
-                settings.theme === theme.id ? "ring-2 ring-link-light ring-offset-2" : ""
+                settings.theme === theme.id ? "ring-2 ring-accent ring-offset-2 ring-offset-bg-surface" : ""
               }`}
             >
               {settings.theme === theme.id && (
                 <Check
                   size={14}
-                  className={theme.id === "night" || theme.id === "quiet" ? "text-white" : "text-link-light"}
+                  className={theme.id === "night" || theme.id === "quiet" ? "text-white" : "text-accent"}
                 />
               )}
             </div>
@@ -182,7 +186,7 @@ export default function ReaderSettings({ open, onClose, anchorRef, settings, onS
             onClick={() => update({ readingMode: "scrolling" })}
             className={`flex-1 flex flex-col items-center gap-1.5 py-2.5 rounded-lg border cursor-pointer transition-colors ${
               settings.readingMode === "scrolling"
-                ? "border-link-light bg-[#eff6ff] text-link-light"
+                ? "border-accent bg-accent-bg text-accent"
                 : "border-border bg-bg-surface text-text-primary hover:bg-bg-input"
             }`}
           >
@@ -193,7 +197,7 @@ export default function ReaderSettings({ open, onClose, anchorRef, settings, onS
             onClick={() => update({ readingMode: "paginated" })}
             className={`flex-1 flex flex-col items-center gap-1.5 py-2.5 rounded-lg border cursor-pointer transition-colors ${
               settings.readingMode === "paginated"
-                ? "border-link-light bg-[#eff6ff] text-link-light"
+                ? "border-accent bg-accent-bg text-accent"
                 : "border-border bg-bg-surface text-text-primary hover:bg-bg-input"
             }`}
           >

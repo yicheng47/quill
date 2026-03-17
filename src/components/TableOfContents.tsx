@@ -23,6 +23,7 @@ export default function TableOfContents({
   anchorRef,
 }: TableOfContentsProps) {
   const popoverRef = useRef<HTMLDivElement>(null);
+  const activeRef = useRef<HTMLButtonElement>(null);
 
   const positionPopover = useCallback(
     (node: HTMLDivElement | null) => {
@@ -53,6 +54,13 @@ export default function TableOfContents({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [open, onClose, anchorRef]);
 
+  // Auto-scroll to active chapter when opened
+  useEffect(() => {
+    if (open && activeRef.current) {
+      activeRef.current.scrollIntoView({ block: "center" });
+    }
+  }, [open]);
+
   if (!open) return null;
 
   return (
@@ -71,29 +79,23 @@ export default function TableOfContents({
           return (
             <button
               key={chapter.page}
+              ref={isActive ? activeRef : undefined}
               onClick={() => {
                 onNavigate(chapter.page);
                 onClose();
               }}
               className={`flex items-center justify-between px-4 py-2 cursor-pointer transition-colors ${
                 isActive
-                  ? "bg-blue-50"
-                  : "hover:bg-border-light"
+                  ? "bg-accent-bg"
+                  : "hover:bg-bg-input"
               }`}
             >
               <span
                 className={`text-[14px] font-medium tracking-[-0.15px] truncate ${
-                  isActive ? "text-[#155dfc]" : "text-[#3f3f47]"
+                  isActive ? "text-accent-text" : "text-text-secondary"
                 }`}
               >
                 {chapter.title}
-              </span>
-              <span
-                className={`text-[12px] font-medium shrink-0 ml-2 ${
-                  isActive ? "text-[#2b7fff]" : "text-[#9f9fa9]"
-                }`}
-              >
-                p. {chapter.page}
               </span>
             </button>
           );

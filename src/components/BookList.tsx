@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { Check } from "lucide-react";
 import type { Book } from "../hooks/useBooks";
-import { deleteBook, markFinished } from "../hooks/useBooks";
+import { deleteBook, markFinished, updateReadingProgress } from "../hooks/useBooks";
 import BookContextMenu from "./BookContextMenu";
 
 interface BookListProps {
@@ -86,9 +86,9 @@ export default function BookList({ books, onBooksChanged }: BookListProps) {
                       </span>
                     )}
                   </div>
-                  <div className="w-full h-1.5 bg-dark/20 rounded-full overflow-hidden">
+                  <div className="w-full h-1.5 bg-accent/20 rounded-full overflow-hidden">
                     <div
-                      className="h-full bg-dark rounded-full"
+                      className="h-full bg-accent rounded-full"
                       style={{ width: `${book.status === "finished" ? 100 : book.progress}%` }}
                     />
                   </div>
@@ -108,6 +108,11 @@ export default function BookList({ books, onBooksChanged }: BookListProps) {
           onClose={() => setContextMenu(null)}
           onMarkFinished={async () => {
             await markFinished(contextMenu.book.id);
+            setContextMenu(null);
+            onBooksChanged?.();
+          }}
+          onMarkReading={async () => {
+            await updateReadingProgress(contextMenu.book.id, contextMenu.book.progress ?? 0);
             setContextMenu(null);
             onBooksChanged?.();
           }}
