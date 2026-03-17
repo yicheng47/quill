@@ -73,17 +73,17 @@ export default function ReaderContextMenu({
   return (
     <div
       ref={menuRef}
-      className="fixed z-50 bg-white/95 border border-border/80 rounded-lg py-1 w-[240px] backdrop-blur-sm shadow-context"
+      className="fixed z-50 bg-bg-surface/95 border border-border/80 rounded-lg py-1 w-[240px] backdrop-blur-sm shadow-context"
       style={{ left: x, top: y }}
     >
       {/* Look Up (short selections only) */}
       {showLookup && (
         <button
           onClick={onLookup}
-          className="flex items-center gap-3 w-[calc(100%-8px)] mx-1 px-3 h-[31.5px] rounded-sm text-left cursor-pointer hover:bg-bg-input transition-colors"
+          className="flex items-center gap-3 w-[calc(100%-8px)] mx-1 px-3 h-[31.5px] rounded-sm text-left cursor-pointer hover:bg-accent-bg transition-colors"
         >
           <Sparkles size={16} className="text-text-muted" />
-          <span className="flex-1 text-[13px] font-medium text-[#27272a] tracking-[-0.08px]">
+          <span className="flex-1 text-[13px] font-medium text-text-primary tracking-[-0.08px]">
             Look Up
           </span>
         </button>
@@ -92,10 +92,10 @@ export default function ReaderContextMenu({
       {/* Ask AI Assistant */}
       <button
         onClick={onAskAI}
-        className="flex items-center gap-3 w-[calc(100%-8px)] mx-1 px-3 h-[31.5px] rounded-sm text-left cursor-pointer hover:bg-bg-input transition-colors"
+        className="flex items-center gap-3 w-[calc(100%-8px)] mx-1 px-3 h-[31.5px] rounded-sm text-left cursor-pointer hover:bg-accent-bg transition-colors"
       >
         <Bot size={16} className="text-text-muted" />
-        <span className="flex-1 text-[13px] font-medium text-[#27272a] tracking-[-0.08px]">
+        <span className="flex-1 text-[13px] font-medium text-text-primary tracking-[-0.08px]">
           Ask AI Assistant
         </span>
       </button>
@@ -108,7 +108,7 @@ export default function ReaderContextMenu({
             className="flex items-center gap-3 w-[calc(100%-8px)] mx-1 px-3 h-[31.5px] rounded-sm text-left cursor-default"
           >
             <Highlighter size={16} className="text-text-muted" />
-            <span className="text-[13px] font-medium text-[#27272a] tracking-[-0.08px]">
+            <span className="text-[13px] font-medium text-text-primary tracking-[-0.08px]">
               Highlight
             </span>
             <div className="flex items-center gap-1.5 ml-auto">
@@ -129,13 +129,13 @@ export default function ReaderContextMenu({
       {/* Copy */}
       <button
         onClick={onCopy}
-        className="flex items-center gap-3 w-[calc(100%-8px)] mx-1 px-3 h-[31.5px] rounded-sm text-left cursor-pointer hover:bg-bg-input transition-colors"
+        className="flex items-center gap-3 w-[calc(100%-8px)] mx-1 px-3 h-[31.5px] rounded-sm text-left cursor-pointer hover:bg-accent-bg transition-colors"
       >
         <Copy size={16} className="text-text-muted" />
-        <span className="flex-1 text-[13px] font-medium text-[#27272a] tracking-[-0.08px]">
+        <span className="flex-1 text-[13px] font-medium text-text-primary tracking-[-0.08px]">
           Copy
         </span>
-        <span className="text-[11px] font-medium text-[#9f9fa9] tracking-[0.06px]">
+        <span className="text-[11px] font-medium text-text-muted tracking-[0.06px]">
           ⌘C
         </span>
       </button>

@@ -34,3 +34,27 @@ Create a new versioned release for Quill.
 12. Publish the release: `gh release edit v{version} --draft=false --notes "..."`. Include a **Download** section at the bottom with the `.dmg` filenames for Apple Silicon and Intel.
 
 If any step fails, stop and report the error — do not continue.
+
+## Notarization Commands
+
+- **Check notarization history**:
+  ```
+  xcrun notarytool history --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID"
+  ```
+
+- **Check a specific submission**:
+  ```
+  xcrun notarytool info <submission-id> --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID"
+  ```
+
+- **Verify stapling on a DMG or .app**:
+  ```
+  stapler validate <file>
+  ```
+
+- **Check code signing**:
+  ```
+  codesign -dvv <path-to-app>
+  ```
+
+Note: Apple credentials are in `~/.zshrc`. The shell may not have them loaded — use literal values if env vars are empty.

@@ -33,15 +33,15 @@ export default function VocabPanel({ bookId, onNavigate, getPageFromCfi }: Vocab
             Vocabulary
           </span>
         </div>
-        <span className="text-[11px] text-[#9f9fa9] tracking-[0.06px]">
+        <span className="text-[11px] text-text-muted tracking-[0.06px]">
           {words.length} word{words.length !== 1 ? "s" : ""}
         </span>
       </div>
 
       {/* Search */}
       <div className="px-4 pb-2 shrink-0">
-        <div className="flex items-center gap-1.5 h-[28px] px-2 rounded-lg bg-[#f4f4f5] border border-[rgba(228,228,231,0.6)]">
-          <Search size={12} className="text-[#9f9fa9] shrink-0" />
+        <div className="flex items-center gap-1.5 h-[28px] px-2 rounded-lg bg-bg-input border border-border">
+          <Search size={12} className="text-text-muted shrink-0" />
           <input
             type="search"
             placeholder="Search vocabulary..."
@@ -52,7 +52,7 @@ export default function VocabPanel({ bookId, onNavigate, getPageFromCfi }: Vocab
             autoCorrect="off"
             autoCapitalize="off"
             spellCheck={false}
-            className="flex-1 text-[12px] text-text-primary bg-transparent outline-none placeholder:text-[#9f9fa9] [&::-webkit-search-cancel-button]:hidden"
+            className="flex-1 text-[12px] text-text-primary bg-transparent outline-none placeholder:text-text-placeholder [&::-webkit-search-cancel-button]:hidden"
           />
         </div>
       </div>
@@ -61,14 +61,14 @@ export default function VocabPanel({ bookId, onNavigate, getPageFromCfi }: Vocab
       <div className="flex-1 overflow-auto">
         {filtered.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full px-4">
-            <div className="size-12 rounded-full bg-[#f4f4f5] flex items-center justify-center mb-3">
-              <BookOpen size={20} className="text-[#9f9fa9]" />
+            <div className="size-12 rounded-full bg-bg-input flex items-center justify-center mb-3">
+              <BookOpen size={20} className="text-text-muted" />
             </div>
-            <p className="text-[14px] text-[#71717b] text-center">
+            <p className="text-[14px] text-text-muted text-center">
               {words.length === 0 ? "No saved words yet" : "No matches found"}
             </p>
             {words.length === 0 && (
-              <p className="text-[12px] text-[#9f9fa9] text-center mt-1">
+              <p className="text-[12px] text-text-muted text-center mt-1">
                 Use "Look Up" on selected text and tap Save
               </p>
             )}
@@ -83,22 +83,21 @@ export default function VocabPanel({ bookId, onNavigate, getPageFromCfi }: Vocab
             return (
               <div
                 key={word.id}
-                className="group relative border-l-[3px] border-[#c27aff] bg-[#fafafa] mx-3 mb-2 rounded-r-lg px-4 pt-3 pb-3"
+                className="group relative border-l-[3px] border-accent bg-bg-surface mx-3 mb-2 rounded-r-lg px-4 pt-3 pb-3"
               >
                 {/* Trash — top right */}
                 <button
                   onClick={() => remove(word.id)}
-                  className="absolute top-3 right-3 p-1 rounded hover:bg-white/80 cursor-pointer"
+                  className="absolute top-3 right-3 p-1 rounded hover:bg-bg-input cursor-pointer"
                 >
-                  <Trash2 size={15} className="text-[#d4d4d8]" />
+                  <Trash2 size={15} className="text-text-muted" />
                 </button>
 
-                {/* Word + speaker */}
+                {/* Word */}
                 <div className="flex items-center gap-2 pr-8">
                   <span className="text-[16px] font-bold text-text-primary leading-5">
                     {word.word}
                   </span>
-                  <Volume2 size={16} className="text-[#d4d4d8] shrink-0" />
                 </div>
 
                 {/* Definition — clamped */}
@@ -108,7 +107,7 @@ export default function VocabPanel({ bookId, onNavigate, getPageFromCfi }: Vocab
 
                 {/* AI context — italic, clamped */}
                 {ctxText && (
-                  <p className="text-[13px] italic text-[#9f9fa9] leading-[1.45] mt-1 line-clamp-2">
+                  <p className="text-[13px] italic text-text-muted leading-[1.45] mt-1 line-clamp-2">
                     {ctxText}
                   </p>
                 )}
@@ -117,12 +116,12 @@ export default function VocabPanel({ bookId, onNavigate, getPageFromCfi }: Vocab
                 <div className="flex items-center justify-between mt-2.5">
                   <div className="flex items-center gap-3">
                     {page != null && (
-                      <span className="flex items-center gap-1 text-[11px] text-[#9f9fa9] tracking-[0.06px]">
+                      <span className="flex items-center gap-1 text-[11px] text-text-muted tracking-[0.06px]">
                         <FileText size={12} />
                         p. {page}
                       </span>
                     )}
-                    <span className="flex items-center gap-1 text-[11px] text-[#9f9fa9] tracking-[0.06px]">
+                    <span className="flex items-center gap-1 text-[11px] text-text-muted tracking-[0.06px]">
                       <Clock size={12} />
                       {timeAgo(word.created_at)}
                     </span>
@@ -130,7 +129,7 @@ export default function VocabPanel({ bookId, onNavigate, getPageFromCfi }: Vocab
                   {word.cfi && (
                     <button
                       onClick={() => onNavigate?.(word.cfi!)}
-                      className="flex items-center gap-1 text-[12px] font-medium text-[#9810fa] cursor-pointer hover:opacity-70"
+                      className="flex items-center gap-1 text-[12px] font-medium text-accent-text cursor-pointer hover:opacity-70"
                     >
                       {page != null ? `Go to p. ${page}` : "Go to location"}
                       <ArrowRight size={12} />
@@ -145,7 +144,7 @@ export default function VocabPanel({ bookId, onNavigate, getPageFromCfi }: Vocab
 
       {/* Footer */}
       <div className="border-t border-border px-4 pt-[11px] pb-3 shrink-0">
-        <p className="text-[11px] text-[#9f9fa9] tracking-[0.06px] text-center">
+        <p className="text-[11px] text-text-muted tracking-[0.06px] text-center">
           {filtered.length} word{filtered.length !== 1 ? "s" : ""}
         </p>
       </div>

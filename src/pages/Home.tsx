@@ -6,6 +6,7 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import Sidebar from "../components/Sidebar";
 import BookGrid from "../components/BookGrid";
 import BookList from "../components/BookList";
+import VocabContent from "../components/VocabContent";
 import Button from "../components/ui/Button";
 import Input from "../components/ui/Input";
 import { useBooks, importBookDialog, type Book } from "../hooks/useBooks";
@@ -116,86 +117,90 @@ export default function Home() {
         collections={collections}
       />
 
-      <main className="flex-1 flex flex-col min-w-0">
-        <div className="border-b border-border px-page pb-section relative">
-          <div data-tauri-drag-region className="absolute top-0 left-0 right-0 h-11" />
-          <div className="pt-11 flex items-center justify-between mb-4">
-            <h1 className="text-[24px] font-semibold text-text-primary tracking-[0.07px]">
-              {title}
-            </h1>
-            <div className="flex items-center gap-0">
-              <Button
-                variant="icon"
-                size="md"
-                active={viewMode === "grid"}
-                onClick={() => setViewMode("grid")}
-              >
-                <Grid3x3 size={16} />
-              </Button>
-              <Button
-                variant="icon"
-                size="md"
-                active={viewMode === "list"}
-                onClick={() => setViewMode("list")}
-              >
-                <List size={16} />
-              </Button>
-              <div className="w-px h-6 bg-border mx-2" />
-              <Button
-                variant="icon"
-                size="md"
-                onClick={() => navigate("/settings")}
-              >
-                <Settings size={16} />
-              </Button>
+      {activeFilter === "vocab" ? (
+        <VocabContent />
+      ) : (
+        <main className="flex-1 flex flex-col min-w-0">
+          <div className="border-b border-border px-page pb-section relative">
+            <div data-tauri-drag-region className="absolute top-0 left-0 right-0 h-11" />
+            <div className="pt-11 flex items-center justify-between mb-4">
+              <h1 className="text-[24px] font-semibold text-text-primary tracking-[0.07px]">
+                {title}
+              </h1>
+              <div className="flex items-center gap-0">
+                <Button
+                  variant="icon"
+                  size="md"
+                  active={viewMode === "grid"}
+                  onClick={() => setViewMode("grid")}
+                >
+                  <Grid3x3 size={16} />
+                </Button>
+                <Button
+                  variant="icon"
+                  size="md"
+                  active={viewMode === "list"}
+                  onClick={() => setViewMode("list")}
+                >
+                  <List size={16} />
+                </Button>
+                <div className="w-px h-6 bg-border mx-2" />
+                <Button
+                  variant="icon"
+                  size="md"
+                  onClick={() => navigate("/settings")}
+                >
+                  <Settings size={16} />
+                </Button>
+              </div>
             </div>
+
+            <Input
+              icon={<Search size={16} />}
+              placeholder="Search books..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-[448px]"
+            />
           </div>
 
-          <Input
-            icon={<Search size={16} />}
-            placeholder="Search books..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-[448px]"
-          />
-        </div>
+          <div className="flex-1 overflow-auto p-page pb-20">
+            {loading ? (
+              <p className="text-text-muted text-[14px]">Loading...</p>
+            ) : displayBooks.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-full gap-4">
+                <p className="text-text-muted text-[14px]">
+                  {searchQuery
+                    ? "No results found"
+                    : isCollectionFilter
+                      ? "No books in this collection"
+                      : activeFilter !== "all"
+                        ? `No ${activeFilter} books`
+                        : "No books yet"}
+                </p>
+                {activeFilter === "all" && !searchQuery && (
+                  <Button variant="primary" size="md" onClick={handleImport}>
+                    <Plus size={16} />
+                    Import EPUB
+                  </Button>
+                )}
+              </div>
+            ) : viewMode === "grid" ? (
+              <BookGrid books={displayBooks} onBooksChanged={() => { refresh(); allBooks.refresh(); collections.refresh(); }} />
+            ) : (
+              <BookList books={displayBooks} onBooksChanged={() => { refresh(); allBooks.refresh(); collections.refresh(); }} />
+            )}
+          </div>
 
-        <div className="flex-1 overflow-auto p-page pb-20">
-          {loading ? (
-            <p className="text-text-muted text-[14px]">Loading...</p>
-          ) : displayBooks.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full gap-4">
-              <p className="text-text-muted text-[14px]">
-                {searchQuery
-                  ? "No results found"
-                  : isCollectionFilter
-                    ? "No books in this collection"
-                    : activeFilter !== "all"
-                      ? `No ${activeFilter} books`
-                      : "No books yet"}
-              </p>
-              {activeFilter === "all" && !searchQuery && (
-                <Button variant="primary" size="md" onClick={handleImport}>
-                  <Plus size={16} />
-                  Import EPUB
-                </Button>
-              )}
-            </div>
-          ) : viewMode === "grid" ? (
-            <BookGrid books={displayBooks} onBooksChanged={() => { refresh(); allBooks.refresh(); collections.refresh(); }} />
-          ) : (
-            <BookList books={displayBooks} onBooksChanged={() => { refresh(); allBooks.refresh(); collections.refresh(); }} />
-          )}
-        </div>
-
-        <button
-          onClick={handleImport}
-          className="shrink-0 mx-page mb-page rounded-lg border border-dashed border-border py-4 flex items-center justify-center gap-2 text-[14px] text-text-muted hover:border-text-muted transition-colors cursor-pointer"
-        >
-          <Upload size={16} />
-          Drop files or click to import more books
-        </button>
-      </main>
+          <button
+            onClick={handleImport}
+            className="shrink-0 mx-page mb-page rounded-lg border border-dashed border-border py-4 flex items-center justify-center gap-2 text-[14px] text-text-muted hover:border-text-muted transition-colors cursor-pointer"
+          >
+            <Upload size={16} />
+            Drop files or click to import more books
+          </button>
+        </main>
+      )}
 
       {isDragging && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm">

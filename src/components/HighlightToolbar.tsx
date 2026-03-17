@@ -61,7 +61,7 @@ export default function HighlightToolbar({
   return (
     <div
       ref={ref}
-      className="fixed z-50 flex items-center gap-2 px-3 h-9 bg-white/95 backdrop-blur-sm rounded-full shadow-context"
+      className="fixed z-50 flex items-center gap-2 px-3 h-9 bg-bg-surface/95 backdrop-blur-sm rounded-full shadow-context"
       style={{ left: x, top: y - 44 }}
     >
       {HIGHLIGHT_COLORS.map((c) => (

@@ -181,7 +181,7 @@ export default function LookupPopover({
   return (
     <div
       ref={popoverRef}
-      className="fixed z-50 w-[440px] bg-white border border-border/80 rounded-xl shadow-context"
+      className="fixed z-50 w-[440px] bg-bg-surface border border-border/80 rounded-xl shadow-context"
       style={{ left: pos.left, top: pos.top }}
     >
       {/* Header — purple tint */}

@@ -23,7 +23,7 @@
       "csp": null,
       "assetProtocol": {
         "enable": true,
-        "scope": ["$APPDATA/**"]
+        "scope": ["$APPDATA/**", "$HOME/Library/Mobile Documents/iCloud~com~jason~quill/Documents/**"]
       }
     }
   },
@@ -38,7 +38,7 @@
     ],
     "macOS": {
       "signingIdentity": null,
-      "entitlements": null
+      "entitlements": "Entitlements.plist"
     }
   }
 }

@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { invoke } from "@tauri-apps/api/core";
-import { ArrowLeft, Bot, BookOpen, SlidersHorizontal, Palette, Save, KeyRound, Shield } from "lucide-react";
+import { ArrowLeft, Bot, BookOpen, SlidersHorizontal, Palette, Save, KeyRound, Shield, Cloud, Loader2 } from "lucide-react";
 import Button from "../components/ui/Button";
 import Select from "../components/ui/Select";
 import Input from "../components/ui/Input";
@@ -17,15 +17,15 @@ export default function SettingsPage() {
   const { settings, loading, saveBulk } = useSettings();
 
   // AI config
-  const [provider, setProvider] = useState("ollama");
+  const [provider, setProvider] = useState("openai");
   const [apiKey, setApiKey] = useState("");
-  const [model, setModel] = useState("llama3.2");
-  const [baseUrl, setBaseUrl] = useState("http://localhost:11434");
+  const [model, setModel] = useState("gpt-5.3-codex");
+  const [baseUrl, setBaseUrl] = useState("https://api.openai.com");
   const [temperature, setTemperature] = useState(0.3);
   const [keepAlive, setKeepAlive] = useState("30m");
 
   // OAuth
-  const [authMode, setAuthMode] = useState<"api_key" | "oauth">("api_key");
+  const [authMode, setAuthMode] = useState<"api_key" | "oauth">("oauth");
   const [oauthStatus, setOauthStatus] = useState<{ connected: boolean; account_id: string | null }>({ connected: false, account_id: null });
   const [oauthLoading, setOauthLoading] = useState(false);
   const [oauthError, setOauthError] = useState<string | null>(null);
@@ -44,6 +44,12 @@ export default function SettingsPage() {
 
   // Appearance
   const [theme, setTheme] = useState("system");
+
+  // iCloud
+  const [icloudAvailable, setIcloudAvailable] = useState(false);
+  const [icloudEnabled, setIcloudEnabled] = useState(false);
+  const [icloudLoading, setIcloudLoading] = useState(false);
+  const [icloudError, setIcloudError] = useState<string | null>(null);
 
   // Load saved settings
   useEffect(() => {
@@ -64,6 +70,36 @@ export default function SettingsPage() {
     if (settings.auto_save) setAutoSave(settings.auto_save === "true");
     if (settings.theme) setTheme(settings.theme);
   }, [settings, loading]);
+
+  // Fetch iCloud status on mount
+  useEffect(() => {
+    invoke<{ available: boolean; enabled: boolean }>("icloud_status")
+      .then((status) => {
+        setIcloudAvailable(status.available);
+        setIcloudEnabled(status.enabled);
+      })
+      .catch(() => {});
+  }, []);
+
+  // Apply theme
+  useEffect(() => {
+    const root = document.documentElement;
+    const applyTheme = (dark: boolean) => {
+      root.classList.toggle("dark", dark);
+    };
+
+    if (theme === "dark") {
+      applyTheme(true);
+    } else if (theme === "light") {
+      applyTheme(false);
+    } else {
+      const mq = window.matchMedia("(prefers-color-scheme: dark)");
+      applyTheme(mq.matches);
+      const handler = (e: MediaQueryListEvent) => applyTheme(e.matches);
+      mq.addEventListener("change", handler);
+      return () => mq.removeEventListener("change", handler);
+    }
+  }, [theme]);
 
   // Fetch OAuth status when provider is OpenAI
   useEffect(() => {
@@ -98,6 +134,24 @@ export default function SettingsPage() {
       setTimeout(() => setShowToast(false), 2000);
     } catch (err) {
       console.error("Failed to save settings:", err);
+    }
+  };
+
+  const handleIcloudToggle = async () => {
+    setIcloudLoading(true);
+    setIcloudError(null);
+    try {
+      if (icloudEnabled) {
+        await invoke("icloud_disable");
+        setIcloudEnabled(false);
+      } else {
+        await invoke("icloud_enable");
+        setIcloudEnabled(true);
+      }
+    } catch (err) {
+      setIcloudError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIcloudLoading(false);
     }
   };
 
@@ -176,7 +230,7 @@ export default function SettingsPage() {
                   setProvider(p);
                   if (p === "ollama") {
                     setBaseUrl("http://localhost:11434");
-                    setModel("llama3.2");
+                    setModel("qwen3.5");
                   } else if (p === "openai") {
                     setBaseUrl("https://api.openai.com");
                     setModel("gpt-4o");
@@ -208,7 +262,7 @@ export default function SettingsPage() {
                       type="button"
                       className={`flex-1 flex items-center justify-center gap-2 h-9 text-[13px] font-medium transition-colors ${
                         authMode === "api_key"
-                          ? "bg-dark text-white"
+                          ? "bg-accent text-white"
                           : "bg-bg-page text-text-secondary hover:bg-bg-input"
                       }`}
                       onClick={() => { setAuthMode("api_key"); setModel("gpt-4o"); }}
@@ -220,7 +274,7 @@ export default function SettingsPage() {
                       type="button"
                       className={`flex-1 flex items-center justify-center gap-2 h-9 text-[13px] font-medium transition-colors ${
                         authMode === "oauth"
-                          ? "bg-dark text-white"
+                          ? "bg-accent text-white"
                           : "bg-bg-page text-text-secondary hover:bg-bg-input"
                       }`}
                       onClick={() => { setAuthMode("oauth"); setModel("gpt-5.3-codex"); }}
@@ -247,7 +301,7 @@ export default function SettingsPage() {
                       </div>
                       <button
                         type="button"
-                        className="text-[13px] font-medium text-red-500 hover:text-red-600 transition-colors"
+                        className="text-[13px] font-medium text-text-muted hover:text-text-primary transition-colors"
                         onClick={handleOAuthLogout}
                       >
                         Logout
@@ -331,7 +385,7 @@ export default function SettingsPage() {
                   value={model}
                   onChange={(e) => setModel(e.target.value)}
                   placeholder={
-                    provider === "ollama" ? "llama3.2" :
+                    provider === "ollama" ? "qwen3.5" :
                     provider === "anthropic" ? "claude-sonnet-4-20250514" :
                     provider === "minimax" ? "MiniMax-M2.5" :
                     provider === "google" ? "gemini-2.0-flash" :
@@ -492,6 +546,67 @@ export default function SettingsPage() {
             </div>
           </section>
 
+          {/* iCloud Sync */}
+          <section className="bg-bg-surface rounded-xl border border-border p-6">
+            <div className="flex items-center gap-2 mb-1">
+              <Cloud size={20} className="text-text-muted" />
+              <h2 className="text-[16px] font-semibold text-text-primary">
+                iCloud Sync
+              </h2>
+            </div>
+            <p className="text-[13px] text-text-muted mb-4">
+              Sync your books, reading progress, and highlights across your Macs
+            </p>
+
+            <div className="space-y-4">
+              {icloudLoading ? (
+                <div className="flex items-center gap-2">
+                  <Loader2 size={16} className="text-text-muted animate-spin" />
+                  <p className="text-[13px] text-text-muted">
+                    Moving files to iCloud Drive...
+                  </p>
+                </div>
+              ) : (
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-[14px] font-semibold text-text-primary">Enable iCloud Sync</p>
+                    <p className="text-[13px] text-text-muted">Store your library in iCloud Drive</p>
+                  </div>
+                  <Toggle
+                    checked={icloudEnabled}
+                    onChange={handleIcloudToggle}
+                    disabled={!icloudAvailable}
+                  />
+                </div>
+              )}
+
+              {!icloudAvailable && !icloudLoading && (
+                <p className="text-[12px] text-text-muted">
+                  Sign in to iCloud on your Mac to enable sync
+                </p>
+              )}
+
+              {icloudError && (
+                <div className="flex items-center justify-between bg-[#fef2f2] border border-[#ffc9c9] rounded-lg px-3.5 py-2">
+                  <span className="text-[12px] text-[#e7000b]">
+                    Failed to enable iCloud Sync. Please try again.
+                  </span>
+                  <button
+                    type="button"
+                    className="text-[12px] font-medium text-[#e7000b] underline"
+                    onClick={handleIcloudToggle}
+                  >
+                    Retry
+                  </button>
+                </div>
+              )}
+
+              <p className="text-[12px] text-[#9f9fa9]">
+                API keys and login tokens are stored locally and will not sync
+              </p>
+            </div>
+          </section>
+
           {/* Appearance */}
           <section className="bg-bg-surface rounded-xl border border-border p-6">
             <div className="flex items-center gap-2 mb-1">
@@ -526,12 +641,12 @@ export default function SettingsPage() {
       />
 
       {showToast && (
-        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-50 bg-dark text-white text-[14px] font-medium px-4 py-2.5 rounded-lg shadow-popover">
+        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-50 bg-accent text-white text-[14px] font-medium px-4 py-2.5 rounded-lg shadow-popover">
           Settings saved successfully
         </div>
       )}
       {oauthToast && (
-        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-50 bg-dark text-white text-[14px] font-medium px-4 py-2.5 rounded-lg shadow-popover flex items-center gap-2">
+        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-50 bg-accent text-white text-[14px] font-medium px-4 py-2.5 rounded-lg shadow-popover flex items-center gap-2">
           Successfully authenticated with OpenAI
         </div>
       )}

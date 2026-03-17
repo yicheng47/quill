@@ -13,7 +13,7 @@ import {
 import Button from "../components/ui/Button";
 import AiPanel from "../components/AiPanel";
 import BookmarksPanel from "../components/BookmarksPanel";
-import ReaderSettings, { type ReaderSettingsState, getFontFamily, getThemeStyles } from "../components/ReaderSettings";
+import ReaderSettings, { type ReaderSettingsState, getFontFamily, getThemeStyles, getDefaultReaderTheme } from "../components/ReaderSettings";
 import ReaderContextMenu from "../components/ReaderContextMenu";
 import HighlightToolbar from "../components/HighlightToolbar";
 import LookupPopover from "../components/LookupPopover";
@@ -61,6 +61,10 @@ const getReaderCSS = (settings: ReaderSettingsState) => {
       font-family: ${fontFamily} !important;
       line-height: ${settings.lineSpacing} !important;
     }
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: ${themeColors.text}33; border-radius: 9999px; }
+    ::-webkit-scrollbar-thumb:hover { background: ${themeColors.text}55; }
     img, svg, video {
       max-width: 100% !important;
       height: auto !important;
@@ -133,8 +137,8 @@ export default function Reader() {
     cfiRange: string;
     color: string;
   } | null>(null);
-  const [readerSettings, setReaderSettings] = useState<ReaderSettingsState>({
-    theme: "original",
+  const [readerSettings, setReaderSettings] = useState<ReaderSettingsState>(() => ({
+    theme: getDefaultReaderTheme(),
     font: "georgia",
     fontSize: 26,
     brightness: 100,
@@ -143,7 +147,7 @@ export default function Reader() {
     charSpacing: 0,
     wordSpacing: 0,
     margins: 0,
-  });
+  }));
 
   const settingsAnchorRef = useRef<HTMLButtonElement>(null);
   const tocAnchorRef = useRef<HTMLButtonElement>(null);
@@ -618,6 +622,7 @@ export default function Reader() {
             ref={tocAnchorRef}
             variant="icon"
             size="md"
+            active={tocOpen}
             onClick={() => { setTocOpen((v) => !v); setSettingsOpen(false); }}
           >
             <List size={16} />
@@ -637,14 +642,12 @@ export default function Reader() {
           <button
             ref={settingsAnchorRef}
             onClick={() => { setSettingsOpen((v) => !v); setTocOpen(false); }}
-            className="flex items-center gap-1 h-8 px-2 rounded-lg hover:bg-bg-input cursor-pointer"
+            className={`flex items-center justify-center gap-1 size-9 rounded-lg cursor-pointer transition-colors ${
+              settingsOpen ? "text-accent-text" : "text-text-muted hover:bg-bg-input"
+            }`}
           >
-            <span className="text-[16px] font-semibold text-text-body leading-6">
-              A
-            </span>
-            <span className="text-[12px] font-semibold text-text-body leading-4">
-              A
-            </span>
+            <span className="text-[16px] font-semibold leading-6">A</span>
+            <span className="text-[12px] font-semibold leading-4">A</span>
           </button>
           <ReaderSettings
             open={settingsOpen}
@@ -654,74 +657,48 @@ export default function Reader() {
             onSettingsChange={setReaderSettings}
           />
 
-          {sidePanel === "bookmarks" ? (
-            <Button
-              variant="icon"
-              size="md"
-              active
-              onClick={() => togglePanel("bookmarks")}
-            >
-              <Bookmark size={16} className="text-white" />
-            </Button>
-          ) : (
-            <Button
-              variant="icon"
-              size="md"
-              onClick={() => togglePanel("bookmarks")}
-            >
-              <Bookmark size={16} className="text-text-body" />
-            </Button>
-          )}
+          <Button
+            variant="icon"
+            size="md"
+            active={sidePanel === "bookmarks"}
+            onClick={() => togglePanel("bookmarks")}
+          >
+            <Bookmark size={16} />
+          </Button>
 
-          {sidePanel === "vocab" ? (
-            <Button
-              variant="icon"
-              size="md"
-              active
-              onClick={() => togglePanel("vocab")}
-            >
-              <Languages size={16} className="text-white" />
-            </Button>
-          ) : (
-            <Button
-              variant="icon"
-              size="md"
-              onClick={() => togglePanel("vocab")}
-            >
-              <Languages size={16} className="text-text-body" />
-            </Button>
-          )}
+          <Button
+            variant="icon"
+            size="md"
+            active={sidePanel === "vocab"}
+            onClick={() => togglePanel("vocab")}
+          >
+            <Languages size={16} />
+          </Button>
 
           <div className="w-px h-6 bg-border mx-1" />
 
-          {sidePanel === "ai" ? (
-            <Button
-              variant="primary"
-              size="sm"
-              onClick={() => togglePanel("ai")}
-            >
-              <Bot size={16} />
+          <button
+            onClick={() => togglePanel("ai")}
+            className={`flex items-center gap-2 h-8 px-2.5 rounded-lg cursor-pointer transition-colors ${
+              sidePanel === "ai"
+                ? "text-accent-text"
+                : "hover:bg-bg-input text-text-muted"
+            }`}
+          >
+            <Bot size={16} />
+            <span className="text-[14px] font-medium tracking-[-0.15px]">
               AI Assistant
-            </Button>
-          ) : (
-            <button
-              onClick={() => togglePanel("ai")}
-              className="flex items-center gap-2 h-8 px-2.5 rounded-lg hover:bg-bg-input cursor-pointer"
-            >
-              <Bot size={16} className="text-text-body" />
-              <span className="text-[14px] font-medium text-text-body tracking-[-0.15px]">
-                AI Assistant
-              </span>
-            </button>
-          )}
+            </span>
+          </button>
         </div>
       </header>
 
       {/* Body */}
-      <div className="flex flex-1 overflow-hidden">
-        <div className="flex-1 flex flex-col min-w-0">
+      <div className="flex flex-1 overflow-hidden" style={{ backgroundColor: getThemeStyles(readerSettings.theme).body }}>
+        <div className="flex-1 flex flex-col min-w-0" style={{ backgroundColor: getThemeStyles(readerSettings.theme).body }}>
           <main
-            className="flex-1 bg-bg-surface relative overflow-hidden"
+            className="flex-1 relative overflow-hidden"
+            style={{ backgroundColor: getThemeStyles(readerSettings.theme).body }}
             onContextMenu={handleContextMenu}
             onClick={() => { setTocOpen(false); setSettingsOpen(false); }}
           >
@@ -765,8 +742,15 @@ export default function Reader() {
         {sidePanel && (
           <div
             onMouseDown={handleMouseDown}
-            className="w-1.5 bg-transparent flex items-center justify-center relative shrink-0 cursor-col-resize hover:bg-black/5 transition-colors"
+            className="w-0 relative shrink-0 cursor-col-resize z-10"
           >
+            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-5 h-7 rounded-md bg-bg-surface border border-border shadow-sm flex items-center justify-center">
+              <svg width="6" height="10" viewBox="0 0 6 10" fill="currentColor" className="text-text-muted">
+                <circle cx="1" cy="1" r="1" /><circle cx="5" cy="1" r="1" />
+                <circle cx="1" cy="5" r="1" /><circle cx="5" cy="5" r="1" />
+                <circle cx="1" cy="9" r="1" /><circle cx="5" cy="9" r="1" />
+              </svg>
+            </div>
           </div>
         )}
         <div ref={panelRef} className={sidePanel ? "shrink-0 h-full" : "hidden"} style={{ width: panelWidth }}>

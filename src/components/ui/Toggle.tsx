@@ -1,15 +1,17 @@
 interface ToggleProps {
   checked: boolean;
   onChange: (checked: boolean) => void;
+  disabled?: boolean;
 }
 
-export default function Toggle({ checked, onChange }: ToggleProps) {
+export default function Toggle({ checked, onChange, disabled }: ToggleProps) {
   return (
     <button
-      onClick={() => onChange(!checked)}
-      className={`relative w-[44px] h-[24px] rounded-full transition-colors cursor-pointer ${
-        checked ? "bg-dark" : "bg-border"
-      }`}
+      onClick={() => !disabled && onChange(!checked)}
+      disabled={disabled}
+      className={`relative w-[44px] h-[24px] rounded-full transition-colors ${
+        disabled ? "opacity-50 cursor-not-allowed" : "cursor-pointer"
+      } ${checked ? "bg-accent" : "bg-border"}`}
     >
       <div
         className={`absolute top-[2px] size-5 rounded-full bg-white shadow transition-transform ${
