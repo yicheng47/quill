@@ -13,5 +13,7 @@
     <array>
         <string>iCloud.com.wycstudios.quill</string>
     </array>
+    <key>com.apple.developer.icloud-container-environment</key>
+    <string>Production</string>
 </dict>
 </plist>
