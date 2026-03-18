@@ -62,8 +62,7 @@ jobs:
         env:
           PROVISIONING_PROFILE: ${{ secrets.PROVISIONING_PROFILE }}
         run: |
-          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
-          echo "$PROVISIONING_PROFILE" | base64 --decode > ~/Library/MobileDevice/Provisioning\ Profiles/quill.provisionprofile
+          echo "$PROVISIONING_PROFILE" | base64 --decode > src-tauri/embedded.provisionprofile
 
       - name: Verify Certificate
         run: |
@@ -89,36 +88,3 @@ jobs:
           releaseDraft: true
           prerelease: false
           args: --target ${{ matrix.target }}
-
-      - name: Embed Provisioning Profile and Re-sign
-        env:
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          APP=$(find src-tauri/target/${{ matrix.target }}/release/bundle/macos -name "*.app" -maxdepth 1)
-          echo "App bundle: $APP"
-          cp ~/Library/MobileDevice/Provisioning\ Profiles/quill.provisionprofile "$APP/Contents/embedded.provisionprofile"
-          codesign --force --sign "$APPLE_SIGNING_IDENTITY" --entitlements src-tauri/Entitlements.plist "$APP"
-          echo "Embedded provisioning profile and re-signed with entitlements"
-          codesign -d --entitlements - "$APP"
-          # Re-create DMG with signed app
-          DMG=$(find src-tauri/target/${{ matrix.target }}/release/bundle/dmg -name "*.dmg" -maxdepth 1)
-          echo "Re-creating DMG with signed app..."
-          hdiutil create -volname "Quill" -srcfolder "$APP" -ov -format UDZO "$DMG"
-          codesign --force --sign "$APPLE_SIGNING_IDENTITY" "$DMG"
-          # Notarize
-          xcrun notarytool submit "$DMG" --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
-          # Staple with retry (ticket propagation delay)
-          for i in 1 2 3; do
-            if xcrun stapler staple "$DMG"; then
-              echo "Stapling succeeded"
-              break
-            fi
-            echo "Stapling attempt $i failed, waiting 30s..."
-            sleep 30
-          done
-          # Re-upload to release
-          gh release upload "${{ github.ref_name }}" "$DMG" --clobber
-          echo "Uploaded $(basename $DMG) to release"
