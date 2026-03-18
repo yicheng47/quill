@@ -6,18 +6,32 @@ use rusqlite::Connection;
 use crate::db::Db;
 use crate::error::{AppError, AppResult};
 
+#[cfg(target_os = "macos")]
+use objc2_foundation::{NSFileManager, NSString};
+
+#[cfg(target_os = "macos")]
+const ICLOUD_CONTAINER_ID: &str = "iCloud.com.wycstudios.quill";
 const MARKER_FILE: &str = ".icloud_enabled";
 
-/// Get the iCloud Drive directory for Quill.
-/// Uses the user-visible iCloud Drive folder (com~apple~CloudDocs/Quill/).
-/// Returns `None` if iCloud Drive is not available (user not signed in).
+/// Get the iCloud ubiquity container URL for this app.
+/// Returns `None` if iCloud is unavailable (not signed in, no entitlement).
+#[cfg(target_os = "macos")]
+pub fn get_icloud_container_url() -> Option<PathBuf> {
+    let fm = NSFileManager::defaultManager();
+    let container_id = NSString::from_str(ICLOUD_CONTAINER_ID);
+    let url = fm.URLForUbiquityContainerIdentifier(Some(&container_id))?;
+    let path = url.path()?;
+    Some(PathBuf::from(path.to_string()))
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn get_icloud_container_url() -> Option<PathBuf> {
+    None
+}
+
+/// Returns the iCloud Documents directory (container/Documents/).
 pub fn icloud_data_dir() -> Option<PathBuf> {
-    let home = std::env::var("HOME").ok()?;
-    let icloud_drive = PathBuf::from(home).join("Library/Mobile Documents/com~apple~CloudDocs");
-    if !icloud_drive.exists() {
-        return None;
-    }
-    Some(icloud_drive.join("Quill"))
+    get_icloud_container_url().map(|p| p.join("Documents"))
 }
 
 /// Check if iCloud sync is enabled by looking for the marker file in the local app dir.
@@ -123,7 +137,23 @@ pub fn wal_checkpoint(db: &Db) -> AppResult<()> {
     Ok(())
 }
 
-/// iCloud Drive handles file downloads automatically — no manual trigger needed.
+/// Trigger iCloud to download evicted files. Best-effort — errors are logged but don't block.
+#[cfg(target_os = "macos")]
+pub fn ensure_downloaded(icloud_dir: &Path) -> AppResult<()> {
+    use objc2_foundation::NSURL;
+    let fm = NSFileManager::defaultManager();
+    for name in &["quill.db", "books", "covers"] {
+        let path = icloud_dir.join(name);
+        let path_str = NSString::from_str(&path.to_string_lossy());
+        let url = NSURL::fileURLWithPath(&path_str);
+        if let Err(e) = fm.startDownloadingUbiquitousItemAtURL_error(&url) {
+            eprintln!("iCloud: failed to trigger download for {}: {}", name, e);
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
 pub fn ensure_downloaded(_icloud_dir: &Path) -> AppResult<()> {
     Ok(())
 }

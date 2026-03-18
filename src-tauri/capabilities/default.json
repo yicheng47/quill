@@ -16,7 +16,7 @@
       "identifier": "fs:scope",
       "allow": [
         { "path": "$APPDATA/**" },
-        { "path": "$HOME/Library/Mobile Documents/com~apple~CloudDocs/Quill/**" }
+        { "path": "$HOME/Library/Mobile Documents/iCloud~com~wycstudios~quill/Documents/**" }
       ]
     }
   ]
