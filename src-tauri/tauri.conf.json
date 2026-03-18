@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Quill",
-  "version": "0.3.0",
-  "identifier": "com.jason.quill",
+  "version": "0.4.0",
+  "identifier": "com.wycstudios.quill",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -23,7 +23,7 @@
       "csp": null,
       "assetProtocol": {
         "enable": true,
-        "scope": ["$APPDATA/**", "$HOME/Library/Mobile Documents/iCloud~com~jason~quill/Documents/**"]
+        "scope": ["$APPDATA/**", "$HOME/Library/Mobile Documents/iCloud~com~wycstudios~quill/Documents/**"]
       }
     }
   },
@@ -38,7 +38,7 @@
     ],
     "macOS": {
       "signingIdentity": null,
-      "entitlements": null
+      "entitlements": "Entitlements.plist"
     }
   }
 }

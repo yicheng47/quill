@@ -3,6 +3,7 @@ interface SliderProps {
   max: number;
   value: number;
   onChange: (value: number) => void;
+  onChangeEnd?: (value: number) => void;
   label: string;
   displayValue: string;
   hint?: string;
@@ -13,6 +14,7 @@ export default function Slider({
   max,
   value,
   onChange,
+  onChangeEnd,
   label,
   displayValue,
   hint,
@@ -29,6 +31,8 @@ export default function Slider({
         max={max}
         value={value}
         onChange={(e) => onChange(Number(e.target.value))}
+        onMouseUp={(e) => onChangeEnd?.(Number((e.target as HTMLInputElement).value))}
+        onTouchEnd={(e) => onChangeEnd?.(Number((e.target as HTMLInputElement).value))}
         className="w-full h-1.5 rounded-full appearance-none cursor-pointer accent-dark bg-border"
       />
       {hint && (

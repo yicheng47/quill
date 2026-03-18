@@ -194,7 +194,7 @@ export default function Home() {
 
           <button
             onClick={handleImport}
-            className="shrink-0 mx-page mb-page rounded-lg border border-dashed border-border py-4 flex items-center justify-center gap-2 text-[14px] text-text-muted hover:border-text-muted transition-colors cursor-pointer"
+            className="shrink-0 mx-page mb-page rounded-lg border border-dashed border-text-muted/40 py-4 flex items-center justify-center gap-2 text-[14px] text-text-secondary hover:border-accent hover:text-accent transition-colors cursor-pointer"
           >
             <Upload size={16} />
             Drop files or click to import more books
@@ -203,10 +203,10 @@ export default function Home() {
       )}
 
       {isDragging && (
-        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm">
-          <div className="flex flex-col items-center gap-4 rounded-2xl border-2 border-dashed border-blue-500 bg-white px-16 py-12">
-            <div className="flex h-14 w-14 items-center justify-center rounded-full bg-blue-50">
-              <BookOpen size={28} className="text-blue-500" />
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-overlay backdrop-blur-sm">
+          <div className="flex flex-col items-center gap-4 rounded-xl border-2 border-dashed border-accent bg-bg-surface px-16 py-12 shadow-popover">
+            <div className="flex h-14 w-14 items-center justify-center rounded-full bg-accent-bg">
+              <BookOpen size={28} className="text-accent" />
             </div>
             <p className="text-[18px] font-semibold text-text-primary">
               Drop to add to your library
