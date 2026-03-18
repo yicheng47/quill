@@ -23,7 +23,7 @@
       "csp": null,
       "assetProtocol": {
         "enable": true,
-        "scope": ["$APPDATA/**", "$HOME/Library/Mobile Documents/iCloud~com~wycstudios~quill/Documents/**"]
+        "scope": ["$APPDATA/**", "$HOME/Library/Mobile Documents/com~apple~CloudDocs/Quill/**"]
       }
     }
   },
@@ -37,11 +37,7 @@
       "icons/icon.icns"
     ],
     "macOS": {
-      "signingIdentity": null,
-      "entitlements": "Entitlements.plist",
-      "files": {
-        "embedded.provisionprofile": "embedded.provisionprofile"
-      }
+      "signingIdentity": null
     }
   }
 }
