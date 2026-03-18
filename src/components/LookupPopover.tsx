@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { X, Loader2, Sparkles, Volume2, BookmarkPlus, Check, Copy } from "lucide-react";
+import { X, Loader2, Sparkles, BookmarkPlus, Check, Copy } from "lucide-react";
 
 interface LookupPopoverProps {
   x: number;
@@ -184,19 +184,19 @@ export default function LookupPopover({
       className="fixed z-50 w-[440px] bg-bg-surface border border-border/80 rounded-xl shadow-context"
       style={{ left: pos.left, top: pos.top }}
     >
-      {/* Header — purple tint */}
-      <div className="flex items-center justify-between px-4 pt-3 pb-2.5 bg-[#f0e6ff]/60 rounded-t-xl border-b border-[#e9d4ff]/40">
+      {/* Header */}
+      <div className="flex items-center justify-between px-4 pt-3 pb-2.5 bg-accent-bg rounded-t-xl border-b border-border/40">
         <div className="flex items-center gap-2">
-          <Sparkles size={16} className="text-[#9810fa]" />
-          <span className="text-[14px] font-medium text-[#9810fa] tracking-[-0.15px]">
+          <Sparkles size={16} className="text-accent-text" />
+          <span className="text-[14px] font-medium text-accent-text tracking-[-0.15px]">
             Look Up
           </span>
         </div>
         <button
           onClick={onClose}
-          className="size-6 flex items-center justify-center rounded hover:bg-white/60 cursor-pointer"
+          className="size-6 flex items-center justify-center rounded hover:bg-bg-surface/60 cursor-pointer"
         >
-          <X size={14} className="text-[#9f9fa9]" />
+          <X size={14} className="text-text-muted" />
         </button>
       </div>
 
@@ -205,7 +205,6 @@ export default function LookupPopover({
         {/* Word heading */}
         <div className="flex items-center gap-2 pt-3 pb-2">
           <h3 className="text-[20px] font-bold text-text-primary leading-6">{word}</h3>
-          <Volume2 size={18} className="text-[#d4d4d8] shrink-0" />
         </div>
 
         {/* Definition section */}
@@ -225,8 +224,8 @@ export default function LookupPopover({
 
         {/* In this context — card */}
         {(context.content || context.streaming) && (
-          <div className="mt-3 mb-1 p-3 rounded-lg bg-[#f9f9fa] border border-[rgba(228,228,231,0.5)]">
-            <span className="block text-[12px] font-medium text-[#9f9fa9] mb-1">
+          <div className="mt-3 mb-1 p-3 rounded-lg bg-bg-muted border border-border/50">
+            <span className="block text-[12px] font-medium text-text-muted mb-1">
               In this context
             </span>
             {context.streaming && !context.content ? (
@@ -235,7 +234,7 @@ export default function LookupPopover({
                 <span className="text-[12px] text-text-muted">Analyzing...</span>
               </div>
             ) : (
-              <p className="text-[13px] text-[#52525c] leading-[1.5]">
+              <p className="text-[13px] text-text-secondary leading-[1.5]">
                 {context.content}
                 {context.streaming && (
                   <Loader2 size={12} className="inline-block ml-0.5 animate-spin text-text-muted" />
@@ -252,14 +251,14 @@ export default function LookupPopover({
           <button
             onClick={handleSave}
             disabled={saved}
-            className="flex items-center gap-1.5 text-[13px] font-medium cursor-pointer text-[#9810fa] hover:opacity-70 disabled:opacity-50 disabled:cursor-default"
+            className="flex items-center gap-1.5 text-[13px] font-medium cursor-pointer text-accent-text hover:opacity-70 disabled:opacity-50 disabled:cursor-default"
           >
             {saved ? <Check size={14} /> : <BookmarkPlus size={14} />}
             {saved ? "Saved" : "Save to Vocab"}
           </button>
           <button
             onClick={handleCopy}
-            className="flex items-center gap-1.5 text-[13px] font-medium cursor-pointer text-[#9f9fa9] hover:opacity-70"
+            className="flex items-center gap-1.5 text-[13px] font-medium cursor-pointer text-text-muted hover:opacity-70"
           >
             {copied ? <Check size={14} /> : <Copy size={14} />}
             {copied ? "Copied" : "Copy"}

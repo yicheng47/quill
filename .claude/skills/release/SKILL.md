@@ -11,29 +11,35 @@ Create a new versioned release for Quill.
 
 1. Ask the user for the version number (e.g. `0.3.0`) if not provided as an argument.
 
-2. Verify the working tree is clean (`git status`). If there are uncommitted changes, stop and notify the user.
+2. If there are uncommitted changes, include them in the release:
+   - Bump version in `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`, and `package.json`.
+   - Run `cargo check` in `src-tauri/` to update `Cargo.lock`.
+   - Check if `public/foliate-js` submodule has changes. If so, commit and push the submodule, then stage the updated reference.
+   - Stage everything and commit with message `chore: bump version to v{version}`.
 
-3. Check that the version in `src-tauri/Cargo.toml` and `src-tauri/tauri.conf.json` matches the requested version. If not, update them.
+3. If the working tree is already clean, just bump version files, run `cargo check`, and commit as above.
 
-4. Also update the version in `package.json` to match.
+4. Create a feature branch: `git checkout -b release/v{version}`
 
-5. Run `cargo check` in `src-tauri/` to update `Cargo.lock` with the new version.
+5. Push the branch: `git push -u origin release/v{version}`
 
-6. Check if `public/foliate-js` submodule has changes (`git diff public/foliate-js`). If so, `cd public/foliate-js && git add -A && git commit -m "fix: scrollbar and null guard improvements" && git push`, then back in the main repo stage the updated submodule reference.
+6. Create a PR: `gh pr create --title "chore: release v{version}" --body "..."` with a summary of changes.
 
-7. Stage all version-related files (`Cargo.toml`, `Cargo.lock`, `tauri.conf.json`, `package.json`, and `public/foliate-js` if changed) and commit with message `chore: bump version to v{version}`.
+7. Wait for CI to pass: `gh pr checks <pr-number> --watch`
 
-8. Create an annotated git tag: `git tag -a v{version} -m "v{version}"`
+8. Once CI passes, merge the PR: `gh pr merge <pr-number> --squash --delete-branch`
 
-9. Push the commit(s) and tag: `git push && git push origin v{version}`
+9. Pull main and tag: `git checkout main && git pull && git tag -a v{version} -m "v{version}"`
 
-10. Wait for the GitHub Actions release workflow to complete: `gh run list --workflow=release.yml --limit 1 --json status,conclusion,databaseId`
+10. Push the tag: `git push origin v{version}`
 
-11. Once the workflow succeeds, draft a release message by reviewing commits since the last tag: `git log $(git describe --tags --abbrev=0 HEAD^)..HEAD --oneline`
+11. Wait for the release workflow to complete: `gh run list --workflow=release.yml --limit 1 --json status,conclusion,databaseId`
 
-12. Categorize changes into sections: **What's New**, **Improvements**, **Bug Fixes** (omit empty sections).
+12. Once the workflow succeeds, draft a release message by reviewing commits since the last tag: `git log $(git describe --tags --abbrev=0 HEAD^)..HEAD --oneline`
 
-13. Publish the release: `gh release edit v{version} --draft=false --notes "..."`. Include a **Download** section at the bottom with the `.dmg` filenames for Apple Silicon and Intel.
+13. Categorize changes into sections: **What's New**, **Improvements**, **Bug Fixes** (omit empty sections).
+
+14. Publish the release: `gh release edit v{version} --draft=false --notes "..."`. Include a **Download** section at the bottom with the `.dmg` filenames for Apple Silicon and Intel.
 
 If any step fails, stop and report the error — do not continue.
 

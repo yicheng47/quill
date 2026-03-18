@@ -1,20 +1,20 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { invoke } from "@tauri-apps/api/core";
-import { ArrowLeft, Bot, BookOpen, SlidersHorizontal, Palette, Save, KeyRound, Shield, Cloud, Loader2 } from "lucide-react";
+import { ArrowLeft, Bot, BookOpen, SlidersHorizontal, Palette, KeyRound, Shield, Cloud, Loader2 } from "lucide-react";
 import Button from "../components/ui/Button";
 import Select from "../components/ui/Select";
 import Input from "../components/ui/Input";
 import Toggle from "../components/ui/Toggle";
 import Slider from "../components/ui/Slider";
-import SaveDialog from "../components/SaveDialog";
 import { useSettings } from "../hooks/useSettings";
 
 export default function SettingsPage() {
   const navigate = useNavigate();
-  const [saveDialogOpen, setSaveDialogOpen] = useState(false);
   const [showToast, setShowToast] = useState(false);
-  const { settings, loading, saveBulk } = useSettings();
+  const [toastMessage, setToastMessage] = useState("Settings saved");
+  const { settings, loading, save, saveBulk } = useSettings();
+  const [aiDirty, setAiDirty] = useState(false);
 
   // AI config
   const [provider, setProvider] = useState("openai");
@@ -50,6 +50,42 @@ export default function SettingsPage() {
   const [icloudEnabled, setIcloudEnabled] = useState(false);
   const [icloudLoading, setIcloudLoading] = useState(false);
   const [icloudError, setIcloudError] = useState<string | null>(null);
+  const [icloudConfirm, setIcloudConfirm] = useState<"enable" | "disable" | null>(null);
+
+  const toastTimeout = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const showSavedToast = (msg = "Settings saved") => {
+    if (toastTimeout.current) clearTimeout(toastTimeout.current);
+    setToastMessage(msg);
+    setShowToast(true);
+    toastTimeout.current = setTimeout(() => setShowToast(false), 1500);
+  };
+
+  const autoSaveSetting = async (key: string, value: string) => {
+    try {
+      await save(key, value);
+      showSavedToast();
+    } catch (err) {
+      console.error(`Failed to save ${key}:`, err);
+    }
+  };
+
+  const handleSaveAI = async () => {
+    try {
+      await saveBulk({
+        ai_provider: provider,
+        ai_api_key: apiKey,
+        ai_model: model,
+        ai_base_url: baseUrl,
+        ai_temperature: String(temperature),
+        ai_keep_alive: keepAlive,
+        ai_auth_mode: authMode,
+      });
+      setAiDirty(false);
+      showSavedToast("AI configuration saved");
+    } catch (err) {
+      console.error("Failed to save AI settings:", err);
+    }
+  };
 
   // Load saved settings
   useEffect(() => {
@@ -110,42 +146,22 @@ export default function SettingsPage() {
     }
   }, [provider]);
 
-  const handleSave = async () => {
-    try {
-      await saveBulk({
-        ai_provider: provider,
-        ai_api_key: apiKey,
-        ai_model: model,
-        ai_base_url: baseUrl,
-        ai_temperature: String(temperature),
-        ai_keep_alive: keepAlive,
-        ai_auth_mode: authMode,
-        font_size: String(fontSize),
-        font_family: fontFamily,
-        line_spacing: String(lineSpacing),
-        char_spacing: String(charSpacing),
-        word_spacing: String(wordSpacing),
-        margins: String(margins),
-        auto_save: String(autoSave),
-        theme,
-      });
-      setSaveDialogOpen(false);
-      setShowToast(true);
-      setTimeout(() => setShowToast(false), 2000);
-    } catch (err) {
-      console.error("Failed to save settings:", err);
-    }
+  const handleIcloudToggle = () => {
+    setIcloudConfirm(icloudEnabled ? "disable" : "enable");
   };
 
-  const handleIcloudToggle = async () => {
+  const confirmIcloudToggle = async () => {
+    const action = icloudConfirm;
+    setIcloudConfirm(null);
     setIcloudLoading(true);
     setIcloudError(null);
     try {
-      if (icloudEnabled) {
-        await invoke("icloud_disable");
+      const minDelay = new Promise((r) => setTimeout(r, 1500));
+      if (action === "disable") {
+        await Promise.all([invoke("icloud_disable"), minDelay]);
         setIcloudEnabled(false);
       } else {
-        await invoke("icloud_enable");
+        await Promise.all([invoke("icloud_enable"), minDelay]);
         setIcloudEnabled(true);
       }
     } catch (err) {
@@ -195,14 +211,7 @@ export default function SettingsPage() {
             </p>
           </div>
         </div>
-        <Button
-          variant="primary"
-          size="md"
-          onClick={() => setSaveDialogOpen(true)}
-        >
-          <Save size={16} />
-          Save Changes
-        </Button>
+        <div /> {/* Spacer for header alignment */}
       </header>
 
       {/* Content */}
@@ -228,17 +237,18 @@ export default function SettingsPage() {
                 value={provider}
                 onChange={(p) => {
                   setProvider(p);
+                  setApiKey("");
+                  setAiDirty(true);
                   if (p === "ollama") {
-                    setBaseUrl("http://localhost:11434");
-                    setModel("qwen3.5");
+                    setBaseUrl("http://localhost:11434"); setModel("qwen3.5");
                   } else if (p === "openai") {
-                    setBaseUrl("https://api.openai.com");
-                    setModel("gpt-4o");
+                    setBaseUrl("https://api.openai.com"); setModel("gpt-4o"); setAuthMode("oauth");
                   } else if (p === "anthropic") {
-                    setModel("claude-sonnet-4-20250514");
+                    setBaseUrl(""); setModel("claude-sonnet-4-20250514");
                   } else if (p === "minimax") {
-                    setBaseUrl("https://api.minimax.io/anthropic");
-                    setModel("MiniMax-M2.5");
+                    setBaseUrl("https://api.minimax.io/anthropic"); setModel("MiniMax-M2.5");
+                  } else {
+                    setBaseUrl(""); setModel("");
                   }
                 }}
                 options={[
@@ -265,7 +275,7 @@ export default function SettingsPage() {
                           ? "bg-accent text-white"
                           : "bg-bg-page text-text-secondary hover:bg-bg-input"
                       }`}
-                      onClick={() => { setAuthMode("api_key"); setModel("gpt-4o"); }}
+                      onClick={() => { setAuthMode("api_key"); setModel("gpt-4o"); setAiDirty(true); }}
                     >
                       <KeyRound size={14} />
                       API Key
@@ -277,7 +287,7 @@ export default function SettingsPage() {
                           ? "bg-accent text-white"
                           : "bg-bg-page text-text-secondary hover:bg-bg-input"
                       }`}
-                      onClick={() => { setAuthMode("oauth"); setModel("gpt-5.3-codex"); }}
+                      onClick={() => { setAuthMode("oauth"); setModel("gpt-5.3-codex"); setAiDirty(true); }}
                     >
                       <Shield size={14} />
                       OAuth Login
@@ -349,7 +359,7 @@ export default function SettingsPage() {
                   </label>
                   <Input
                     value={baseUrl}
-                    onChange={(e) => setBaseUrl(e.target.value)}
+                    onChange={(e) => { setBaseUrl(e.target.value); setAiDirty(true); }}
                     placeholder={provider === "ollama" ? "http://localhost:11434" : "https://api.openai.com"}
                   />
                   <p className="text-[12px] text-text-muted mt-1.5">
@@ -367,7 +377,7 @@ export default function SettingsPage() {
                   <Input
                     type="password"
                     value={apiKey}
-                    onChange={(e) => setApiKey(e.target.value)}
+                    onChange={(e) => { setApiKey(e.target.value); setAiDirty(true); }}
                     placeholder={provider === "anthropic" ? "sk-ant-..." : "sk-..."}
                   />
                   <p className="text-[12px] text-text-muted mt-1.5">
@@ -383,7 +393,7 @@ export default function SettingsPage() {
                 </label>
                 <Input
                   value={model}
-                  onChange={(e) => setModel(e.target.value)}
+                  onChange={(e) => { setModel(e.target.value); setAiDirty(true); }}
                   placeholder={
                     provider === "ollama" ? "qwen3.5" :
                     provider === "anthropic" ? "claude-sonnet-4-20250514" :
@@ -406,7 +416,7 @@ export default function SettingsPage() {
                 min={0}
                 max={100}
                 value={Math.round(temperature * 100)}
-                onChange={(v) => setTemperature(v / 100)}
+                onChange={(v) => { setTemperature(v / 100); setAiDirty(true); }}
                 displayValue={temperature.toFixed(1)}
                 hint="Lower = more focused, Higher = more creative"
               />
@@ -419,7 +429,7 @@ export default function SettingsPage() {
                   </label>
                   <Input
                     value={keepAlive}
-                    onChange={(e) => setKeepAlive(e.target.value)}
+                    onChange={(e) => { setKeepAlive(e.target.value); setAiDirty(true); }}
                     placeholder="30m"
                   />
                   <p className="text-[12px] text-text-muted mt-1.5">
@@ -427,6 +437,12 @@ export default function SettingsPage() {
                   </p>
                 </div>
               )}
+
+              {/* Save AI Config */}
+              <div className="h-px bg-border-light" />
+              <Button variant="primary" size="md" className="w-full justify-center" disabled={!aiDirty} onClick={handleSaveAI}>
+                Save AI Configuration
+              </Button>
 
             </div>
           </section>
@@ -447,7 +463,7 @@ export default function SettingsPage() {
               <Select
                 label="Font Family"
                 value={fontFamily}
-                onChange={setFontFamily}
+                onChange={(v) => { setFontFamily(v); autoSaveSetting("font_family", v); }}
                 options={[
                   { value: "system", label: "System Default" },
                   { value: "georgia", label: "Georgia" },
@@ -470,9 +486,12 @@ export default function SettingsPage() {
                     setFontSize(v);
                   }}
                   onBlur={() => {
-                    if (fontSize < 8) setFontSize(8);
-                    else if (fontSize > 48) setFontSize(48);
-                    else if (fontSize === 0) setFontSize(18);
+                    let v = fontSize;
+                    if (v < 8) v = 8;
+                    else if (v > 48) v = 48;
+                    else if (v === 0) v = 18;
+                    setFontSize(v);
+                    autoSaveSetting("font_size", String(v));
                   }}
                   placeholder="18"
                 />
@@ -487,6 +506,7 @@ export default function SettingsPage() {
                 max={30}
                 value={Math.round(lineSpacing * 10)}
                 onChange={(v) => setLineSpacing(v / 10)}
+                onChangeEnd={(v) => autoSaveSetting("line_spacing", String(v / 10))}
                 displayValue={lineSpacing.toFixed(1)}
                 hint="Default space between lines of text"
               />
@@ -497,6 +517,7 @@ export default function SettingsPage() {
                 max={20}
                 value={charSpacing}
                 onChange={setCharSpacing}
+                onChangeEnd={(v) => autoSaveSetting("char_spacing", String(v))}
                 displayValue={`${charSpacing}%`}
                 hint="Default space between individual characters"
               />
@@ -507,6 +528,7 @@ export default function SettingsPage() {
                 max={50}
                 value={wordSpacing}
                 onChange={setWordSpacing}
+                onChangeEnd={(v) => autoSaveSetting("word_spacing", String(v))}
                 displayValue={`${wordSpacing}%`}
                 hint="Default space between words"
               />
@@ -517,6 +539,7 @@ export default function SettingsPage() {
                 max={120}
                 value={margins}
                 onChange={setMargins}
+                onChangeEnd={(v) => autoSaveSetting("margins", String(v))}
                 displayValue={`${margins}px`}
                 hint="Default margins around the reading area"
               />
@@ -541,7 +564,7 @@ export default function SettingsPage() {
                   <p className="text-[14px] font-semibold text-text-primary">Auto-save Progress</p>
                   <p className="text-[13px] text-text-muted">Automatically save your reading position</p>
                 </div>
-                <Toggle checked={autoSave} onChange={setAutoSave} />
+                <Toggle checked={autoSave} onChange={(v) => { setAutoSave(v); autoSaveSetting("auto_save", String(v)); }} />
               </div>
             </div>
           </section>
@@ -622,7 +645,7 @@ export default function SettingsPage() {
             <Select
               label="Theme"
               value={theme}
-              onChange={setTheme}
+              onChange={(v) => { setTheme(v); autoSaveSetting("theme", v); }}
               options={[
                 { value: "system", label: "System" },
                 { value: "light", label: "Light" },
@@ -634,19 +657,38 @@ export default function SettingsPage() {
         </div>
       </main>
 
-      <SaveDialog
-        open={saveDialogOpen}
-        onCancel={() => setSaveDialogOpen(false)}
-        onSave={handleSave}
-      />
+      {/* iCloud confirmation dialog */}
+      {icloudConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-overlay">
+          <div className="bg-bg-surface rounded-xl shadow-lg w-[400px] p-6">
+            <h3 className="text-[18px] font-semibold text-text-primary mb-2">
+              {icloudConfirm === "enable" ? "Move Library to iCloud?" : "Move Library Back to Local?"}
+            </h3>
+            <p className="text-[14px] text-text-secondary leading-5 mb-6">
+              {icloudConfirm === "enable"
+                ? "Your books, reading progress, and highlights will be moved to iCloud Drive and synced across your Macs."
+                : "Your library will be copied back to local storage. The iCloud copy will remain until you delete it manually."}
+            </p>
+            <div className="flex justify-end gap-3">
+              <Button variant="ghost" size="md" onClick={() => setIcloudConfirm(null)}>
+                Cancel
+              </Button>
+              <Button variant="primary" size="md" onClick={confirmIcloudToggle}>
+                {icloudConfirm === "enable" ? "Move to iCloud" : "Move to Local"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
+      {/* Toast */}
       {showToast && (
-        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-50 bg-accent text-white text-[14px] font-medium px-4 py-2.5 rounded-lg shadow-popover">
-          Settings saved successfully
+        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-50 bg-accent text-white text-[13px] font-medium px-4 py-2 rounded-lg shadow-popover transition-opacity">
+          {toastMessage}
         </div>
       )}
       {oauthToast && (
-        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-50 bg-accent text-white text-[14px] font-medium px-4 py-2.5 rounded-lg shadow-popover flex items-center gap-2">
+        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-50 bg-accent text-white text-[13px] font-medium px-4 py-2 rounded-lg shadow-popover flex items-center gap-2">
           Successfully authenticated with OpenAI
         </div>
       )}

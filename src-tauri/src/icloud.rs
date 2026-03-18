@@ -9,7 +9,7 @@ use crate::error::{AppError, AppResult};
 #[cfg(target_os = "macos")]
 use objc2_foundation::{NSFileManager, NSString, NSURL};
 
-const ICLOUD_CONTAINER_ID: &str = "iCloud.com.jason.quill";
+const ICLOUD_CONTAINER_ID: &str = "iCloud.com.wycstudios.quill";
 const MARKER_FILE: &str = ".icloud_enabled";
 
 /// Get the iCloud ubiquity container URL for this app.

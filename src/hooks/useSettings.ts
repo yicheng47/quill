@@ -26,7 +26,12 @@ export function useSettings() {
     setSettings((prev) => ({ ...prev, ...newSettings }));
   }, []);
 
-  return { settings, loading, refresh, saveBulk };
+  const save = useCallback(async (key: string, value: string) => {
+    await invoke("set_setting", { key, value });
+    setSettings((prev) => ({ ...prev, [key]: value }));
+  }, []);
+
+  return { settings, loading, refresh, saveBulk, save };
 }
 
 export async function getAllSettings(): Promise<Record<string, string>> {
