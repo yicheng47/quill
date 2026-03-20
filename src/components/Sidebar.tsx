@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Library, BookOpen, CheckCircle2, Sparkles, BookA, Plus } from "lucide-react";
+import { Library, BookOpen, CheckCircle2, Sparkles, BookA, Plus, MessageSquare } from "lucide-react";
 import Button from "./ui/Button";
 import QuillLogo from "./QuillLogo";
 import type { Book } from "../hooks/useBooks";
@@ -105,6 +105,19 @@ export default function Sidebar({ activeFilter, onFilterChange, books, collectio
               activeFilter === "vocab" ? "text-accent-text" : "text-text-secondary"
             }`}>
               Vocabulary
+            </span>
+          </button>
+          <button
+            onClick={() => onFilterChange("chats")}
+            className={`flex items-center gap-2 px-3 h-9 rounded-lg w-full cursor-pointer ${
+              activeFilter === "chats" ? "bg-accent-bg" : "hover:bg-bg-input"
+            }`}
+          >
+            <MessageSquare size={16} className={activeFilter === "chats" ? "text-accent-text" : "text-text-muted"} />
+            <span className={`text-[14px] font-medium tracking-[-0.15px] ${
+              activeFilter === "chats" ? "text-accent-text" : "text-text-secondary"
+            }`}>
+              Chats
             </span>
           </button>
         </div>

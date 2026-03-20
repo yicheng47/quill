@@ -120,7 +120,8 @@ export default function Reader() {
     sentence: string;
     cfiRange?: string;
   } | null>(null);
-  const [aiContext, setAiContext] = useState<string | undefined>();
+  const [aiContext, setAiContext] = useState<{ text: string; cfi?: string } | undefined>();
+  const [initialChatId, setInitialChatId] = useState<string | undefined>();
   const [lookup, setLookup] = useState<{
     x: number;
     y: number;
@@ -553,6 +554,15 @@ export default function Reader() {
     viewRef.current?.goTo(cfi);
   }, []);
 
+  // Handle navigation state from ChatsPage ("Open in Reader")
+  useEffect(() => {
+    const state = location.state as { openChat?: boolean; chatId?: string } | null;
+    if (!state?.openChat || !bookReady) return;
+    setSidePanel("ai");
+    if (state.chatId) setInitialChatId(state.chatId);
+    navigate(location.pathname, { replace: true });
+  }, [bookReady, location.state, location.pathname, navigate]);
+
   // Handle navigation state from VocabPage ("Open in Reader")
   useEffect(() => {
     const state = location.state as { openVocab?: boolean; cfi?: string } | null;
@@ -755,7 +765,20 @@ export default function Reader() {
         )}
         <div ref={panelRef} className={sidePanel ? "shrink-0 h-full" : "hidden"} style={{ width: panelWidth }}>
           <div className={sidePanel === "ai" ? "h-full" : "hidden"}>
-            <AiPanel context={aiContext} onContextConsumed={() => setAiContext(undefined)} />
+            <AiPanel
+              bookId={bookId}
+              context={aiContext}
+              initialChatId={initialChatId}
+              onContextConsumed={() => setAiContext(undefined)}
+              onNavigateToCfi={(cfi) => {
+                viewRef.current?.goTo(cfi).then(() => {
+                  viewRef.current?.addAnnotation({ value: cfi, color: "#c27aff" });
+                  setTimeout(() => {
+                    viewRef.current?.deleteAnnotation({ value: cfi });
+                  }, 3000);
+                });
+              }}
+            />
           </div>
           {sidePanel === "bookmarks" && bookId && (
             <BookmarksPanel
@@ -804,7 +827,7 @@ export default function Reader() {
             setContextMenu(null);
           }}
           onAskAI={() => {
-            setAiContext(contextMenu.text);
+            setAiContext({ text: contextMenu.text, cfi: contextMenu.cfiRange });
             setSidePanel("ai");
             setContextMenu(null);
           }}

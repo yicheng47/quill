@@ -7,6 +7,7 @@ import Sidebar from "../components/Sidebar";
 import BookGrid from "../components/BookGrid";
 import BookList from "../components/BookList";
 import VocabContent from "../components/VocabContent";
+import ChatsContent from "../components/ChatsContent";
 import Button from "../components/ui/Button";
 import Input from "../components/ui/Input";
 import { useBooks, importBookDialog, type Book } from "../hooks/useBooks";
@@ -119,6 +120,8 @@ export default function Home() {
 
       {activeFilter === "vocab" ? (
         <VocabContent />
+      ) : activeFilter === "chats" ? (
+        <ChatsContent />
       ) : (
         <main className="flex-1 flex flex-col min-w-0">
           <div className="border-b border-border px-page pb-section relative">

@@ -1,6 +1,7 @@
 pub mod ai;
 pub mod bookmarks;
 pub mod books;
+pub mod chats;
 pub mod collections;
 pub mod icloud;
 pub mod oauth;
