@@ -1,8 +1,8 @@
 .PHONY: dev dev-web build package lint typecheck clean install
 
-# Start Tauri app (frontend + backend)
+# Start Tauri app (frontend + backend) with dev-mode config overlay
 dev:
-	npm run tauri dev
+	npm run tauri dev -- --config src-tauri/tauri.dev.conf.json
 
 # Start frontend only (browser)
 dev-web:

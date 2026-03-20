@@ -48,6 +48,7 @@ export default function SettingsPage() {
   // iCloud
   const [icloudAvailable, setIcloudAvailable] = useState(false);
   const [icloudEnabled, setIcloudEnabled] = useState(false);
+  const [icloudHasExistingData, setIcloudHasExistingData] = useState(false);
   const [icloudLoading, setIcloudLoading] = useState(false);
   const [icloudError, setIcloudError] = useState<string | null>(null);
   const [icloudConfirm, setIcloudConfirm] = useState<"enable" | "disable" | null>(null);
@@ -109,10 +110,11 @@ export default function SettingsPage() {
 
   // Fetch iCloud status on mount
   useEffect(() => {
-    invoke<{ available: boolean; enabled: boolean }>("icloud_status")
+    invoke<{ available: boolean; enabled: boolean; has_existing_data: boolean }>("icloud_status")
       .then((status) => {
         setIcloudAvailable(status.available);
         setIcloudEnabled(status.enabled);
+        setIcloudHasExistingData(status.has_existing_data);
       })
       .catch(() => {});
   }, []);
@@ -662,11 +664,17 @@ export default function SettingsPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-overlay">
           <div className="bg-bg-surface rounded-xl shadow-lg w-[400px] p-6">
             <h3 className="text-[18px] font-semibold text-text-primary mb-2">
-              {icloudConfirm === "enable" ? "Move Library to iCloud?" : "Move Library Back to Local?"}
+              {icloudConfirm === "enable"
+                ? icloudHasExistingData
+                  ? "Sync with Existing iCloud Library?"
+                  : "Move Library to iCloud?"
+                : "Move Library Back to Local?"}
             </h3>
             <p className="text-[14px] text-text-secondary leading-5 mb-6">
               {icloudConfirm === "enable"
-                ? "Your books, reading progress, and highlights will be moved to iCloud Drive and synced across your Macs."
+                ? icloudHasExistingData
+                  ? "An existing library was found in iCloud from another device. Your local library will be replaced by the iCloud library."
+                  : "Your books, reading progress, and highlights will be moved to iCloud Drive and synced across your Macs."
                 : "Your library will be copied back to local storage. The iCloud copy will remain until you delete it manually."}
             </p>
             <div className="flex justify-end gap-3">
@@ -674,7 +682,9 @@ export default function SettingsPage() {
                 Cancel
               </Button>
               <Button variant="primary" size="md" onClick={confirmIcloudToggle}>
-                {icloudConfirm === "enable" ? "Move to iCloud" : "Move to Local"}
+                {icloudConfirm === "enable"
+                  ? icloudHasExistingData ? "Sync with iCloud" : "Move to iCloud"
+                  : "Move to Local"}
               </Button>
             </div>
           </div>
