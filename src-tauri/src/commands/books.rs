@@ -225,7 +225,15 @@ pub fn delete_book(id: String, db: State<'_, Db>) -> AppResult<()> {
         |row| Ok((row.get(0)?, row.get(1)?)),
     )?;
 
-    conn.execute("DELETE FROM books WHERE id = ?1", params![id])?;
+    // Clean up chats, messages, and the book in a transaction
+    let tx = conn.unchecked_transaction()?;
+    tx.execute(
+        "DELETE FROM chat_messages WHERE chat_id IN (SELECT id FROM chats WHERE book_id = ?1)",
+        params![id],
+    )?;
+    tx.execute("DELETE FROM chats WHERE book_id = ?1", params![id])?;
+    tx.execute("DELETE FROM books WHERE id = ?1", params![id])?;
+    tx.commit()?;
 
     // Resolve to absolute for file deletion
     let abs_file = db.resolve_path(&file_path);

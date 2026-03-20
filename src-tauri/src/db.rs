@@ -27,6 +27,9 @@ impl Db {
         let schema2 = include_str!("../migrations/002_vocab.sql");
         conn.execute_batch(schema2)?;
 
+        let schema3 = include_str!("../migrations/003_chats.sql");
+        conn.execute_batch(schema3)?;
+
         // One-time migration: convert absolute paths to relative
         Self::migrate_to_relative_paths(&conn, app_data_dir)?;
 

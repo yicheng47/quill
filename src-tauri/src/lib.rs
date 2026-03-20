@@ -111,6 +111,15 @@ pub fn run() {
             commands::vocab::update_vocab_mastery,
             commands::vocab::list_vocab_due_for_review,
             commands::vocab::get_vocab_stats,
+            // Chats
+            commands::chats::create_chat,
+            commands::chats::list_chats,
+            commands::chats::list_all_chats,
+            commands::chats::get_chat,
+            commands::chats::delete_chat,
+            commands::chats::rename_chat,
+            commands::chats::list_chat_messages,
+            commands::chats::save_chat_message,
             // iCloud
             commands::icloud::icloud_status,
             commands::icloud::icloud_enable,
