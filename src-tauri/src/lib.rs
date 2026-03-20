@@ -6,9 +6,14 @@ mod error;
 mod icloud;
 mod secrets;
 
+use std::path::PathBuf;
+
 use db::Db;
 use secrets::Secrets;
 use tauri::Manager;
+
+/// The resolved local app data directory, accounting for dev-mode isolation.
+pub struct LocalDir(pub PathBuf);
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -17,10 +22,18 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .setup(|app| {
-            let local_dir = app
-                .path()
-                .app_data_dir()
-                .expect("failed to resolve app data dir");
+            let local_dir = {
+                let base = app
+                    .path()
+                    .app_data_dir()
+                    .expect("failed to resolve app data dir");
+                if cfg!(debug_assertions) {
+                    base.with_file_name("com.wycstudios.quill-dev")
+                } else {
+                    base
+                }
+            };
+            std::fs::create_dir_all(&local_dir).expect("failed to create app data dir");
 
             // If iCloud sync is enabled and available, use the iCloud directory
             let data_dir = if icloud::is_icloud_enabled(&local_dir) {
@@ -46,6 +59,7 @@ pub fn run() {
                 .migrate_from_settings(&db)
                 .expect("failed to migrate secrets");
 
+            app.manage(LocalDir(local_dir));
             app.manage(db);
             app.manage(secrets);
 
