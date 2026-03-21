@@ -1,12 +1,12 @@
 import { useState, useEffect, useRef } from "react";
-import { Search, Grid3x3, List, Settings, Plus, Upload, BookOpen } from "lucide-react";
+import { Search, LayoutGrid, List, Settings, Plus, Upload, BookOpen } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import Sidebar from "../components/Sidebar";
 import BookGrid from "../components/BookGrid";
 import BookList from "../components/BookList";
-import VocabContent from "../components/VocabContent";
+import DictionaryContent from "../components/DictionaryContent";
 import ChatsContent from "../components/ChatsContent";
 import Button from "../components/ui/Button";
 import Input from "../components/ui/Input";
@@ -119,7 +119,7 @@ export default function Home() {
       />
 
       {activeFilter === "vocab" ? (
-        <VocabContent />
+        <DictionaryContent />
       ) : activeFilter === "chats" ? (
         <ChatsContent />
       ) : (
@@ -137,7 +137,7 @@ export default function Home() {
                   active={viewMode === "grid"}
                   onClick={() => setViewMode("grid")}
                 >
-                  <Grid3x3 size={16} />
+                  <LayoutGrid size={16} />
                 </Button>
                 <Button
                   variant="icon"
