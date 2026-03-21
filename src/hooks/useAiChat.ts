@@ -55,52 +55,49 @@ async function generateAiTitle(
   const requestId = `title-${Date.now()}`;
   const eventName = `ai-title-chunk-${requestId}`;
 
-  return new Promise<string | null>(async (resolve) => {
-    let title = "";
-    let done = false;
+  let title = "";
+  let resolveFn: (val: string | null) => void;
+  const promise = new Promise<string | null>((r) => { resolveFn = r; });
+  let done = false;
 
-    const timeout = setTimeout(() => {
-      if (!done) {
-        done = true;
-        unlisten();
-        resolve(null);
-      }
-    }, 15000);
+  const timeout = setTimeout(() => {
+    if (!done) { done = true; resolve(null); }
+  }, 15000);
 
-    // Register listener BEFORE invoking the command
-    const unlisten = await listen<{ delta: string; done: boolean }>(eventName, (event) => {
-      if (event.payload.done) {
-        if (!done) {
-          done = true;
-          clearTimeout(timeout);
-          unlisten();
-          title = title.replace(/^["']|["']$/g, "").replace(/[.!]$/, "").trim();
-          if (title.length > 50) {
-            title = title.substring(0, 50).trim() + "...";
-          }
-          resolve(title || null);
-        }
-        return;
-      }
-      if (!event.payload.delta.startsWith("Error:")) {
-        title += event.payload.delta;
-      }
-    });
+  function resolve(val: string | null) {
+    if (done) return;
+    done = true;
+    clearTimeout(timeout);
+    resolveFn(val);
+  }
 
-    // Fire the command (returns immediately, streaming happens in background)
-    invoke("ai_generate_title", {
-      userMessage: userMsg,
-      assistantMessage: assistantMsg,
-      requestId,
-    }).catch(() => {
-      if (!done) {
-        done = true;
-        clearTimeout(timeout);
-        unlisten();
-        resolve(null);
+  // Register listener BEFORE invoking the command
+  const unlisten = await listen<{ delta: string; done: boolean }>(eventName, (event) => {
+    if (event.payload.done) {
+      unlisten();
+      title = title.replace(/^["']|["']$/g, "").replace(/[.!]$/, "").trim();
+      if (title.length > 50) {
+        title = title.substring(0, 50).trim() + "...";
       }
-    });
+      resolve(title || null);
+      return;
+    }
+    if (!event.payload.delta.startsWith("Error:")) {
+      title += event.payload.delta;
+    }
   });
+
+  // Fire the command (returns immediately, streaming happens in background)
+  invoke("ai_generate_title", {
+    userMessage: userMsg,
+    assistantMessage: assistantMsg,
+    requestId,
+  }).catch(() => {
+    unlisten();
+    resolve(null);
+  });
+
+  return promise;
 }
 
 let msgIdCounter = 0;
