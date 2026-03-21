@@ -33,6 +33,7 @@ interface ChatMsgRecord {
 }
 
 /** Derive a short title from the user's first message (truncated at word boundary). */
+/** Fallback: truncate user message into a short title. */
 function deriveTitle(userMsg: string): string {
   let title = userMsg
     .replace(/^Explain this passage:\s*"?/i, "")
@@ -46,6 +47,59 @@ function deriveTitle(userMsg: string): string {
   return title;
 }
 
+/** Generate a chat title using a dedicated AI call with per-request event channel. */
+async function generateAiTitle(
+  userMsg: string,
+  assistantMsg: string,
+): Promise<string | null> {
+  const requestId = `title-${Date.now()}`;
+  const eventName = `ai-title-chunk-${requestId}`;
+
+  let title = "";
+  let resolveFn: (val: string | null) => void;
+  const promise = new Promise<string | null>((r) => { resolveFn = r; });
+  let done = false;
+
+  const timeout = setTimeout(() => {
+    if (!done) { done = true; resolve(null); }
+  }, 15000);
+
+  function resolve(val: string | null) {
+    if (done) return;
+    done = true;
+    clearTimeout(timeout);
+    resolveFn(val);
+  }
+
+  // Register listener BEFORE invoking the command
+  const unlisten = await listen<{ delta: string; done: boolean }>(eventName, (event) => {
+    if (event.payload.done) {
+      unlisten();
+      title = title.replace(/^["']|["']$/g, "").replace(/[.!]$/, "").trim();
+      if (title.length > 50) {
+        title = title.substring(0, 50).trim() + "...";
+      }
+      resolve(title || null);
+      return;
+    }
+    if (!event.payload.delta.startsWith("Error:")) {
+      title += event.payload.delta;
+    }
+  });
+
+  // Fire the command (returns immediately, streaming happens in background)
+  invoke("ai_generate_title", {
+    userMessage: userMsg,
+    assistantMessage: assistantMsg,
+    requestId,
+  }).catch(() => {
+    unlisten();
+    resolve(null);
+  });
+
+  return promise;
+}
+
 let msgIdCounter = 0;
 function nextMsgId() {
   return `local-${Date.now()}-${++msgIdCounter}`;
@@ -54,6 +108,7 @@ function nextMsgId() {
 export function useAiChat(bookId?: string) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [streaming, setStreaming] = useState(false);
+  const [titling, setTitling] = useState(false);
   const [chatId, setChatId] = useState<string | null>(null);
   const [chats, setChats] = useState<ChatRecord[]>([]);
 
@@ -173,12 +228,16 @@ export function useAiChat(bookId?: string) {
       const currentBookId = bookId;
 
       // Lazy chat creation: if no chat exists yet, create one now
+      const isNewChat = !currentChatId;
       if (!currentChatId && currentBookId) {
         const chat = await createChat(currentBookId);
         if (!chat) return;
         currentChatId = chat.id;
       }
       if (!currentChatId) return;
+
+      // Show title loading immediately for new chats
+      if (isNewChat) setTitling(true);
 
       const userMessage: ChatMessage = {
         id: nextMsgId(),
@@ -241,13 +300,14 @@ export function useAiChat(bookId?: string) {
               }
             }
 
-            // Auto-title: derive from user message (no AI call to avoid event collision)
-            if (currentBookId) {
+            // Auto-title: use AI with per-request channel, fallback to truncation
+            if (currentBookId && isNewChat) {
               try {
                 const chat = await invoke<ChatRecord>("get_chat", { chatId: currentChatId });
                 if (chat.title === "New chat") {
-                  // Use context (selected passage) if available, otherwise user message
-                  const title = deriveTitle(context || content);
+                  const userText = context || content;
+                  const aiTitle = await generateAiTitle(userText, fullContent);
+                  const title = aiTitle || deriveTitle(userText);
                   if (title) {
                     await invoke("rename_chat", { chatId: currentChatId, title });
                     await refreshChats(currentBookId);
@@ -256,6 +316,7 @@ export function useAiChat(bookId?: string) {
               } catch {
                 // Ignore auto-title errors
               }
+              setTitling(false);
             }
 
             return;
@@ -349,6 +410,7 @@ export function useAiChat(bookId?: string) {
   return {
     messages,
     streaming,
+    titling,
     send,
     reset,
     initialize,

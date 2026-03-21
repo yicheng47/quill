@@ -21,7 +21,7 @@ const SUGGESTED_PROMPTS = [
 export default function AiPanel({ bookId, context, initialChatId, onContextConsumed, onNavigateToCfi }: AiPanelProps) {
   const {
     messages, streaming, send, initialize,
-    chatId, chats, loadChat, deleteChat, renameChat, reset,
+    chatId, chats, titling, loadChat, deleteChat, renameChat, reset,
   } = useAiChat(bookId);
 
   const [input, setInput] = useState("");
@@ -131,9 +131,16 @@ export default function AiPanel({ bookId, context, initialChatId, onContextConsu
               }}
               className="flex items-center gap-1.5 min-w-0 cursor-pointer"
             >
-              <span className="text-[15px] font-semibold text-text-primary tracking-[-0.23px] truncate">
-                {currentChat?.title || "New Chat"}
-              </span>
+              {titling ? (
+                <span className="flex items-center gap-1.5 text-[15px] font-semibold text-text-muted tracking-[-0.23px]">
+                  <Loader2 size={14} className="animate-spin" />
+                  Generating title...
+                </span>
+              ) : (
+                <span className="text-[15px] font-semibold text-text-primary tracking-[-0.23px] truncate">
+                  {currentChat?.title || "New Chat"}
+                </span>
+              )}
               {pickerOpen ? (
                 <ChevronUp size={14} className="text-text-muted shrink-0" />
               ) : (

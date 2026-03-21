@@ -98,6 +98,7 @@ pub fn run() {
             // AI
             commands::ai::ai_chat,
             commands::ai::ai_lookup,
+            commands::ai::ai_generate_title,
             // OAuth
             commands::oauth::openai_oauth_login,
             commands::oauth::openai_oauth_status,
