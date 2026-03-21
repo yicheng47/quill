@@ -133,6 +133,94 @@ pub async fn ai_lookup(
 }
 
 #[tauri::command]
+pub async fn ai_generate_title(
+    user_message: String,
+    assistant_message: String,
+    request_id: String,
+    app: AppHandle,
+    db: State<'_, Db>,
+    secrets: State<'_, Secrets>,
+) -> AppResult<()> {
+    let (provider, model, base_url, keep_alive, auth_mode) = {
+        let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
+        let get = |key: &str| -> Option<String> {
+            conn.query_row(
+                "SELECT value FROM settings WHERE key = ?1",
+                rusqlite::params![key],
+                |row| row.get(0),
+            )
+            .ok()
+        };
+        (
+            get("ai_provider").unwrap_or_else(|| "ollama".to_string()),
+            get("ai_model").unwrap_or_else(|| "llama3.2".to_string()),
+            get("ai_base_url"),
+            get("ai_keep_alive").unwrap_or_else(|| "30m".to_string()),
+            get("ai_auth_mode").unwrap_or_else(|| "api_key".to_string()),
+        )
+    };
+
+    let api_key = secrets.get("ai_api_key").unwrap_or_default();
+    let (api_key, oauth_account_id) = if auth_mode == "oauth" && provider == "openai" {
+        let (token, acct_id) = crate::ai::oauth::get_valid_token(&secrets).await?;
+        (token, acct_id)
+    } else {
+        (api_key, None)
+    };
+
+    let user_snippet = if user_message.len() > 200 { &user_message[..200] } else { &user_message };
+    let ai_snippet = if assistant_message.len() > 200 { &assistant_message[..200] } else { &assistant_message };
+
+    let messages = vec![
+        ChatMessage {
+            role: "system".to_string(),
+            content: "Generate a very short title (3-6 words) for the following chat exchange. Respond with ONLY the title, no quotes, no punctuation at the end.".to_string(),
+        },
+        ChatMessage {
+            role: "user".to_string(),
+            content: format!("User: {}\nAssistant: {}", user_snippet, ai_snippet),
+        },
+    ];
+
+    let event_name = format!("ai-title-chunk-{}", request_id);
+    let use_responses_api = auth_mode == "oauth" && provider == "openai";
+    let app_clone = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let result = match provider.as_str() {
+            "anthropic" => {
+                let url = base_url.unwrap_or_else(|| "https://api.anthropic.com".to_string());
+                crate::ai::anthropic::stream_chat(&app_clone, &url, &api_key, &model, 0.3, &messages, false, &event_name, Some(32)).await
+            }
+            "minimax" => {
+                let url = base_url.unwrap_or_else(|| "https://api.minimax.io/anthropic".to_string());
+                crate::ai::anthropic::stream_chat(&app_clone, &url, &api_key, &model, 0.3, &messages, true, &event_name, Some(32)).await
+            }
+            _ if use_responses_api => {
+                let url = "https://chatgpt.com/backend-api/codex".to_string();
+                crate::ai::openai_responses::stream_chat(&app_clone, &url, &api_key, &model, &messages, oauth_account_id.as_deref(), &event_name).await
+            }
+            _ => {
+                let url = base_url.unwrap_or_else(|| "http://localhost:11434".to_string());
+                let ka = if provider == "ollama" { Some(keep_alive.clone()) } else { None };
+                crate::ai::openai_compat::stream_chat(&app_clone, &url, &api_key, &model, 0.3, &messages, ka.as_deref(), &event_name, Some(32)).await
+            }
+        };
+        if let Err(e) = result {
+            let _ = app_clone.emit(&event_name, AiStreamChunk {
+                delta: format!("Error: {}", e),
+                done: false,
+            });
+            let _ = app_clone.emit(&event_name, AiStreamChunk {
+                delta: String::new(),
+                done: true,
+            });
+        }
+    });
+
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn ai_chat(
     messages: Vec<ChatMessage>,
     context: Option<String>,
