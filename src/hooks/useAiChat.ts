@@ -246,7 +246,8 @@ export function useAiChat(bookId?: string) {
               try {
                 const chat = await invoke<ChatRecord>("get_chat", { chatId: currentChatId });
                 if (chat.title === "New chat") {
-                  const title = deriveTitle(content);
+                  // Use context (selected passage) if available, otherwise user message
+                  const title = deriveTitle(context || content);
                   if (title) {
                     await invoke("rename_chat", { chatId: currentChatId, title });
                     await refreshChats(currentBookId);

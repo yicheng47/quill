@@ -1,17 +1,17 @@
 import { useState } from "react";
 import { BookOpen, Search, Trash2, Clock, FileText, ArrowRight, Sparkles } from "lucide-react";
-import { useVocab } from "../hooks/useVocab";
+import { useDictionary } from "../hooks/useDictionary";
 import { timeAgo } from "../utils/timeAgo";
 
-interface VocabPanelProps {
+interface DictionaryPanelProps {
   bookId: string;
   onNavigate?: (cfi: string) => void;
   getPageFromCfi?: (cfi: string) => number | null;
 }
 
-export default function VocabPanel({ bookId, onNavigate, getPageFromCfi }: VocabPanelProps) {
+export default function DictionaryPanel({ bookId, onNavigate, getPageFromCfi }: DictionaryPanelProps) {
   const [search, setSearch] = useState("");
-  const { words, remove } = useVocab(bookId);
+  const { words, remove } = useDictionary(bookId);
 
   const filtered = words.filter((w) => {
     if (!search) return true;
@@ -30,7 +30,7 @@ export default function VocabPanel({ bookId, onNavigate, getPageFromCfi }: Vocab
             <Sparkles size={12} className="text-white" />
           </div>
           <span className="text-[14px] font-semibold text-text-primary tracking-[-0.15px]">
-            Vocabulary
+            Dictionary
           </span>
         </div>
         <span className="text-[11px] text-text-muted tracking-[0.06px]">
@@ -44,7 +44,7 @@ export default function VocabPanel({ bookId, onNavigate, getPageFromCfi }: Vocab
           <Search size={12} className="text-text-muted shrink-0" />
           <input
             type="search"
-            placeholder="Search vocabulary..."
+            placeholder="Search dictionary..."
             defaultValue=""
             onInput={(e) => setSearch((e.target as HTMLInputElement).value)}
             onKeyDown={(e) => e.stopPropagation()}

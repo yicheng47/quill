@@ -17,7 +17,7 @@ import ReaderSettings, { type ReaderSettingsState, getFontFamily, getThemeStyles
 import ReaderContextMenu from "../components/ReaderContextMenu";
 import HighlightToolbar from "../components/HighlightToolbar";
 import LookupPopover from "../components/LookupPopover";
-import VocabPanel from "../components/VocabPanel";
+import DictionaryPanel from "../components/DictionaryPanel";
 import TableOfContents from "../components/TableOfContents";
 import { getBook, updateReadingProgress, type Book } from "../hooks/useBooks";
 import { getAllSettings } from "../hooks/useSettings";
@@ -563,7 +563,7 @@ export default function Reader() {
     navigate(location.pathname, { replace: true });
   }, [bookReady, location.state, location.pathname, navigate]);
 
-  // Handle navigation state from VocabPage ("Open in Reader")
+  // Handle navigation state from DictionaryPage ("Open in Reader")
   useEffect(() => {
     const state = location.state as { openVocab?: boolean; cfi?: string } | null;
     if (!state?.openVocab || !bookReady) return;
@@ -799,7 +799,7 @@ export default function Reader() {
             />
           )}
           {sidePanel === "vocab" && bookId && (
-            <VocabPanel
+            <DictionaryPanel
               bookId={bookId}
               onNavigate={(cfi) => {
                 viewRef.current?.goTo(cfi).then(() => {

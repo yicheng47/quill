@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
-export interface VocabWord {
+export interface DictionaryWord {
   id: string;
   book_id: string;
   word: string;
@@ -16,12 +16,12 @@ export interface VocabWord {
   book_title: string | null;
 }
 
-export function useVocab(bookId: string) {
-  const [words, setWords] = useState<VocabWord[]>([]);
+export function useDictionary(bookId: string) {
+  const [words, setWords] = useState<DictionaryWord[]>([]);
 
   const refresh = useCallback(async () => {
     try {
-      const result = await invoke<VocabWord[]>("list_vocab_words", { bookId });
+      const result = await invoke<DictionaryWord[]>("list_vocab_words", { bookId });
       setWords(result);
     } catch (err) {
       console.error("Failed to load vocab words:", err);
@@ -39,15 +39,15 @@ export function useVocab(bookId: string) {
       contextSentence?: string,
       cfi?: string
     ) => {
-      const vocabWord = await invoke<VocabWord>("add_vocab_word", {
+      const dictionaryWord = await invoke<DictionaryWord>("add_vocab_word", {
         bookId,
         word,
         definition,
         contextSentence: contextSentence || null,
         cfi: cfi || null,
       });
-      setWords((prev) => [vocabWord, ...prev]);
-      return vocabWord;
+      setWords((prev) => [dictionaryWord, ...prev]);
+      return dictionaryWord;
     },
     [bookId]
   );
@@ -67,12 +67,12 @@ export function useVocab(bookId: string) {
   return { words, refresh, add, remove, checkExists };
 }
 
-export function useAllVocab() {
-  const [words, setWords] = useState<VocabWord[]>([]);
+export function useAllDictionary() {
+  const [words, setWords] = useState<DictionaryWord[]>([]);
 
   const refresh = useCallback(async () => {
     try {
-      const result = await invoke<VocabWord[]>("list_all_vocab_words");
+      const result = await invoke<DictionaryWord[]>("list_all_vocab_words");
       setWords(result);
     } catch (err) {
       console.error("Failed to load all vocab words:", err);

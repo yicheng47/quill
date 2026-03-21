@@ -104,7 +104,7 @@ export default function Sidebar({ activeFilter, onFilterChange, books, collectio
             <span className={`text-[14px] font-medium tracking-[-0.15px] ${
               activeFilter === "vocab" ? "text-accent-text" : "text-text-secondary"
             }`}>
-              Vocabulary
+              Dictionary
             </span>
           </button>
           <button
