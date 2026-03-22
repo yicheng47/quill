@@ -30,6 +30,10 @@ impl Db {
         let schema3 = include_str!("../migrations/003_chats.sql");
         conn.execute_batch(schema3)?;
 
+        let schema4 = include_str!("../migrations/004_pdf_support.sql");
+        // ALTER TABLE may fail if column already exists — ignore the error
+        let _ = conn.execute_batch(schema4);
+
         // One-time migration: convert absolute paths to relative
         Self::migrate_to_relative_paths(&conn, app_data_dir)?;
 

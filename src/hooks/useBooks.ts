@@ -9,6 +9,7 @@ export interface Book {
   description: string | null;
   cover_path: string | null;
   file_path: string;
+  format: "epub" | "pdf";
   genre: string | null;
   pages: number | null;
   status: "reading" | "finished" | "unread";
@@ -47,9 +48,23 @@ export function useBooks(filter?: string, search?: string) {
 export async function importBookDialog(): Promise<Book | null> {
   const selected = await open({
     multiple: false,
-    filters: [{ name: "EPUB files", extensions: ["epub"] }],
+    filters: [{ name: "Books", extensions: ["epub", "pdf"] }],
   });
   if (!selected) return null;
+
+  if (selected.toLowerCase().endsWith(".pdf")) {
+    const { extractPdfMetadata } = await import("../utils/pdfMetadata");
+    const meta = await extractPdfMetadata(selected);
+    return invoke<Book>("import_pdf", {
+      sourcePath: selected,
+      title: meta.title,
+      author: meta.author,
+      description: meta.description,
+      pages: meta.pages,
+      coverData: meta.coverData ? Array.from(meta.coverData) : null,
+    });
+  }
+
   return invoke<Book>("import_book", { filePath: selected });
 }
 

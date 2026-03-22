@@ -9,6 +9,8 @@ import {
   Bot,
   Languages,
   Loader2,
+  Minus,
+  Plus,
 } from "lucide-react";
 import Button from "../components/ui/Button";
 import AiPanel from "../components/AiPanel";
@@ -38,6 +40,7 @@ interface FoliateView extends HTMLElement {
   getCFI(index: number, range: Range): string;
   addAnnotation(annotation: { value: string; color?: string }): Promise<any>;
   deleteAnnotation(annotation: { value: string }): Promise<void>;
+  getContents(): Array<{ doc: Document; index: number }>;
 }
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
@@ -106,6 +109,7 @@ export default function Reader() {
   const [sidePanel, setSidePanel] = useState<SidePanel>(null);
   const [panelWidth, setPanelWidth] = useState(PANEL_DEFAULT_WIDTH);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [zoomLevel, setZoomLevel] = useState(100);
   const [tocOpen, setTocOpen] = useState(false);
   const [chapters, setChapters] = useState<TocChapter[]>([]);
   const [currentChapterIndex, setCurrentChapterIndex] = useState(-1);
@@ -144,6 +148,7 @@ export default function Reader() {
     fontSize: 26,
     brightness: 100,
     readingMode: "scrolling",
+    pageColumns: 2,
     lineSpacing: 1.8,
     charSpacing: 0,
     wordSpacing: 0,
@@ -214,9 +219,10 @@ export default function Reader() {
       viewRef.current = view;
 
       // Fetch EPUB as blob for foliate-js
-      const epubUrl = convertFileSrc(book.file_path);
-      const response = await fetch(epubUrl);
-      const blob = new File([await response.blob()], "book.epub");
+      const fileUrl = convertFileSrc(book.file_path);
+      const response = await fetch(fileUrl);
+      const ext = book.format === "pdf" ? "pdf" : "epub";
+      const blob = new File([await response.blob()], `book.${ext}`);
       await view.open(blob);
 
       if (cancelled) return;
@@ -226,10 +232,30 @@ export default function Reader() {
       view.renderer.setAttribute("flow", isScrolling ? "scrolled" : "paginated");
       view.renderer.setAttribute("gap", "5%");
       view.renderer.setAttribute("max-inline-size", "1000px");
-      view.renderer.setAttribute("max-column-count", "2");
+      view.renderer.setAttribute("max-column-count", String(readerSettings.pageColumns));
+      // Spread mode for fixed-layout (PDF) — 'none' = single page, default = two pages
+      if (book.format === "pdf") {
+        view.renderer.setAttribute("spread", readerSettings.pageColumns === 1 ? "none" : "auto");
+      }
 
       // Apply styles
       view.renderer.setStyles?.(getReaderCSS(readerSettings));
+
+      // Apply PDF theme filter on init
+      if (book.format === "pdf") {
+        const mainEl = viewerRef.current?.parentElement;
+        if (mainEl) {
+          const pdfFilter = (() => {
+            switch (readerSettings.theme) {
+              case "paper": return "sepia(100%) saturate(70%) brightness(0.92)";
+              case "quiet": return "grayscale(30%) brightness(0.75) contrast(1.1)";
+              case "night": return "invert(0.9) hue-rotate(180deg) contrast(0.9)";
+              default: return "";
+            }
+          })();
+          mainEl.style.filter = pdfFilter || "";
+        }
+      }
 
       // Load TOC
       const toc = view.book.toc;
@@ -447,16 +473,53 @@ export default function Reader() {
       readerSettings.readingMode === "scrolling" ? "scrolled" : "paginated"
     );
 
+    // Update page columns (single page vs two pages)
+    view.renderer.setAttribute("max-column-count", String(readerSettings.pageColumns));
+    // Spread mode for fixed-layout (PDF)
+    if (book?.format === "pdf") {
+      view.renderer.setAttribute("spread", readerSettings.pageColumns === 1 ? "none" : "auto");
+    }
+
     // Update max-inline-size for margins (narrower content = more margin)
     const baseWidth = 1000;
     const marginOffset = readerSettings.margins * 2;
     view.renderer.setAttribute("max-inline-size", `${Math.max(400, baseWidth - marginOffset)}px`);
 
-    // Update brightness
+    // Update brightness + PDF theme filter
     if (viewerRef.current) {
       viewerRef.current.style.filter = `brightness(${readerSettings.brightness / 100})`;
     }
-  }, [readerSettings]);
+    // For PDFs, apply theme filter on the main container so background + pages match
+    const mainEl = viewerRef.current?.parentElement;
+    if (mainEl && book?.format === "pdf") {
+      const pdfFilter = (() => {
+        switch (readerSettings.theme) {
+          case "paper": return "sepia(100%) saturate(70%) brightness(0.92)";
+          case "quiet": return "grayscale(30%) brightness(0.75) contrast(1.1)";
+          case "night": return "invert(0.9) hue-rotate(180deg) contrast(0.9)";
+          default: return "";
+        }
+      })();
+      mainEl.style.filter = pdfFilter || "";
+    }
+  }, [readerSettings, book?.format]);
+
+  // Apply zoom for PDFs via CSS transform (relative to fit-page baseline)
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view?.renderer || book?.format !== "pdf") return;
+    if (zoomLevel === 100) {
+      view.renderer.style.transform = "";
+      view.renderer.style.transformOrigin = "";
+    } else {
+      view.renderer.style.transform = `scale(${zoomLevel / 100})`;
+      view.renderer.style.transformOrigin = "center top";
+    }
+  }, [zoomLevel, book?.format]);
+
+  const handleZoom = (delta: number) => {
+    setZoomLevel((prev) => Math.min(300, Math.max(50, prev + delta)));
+  };
 
   const togglePanel = (panel: "ai" | "bookmarks" | "vocab") => {
     setSidePanel((prev) => (prev === panel ? null : panel));
@@ -622,7 +685,9 @@ export default function Reader() {
               {book.title}
             </h1>
             <span className="text-[13px] text-text-muted leading-4">
-              {chapters.length > 0 ? `Chapter ${currentChapterIndex + 1} of ${chapters.length}` : ""}
+              {book.format === "pdf"
+                ? pageInfo ? `Page ${pageInfo.current} of ${pageInfo.total}` : ""
+                : chapters.length > 0 ? `Chapter ${currentChapterIndex + 1} of ${chapters.length}` : ""}
             </span>
           </div>
         </div>
@@ -665,6 +730,7 @@ export default function Reader() {
             anchorRef={settingsAnchorRef}
             settings={readerSettings}
             onSettingsChange={setReaderSettings}
+            bookFormat={book.format}
           />
 
           <Button
@@ -685,6 +751,25 @@ export default function Reader() {
             <Languages size={16} />
           </Button>
 
+          {/* Zoom control — PDF only */}
+          {book.format === "pdf" && (
+            <>
+              <div className="w-px h-6 bg-border mx-1" />
+              <div className="flex items-center gap-0.5">
+                <span className="text-[12px] font-medium text-text-muted w-[42px] text-center tabular-nums">
+                  {zoomLevel}%
+                </span>
+                <Button variant="icon" size="sm" onClick={() => handleZoom(-10)}>
+                  <Minus size={14} />
+                </Button>
+                <div className="w-px h-4 bg-border" />
+                <Button variant="icon" size="sm" onClick={() => handleZoom(10)}>
+                  <Plus size={14} />
+                </Button>
+              </div>
+            </>
+          )}
+
           <div className="w-px h-6 bg-border mx-1" />
 
           <button
@@ -704,11 +789,14 @@ export default function Reader() {
       </header>
 
       {/* Body */}
-      <div className="flex flex-1 overflow-hidden" style={{ backgroundColor: getThemeStyles(readerSettings.theme).body }}>
-        <div className="flex-1 flex flex-col min-w-0" style={{ backgroundColor: getThemeStyles(readerSettings.theme).body }}>
+      <div
+        className={`flex flex-1 ${book.format === "pdf" && zoomLevel > 100 ? "overflow-auto" : "overflow-hidden"}`}
+        style={{ backgroundColor: book.format === "pdf" ? "#ffffff" : getThemeStyles(readerSettings.theme).body }}
+      >
+        <div className="flex-1 flex flex-col min-w-0" style={{ backgroundColor: book.format === "pdf" ? "#ffffff" : getThemeStyles(readerSettings.theme).body }}>
           <main
-            className="flex-1 relative overflow-hidden"
-            style={{ backgroundColor: getThemeStyles(readerSettings.theme).body }}
+            className={`flex-1 relative ${book.format === "pdf" && zoomLevel > 100 ? "overflow-auto" : "overflow-hidden"}`}
+            style={{ backgroundColor: book.format === "pdf" ? "#ffffff" : getThemeStyles(readerSettings.theme).body }}
             onContextMenu={handleContextMenu}
             onClick={() => { setTocOpen(false); setSettingsOpen(false); }}
           >
@@ -827,7 +915,10 @@ export default function Reader() {
             setContextMenu(null);
           }}
           onAskAI={() => {
-            setAiContext({ text: contextMenu.text, cfi: contextMenu.cfiRange });
+            setAiContext({
+              text: contextMenu.text,
+              cfi: contextMenu.cfiRange,
+            });
             setSidePanel("ai");
             setContextMenu(null);
           }}

@@ -68,6 +68,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             // Books
             commands::books::import_book,
+            commands::books::import_pdf,
             commands::books::list_books,
             commands::books::get_book,
             commands::books::delete_book,

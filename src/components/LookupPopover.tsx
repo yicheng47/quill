@@ -254,7 +254,7 @@ export default function LookupPopover({
             className="flex items-center gap-1.5 text-[13px] font-medium cursor-pointer text-accent-text hover:opacity-70 disabled:opacity-50 disabled:cursor-default"
           >
             {saved ? <Check size={14} /> : <BookmarkPlus size={14} />}
-            {saved ? "Saved" : "Save to Vocab"}
+            {saved ? "Saved" : "Save to Dict"}
           </button>
           <button
             onClick={handleCopy}
