@@ -120,9 +120,5 @@ body {
 }
 
 [data-tauri-drag-region] {
-  cursor: grab;
-}
-
-[data-tauri-drag-region]:active {
-  cursor: grabbing;
+  cursor: default;
 }

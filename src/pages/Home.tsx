@@ -58,17 +58,30 @@ export default function Home() {
         setIsDragging(true);
       } else if (event.payload.type === "drop") {
         setIsDragging(false);
-        const epubs = event.payload.paths.filter((p) =>
-          p.toLowerCase().endsWith(".epub")
+        const books = event.payload.paths.filter((p) =>
+          p.toLowerCase().endsWith(".epub") || p.toLowerCase().endsWith(".pdf")
         );
-        for (const filePath of epubs) {
+        for (const filePath of books) {
           try {
-            await invoke<Book>("import_book", { filePath });
+            if (filePath.toLowerCase().endsWith(".pdf")) {
+              const { extractPdfMetadata } = await import("../utils/pdfMetadata");
+              const meta = await extractPdfMetadata(filePath);
+              await invoke<Book>("import_pdf", {
+                sourcePath: filePath,
+                title: meta.title,
+                author: meta.author,
+                description: meta.description,
+                pages: meta.pages,
+                coverData: meta.coverData ? Array.from(meta.coverData) : null,
+              });
+            } else {
+              await invoke<Book>("import_book", { filePath });
+            }
           } catch (err) {
             console.error("Failed to import dropped book:", err);
           }
         }
-        if (epubs.length > 0) {
+        if (books.length > 0) {
           refreshRef.current();
           allBooksRefreshRef.current();
         }
@@ -214,7 +227,7 @@ export default function Home() {
             <p className="text-[18px] font-semibold text-text-primary">
               Drop to add to your library
             </p>
-            <p className="text-[14px] text-text-muted">EPUB</p>
+            <p className="text-[14px] text-text-muted">EPUB & PDF</p>
           </div>
         </div>
       )}

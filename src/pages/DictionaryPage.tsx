@@ -244,7 +244,7 @@ export default function DictionaryPage() {
               Start Building Your Dictionary
             </h2>
             <p className="text-[14px] text-text-muted text-center max-w-[296px]">
-              Select a word while reading, use "Look Up" to see its definition, then tap "Save to Vocab" to add it here.
+              Select a word while reading, use "Look Up" to see its definition, then tap "Save to Dict" to add it here.
             </p>
           </div>
         ) : view === "list" ? (

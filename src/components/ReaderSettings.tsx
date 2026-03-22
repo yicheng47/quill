@@ -1,15 +1,15 @@
 import { useState, useRef, useEffect } from "react";
-import { Sun, Check, ScrollText, BookOpen } from "lucide-react";
+import { Sun, Check, ScrollText, BookOpen, File, Files } from "lucide-react";
 import Select from "./ui/Select";
 
 const sliderClass =
   "w-full h-1 cursor-pointer appearance-none rounded-full bg-border [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3.5 [&::-webkit-slider-thumb]:h-3.5 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-bg-surface [&::-webkit-slider-thumb]:border [&::-webkit-slider-thumb]:border-border [&::-webkit-slider-thumb]:shadow-sm";
 
 const themes = [
-  { id: "original", label: "Original", color: "bg-white border border-[#d4d4d8]" },
-  { id: "paper", label: "Paper", color: "bg-[#fef3c6]" },
-  { id: "quiet", label: "Quiet", color: "bg-[#71717b]" },
-  { id: "night", label: "Night", color: "bg-[#18181b] border border-[#3f3f46]" },
+  { id: "original", label: "Original", color: "bg-white border border-[#d4d4d8]", pdf: true },
+  { id: "paper", label: "Sepia", color: "bg-[#f5e6c8]", pdf: true },
+  { id: "quiet", label: "Gray", color: "bg-[#71717b]", pdf: true },
+  { id: "night", label: "Night", color: "bg-[#18181b] border border-[#3f3f46]", pdf: true },
 ] as const;
 
 const fonts = [
@@ -24,6 +24,7 @@ export type ReaderTheme = (typeof themes)[number]["id"];
 export type ReaderFont = (typeof fonts)[number]["id"];
 
 export type ReadingMode = "scrolling" | "paginated";
+export type PageColumns = 1 | 2;
 
 export interface ReaderSettingsState {
   theme: ReaderTheme;
@@ -31,6 +32,7 @@ export interface ReaderSettingsState {
   fontSize: number; // px
   brightness: number; // 0-100
   readingMode: ReadingMode;
+  pageColumns: PageColumns; // 1 = single page, 2 = two pages side by side
   lineSpacing: number; // multiplier, e.g. 1.5
   charSpacing: number; // percentage, 0 = normal
   wordSpacing: number; // percentage, 0 = normal
@@ -43,6 +45,7 @@ interface ReaderSettingsProps {
   anchorRef: React.RefObject<HTMLElement | null>;
   settings: ReaderSettingsState;
   onSettingsChange: (settings: ReaderSettingsState) => void;
+  bookFormat?: "epub" | "pdf";
 }
 
 export function getFontFamily(fontId: ReaderFont): string {
@@ -66,7 +69,7 @@ export function getDefaultReaderTheme(): ReaderTheme {
   return document.documentElement.classList.contains("dark") ? "night" : "original";
 }
 
-export default function ReaderSettings({ open, onClose, anchorRef, settings, onSettingsChange }: ReaderSettingsProps) {
+export default function ReaderSettings({ open, onClose, anchorRef, settings, onSettingsChange, bookFormat }: ReaderSettingsProps) {
   const popoverRef = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState({ top: 0, right: 0 });
 
@@ -109,7 +112,7 @@ export default function ReaderSettings({ open, onClose, anchorRef, settings, onS
       style={{ top: position.top, right: position.right }}
     >
       {/* Font size toggle */}
-      <div className="flex items-center h-[60px] px-4 border-b border-border-light">
+      {bookFormat !== "pdf" && (<div className="flex items-center h-[60px] px-4 border-b border-border-light">
         <button
           onClick={() => update({ fontSize: Math.max(12, settings.fontSize - 2) })}
           className="flex-1 flex items-center justify-center h-7 border-r border-border cursor-pointer text-text-primary hover:bg-bg-input"
@@ -125,7 +128,7 @@ export default function ReaderSettings({ open, onClose, anchorRef, settings, onS
         >
           <span className="text-[20px] font-medium tracking-[-0.45px]">A+</span>
         </button>
-      </div>
+      </div>)}
 
       {/* Brightness slider */}
       <div className="flex items-center gap-3 h-[42px] px-4 border-b border-border-light">
@@ -142,8 +145,8 @@ export default function ReaderSettings({ open, onClose, anchorRef, settings, onS
       </div>
 
       {/* Theme selector */}
-      <div className="flex items-center justify-center gap-5 h-[78px] border-b border-border-light">
-        {themes.map((theme) => (
+      <div className={`flex items-center justify-center gap-5 h-[78px] ${bookFormat !== "pdf" ? "border-b border-border-light" : ""}`}>
+        {themes.filter((t) => bookFormat !== "pdf" || t.pdf).map((theme) => (
           <button
             key={theme.id}
             onClick={() => update({ theme: theme.id })}
@@ -168,7 +171,8 @@ export default function ReaderSettings({ open, onClose, anchorRef, settings, onS
         ))}
       </div>
 
-      {/* Font family dropdown */}
+      {/* Font family — hidden for PDFs */}
+      {bookFormat !== "pdf" && (
       <div className="px-4 py-3 border-b border-border-light">
         <p className="text-[11px] font-medium text-text-muted tracking-[0.5px] uppercase mb-2">Font</p>
         <Select
@@ -177,9 +181,10 @@ export default function ReaderSettings({ open, onClose, anchorRef, settings, onS
           options={fonts.map((f) => ({ value: f.id, label: f.label }))}
         />
       </div>
+      )}
 
-      {/* Reading Mode */}
-      <div className="px-4 py-3 border-b border-border-light">
+      {/* Reading Mode — EPUB only (PDF uses fixed layout renderer) */}
+      {bookFormat !== "pdf" && (<div className="px-4 py-3 border-b border-border-light">
         <p className="text-[11px] font-medium text-text-muted tracking-[0.5px] uppercase mb-2">Reading Mode</p>
         <div className="flex gap-2">
           <button
@@ -205,10 +210,39 @@ export default function ReaderSettings({ open, onClose, anchorRef, settings, onS
             <span className="text-[12px] font-medium">Page Turning</span>
           </button>
         </div>
+      </div>)}
+
+      {/* Page columns — single or two pages — EPUB only */}
+      <div className="px-4 py-3 border-b border-border-light">
+        <p className="text-[11px] font-medium text-text-muted tracking-[0.5px] uppercase mb-2">Page Layout</p>
+        <div className="flex gap-2">
+          <button
+            onClick={() => update({ pageColumns: 1 })}
+            className={`flex-1 flex flex-col items-center gap-1.5 py-2.5 rounded-lg border cursor-pointer transition-colors ${
+              settings.pageColumns === 1
+                ? "border-accent bg-accent-bg text-accent"
+                : "border-border bg-bg-surface text-text-primary hover:bg-bg-input"
+            }`}
+          >
+            <File size={20} />
+            <span className="text-[12px] font-medium">Single Page</span>
+          </button>
+          <button
+            onClick={() => update({ pageColumns: 2 })}
+            className={`flex-1 flex flex-col items-center gap-1.5 py-2.5 rounded-lg border cursor-pointer transition-colors ${
+              settings.pageColumns === 2
+                ? "border-accent bg-accent-bg text-accent"
+                : "border-border bg-bg-surface text-text-primary hover:bg-bg-input"
+            }`}
+          >
+            <Files size={20} />
+            <span className="text-[12px] font-medium">Two Pages</span>
+          </button>
+        </div>
       </div>
 
-      {/* Layout section */}
-      <div className="px-4 py-3 flex flex-col gap-4">
+      {/* Layout section — hidden for PDFs */}
+      {bookFormat !== "pdf" && (<div className="px-4 py-3 flex flex-col gap-4">
         <p className="text-[11px] font-medium text-text-muted tracking-[0.5px] uppercase">Layout</p>
 
         {/* Line Spacing */}
@@ -278,7 +312,7 @@ export default function ReaderSettings({ open, onClose, anchorRef, settings, onS
             className={sliderClass}
           />
         </div>
-      </div>
+      </div>)}
     </div>
   );
 }

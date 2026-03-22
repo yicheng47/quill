@@ -1,0 +1,1 @@
+ALTER TABLE books ADD COLUMN format TEXT NOT NULL DEFAULT 'epub';
