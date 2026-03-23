@@ -507,16 +507,14 @@ export default function Reader() {
     }
   }, [readerSettings, book?.format]);
 
-  // Apply zoom for PDFs via CSS transform (relative to fit-page baseline)
+  // Apply zoom for PDFs via the renderer's built-in zoom attribute
   useEffect(() => {
     const view = viewRef.current;
     if (!view?.renderer || book?.format !== "pdf") return;
     if (zoomLevel === 100) {
-      view.renderer.style.transform = "";
-      view.renderer.style.transformOrigin = "";
+      view.renderer.setAttribute("zoom", "fit-page");
     } else {
-      view.renderer.style.transform = `scale(${zoomLevel / 100})`;
-      view.renderer.style.transformOrigin = "center top";
+      view.renderer.setAttribute("zoom", String(zoomLevel / 100));
     }
   }, [zoomLevel, book?.format]);
 
