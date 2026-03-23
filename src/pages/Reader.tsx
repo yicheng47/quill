@@ -357,9 +357,10 @@ export default function Reader() {
           else if (ev.key === "ArrowRight") view.next();
         });
 
-        // Click to dismiss context menu
+        // Click to dismiss context menu and highlight toolbar
         doc.addEventListener("click", () => {
           setContextMenu(null);
+          setHighlightToolbar(null);
         });
       }) as EventListener);
 
