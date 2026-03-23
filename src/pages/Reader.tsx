@@ -560,6 +560,38 @@ export default function Reader() {
     setSidePanel((prev) => (prev === panel ? null : panel));
   };
 
+  // When side panel toggles while zoomed, re-fit the renderer to the new container size
+  useEffect(() => {
+    if (book?.format !== "pdf" || zoomLevel === 100) return;
+    const view = viewRef.current;
+    const viewer = viewerRef.current;
+    if (!view?.renderer || !viewer) return;
+    const renderer = view.renderer;
+
+    // Unlock so renderer adapts to new container width
+    renderer.style.width = "";
+    renderer.style.height = "";
+    viewer.style.width = "";
+    viewer.style.height = "";
+    renderer.style.transform = "";
+
+    // After layout settles, re-lock and re-apply zoom
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const w = renderer.clientWidth;
+        const h = renderer.clientHeight;
+        renderer.style.width = `${w}px`;
+        renderer.style.height = `${h}px`;
+        const scale = zoomLevel / 100;
+        renderer.style.transform = `scale(${scale})`;
+        renderer.style.transformOrigin = "top left";
+        viewer.style.width = `${w * scale}px`;
+        viewer.style.height = `${h * scale}px`;
+      });
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sidePanel]);
+
   // Keyboard navigation — parent document listener
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -794,25 +826,6 @@ export default function Reader() {
             <Languages size={16} />
           </Button>
 
-          {/* Zoom control — PDF only */}
-          {book.format === "pdf" && (
-            <>
-              <div className="w-px h-6 bg-border mx-1" />
-              <div className="flex items-center gap-0.5">
-                <span className="text-[12px] font-medium text-text-muted w-[42px] text-center tabular-nums">
-                  {zoomLevel}%
-                </span>
-                <Button variant="icon" size="sm" onClick={() => handleZoom(-10)}>
-                  <Minus size={14} />
-                </Button>
-                <div className="w-px h-4 bg-border" />
-                <Button variant="icon" size="sm" onClick={() => handleZoom(10)}>
-                  <Plus size={14} />
-                </Button>
-              </div>
-            </>
-          )}
-
           <div className="w-px h-6 bg-border mx-1" />
 
           <button
@@ -866,10 +879,23 @@ export default function Reader() {
                   style={{ width: `${progress}%` }}
                 />
               </div>
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between h-8">
                 <span className="text-[12px] text-text-muted">
                   {pageInfo ? `Page ${pageInfo.current} of ${pageInfo.total}` : `${progress}%`}
                 </span>
+                {book.format === "pdf" && (
+                  <div className="flex items-center gap-1">
+                    <Button variant="icon" size="sm" onClick={() => handleZoom(-10)}>
+                      <Minus size={12} />
+                    </Button>
+                    <span className="text-[12px] font-medium text-text-muted w-[36px] text-center tabular-nums">
+                      {zoomLevel}%
+                    </span>
+                    <Button variant="icon" size="sm" onClick={() => handleZoom(10)}>
+                      <Plus size={12} />
+                    </Button>
+                  </div>
+                )}
                 <span className="text-[12px] text-text-muted">
                   {pageInfo && pageInfo.total > pageInfo.current
                     ? `${pageInfo.total - pageInfo.current} page${pageInfo.total - pageInfo.current !== 1 ? "s" : ""} left`
