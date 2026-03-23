@@ -45,18 +45,19 @@ export function useBooks(filter?: string, search?: string) {
   return { books, loading, refresh };
 }
 
-export async function importBookDialog(): Promise<Book | null> {
-  const selected = await open({
+async function pickFile(): Promise<string | null> {
+  return open({
     multiple: false,
     filters: [{ name: "Books", extensions: ["epub", "pdf"] }],
   });
-  if (!selected) return null;
+}
 
-  if (selected.toLowerCase().endsWith(".pdf")) {
+async function importFile(filePath: string): Promise<Book> {
+  if (filePath.toLowerCase().endsWith(".pdf")) {
     const { extractPdfMetadata } = await import("../utils/pdfMetadata");
-    const meta = await extractPdfMetadata(selected);
+    const meta = await extractPdfMetadata(filePath);
     return invoke<Book>("import_pdf", {
-      sourcePath: selected,
+      sourcePath: filePath,
       title: meta.title,
       author: meta.author,
       description: meta.description,
@@ -65,8 +66,10 @@ export async function importBookDialog(): Promise<Book | null> {
     });
   }
 
-  return invoke<Book>("import_book", { filePath: selected });
+  return invoke<Book>("import_book", { filePath });
 }
+
+export const importBookDialog = { pickFile, importFile };
 
 export async function getBook(id: string): Promise<Book> {
   return invoke<Book>("get_book", { id });

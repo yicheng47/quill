@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Search, LayoutGrid, List, Settings, Plus, Upload, BookOpen } from "lucide-react";
+import { Search, LayoutGrid, List, Settings, Plus, Upload, BookOpen, Loader } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
@@ -18,6 +18,7 @@ export default function Home() {
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [searchQuery, setSearchQuery] = useState("");
   const [isDragging, setIsDragging] = useState(false);
+  const [importing, setImporting] = useState(false);
   const collections = useCollections();
   const navigate = useNavigate();
 
@@ -66,29 +67,34 @@ export default function Home() {
         const books = event.payload.paths.filter((p) =>
           p.toLowerCase().endsWith(".epub") || p.toLowerCase().endsWith(".pdf")
         );
-        for (const filePath of books) {
-          try {
-            if (filePath.toLowerCase().endsWith(".pdf")) {
-              const { extractPdfMetadata } = await import("../utils/pdfMetadata");
-              const meta = await extractPdfMetadata(filePath);
-              await invoke<Book>("import_pdf", {
-                sourcePath: filePath,
-                title: meta.title,
-                author: meta.author,
-                description: meta.description,
-                pages: meta.pages,
-                coverData: meta.coverData ? Array.from(meta.coverData) : null,
-              });
-            } else {
-              await invoke<Book>("import_book", { filePath });
-            }
-          } catch (err) {
-            console.error("Failed to import dropped book:", err);
-          }
-        }
         if (books.length > 0) {
-          refreshRef.current();
-          allBooksRefreshRef.current();
+          setImporting(true);
+          try {
+            for (const filePath of books) {
+              try {
+                if (filePath.toLowerCase().endsWith(".pdf")) {
+                  const { extractPdfMetadata } = await import("../utils/pdfMetadata");
+                  const meta = await extractPdfMetadata(filePath);
+                  await invoke<Book>("import_pdf", {
+                    sourcePath: filePath,
+                    title: meta.title,
+                    author: meta.author,
+                    description: meta.description,
+                    pages: meta.pages,
+                    coverData: meta.coverData ? Array.from(meta.coverData) : null,
+                  });
+                } else {
+                  await invoke<Book>("import_book", { filePath });
+                }
+              } catch (err) {
+                console.error("Failed to import dropped book:", err);
+              }
+            }
+            refreshRef.current();
+            allBooksRefreshRef.current();
+          } finally {
+            setImporting(false);
+          }
         }
       } else {
         setIsDragging(false);
@@ -106,10 +112,17 @@ export default function Home() {
 
   const handleImport = async () => {
     try {
-      const book = await importBookDialog();
-      if (book) {
-        refresh();
-        allBooks.refresh();
+      const selected = await importBookDialog.pickFile();
+      if (!selected) return;
+      setImporting(true);
+      try {
+        const book = await importBookDialog.importFile(selected);
+        if (book) {
+          refresh();
+          allBooks.refresh();
+        }
+      } finally {
+        setImporting(false);
       }
     } catch (err) {
       console.error("Failed to import book:", err);
@@ -233,6 +246,17 @@ export default function Home() {
               Drop to add to your library
             </p>
             <p className="text-[14px] text-text-muted">EPUB & PDF</p>
+          </div>
+        </div>
+      )}
+
+      {importing && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-overlay backdrop-blur-sm">
+          <div className="flex flex-col items-center gap-4 rounded-xl border border-border bg-bg-surface px-16 py-12 shadow-popover">
+            <Loader size={28} className="text-accent animate-spin" />
+            <p className="text-[18px] font-semibold text-text-primary">
+              Importing book...
+            </p>
           </div>
         </div>
       )}
