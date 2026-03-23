@@ -223,7 +223,6 @@ pub async fn ai_generate_title(
 #[tauri::command]
 pub async fn ai_chat(
     messages: Vec<ChatMessage>,
-    context: Option<String>,
     app: AppHandle,
     db: State<'_, Db>,
     secrets: State<'_, Secrets>,
@@ -261,18 +260,12 @@ pub async fn ai_chat(
         (api_key, None)
     };
 
-    // Build messages with optional context
+    // Build messages: system prompt + conversation history (context is inlined by frontend)
     let mut api_messages = Vec::new();
     api_messages.push(ChatMessage {
         role: "system".to_string(),
         content: "You are a helpful reading assistant. Help the user understand and discuss the book they are reading.".to_string(),
     });
-    if let Some(ctx) = context {
-        api_messages.push(ChatMessage {
-            role: "system".to_string(),
-            content: format!("The user has selected the following text from the book:\n\n{}", ctx),
-        });
-    }
     api_messages.extend(messages);
 
     // Spawn streaming in a background task so events emit immediately
