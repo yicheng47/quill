@@ -3,6 +3,7 @@ import {
   BookOpen,
   CheckCircle2,
   FolderPlus,
+  FolderMinus,
   Trash2,
   ChevronRight,
   Plus,
@@ -15,6 +16,7 @@ interface BookContextMenuProps {
   y: number;
   bookId: string;
   bookStatus: string;
+  activeCollectionId?: string;
   onClose: () => void;
   onMarkFinished: () => void;
   onMarkReading: () => void;
@@ -27,6 +29,7 @@ export default function BookContextMenu({
   y,
   bookId,
   bookStatus,
+  activeCollectionId,
   onClose,
   onMarkFinished,
   onMarkReading,
@@ -37,7 +40,7 @@ export default function BookContextMenu({
   const [showCollections, setShowCollections] = useState(false);
   const [newName, setNewName] = useState("");
   const [creatingNew, setCreatingNew] = useState(false);
-  const { collections, create, addBook } = useCollections();
+  const { collections, create, addBook, removeBook } = useCollections();
   const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const submenuRef = useRef<HTMLDivElement>(null);
 
@@ -92,6 +95,13 @@ export default function BookContextMenu({
     onClose();
   };
 
+  const handleRemoveFromCollection = async () => {
+    if (!activeCollectionId) return;
+    await removeBook(activeCollectionId, bookId);
+    onBooksChanged?.();
+    onClose();
+  };
+
   const handleCreateAndAdd = async () => {
     const trimmed = newName.trim();
     if (!trimmed) return;
@@ -121,7 +131,7 @@ export default function BookContextMenu({
     <>
       <div
         ref={menuRef}
-        className="fixed z-50 bg-bg-surface/95 border border-border/80 rounded-[10px] py-1 w-[200px] backdrop-blur-sm shadow-[0px_20px_25px_0px_rgba(0,0,0,0.15),0px_8px_10px_0px_rgba(0,0,0,0.15)]"
+        className="fixed z-50 bg-bg-surface/95 border border-border/80 rounded-[10px] py-1 w-[220px] backdrop-blur-sm shadow-[0px_20px_25px_0px_rgba(0,0,0,0.15),0px_8px_10px_0px_rgba(0,0,0,0.15)]"
         style={{ left: x, top: y }}
       >
         {/* Status indicator */}
@@ -169,6 +179,19 @@ export default function BookContextMenu({
           </span>
           <ChevronRight size={12} className="text-text-muted" />
         </button>
+
+        {/* Remove from Collection (only when viewing a collection) */}
+        {activeCollectionId && (
+          <button
+            onClick={handleRemoveFromCollection}
+            className="flex items-center gap-3 w-[calc(100%-8px)] mx-1 px-3 h-[31.5px] rounded-sm text-left cursor-pointer hover:bg-accent-bg transition-colors"
+          >
+            <FolderMinus size={16} className="text-text-muted" />
+            <span className="flex-1 text-[13px] font-medium text-text-primary tracking-[-0.08px] whitespace-nowrap">
+              Remove from Collection
+            </span>
+          </button>
+        )}
 
         <div className="mx-3 my-1 h-px bg-border/80" />
 

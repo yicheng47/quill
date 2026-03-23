@@ -8,10 +8,11 @@ import BookContextMenu from "./BookContextMenu";
 
 interface BookListProps {
   books: Book[];
+  activeCollectionId?: string;
   onBooksChanged?: () => void;
 }
 
-export default function BookList({ books, onBooksChanged }: BookListProps) {
+export default function BookList({ books, activeCollectionId, onBooksChanged }: BookListProps) {
   const navigate = useNavigate();
   const [contextMenu, setContextMenu] = useState<{
     x: number;
@@ -105,6 +106,7 @@ export default function BookList({ books, onBooksChanged }: BookListProps) {
           y={contextMenu.y}
           bookId={contextMenu.book.id}
           bookStatus={contextMenu.book.status}
+          activeCollectionId={activeCollectionId}
           onClose={() => setContextMenu(null)}
           onMarkFinished={async () => {
             await markFinished(contextMenu.book.id);

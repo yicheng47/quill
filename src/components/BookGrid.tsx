@@ -7,10 +7,11 @@ import BookContextMenu from "./BookContextMenu";
 
 interface BookGridProps {
   books: Book[];
+  activeCollectionId?: string;
   onBooksChanged?: () => void;
 }
 
-export default function BookGrid({ books, onBooksChanged }: BookGridProps) {
+export default function BookGrid({ books, activeCollectionId, onBooksChanged }: BookGridProps) {
   const navigate = useNavigate();
   const [contextMenu, setContextMenu] = useState<{
     x: number;
@@ -67,6 +68,7 @@ export default function BookGrid({ books, onBooksChanged }: BookGridProps) {
           y={contextMenu.y}
           bookId={contextMenu.book.id}
           bookStatus={contextMenu.book.status}
+          activeCollectionId={activeCollectionId}
           onClose={() => setContextMenu(null)}
           onMarkFinished={async () => {
             await markFinished(contextMenu.book.id);
