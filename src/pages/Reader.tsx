@@ -93,11 +93,11 @@ interface TocChapter {
 }
 
 const highlightColorMap: Record<string, string> = {
-  yellow: "rgba(251, 191, 36, 0.5)",
-  green: "rgba(52, 211, 153, 0.5)",
-  blue: "rgba(96, 165, 250, 0.5)",
-  pink: "rgba(244, 114, 182, 0.5)",
-  purple: "rgba(167, 139, 250, 0.5)",
+  yellow: "#FBBF24",
+  green: "#34D399",
+  blue: "#60A5FA",
+  pink: "#F472B6",
+  purple: "#A78BFA",
 };
 
 export default function Reader() {
@@ -313,10 +313,10 @@ export default function Reader() {
         // foliate-js renders in iframes; clientX/Y are relative to the
         // iframe viewport. Use frameElement to get the iframe's offset.
         doc.addEventListener("contextmenu", (ev: MouseEvent) => {
+          ev.preventDefault();
           const sel = doc.getSelection?.();
           const text = sel?.toString().trim();
           if (text) {
-            ev.preventDefault();
             const iframe = doc.defaultView?.frameElement as HTMLElement | null;
             let offsetX = 0, offsetY = 0;
             if (iframe) {
@@ -357,9 +357,10 @@ export default function Reader() {
           else if (ev.key === "ArrowRight") view.next();
         });
 
-        // Click to dismiss context menu
+        // Click to dismiss context menu and highlight toolbar
         doc.addEventListener("click", () => {
           setContextMenu(null);
+          setHighlightToolbar(null);
         });
       }) as EventListener);
 
@@ -382,20 +383,22 @@ export default function Reader() {
 
       view.addEventListener("draw-annotation", ((e: CustomEvent) => {
         const { draw, annotation } = e.detail;
-        // Overlayer is already loaded as a dependency of view.js
-        // The draw function accepts a static method and options
         const color = highlightColorMap[annotation.color] || highlightColorMap.yellow;
-        // Use the highlight draw function: filled rectangles over text ranges
+        const isPdf = book?.format === "pdf";
         draw((rects: DOMRectList) => {
           const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
           g.setAttribute("fill", color);
+          g.setAttribute("opacity", "0.35");
           g.style.mixBlendMode = "multiply";
           for (const { left, top, height, width } of rects) {
             const el = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-            el.setAttribute("x", String(left));
-            el.setAttribute("y", String(top));
-            el.setAttribute("height", String(height));
-            el.setAttribute("width", String(width));
+            // PDF text layer spans have sub-pixel gaps; pad rects to close them
+            const pad = isPdf ? 1 : 0;
+            el.setAttribute("x", String(Math.floor(left)));
+            el.setAttribute("y", String(top - pad));
+            el.setAttribute("height", String(height + pad * 2));
+            el.setAttribute("width", String(Math.ceil(width)));
+            el.setAttribute("rx", isPdf ? "1" : "0");
             g.append(el);
           }
           return g;
@@ -532,12 +535,23 @@ export default function Reader() {
       if (tag === "INPUT" || tag === "TEXTAREA") return;
       if (e.key === "ArrowLeft") viewRef.current?.prev();
       else if (e.key === "ArrowRight") viewRef.current?.next();
+      // Cmd+/Cmd- zoom for PDFs
+      else if ((e.metaKey || e.ctrlKey) && (e.key === "=" || e.key === "+")) {
+        e.preventDefault();
+        if (book?.format === "pdf") handleZoom(10);
+      } else if ((e.metaKey || e.ctrlKey) && e.key === "-") {
+        e.preventDefault();
+        if (book?.format === "pdf") handleZoom(-10);
+      } else if ((e.metaKey || e.ctrlKey) && e.key === "0") {
+        e.preventDefault();
+        if (book?.format === "pdf") setZoomLevel(100);
+      }
     };
     document.addEventListener("keydown", handleKeyDown);
     return () => {
       document.removeEventListener("keydown", handleKeyDown);
     };
-  }, []);
+  }, [book?.format]);
 
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     const selection = window.getSelection();
