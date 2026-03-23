@@ -1,4 +1,4 @@
-# Stage 1 — MVP (Complete)
+# Milestone 1 — MVP (Complete)
 
 Core reading experience with AI integration. Shipped as v0.1–v0.2.x.
 
@@ -14,5 +14,6 @@ Core reading experience with AI integration. Shipped as v0.1–v0.2.x.
 - Multi-provider AI support (Anthropic, OpenAI-compatible, Ollama, MiniMax)
 - OpenAI OAuth login
 - iCloud sync (books, DB, settings via relative paths)
+- PDF support
 
-*Feature specs for Stage 1 have been removed — the shipped code is the source of truth.*
+*Feature specs for Milestone 1 have been removed — the shipped code is the source of truth.*

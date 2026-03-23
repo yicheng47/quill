@@ -28,7 +28,6 @@ An eBook reader with a built-in AI reading assistant. Works with your ChatGPT su
 ### Organization
 - **Library** — Grid/list views, search, status filters, collections
 - **iCloud Sync** — Sync books, progress, and settings across Macs
-- **i18n** — English and Simplified Chinese
 
 ## Download
 
