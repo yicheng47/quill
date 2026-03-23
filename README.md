@@ -28,7 +28,6 @@ An eBook reader with a built-in AI reading assistant — powered by your existin
 ### Organization
 - **Library** — Grid/list views, search, status filters, collections
 - **iCloud Sync** — Sync books, progress, and settings across Macs
-- **Auto-Update** — The app updates itself
 - **i18n** — English and Simplified Chinese
 
 ## Download
@@ -40,7 +39,7 @@ Grab the latest `.dmg` from the [Releases](https://github.com/yicheng47/quill/re
 | `Quill_x.x.x_aarch64.dmg` | macOS Apple Silicon (M1/M2/M3/M4) |
 | `Quill_x.x.x_x64.dmg` | macOS Intel |
 
-Open the `.dmg` and drag **Quill.app** to your Applications folder. Future updates are delivered automatically in-app.
+Open the `.dmg` and drag **Quill.app** to your Applications folder.
 
 ## AI Setup
 
