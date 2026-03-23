@@ -21,7 +21,6 @@ Save and restore AI chats per book. Users can maintain multiple chat threads (e.
 Toggle between fast responses and extended reasoning with visible chain-of-thought. Useful for complex literary analysis, thematic questions, and nuanced passage interpretation.
 
 - **Status:** Spec complete
-- **Spec:** [03 — AI Thinking Mode](../features/03-ai-thinking-mode.md)
 
 ### Smart summaries
 Generate chapter or section summaries on demand. Help users quickly recall what happened or extract key points from dense material.
