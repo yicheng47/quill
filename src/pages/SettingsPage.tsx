@@ -181,6 +181,17 @@ export default function SettingsPage() {
       setOauthStatus(result);
       setOauthToast(true);
       setTimeout(() => setOauthToast(false), 2000);
+      // Auto-save AI configuration after successful OAuth login
+      await saveBulk({
+        ai_provider: provider,
+        ai_api_key: apiKey,
+        ai_model: model,
+        ai_base_url: baseUrl,
+        ai_temperature: String(temperature),
+        ai_keep_alive: keepAlive,
+        ai_auth_mode: authMode,
+      });
+      setAiDirty(false);
     } catch (err) {
       setOauthError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -244,7 +255,7 @@ export default function SettingsPage() {
                   if (p === "ollama") {
                     setBaseUrl("http://localhost:11434"); setModel("qwen3.5");
                   } else if (p === "openai") {
-                    setBaseUrl("https://api.openai.com"); setModel("gpt-4o"); setAuthMode("oauth");
+                    setBaseUrl("https://api.openai.com"); setModel("gpt-5.3-codex"); setAuthMode("oauth");
                   } else if (p === "anthropic") {
                     setBaseUrl(""); setModel("claude-sonnet-4-20250514");
                   } else if (p === "minimax") {
