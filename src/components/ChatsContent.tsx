@@ -85,7 +85,7 @@ export default function ChatsContent() {
   return (
     <div className="flex-1 flex flex-col min-w-0">
       {/* Header */}
-      <div className="px-page pb-2 relative">
+      <div className="px-page pb-2 relative select-none">
         <div data-tauri-drag-region className="absolute top-0 left-0 right-0 h-11" />
         <div className="pt-11 flex items-center justify-between mb-6">
           <h1 className="text-[24px] font-semibold text-text-primary tracking-[0.07px]">

@@ -38,6 +38,11 @@ Simple first-launch flow guiding new users to set up their AI provider in Settin
 
 - **Status:** Planned
 
+### Region screenshot for AI
+Capture a selected region of the page (screenshot crop) and send it to the AI assistant as an image. Useful for magazines and image-heavy PDFs where text selection is unreliable and photos/diagrams can't be copied. The user draws a rectangle over the reader area, the captured image is attached to the AI chat as context.
+
+- **Status:** Planned
+
 ### User profile in sidebar
 Move settings access to a bottom-left user avatar section (name + initials). Replaces the current settings gear, prepares the local user identity for Milestone 3 persona engine integration.
 

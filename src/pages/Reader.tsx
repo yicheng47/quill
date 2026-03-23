@@ -355,6 +355,13 @@ export default function Reader() {
         doc.addEventListener("keydown", (ev: KeyboardEvent) => {
           if (ev.key === "ArrowLeft") view.prev();
           else if (ev.key === "ArrowRight") view.next();
+          else if ((ev.metaKey || ev.ctrlKey) && (ev.key === "=" || ev.key === "+")) {
+            ev.preventDefault();
+            if (book?.format === "pdf") handleZoom(10);
+          } else if ((ev.metaKey || ev.ctrlKey) && ev.key === "-") {
+            ev.preventDefault();
+            if (book?.format === "pdf") handleZoom(-10);
+          }
         });
 
         // Click to dismiss context menu and highlight toolbar
@@ -507,21 +514,46 @@ export default function Reader() {
     }
   }, [readerSettings, book?.format]);
 
-  // Apply zoom for PDFs via CSS transform (relative to fit-page baseline)
+  // Prepare renderer for GPU-accelerated zoom transforms
   useEffect(() => {
     const view = viewRef.current;
     if (!view?.renderer || book?.format !== "pdf") return;
-    if (zoomLevel === 100) {
-      view.renderer.style.transform = "";
-      view.renderer.style.transformOrigin = "";
-    } else {
-      view.renderer.style.transform = `scale(${zoomLevel / 100})`;
-      view.renderer.style.transformOrigin = "center top";
-    }
-  }, [zoomLevel, book?.format]);
+    view.renderer.style.willChange = "transform";
+  }, [book?.format]);
+
+  const zoomRef = useRef(zoomLevel);
+  zoomRef.current = zoomLevel;
 
   const handleZoom = (delta: number) => {
-    setZoomLevel((prev) => Math.min(300, Math.max(50, prev + delta)));
+    const view = viewRef.current;
+    const viewer = viewerRef.current;
+    if (!view?.renderer || !viewer) return;
+    const next = Math.min(300, Math.max(50, zoomRef.current + delta));
+    const renderer = view.renderer;
+
+    if (next === 100) {
+      // Reset to fit-page: fluid sizing, no transform
+      renderer.style.width = "";
+      renderer.style.height = "";
+      renderer.style.transform = "";
+      viewer.style.width = "";
+      viewer.style.height = "";
+    } else {
+      // Lock renderer at its current (fit-page) size if not already locked
+      if (!renderer.style.width) {
+        renderer.style.width = `${renderer.clientWidth}px`;
+        renderer.style.height = `${renderer.clientHeight}px`;
+      }
+      const scale = next / 100;
+      renderer.style.transform = `scale(${scale})`;
+      renderer.style.transformOrigin = "top left";
+      // Set viewer to zoomed size so parent container can scroll
+      const baseW = parseInt(renderer.style.width);
+      const baseH = parseInt(renderer.style.height);
+      viewer.style.width = `${baseW * scale}px`;
+      viewer.style.height = `${baseH * scale}px`;
+    }
+    setZoomLevel(next);
   };
 
   const togglePanel = (panel: "ai" | "bookmarks" | "vocab") => {
@@ -542,9 +574,6 @@ export default function Reader() {
       } else if ((e.metaKey || e.ctrlKey) && e.key === "-") {
         e.preventDefault();
         if (book?.format === "pdf") handleZoom(-10);
-      } else if ((e.metaKey || e.ctrlKey) && e.key === "0") {
-        e.preventDefault();
-        if (book?.format === "pdf") setZoomLevel(100);
       }
     };
     document.addEventListener("keydown", handleKeyDown);
@@ -684,7 +713,7 @@ export default function Reader() {
         />
       )}
       {/* Header */}
-      <header className="flex items-center justify-between px-section pt-8 pb-2 bg-bg-surface border-b border-border shrink-0 relative">
+      <header className="flex items-center justify-between px-section pt-8 pb-2 bg-bg-surface border-b border-border shrink-0 relative select-none">
         <div data-tauri-drag-region className="absolute top-0 left-0 right-0 h-8" />
         <div className="flex items-center gap-3">
           <Button variant="icon" size="md" onClick={() => navigate("/")}>
@@ -804,12 +833,12 @@ export default function Reader() {
 
       {/* Body */}
       <div
-        className={`flex flex-1 ${book.format === "pdf" && zoomLevel > 100 ? "overflow-auto" : "overflow-hidden"}`}
+        className={`flex flex-1 ${book.format === "pdf" && zoomLevel !== 100 ? "overflow-auto" : "overflow-hidden"}`}
         style={{ backgroundColor: book.format === "pdf" ? "#ffffff" : getThemeStyles(readerSettings.theme).body }}
       >
         <div className="flex-1 flex flex-col min-w-0" style={{ backgroundColor: book.format === "pdf" ? "#ffffff" : getThemeStyles(readerSettings.theme).body }}>
           <main
-            className={`flex-1 relative ${book.format === "pdf" && zoomLevel > 100 ? "overflow-auto" : "overflow-hidden"}`}
+            className={`flex-1 relative ${book.format === "pdf" && zoomLevel !== 100 ? "overflow-auto" : "overflow-hidden"}`}
             style={{ backgroundColor: book.format === "pdf" ? "#ffffff" : getThemeStyles(readerSettings.theme).body }}
             onContextMenu={handleContextMenu}
             onClick={() => { setTocOpen(false); setSettingsOpen(false); }}
