@@ -1,27 +1,35 @@
 # Quill
 
-A modern eBook reader with a built-in AI reading assistant. Import EPUB and PDF files, organize your library into collections, and use AI to help you understand passages, themes, and characters as you read.
+An eBook reader with a built-in AI reading assistant — powered by your existing ChatGPT subscription. No API keys, no extra costs. Just sign in and start reading with AI.
 
-Built with Tauri 2 (Rust) and React.
-
-<p>
-  <img src="assets/home.png" width="49%" />
-  <img src="assets/reader.png" width="49%" />
-</p>
+<table>
+  <tr>
+    <td><img src="assets/home.png" alt="Library view" /></td>
+    <td><img src="assets/reader.png" alt="Reader with AI assistant and word lookup" /></td>
+  </tr>
+  <tr>
+    <td align="center"><em>Library</em></td>
+    <td align="center"><em>Reader with AI chat & word lookup</em></td>
+  </tr>
+</table>
 
 ## Features
 
-- **EPUB & PDF Reader** — Paginated and scrolled reading modes with customizable fonts, spacing, and margins
-- **AI Reading Assistant** — Ask questions about passages, get explanations, discuss themes with contextual AI chat
-- **AI Lookup** — Select a word for instant definitions, contextual meaning, or full explanations
-- **Highlights & Bookmarks** — Color-coded highlights with notes, bookmarks for important passages
-- **Vocabulary Management** — Save words with context, track mastery with spaced repetition
-- **Library Management** — Grid/list views, search, status filters (reading/finished), collections
-- **iCloud Sync** — Sync books, reading progress, and settings across Macs
-- **Multi-Provider AI** — Ollama (local), Anthropic, OpenAI (API key or OAuth), OpenAI-compatible, MiniMax
+### Reading
+- **EPUB & PDF** — Paginated and scrolled modes with customizable fonts, spacing, and margins
+- **Highlights & Bookmarks** — Color-coded highlights with notes
+- **Vocabulary** — Save words with context, track mastery with spaced repetition
+
+### AI
+- **Chat Assistant** — Ask questions about passages, get explanations, discuss themes — with your highlighted text as context
+- **Word Lookup** — Select any word for instant definitions, contextual meaning, or deep explanations
+- **Multiple Providers** — OpenAI (OAuth or API key), Anthropic, Ollama (local), OpenAI-compatible, MiniMax
+
+### Organization
+- **Library** — Grid/list views, search, status filters, collections
+- **iCloud Sync** — Sync books, progress, and settings across Macs
+- **Auto-Update** — The app updates itself
 - **i18n** — English and Simplified Chinese
-- **Auto-Update** — In-app update notifications with one-click install
-- **Drag & Drop Import** — Drop EPUB/PDF files to add them to your library
 
 ## Download
 
@@ -32,7 +40,7 @@ Grab the latest `.dmg` from the [Releases](https://github.com/yicheng47/quill/re
 | `Quill_x.x.x_aarch64.dmg` | macOS Apple Silicon (M1/M2/M3/M4) |
 | `Quill_x.x.x_x64.dmg` | macOS Intel |
 
-Open the `.dmg` and drag **Quill.app** to your Applications folder.
+Open the `.dmg` and drag **Quill.app** to your Applications folder. Future updates are delivered automatically in-app.
 
 ## AI Setup
 
@@ -47,14 +55,17 @@ Quill supports multiple AI providers. Configure in Settings:
 | **OpenAI-compatible** | Any OpenAI-compatible endpoint (e.g. local models, third-party hosts) |
 | **MiniMax** | Add your API key |
 
-## Tech Stack
+<details>
+<summary><h2 style="display:inline">Development</h2></summary>
+
+### Tech Stack
 
 - **Frontend**: React 19, TypeScript, Tailwind CSS 4, Vite
 - **EPUB Rendering**: [foliate-js](https://github.com/yicheng47/foliate-js) (Web Components + CSS multi-column layout)
 - **Backend**: Rust, Tauri 2, SQLite (rusqlite)
 - **AI**: Streaming via SSE, supports OpenAI-compatible APIs and Anthropic
 
-## Project Structure
+### Project Structure
 
 ```
 quill/
@@ -69,6 +80,8 @@ quill/
 ├── public/foliate-js/    # EPUB renderer (git submodule)
 └── docs/                 # Feature specs and roadmap
 ```
+
+</details>
 
 ## License
 
