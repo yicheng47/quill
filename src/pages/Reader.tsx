@@ -313,10 +313,10 @@ export default function Reader() {
         // foliate-js renders in iframes; clientX/Y are relative to the
         // iframe viewport. Use frameElement to get the iframe's offset.
         doc.addEventListener("contextmenu", (ev: MouseEvent) => {
+          ev.preventDefault();
           const sel = doc.getSelection?.();
           const text = sel?.toString().trim();
           if (text) {
-            ev.preventDefault();
             const iframe = doc.defaultView?.frameElement as HTMLElement | null;
             let offsetX = 0, offsetY = 0;
             if (iframe) {
@@ -535,12 +535,23 @@ export default function Reader() {
       if (tag === "INPUT" || tag === "TEXTAREA") return;
       if (e.key === "ArrowLeft") viewRef.current?.prev();
       else if (e.key === "ArrowRight") viewRef.current?.next();
+      // Cmd+/Cmd- zoom for PDFs
+      else if ((e.metaKey || e.ctrlKey) && (e.key === "=" || e.key === "+")) {
+        e.preventDefault();
+        if (book?.format === "pdf") handleZoom(10);
+      } else if ((e.metaKey || e.ctrlKey) && e.key === "-") {
+        e.preventDefault();
+        if (book?.format === "pdf") handleZoom(-10);
+      } else if ((e.metaKey || e.ctrlKey) && e.key === "0") {
+        e.preventDefault();
+        if (book?.format === "pdf") setZoomLevel(100);
+      }
     };
     document.addEventListener("keydown", handleKeyDown);
     return () => {
       document.removeEventListener("keydown", handleKeyDown);
     };
-  }, []);
+  }, [book?.format]);
 
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     const selection = window.getSelection();
