@@ -334,14 +334,19 @@ export function useAiChat(bookId?: string) {
       );
 
       // Build API messages from current ref (avoids stale closure)
+      // Include each message's context inline so the AI sees all quoted passages
       const apiMessages = messagesRef.current
         .filter((m) => m.id !== assistantId)
-        .map((m) => ({ role: m.role, content: m.content }));
+        .map((m) => ({
+          role: m.role,
+          content: m.context
+            ? `[Selected passage: "${m.context}"]\n\n${m.content}`
+            : m.content,
+        }));
 
       try {
         await invoke("ai_chat", {
           messages: apiMessages,
-          context: context || null,
         });
       } catch (err) {
         setStreaming(false);
