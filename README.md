@@ -1,6 +1,6 @@
 # Quill
 
-A modern eBook reader with a built-in AI reading assistant. Import EPUB files, organize your library into collections, and use AI to help you understand passages, themes, and characters as you read.
+A modern eBook reader with a built-in AI reading assistant. Import EPUB and PDF files, organize your library into collections, and use AI to help you understand passages, themes, and characters as you read.
 
 Built with Tauri 2 (Rust) and React.
 
@@ -11,12 +11,17 @@ Built with Tauri 2 (Rust) and React.
 
 ## Features
 
-- **EPUB Reader** — Paginated and scrolled reading modes with customizable fonts, spacing, and margins
-- **AI Reading Assistant** — Ask questions about passages, get explanations, discuss themes (supports Ollama, OpenAI, Anthropic)
+- **EPUB & PDF Reader** — Paginated and scrolled reading modes with customizable fonts, spacing, and margins
+- **AI Reading Assistant** — Ask questions about passages, get explanations, discuss themes with contextual AI chat
+- **AI Lookup** — Select a word for instant definitions, contextual meaning, or full explanations
+- **Highlights & Bookmarks** — Color-coded highlights with notes, bookmarks for important passages
+- **Vocabulary Management** — Save words with context, track mastery with spaced repetition
 - **Library Management** — Grid/list views, search, status filters (reading/finished), collections
-- **Bookmarks** — Save and revisit important passages
-- **Drag & Drop Import** — Drop EPUB files to add them to your library
-- **Reading Progress** — Auto-saves your position and tracks progress
+- **iCloud Sync** — Sync books, reading progress, and settings across Macs
+- **Multi-Provider AI** — Ollama (local), Anthropic, OpenAI (API key or OAuth), OpenAI-compatible, MiniMax
+- **i18n** — English and Simplified Chinese
+- **Auto-Update** — In-app update notifications with one-click install
+- **Drag & Drop Import** — Drop EPUB/PDF files to add them to your library
 
 ## Download
 
@@ -108,9 +113,11 @@ Quill supports multiple AI providers. Configure in Settings:
 
 | Provider | Setup |
 |----------|-------|
-| **Ollama** (default) | Install Ollama, run `ollama pull llama3.2`, no API key needed |
-| **OpenAI** | Add your API key, set model (e.g. `gpt-4o`) |
-| **Anthropic** | Add your API key, set model (e.g. `claude-sonnet-4-20250514`) |
+| **Ollama** (default) | Install [Ollama](https://ollama.com/), run `ollama pull llama3.2`, no API key needed |
+| **OpenAI** | Add your API key or sign in with OAuth |
+| **Anthropic** | Add your API key |
+| **OpenAI-compatible** | Any OpenAI-compatible endpoint (e.g. local models, third-party hosts) |
+| **MiniMax** | Add your API key |
 
 ## Tech Stack
 
@@ -132,7 +139,7 @@ quill/
 │   ├── src/ai/           # AI provider implementations
 │   └── migrations/       # SQLite schema
 ├── public/foliate-js/    # EPUB renderer (git submodule)
-└── docs/                 # Documentation
+└── docs/                 # Feature specs and roadmap
 ```
 
 ## License
