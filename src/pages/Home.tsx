@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { Search, LayoutGrid, List, Settings, Plus, Upload, BookOpen } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { invoke } from "@tauri-apps/api/core";
@@ -32,16 +32,21 @@ export default function Home() {
 
   // Collection-filtered books
   const [collectionBookIds, setCollectionBookIds] = useState<string[]>([]);
-  useEffect(() => {
-    if (!isCollectionFilter) {
-      setCollectionBookIds([]);
-      return;
-    }
+  const refreshCollectionBooks = useCallback(() => {
+    if (!isCollectionFilter) return;
     const collectionId = activeFilter.replace("collection:", "");
     invoke<string[]>("list_books_in_collection", { collectionId })
       .then(setCollectionBookIds)
       .catch(() => setCollectionBookIds([]));
   }, [activeFilter, isCollectionFilter]);
+
+  useEffect(() => {
+    if (!isCollectionFilter) {
+      setCollectionBookIds([]);
+      return;
+    }
+    refreshCollectionBooks();
+  }, [activeFilter, isCollectionFilter, refreshCollectionBooks]);
 
   // Keep stable refs for refresh functions so the drag-drop effect doesn't re-register
   const refreshRef = useRef(refresh);
@@ -192,19 +197,19 @@ export default function Home() {
                       ? "No books in this collection"
                       : activeFilter !== "all"
                         ? `No ${activeFilter} books`
-                        : "No books yet"}
+                        : "No books yet — import an EPUB or PDF to get started"}
                 </p>
                 {activeFilter === "all" && !searchQuery && (
                   <Button variant="primary" size="md" onClick={handleImport}>
                     <Plus size={16} />
-                    Import EPUB
+                    Import Book
                   </Button>
                 )}
               </div>
             ) : viewMode === "grid" ? (
-              <BookGrid books={displayBooks} onBooksChanged={() => { refresh(); allBooks.refresh(); collections.refresh(); }} />
+              <BookGrid books={displayBooks} activeCollectionId={isCollectionFilter ? activeFilter.replace("collection:", "") : undefined} onBooksChanged={() => { refresh(); allBooks.refresh(); collections.refresh(); refreshCollectionBooks(); }} />
             ) : (
-              <BookList books={displayBooks} onBooksChanged={() => { refresh(); allBooks.refresh(); collections.refresh(); }} />
+              <BookList books={displayBooks} activeCollectionId={isCollectionFilter ? activeFilter.replace("collection:", "") : undefined} onBooksChanged={() => { refresh(); allBooks.refresh(); collections.refresh(); refreshCollectionBooks(); }} />
             )}
           </div>
 
