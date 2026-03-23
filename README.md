@@ -41,7 +41,8 @@ Quill supports multiple AI providers. Configure in Settings:
 | Provider | Setup |
 |----------|-------|
 | **Ollama** (default) | Install [Ollama](https://ollama.com/), run `ollama pull llama3.2`, no API key needed |
-| **OpenAI** | Add your API key or sign in with OAuth |
+| **OpenAI (OAuth)** | Sign in with your OpenAI account — uses your existing ChatGPT subscription, no API key or extra payment needed |
+| **OpenAI (API key)** | Add your OpenAI API key (pay-per-use) |
 | **Anthropic** | Add your API key |
 | **OpenAI-compatible** | Any OpenAI-compatible endpoint (e.g. local models, third-party hosts) |
 | **MiniMax** | Add your API key |
