@@ -7,3 +7,4 @@ Specs for features that are in progress or planned. Shipped feature specs have b
 - [09 — Chat Persistence](09-chat-persistence.md)
 - [10 — PDF Support](10-pdf-support.md)
 - [11 — i18n](11-i18n.md)
+- [12 — Auto-Update](12-auto-update.md)
