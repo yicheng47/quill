@@ -1,6 +1,6 @@
 # Quill
 
-An eBook reader with a built-in AI reading assistant — powered by your existing ChatGPT subscription. No API keys, no extra costs. Just sign in and start reading with AI.
+An eBook reader with a built-in AI reading assistant. Works with your ChatGPT subscription, API keys, and local models.
 
 <table>
   <tr>
