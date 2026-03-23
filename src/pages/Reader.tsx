@@ -93,11 +93,11 @@ interface TocChapter {
 }
 
 const highlightColorMap: Record<string, string> = {
-  yellow: "rgba(251, 191, 36, 0.5)",
-  green: "rgba(52, 211, 153, 0.5)",
-  blue: "rgba(96, 165, 250, 0.5)",
-  pink: "rgba(244, 114, 182, 0.5)",
-  purple: "rgba(167, 139, 250, 0.5)",
+  yellow: "#FBBF24",
+  green: "#34D399",
+  blue: "#60A5FA",
+  pink: "#F472B6",
+  purple: "#A78BFA",
 };
 
 export default function Reader() {
@@ -388,6 +388,7 @@ export default function Reader() {
         draw((rects: DOMRectList) => {
           const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
           g.setAttribute("fill", color);
+          g.setAttribute("opacity", "0.35");
           g.style.mixBlendMode = "multiply";
           for (const { left, top, height, width } of rects) {
             const el = document.createElementNS("http://www.w3.org/2000/svg", "rect");
