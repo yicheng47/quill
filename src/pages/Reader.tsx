@@ -383,20 +383,21 @@ export default function Reader() {
 
       view.addEventListener("draw-annotation", ((e: CustomEvent) => {
         const { draw, annotation } = e.detail;
-        // Overlayer is already loaded as a dependency of view.js
-        // The draw function accepts a static method and options
         const color = highlightColorMap[annotation.color] || highlightColorMap.yellow;
-        // Use the highlight draw function: filled rectangles over text ranges
+        const isPdf = book?.format === "pdf";
         draw((rects: DOMRectList) => {
           const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
           g.setAttribute("fill", color);
           g.style.mixBlendMode = "multiply";
           for (const { left, top, height, width } of rects) {
             const el = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-            el.setAttribute("x", String(left));
-            el.setAttribute("y", String(top));
-            el.setAttribute("height", String(height));
-            el.setAttribute("width", String(width));
+            // PDF text layer spans have sub-pixel gaps; pad rects to close them
+            const pad = isPdf ? 1 : 0;
+            el.setAttribute("x", String(Math.floor(left)));
+            el.setAttribute("y", String(top - pad));
+            el.setAttribute("height", String(height + pad * 2));
+            el.setAttribute("width", String(Math.ceil(width)));
+            el.setAttribute("rx", isPdf ? "1" : "0");
             g.append(el);
           }
           return g;
