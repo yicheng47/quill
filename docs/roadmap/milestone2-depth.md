@@ -43,7 +43,8 @@ Capture a selected region of the page (screenshot crop) and send it to the AI as
 
 - **Status:** Planned
 
-### User profile in sidebar
-Move settings access to a bottom-left user avatar section (name + initials). Replaces the current settings gear, prepares the local user identity for Milestone 3 persona engine integration.
+### User profile in sidebar + Settings modal
+Move settings access to a bottom-left user avatar section (name + initials). Replaces the current settings gear, prepares the local user identity for Milestone 3 persona engine integration. Settings become a ChatGPT-style modal dialog instead of a full page.
 
 - **Status:** Planned
+- **Issue:** [#59](https://github.com/yicheng47/quill/issues/59)
