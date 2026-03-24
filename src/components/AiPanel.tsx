@@ -56,7 +56,7 @@ export default function AiPanel({ bookId, context, initialChatId, onContextConsu
   // Handle context from "Ask AI" context menu — auto-send
   useEffect(() => {
     if (context && !streaming) {
-      send("Explain", context.text, context.cfi);
+      send(t("ai.explain"), context.text, context.cfi);
       onContextConsumed?.();
     }
   }, [context, onContextConsumed, send, streaming]);

@@ -143,6 +143,13 @@
   "settings.language": "Language",
   "settings.languageSub": "Choose your preferred language",
 
+  "settings.lookup.title": "Lookup",
+  "settings.lookup.sub": "Customize how word lookups appear",
+  "settings.lookup.nativeLanguage": "Native Language",
+  "settings.lookup.nativeLanguageHint": "Your native language for word translations",
+  "settings.lookup.showTranslation": "Show Translation",
+  "settings.lookup.showTranslationHint": "Include a brief translation in your native language",
+
   "settings.ai.title": "AI Assistant Configuration",
   "settings.ai.subtitle": "Configure your AI provider and model preferences for the reading assistant",
   "settings.ai.provider": "AI Provider",

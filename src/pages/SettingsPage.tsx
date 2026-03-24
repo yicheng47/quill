@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { invoke } from "@tauri-apps/api/core";
-import { ArrowLeft, Bot, BookOpen, SlidersHorizontal, Palette, KeyRound, Shield, Cloud, Loader2, Globe } from "lucide-react";
+import { ArrowLeft, Bot, BookOpen, SlidersHorizontal, Palette, KeyRound, Shield, Cloud, Loader2, Globe, Sparkles, X } from "lucide-react";
 import i18n from "../i18n";
 import Button from "../components/ui/Button";
 import Select from "../components/ui/Select";
@@ -47,6 +47,10 @@ export default function SettingsPage() {
 
   // Language
   const [language, setLanguage] = useState("en");
+
+  // Lookup
+  const [nativeLanguage, setNativeLanguage] = useState("en");
+  const [showTranslation, setShowTranslation] = useState(false);
 
   // Appearance
   const [theme, setTheme] = useState("system");
@@ -113,6 +117,8 @@ export default function SettingsPage() {
     if (settings.auto_save) setAutoSave(settings.auto_save === "true");
     if (settings.theme) setTheme(settings.theme);
     if (settings.language) setLanguage(settings.language);
+    if (settings.native_language) setNativeLanguage(settings.native_language);
+    if (settings.show_translation) setShowTranslation(settings.show_translation === "true");
   }, [settings, loading]);
 
   // Fetch iCloud status on mount
@@ -236,7 +242,7 @@ export default function SettingsPage() {
 
       {/* Content */}
       <main className="flex-1 overflow-auto">
-        <div className="max-w-[560px] mx-auto py-8 px-4 space-y-6">
+        <div className="max-w-[680px] mx-auto py-8 px-4 space-y-6">
           {/* AI Assistant Configuration */}
           <section className="bg-bg-surface rounded-xl border border-border p-6">
             <div className="flex items-center gap-2 mb-1">
@@ -676,6 +682,116 @@ export default function SettingsPage() {
                 { value: "zh", label: "简体中文" },
               ]}
             />
+          </section>
+
+          {/* Lookup */}
+          <section className="bg-bg-surface rounded-xl border border-border p-6">
+            <div className="flex items-center gap-2 mb-1">
+              <BookOpen size={20} className="text-text-muted" />
+              <h2 className="text-[16px] font-semibold text-text-primary">
+                {t("settings.lookup.title")}
+              </h2>
+            </div>
+            <p className="text-[13px] text-text-muted mb-4">
+              {t("settings.lookup.sub")}
+            </p>
+
+            <div className="flex gap-6">
+              {/* Left: controls */}
+              <div className="flex-1 space-y-4">
+                <Select
+                  label={t("settings.lookup.nativeLanguage")}
+                  value={nativeLanguage}
+                  onChange={(lang) => {
+                    setNativeLanguage(lang);
+                    save("native_language", lang);
+                    showSavedToast();
+                  }}
+                  options={[
+                    { value: "en", label: "English" },
+                    { value: "zh", label: "简体中文" },
+                  ]}
+                />
+                <p className="text-[12px] text-text-muted -mt-2">
+                  {t("settings.lookup.nativeLanguageHint")}
+                </p>
+
+                <div className="border-t border-border pt-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-[14px] font-medium text-text-primary">
+                        {t("settings.lookup.showTranslation")}
+                      </p>
+                      <p className="text-[12px] text-text-muted mt-0.5">
+                        {t("settings.lookup.showTranslationHint")}
+                      </p>
+                    </div>
+                    <Toggle
+                      checked={showTranslation}
+                      onChange={(checked) => {
+                        setShowTranslation(checked);
+                        save("show_translation", String(checked));
+                        showSavedToast();
+                      }}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Right: preview */}
+              <div className="w-[280px] shrink-0">
+                <div className="bg-bg-surface border border-border/80 rounded-xl shadow-sm overflow-hidden">
+                  <div className="flex items-center justify-between px-3 pt-2.5 pb-2 bg-accent-bg border-b border-border/40">
+                    <div className="flex items-center gap-1.5">
+                      <Sparkles size={13} className="text-accent-text" />
+                      <span className="text-[12px] font-medium text-accent-text">{t("lookup.title")}</span>
+                    </div>
+                    <X size={12} className="text-text-muted" />
+                  </div>
+                  <div className="px-3 py-2.5">
+                    <p className="text-[16px] font-bold text-text-primary mb-1">interfaces</p>
+                    {language !== "en" ? (
+                      <>
+                        <p className="text-[12px] text-text-primary leading-[1.5] mb-2">
+                          {language === "zh"
+                            ? "名词。两个系统相互连接和交互的点或区域。"
+                            : "/ˈɪntəfeɪsɪz/ noun. Points where two systems meet and interact."}
+                        </p>
+                        <div className="p-2 rounded-md bg-bg-muted border border-border/50">
+                          <p className="text-[11px] font-medium text-text-muted mb-0.5">{t("lookup.inContext")}</p>
+                          <p className="text-[11px] text-text-secondary leading-[1.5]">
+                            {language === "zh"
+                              ? "\u5728\u8fd9\u6bb5\u6587\u5b57\u4e2d\uff0cinterfaces \u6307\u7684\u662f\u4eba\u7c7b\u4e0e\u6280\u672f\u4e4b\u95f4\u7684\u8fb9\u754c\u3002"
+                              : 'In this passage, "interfaces" refers to the boundaries between humanity and technology.'}
+                          </p>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        {showTranslation && nativeLanguage !== "en" && (
+                          <p className="text-[13px] text-accent-text mb-2">
+                            {nativeLanguage === "zh" ? "界面；接口" : "interfaces"}
+                          </p>
+                        )}
+                        <p className="text-[12px] text-text-primary leading-[1.5] mb-2">
+                          /ˈɪntəfeɪsɪz/ noun. Points where two systems meet and interact.
+                        </p>
+                        <div className="p-2 rounded-md bg-bg-muted border border-border/50">
+                          <p className="text-[11px] font-medium text-text-muted mb-0.5">{t("lookup.inContext")}</p>
+                          <p className="text-[11px] text-text-secondary leading-[1.5]">
+                            In this passage, &quot;interfaces&quot; refers to the boundaries between humanity and technology.
+                          </p>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                  <div className="flex items-center justify-between px-3 py-2 border-t border-border/40">
+                    <span className="text-[11px] font-medium text-accent-text">{t("lookup.saveToDict")}</span>
+                    <span className="text-[11px] font-medium text-text-muted">{t("lookup.copy")}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
           </section>
 
           {/* Appearance */}

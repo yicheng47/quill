@@ -31,7 +31,7 @@ pub async fn ai_lookup(
     secrets: State<'_, Secrets>,
 ) -> AppResult<()> {
     // Read provider settings
-    let (provider, model, base_url, keep_alive, auth_mode, language) = {
+    let (provider, model, base_url, keep_alive, auth_mode, language, native_language, show_translation) = {
         let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
         let get = |key: &str| -> Option<String> {
             conn.query_row(
@@ -48,6 +48,8 @@ pub async fn ai_lookup(
             get("ai_keep_alive").unwrap_or_else(|| "30m".to_string()),
             get("ai_auth_mode").unwrap_or_else(|| "api_key".to_string()),
             get("language").unwrap_or_else(|| "en".to_string()),
+            get("native_language").unwrap_or_else(|| "en".to_string()),
+            get("show_translation").unwrap_or_else(|| "false".to_string()),
         )
     };
 
@@ -71,10 +73,17 @@ pub async fn ai_lookup(
 
     let kind = kind.unwrap_or_else(|| "full".to_string());
 
-    // Bilingual dictionary: when the user's language differs from English,
-    // prepend an instruction to include a native-language translation.
-    let bilingual_prefix = if language != "en" {
+    // Language-aware lookup:
+    // 1. When system language is non-English, respond entirely in that language
+    // 2. When system language is English but translation is enabled, prepend a native translation
+    let language_prefix = if language != "en" {
         let lang_name = match language.as_str() {
+            "zh" => "Chinese (Simplified)",
+            _ => &language,
+        };
+        format!("Respond entirely in {}.\n\n", lang_name)
+    } else if show_translation == "true" && native_language != "en" {
+        let lang_name = match native_language.as_str() {
             "zh" => "Chinese (Simplified)",
             _ => "the user's language",
         };
@@ -86,10 +95,14 @@ pub async fn ai_lookup(
         String::new()
     };
 
+    // Only apply translation prefix to definition, not context
+    let def_prefix = &language_prefix;
+    let ctx_prefix = if language != "en" { &language_prefix } else { "" };
+
     let system_prompt = match kind.as_str() {
-        "definition" => format!("{}You are a reading assistant embedded in an ebook reader. The user selected a word or phrase and wants a dictionary-style definition.\n\nGive: pronunciation in IPA (if English), part of speech, and a concise definition in 1–2 sentences.\n\nIf the selection is a proper noun (person, place, historical event), give a brief factual identification instead.\n\nBe concise. No headers or labels.", bilingual_prefix),
-        "context" => format!("{}You are a reading assistant embedded in an ebook reader. The user selected a word or phrase and wants to understand how it's used in the surrounding passage.\n\nExplain how the word is used in context. Consider the author's intent, tone, or any literary/idiomatic significance. Keep it to 2–3 sentences.\n\nBe concise. No headers or labels.", bilingual_prefix),
-        _ => format!("{}You are a reading assistant embedded in an ebook reader. The user selected a word or phrase and wants to understand it.\n\nRespond in two parts:\n\n1. **Definition** — Give a dictionary-style entry: the word, pronunciation in IPA (if it's an English word), part of speech, and a concise definition in one sentence.\n\n2. **In context** — Explain how the word is used in the given passage. Consider the author's intent, tone, or any literary/idiomatic significance. Keep it to 2–3 sentences.\n\nIf the selection is a proper noun (person, place, historical event), replace the dictionary definition with a brief factual identification, then explain its relevance in context.\n\nDo not use headers or labels like \"Definition:\" or \"In context:\". Separate the two parts with a line break. Be concise.", bilingual_prefix),
+        "definition" => format!("{}You are a reading assistant embedded in an ebook reader. The user selected a word or phrase and wants a dictionary-style definition.\n\nGive: pronunciation in IPA (if English), part of speech, and a concise definition in 1–2 sentences.\n\nIf the selection is a proper noun (person, place, historical event), give a brief factual identification instead.\n\nBe concise. No headers or labels.", def_prefix),
+        "context" => format!("{}You are a reading assistant embedded in an ebook reader. The user selected a word or phrase and wants to understand how it's used in the surrounding passage.\n\nExplain how the word is used in context. Consider the author's intent, tone, or any literary/idiomatic significance. Keep it to 2–3 sentences.\n\nBe concise. No headers or labels.", ctx_prefix),
+        _ => format!("{}You are a reading assistant embedded in an ebook reader. The user selected a word or phrase and wants to understand it.\n\nRespond in two parts:\n\n1. **Definition** — Give a dictionary-style entry: the word, pronunciation in IPA (if it's an English word), part of speech, and a concise definition in one sentence.\n\n2. **In context** — Explain how the word is used in the given passage. Consider the author's intent, tone, or any literary/idiomatic significance. Keep it to 2–3 sentences.\n\nIf the selection is a proper noun (person, place, historical event), replace the dictionary definition with a brief factual identification, then explain its relevance in context.\n\nDo not use headers or labels like \"Definition:\" or \"In context:\". Separate the two parts with a line break. Be concise.", def_prefix),
     };
 
     let max_tokens = match kind.as_str() {

@@ -143,6 +143,13 @@
   "settings.language": "语言",
   "settings.languageSub": "选择你的首选语言",
 
+  "settings.lookup.title": "查词",
+  "settings.lookup.sub": "自定义查词显示方式",
+  "settings.lookup.nativeLanguage": "母语",
+  "settings.lookup.nativeLanguageHint": "查词时的翻译语言",
+  "settings.lookup.showTranslation": "显示翻译",
+  "settings.lookup.showTranslationHint": "在查词结果中显示母语翻译",
+
   "settings.ai.title": "AI 助手配置",
   "settings.ai.subtitle": "配置阅读助手的 AI 服务商和模型偏好",
   "settings.ai.provider": "AI 服务商",

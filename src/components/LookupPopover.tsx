@@ -93,11 +93,28 @@ export default function LookupPopover({
   const { t } = useTranslation();
   const [saved, setSaved] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [showTranslation, setShowTranslation] = useState(false);
   const popoverRef = useRef<HTMLDivElement>(null);
+
+  // Check if translation is enabled
+  useEffect(() => {
+    invoke<Record<string, string>>("get_all_settings").then((s) => {
+      const isEn = (s.language ?? "en") === "en";
+      setShowTranslation(isEn && s.show_translation === "true" && (s.native_language ?? "en") !== "en");
+    }).catch(() => {});
+  }, []);
 
   // Two concurrent AI streams
   const definition = useStreamingLookup(word, sentence, bookTitle, chapter, "definition");
   const context = useStreamingLookup(word, sentence, bookTitle, chapter, "context");
+
+  // Split translation from definition when translation is enabled
+  const translationLine = showTranslation && definition.content.includes("\n")
+    ? definition.content.split("\n")[0].trim()
+    : null;
+  const definitionText = translationLine
+    ? definition.content.slice(definition.content.indexOf("\n") + 1).trim()
+    : definition.content;
 
   const allDone = !definition.streaming && !context.streaming;
   const hasContent = definition.content || context.content;
@@ -216,12 +233,17 @@ export default function LookupPopover({
             <span className="text-[13px] text-text-muted">{t("lookup.lookingUp")}</span>
           </div>
         ) : (
-          <p className="text-[13px] text-text-primary leading-[1.55]">
-            {definition.content}
-            {definition.streaming && (
-              <Loader2 size={12} className="inline-block ml-0.5 animate-spin text-text-muted" />
+          <>
+            {translationLine && (
+              <p className="text-[13px] text-accent-text mb-1.5">{translationLine}</p>
             )}
-          </p>
+            <p className="text-[13px] text-text-primary leading-[1.55]">
+              {definitionText}
+              {definition.streaming && (
+                <Loader2 size={12} className="inline-block ml-0.5 animate-spin text-text-muted" />
+              )}
+            </p>
+          </>
         )}
 
         {/* In this context — card */}
