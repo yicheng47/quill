@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { X, Loader2, Sparkles, BookmarkPlus, Check, Copy } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 interface LookupPopoverProps {
   x: number;
@@ -89,13 +90,31 @@ export default function LookupPopover({
   cfi,
   onClose,
 }: LookupPopoverProps) {
+  const { t } = useTranslation();
   const [saved, setSaved] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [showTranslation, setShowTranslation] = useState(false);
   const popoverRef = useRef<HTMLDivElement>(null);
+
+  // Check if translation is enabled
+  useEffect(() => {
+    invoke<Record<string, string>>("get_all_settings").then((s) => {
+      const isEn = (s.language ?? "en") === "en";
+      setShowTranslation(isEn && s.show_translation === "true" && (s.native_language ?? "en") !== "en");
+    }).catch(() => {});
+  }, []);
 
   // Two concurrent AI streams
   const definition = useStreamingLookup(word, sentence, bookTitle, chapter, "definition");
   const context = useStreamingLookup(word, sentence, bookTitle, chapter, "context");
+
+  // Split translation from definition when translation is enabled
+  const translationLine = showTranslation && definition.content.includes("\n")
+    ? definition.content.split("\n")[0].trim()
+    : null;
+  const definitionText = translationLine
+    ? definition.content.slice(definition.content.indexOf("\n") + 1).trim()
+    : definition.content;
 
   const allDone = !definition.streaming && !context.streaming;
   const hasContent = definition.content || context.content;
@@ -189,7 +208,7 @@ export default function LookupPopover({
         <div className="flex items-center gap-2">
           <Sparkles size={16} className="text-accent-text" />
           <span className="text-[14px] font-medium text-accent-text tracking-[-0.15px]">
-            Look Up
+            {t("lookup.title")}
           </span>
         </div>
         <button
@@ -211,27 +230,32 @@ export default function LookupPopover({
         {definition.streaming && !definition.content ? (
           <div className="flex items-center gap-1.5 py-1">
             <Loader2 size={14} className="animate-spin text-text-muted" />
-            <span className="text-[13px] text-text-muted">Looking up...</span>
+            <span className="text-[13px] text-text-muted">{t("lookup.lookingUp")}</span>
           </div>
         ) : (
-          <p className="text-[13px] text-text-primary leading-[1.55]">
-            {definition.content}
-            {definition.streaming && (
-              <Loader2 size={12} className="inline-block ml-0.5 animate-spin text-text-muted" />
+          <>
+            {translationLine && (
+              <p className="text-[13px] text-accent-text mb-1.5">{translationLine}</p>
             )}
-          </p>
+            <p className="text-[13px] text-text-primary leading-[1.55]">
+              {definitionText}
+              {definition.streaming && (
+                <Loader2 size={12} className="inline-block ml-0.5 animate-spin text-text-muted" />
+              )}
+            </p>
+          </>
         )}
 
         {/* In this context — card */}
         {(context.content || context.streaming) && (
           <div className="mt-3 mb-1 p-3 rounded-lg bg-bg-muted border border-border/50">
             <span className="block text-[12px] font-medium text-text-muted mb-1">
-              In this context
+              {t("lookup.inContext")}
             </span>
             {context.streaming && !context.content ? (
               <div className="flex items-center gap-1.5 py-0.5">
                 <Loader2 size={12} className="animate-spin text-text-muted" />
-                <span className="text-[12px] text-text-muted">Analyzing...</span>
+                <span className="text-[12px] text-text-muted">{t("lookup.analyzing")}</span>
               </div>
             ) : (
               <p className="text-[13px] text-text-secondary leading-[1.5]">
@@ -254,14 +278,14 @@ export default function LookupPopover({
             className="flex items-center gap-1.5 text-[13px] font-medium cursor-pointer text-accent-text hover:opacity-70 disabled:opacity-50 disabled:cursor-default"
           >
             {saved ? <Check size={14} /> : <BookmarkPlus size={14} />}
-            {saved ? "Saved" : "Save to Dict"}
+            {saved ? t("lookup.saved") : t("lookup.saveToDict")}
           </button>
           <button
             onClick={handleCopy}
             className="flex items-center gap-1.5 text-[13px] font-medium cursor-pointer text-text-muted hover:opacity-70"
           >
             {copied ? <Check size={14} /> : <Copy size={14} />}
-            {copied ? "Copied" : "Copy"}
+            {copied ? t("lookup.copied") : t("lookup.copy")}
           </button>
         </div>
       )}

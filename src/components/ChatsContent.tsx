@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import {
   ArrowRight,
@@ -18,6 +19,7 @@ import { timeAgo } from "../utils/timeAgo";
 type SortMode = "newest" | "oldest";
 
 export default function ChatsContent() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const { chats, remove } = useAllChats();
   const [sort, setSort] = useState<SortMode>("newest");
@@ -89,7 +91,7 @@ export default function ChatsContent() {
         <div data-tauri-drag-region className="absolute top-0 left-0 right-0 h-11" />
         <div className="pt-11 flex items-center justify-between mb-6">
           <h1 className="text-[24px] font-semibold text-text-primary tracking-[0.07px]">
-            Chats
+            {t("chats.title")}
           </h1>
           <div className="flex items-center gap-0">
             <Button variant="icon" size="md" onClick={() => navigate("/settings")}>
@@ -102,7 +104,7 @@ export default function ChatsContent() {
           <Search size={16} className="text-text-muted shrink-0" />
           <input
             type="search"
-            placeholder="Search chats..."
+            placeholder={t("chats.search")}
             defaultValue=""
             onInput={(e) => setSearch((e.target as HTMLInputElement).value)}
             autoComplete="off"
@@ -126,7 +128,7 @@ export default function ChatsContent() {
             }`}
           >
             <BookOpen size={12} className={bookFilter === null ? "text-accent-text" : ""} />
-            All Books
+            {t("chats.allBooks")}
             <span className={`text-[11px] ${bookFilter === null ? "text-accent-text" : "text-text-muted"}`}>
               {chats.length}
             </span>
@@ -157,7 +159,7 @@ export default function ChatsContent() {
               }`}
             >
               <ArrowDownWideNarrow size={12} />
-              Newest
+              {t("chats.newest")}
             </button>
             <button
               onClick={() => setSort("oldest")}
@@ -166,7 +168,7 @@ export default function ChatsContent() {
               }`}
             >
               <ArrowUpWideNarrow size={12} />
-              Oldest
+              {t("chats.oldest")}
             </button>
           </div>
         </div>
@@ -180,10 +182,10 @@ export default function ChatsContent() {
               <MessageSquare size={28} className="text-text-muted" />
             </div>
             <h2 className="text-[18px] font-medium text-text-primary mb-2">
-              No Chats Yet
+              {t("chats.empty")}
             </h2>
             <p className="text-[14px] text-text-muted text-center max-w-[296px]">
-              Start a conversation in the AI panel while reading a book.
+              {t("chats.emptySub")}
             </p>
           </div>
         ) : (
@@ -214,7 +216,7 @@ export default function ChatsContent() {
                       <p className="text-[12px] text-text-muted leading-[18px] truncate mt-0.5">
                         {chat.last_message
                           ? `AI: ${chat.last_message.substring(0, 80)}${chat.last_message.length > 80 ? "..." : ""}`
-                          : "No messages yet"}
+                          : t("chats.noMessages")}
                       </p>
                     </div>
 
@@ -222,14 +224,14 @@ export default function ChatsContent() {
                       <div className="flex flex-col items-end gap-0.5">
                         <span className="text-[11px] text-text-muted">{timeAgo(chat.updated_at)}</span>
                         <span className="text-[11px] text-text-muted">
-                          {chat.message_count ?? 0} msgs
+                          {t("chats.msgs", { count: chat.message_count ?? 0 })}
                         </span>
                       </div>
                       <button
                         onClick={() => handleOpenInReader(chat)}
                         className="flex items-center gap-1 h-[24.5px] px-2.5 rounded-[10px] bg-accent-bg text-[11px] font-medium text-accent-text tracking-[0.06px] cursor-pointer hover:opacity-70"
                       >
-                        Open in Reader
+                        {t("chats.openInReader")}
                         <ArrowRight size={12} />
                       </button>
                       <button
@@ -245,7 +247,7 @@ export default function ChatsContent() {
             ))}
             {filtered.length === 0 && chats.length > 0 && (
               <div className="flex flex-col items-center justify-center h-64 gap-2">
-                <p className="text-[14px] text-text-muted">No matching chats</p>
+                <p className="text-[14px] text-text-muted">{t("chats.noMatch")}</p>
               </div>
             )}
           </div>
@@ -257,14 +259,14 @@ export default function ChatsContent() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-overlay">
           <div className="bg-bg-surface rounded-xl shadow-lg w-[400px] p-6">
             <h3 className="text-[18px] font-semibold text-text-primary mb-2">
-              Delete Chat?
+              {t("chats.deleteTitle")}
             </h3>
             <p className="text-[14px] text-text-secondary leading-5 mb-6">
-              "{deleteConfirm.title}" and all its messages will be permanently deleted. This action cannot be undone.
+              {t("chats.deleteMsg", { title: deleteConfirm.title })}
             </p>
             <div className="flex justify-end gap-3">
               <Button variant="ghost" size="md" onClick={() => setDeleteConfirm(null)}>
-                Cancel
+                {t("common.cancel")}
               </Button>
               <button
                 onClick={() => {
@@ -273,7 +275,7 @@ export default function ChatsContent() {
                 }}
                 className="h-9 px-4 rounded-lg bg-red-500 text-white text-[14px] font-medium cursor-pointer hover:bg-red-600 transition-colors"
               >
-                Delete
+                {t("common.delete")}
               </button>
             </div>
           </div>

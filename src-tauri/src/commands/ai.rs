@@ -31,7 +31,7 @@ pub async fn ai_lookup(
     secrets: State<'_, Secrets>,
 ) -> AppResult<()> {
     // Read provider settings
-    let (provider, model, base_url, keep_alive, auth_mode) = {
+    let (provider, model, base_url, keep_alive, auth_mode, language, native_language, show_translation) = {
         let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
         let get = |key: &str| -> Option<String> {
             conn.query_row(
@@ -47,6 +47,9 @@ pub async fn ai_lookup(
             get("ai_base_url"),
             get("ai_keep_alive").unwrap_or_else(|| "30m".to_string()),
             get("ai_auth_mode").unwrap_or_else(|| "api_key".to_string()),
+            get("language").unwrap_or_else(|| "en".to_string()),
+            get("native_language").unwrap_or_else(|| "en".to_string()),
+            get("show_translation").unwrap_or_else(|| "false".to_string()),
         )
     };
 
@@ -70,10 +73,36 @@ pub async fn ai_lookup(
 
     let kind = kind.unwrap_or_else(|| "full".to_string());
 
+    // Language-aware lookup:
+    // 1. When system language is non-English, respond entirely in that language
+    // 2. When system language is English but translation is enabled, prepend a native translation
+    let language_prefix = if language != "en" {
+        let lang_name = match language.as_str() {
+            "zh" => "Chinese (Simplified)",
+            _ => &language,
+        };
+        format!("Respond entirely in {}.\n\n", lang_name)
+    } else if show_translation == "true" && native_language != "en" {
+        let lang_name = match native_language.as_str() {
+            "zh" => "Chinese (Simplified)",
+            _ => "the user's language",
+        };
+        format!(
+            "Before the definition, provide a brief translation of the word/phrase in {}. Keep the translation to a few words — no explanation, just the meaning. Then proceed with the definition as usual.\n\n",
+            lang_name
+        )
+    } else {
+        String::new()
+    };
+
+    // Only apply translation prefix to definition, not context
+    let def_prefix = &language_prefix;
+    let ctx_prefix = if language != "en" { &language_prefix } else { "" };
+
     let system_prompt = match kind.as_str() {
-        "definition" => "You are a reading assistant embedded in an ebook reader. The user selected a word or phrase and wants a dictionary-style definition.\n\nGive: pronunciation in IPA (if English), part of speech, and a concise definition in 1–2 sentences.\n\nIf the selection is a proper noun (person, place, historical event), give a brief factual identification instead.\n\nBe concise. No headers or labels.".to_string(),
-        "context" => "You are a reading assistant embedded in an ebook reader. The user selected a word or phrase and wants to understand how it's used in the surrounding passage.\n\nExplain how the word is used in context. Consider the author's intent, tone, or any literary/idiomatic significance. Keep it to 2–3 sentences.\n\nBe concise. No headers or labels.".to_string(),
-        _ => "You are a reading assistant embedded in an ebook reader. The user selected a word or phrase and wants to understand it.\n\nRespond in two parts:\n\n1. **Definition** — Give a dictionary-style entry: the word, pronunciation in IPA (if it's an English word), part of speech, and a concise definition in one sentence.\n\n2. **In context** — Explain how the word is used in the given passage. Consider the author's intent, tone, or any literary/idiomatic significance. Keep it to 2–3 sentences.\n\nIf the selection is a proper noun (person, place, historical event), replace the dictionary definition with a brief factual identification, then explain its relevance in context.\n\nDo not use headers or labels like \"Definition:\" or \"In context:\". Separate the two parts with a line break. Be concise.".to_string(),
+        "definition" => format!("{}You are a reading assistant embedded in an ebook reader. The user selected a word or phrase and wants a dictionary-style definition.\n\nGive: pronunciation in IPA (if English), part of speech, and a concise definition in 1–2 sentences.\n\nIf the selection is a proper noun (person, place, historical event), give a brief factual identification instead.\n\nBe concise. No headers or labels.", def_prefix),
+        "context" => format!("{}You are a reading assistant embedded in an ebook reader. The user selected a word or phrase and wants to understand how it's used in the surrounding passage.\n\nExplain how the word is used in context. Consider the author's intent, tone, or any literary/idiomatic significance. Keep it to 2–3 sentences.\n\nBe concise. No headers or labels.", ctx_prefix),
+        _ => format!("{}You are a reading assistant embedded in an ebook reader. The user selected a word or phrase and wants to understand it.\n\nRespond in two parts:\n\n1. **Definition** — Give a dictionary-style entry: the word, pronunciation in IPA (if it's an English word), part of speech, and a concise definition in one sentence.\n\n2. **In context** — Explain how the word is used in the given passage. Consider the author's intent, tone, or any literary/idiomatic significance. Keep it to 2–3 sentences.\n\nIf the selection is a proper noun (person, place, historical event), replace the dictionary definition with a brief factual identification, then explain its relevance in context.\n\nDo not use headers or labels like \"Definition:\" or \"In context:\". Separate the two parts with a line break. Be concise.", def_prefix),
     };
 
     let max_tokens = match kind.as_str() {
@@ -141,7 +170,7 @@ pub async fn ai_generate_title(
     db: State<'_, Db>,
     secrets: State<'_, Secrets>,
 ) -> AppResult<()> {
-    let (provider, model, base_url, keep_alive, auth_mode) = {
+    let (provider, model, base_url, keep_alive, auth_mode, language) = {
         let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
         let get = |key: &str| -> Option<String> {
             conn.query_row(
@@ -157,6 +186,7 @@ pub async fn ai_generate_title(
             get("ai_base_url"),
             get("ai_keep_alive").unwrap_or_else(|| "30m".to_string()),
             get("ai_auth_mode").unwrap_or_else(|| "api_key".to_string()),
+            get("language").unwrap_or_else(|| "en".to_string()),
         )
     };
 
@@ -171,10 +201,12 @@ pub async fn ai_generate_title(
     let user_snippet = if user_message.len() > 200 { &user_message[..200] } else { &user_message };
     let ai_snippet = if assistant_message.len() > 200 { &assistant_message[..200] } else { &assistant_message };
 
+    let title_lang_hint = if language == "zh" { " Generate the title in Chinese." } else { "" };
+
     let messages = vec![
         ChatMessage {
             role: "system".to_string(),
-            content: "Generate a very short title (3-6 words) for the following chat exchange. Respond with ONLY the title, no quotes, no punctuation at the end.".to_string(),
+            content: format!("Generate a very short title (3-6 words) for the following chat exchange.{} Respond with ONLY the title, no quotes, no punctuation at the end.", title_lang_hint),
         },
         ChatMessage {
             role: "user".to_string(),
@@ -228,7 +260,7 @@ pub async fn ai_chat(
     secrets: State<'_, Secrets>,
 ) -> AppResult<()> {
     // Read provider settings
-    let (provider, model, base_url, temperature, keep_alive, auth_mode) = {
+    let (provider, model, base_url, temperature, keep_alive, auth_mode, language) = {
         let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
         let get = |key: &str| -> Option<String> {
             conn.query_row(
@@ -247,6 +279,7 @@ pub async fn ai_chat(
                 .unwrap_or(0.3),
             get("ai_keep_alive").unwrap_or_else(|| "30m".to_string()),
             get("ai_auth_mode").unwrap_or_else(|| "api_key".to_string()),
+            get("language").unwrap_or_else(|| "en".to_string()),
         )
     };
 
@@ -261,10 +294,15 @@ pub async fn ai_chat(
     };
 
     // Build messages: system prompt + conversation history (context is inlined by frontend)
+    let mut system_content = "You are a helpful reading assistant. Help the user understand and discuss the book they are reading.".to_string();
+    if language == "zh" {
+        system_content.push_str(" Always respond in Chinese (Simplified).");
+    }
+
     let mut api_messages = Vec::new();
     api_messages.push(ChatMessage {
         role: "system".to_string(),
-        content: "You are a helpful reading assistant. Help the user understand and discuss the book they are reading.".to_string(),
+        content: system_content,
     });
     api_messages.extend(messages);
 

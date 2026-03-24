@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from "react";
+import { useTranslation } from "react-i18next";
 import { Sun, Check, ScrollText, BookOpen, File, Files } from "lucide-react";
 import Select from "./ui/Select";
 
@@ -70,6 +71,7 @@ export function getDefaultReaderTheme(): ReaderTheme {
 }
 
 export default function ReaderSettings({ open, onClose, anchorRef, settings, onSettingsChange, bookFormat }: ReaderSettingsProps) {
+  const { t } = useTranslation();
   const popoverRef = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState({ top: 0, right: 0 });
 
@@ -101,6 +103,13 @@ export default function ReaderSettings({ open, onClose, anchorRef, settings, onS
 
   const update = (partial: Partial<ReaderSettingsState>) => {
     onSettingsChange({ ...settings, ...partial });
+  };
+
+  const themeLabels: Record<string, string> = {
+    original: t("readerSettings.themeOriginal"),
+    paper: t("readerSettings.themeSepia"),
+    quiet: t("readerSettings.themeGray"),
+    night: t("readerSettings.themeNight"),
   };
 
   if (!open) return null;
@@ -165,7 +174,7 @@ export default function ReaderSettings({ open, onClose, anchorRef, settings, onS
               )}
             </div>
             <span className="text-[10px] font-medium text-text-muted tracking-[0.12px]">
-              {theme.label}
+              {themeLabels[theme.id]}
             </span>
           </button>
         ))}
@@ -174,7 +183,7 @@ export default function ReaderSettings({ open, onClose, anchorRef, settings, onS
       {/* Font family — hidden for PDFs */}
       {bookFormat !== "pdf" && (
       <div className="px-4 py-3 border-b border-border-light">
-        <p className="text-[11px] font-medium text-text-muted tracking-[0.5px] uppercase mb-2">Font</p>
+        <p className="text-[11px] font-medium text-text-muted tracking-[0.5px] uppercase mb-2">{t("readerSettings.font")}</p>
         <Select
           value={settings.font}
           onChange={(v) => update({ font: v as ReaderFont })}
@@ -185,7 +194,7 @@ export default function ReaderSettings({ open, onClose, anchorRef, settings, onS
 
       {/* Reading Mode — EPUB only (PDF uses fixed layout renderer) */}
       {bookFormat !== "pdf" && (<div className="px-4 py-3 border-b border-border-light">
-        <p className="text-[11px] font-medium text-text-muted tracking-[0.5px] uppercase mb-2">Reading Mode</p>
+        <p className="text-[11px] font-medium text-text-muted tracking-[0.5px] uppercase mb-2">{t("readerSettings.readingMode")}</p>
         <div className="flex gap-2">
           <button
             onClick={() => update({ readingMode: "scrolling" })}
@@ -196,7 +205,7 @@ export default function ReaderSettings({ open, onClose, anchorRef, settings, onS
             }`}
           >
             <ScrollText size={20} />
-            <span className="text-[12px] font-medium">Scrolling</span>
+            <span className="text-[12px] font-medium">{t("readerSettings.scrolling")}</span>
           </button>
           <button
             onClick={() => update({ readingMode: "paginated" })}
@@ -207,14 +216,14 @@ export default function ReaderSettings({ open, onClose, anchorRef, settings, onS
             }`}
           >
             <BookOpen size={20} />
-            <span className="text-[12px] font-medium">Page Turning</span>
+            <span className="text-[12px] font-medium">{t("readerSettings.pageTurning")}</span>
           </button>
         </div>
       </div>)}
 
       {/* Page columns — single or two pages — EPUB only */}
       <div className="px-4 py-3 border-b border-border-light">
-        <p className="text-[11px] font-medium text-text-muted tracking-[0.5px] uppercase mb-2">Page Layout</p>
+        <p className="text-[11px] font-medium text-text-muted tracking-[0.5px] uppercase mb-2">{t("readerSettings.pageLayout")}</p>
         <div className="flex gap-2">
           <button
             onClick={() => update({ pageColumns: 1 })}
@@ -225,7 +234,7 @@ export default function ReaderSettings({ open, onClose, anchorRef, settings, onS
             }`}
           >
             <File size={20} />
-            <span className="text-[12px] font-medium">Single Page</span>
+            <span className="text-[12px] font-medium">{t("readerSettings.singlePage")}</span>
           </button>
           <button
             onClick={() => update({ pageColumns: 2 })}
@@ -236,19 +245,19 @@ export default function ReaderSettings({ open, onClose, anchorRef, settings, onS
             }`}
           >
             <Files size={20} />
-            <span className="text-[12px] font-medium">Two Pages</span>
+            <span className="text-[12px] font-medium">{t("readerSettings.twoPages")}</span>
           </button>
         </div>
       </div>
 
       {/* Layout section — hidden for PDFs */}
       {bookFormat !== "pdf" && (<div className="px-4 py-3 flex flex-col gap-4">
-        <p className="text-[11px] font-medium text-text-muted tracking-[0.5px] uppercase">Layout</p>
+        <p className="text-[11px] font-medium text-text-muted tracking-[0.5px] uppercase">{t("readerSettings.layout")}</p>
 
         {/* Line Spacing */}
         <div className="flex flex-col gap-1.5">
           <div className="flex items-center justify-between">
-            <span className="text-[13px] font-medium text-text-primary">Line Spacing</span>
+            <span className="text-[13px] font-medium text-text-primary">{t("readerSettings.lineSpacing")}</span>
             <span className="text-[13px] text-text-muted">{settings.lineSpacing}</span>
           </div>
           <input
@@ -265,7 +274,7 @@ export default function ReaderSettings({ open, onClose, anchorRef, settings, onS
         {/* Character Spacing */}
         <div className="flex flex-col gap-1.5">
           <div className="flex items-center justify-between">
-            <span className="text-[13px] font-medium text-text-primary">Character Spacing</span>
+            <span className="text-[13px] font-medium text-text-primary">{t("readerSettings.charSpacing")}</span>
             <span className="text-[13px] text-text-muted">{settings.charSpacing}%</span>
           </div>
           <input
@@ -282,7 +291,7 @@ export default function ReaderSettings({ open, onClose, anchorRef, settings, onS
         {/* Word Spacing */}
         <div className="flex flex-col gap-1.5">
           <div className="flex items-center justify-between">
-            <span className="text-[13px] font-medium text-text-primary">Word Spacing</span>
+            <span className="text-[13px] font-medium text-text-primary">{t("readerSettings.wordSpacing")}</span>
             <span className="text-[13px] text-text-muted">{settings.wordSpacing}%</span>
           </div>
           <input
@@ -299,7 +308,7 @@ export default function ReaderSettings({ open, onClose, anchorRef, settings, onS
         {/* Margins */}
         <div className="flex flex-col gap-1.5">
           <div className="flex items-center justify-between">
-            <span className="text-[13px] font-medium text-text-primary">Margins</span>
+            <span className="text-[13px] font-medium text-text-primary">{t("readerSettings.margins")}</span>
             <span className="text-[13px] text-text-muted">{settings.margins}px</span>
           </div>
           <input

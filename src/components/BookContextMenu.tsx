@@ -10,6 +10,7 @@ import {
   Check,
 } from "lucide-react";
 import { useCollections } from "../hooks/useCollections";
+import { useTranslation } from "react-i18next";
 
 interface BookContextMenuProps {
   x: number;
@@ -41,6 +42,7 @@ export default function BookContextMenu({
   const [newName, setNewName] = useState("");
   const [creatingNew, setCreatingNew] = useState(false);
   const { collections, create, addBook, removeBook } = useCollections();
+  const { t } = useTranslation();
   const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const submenuRef = useRef<HTMLDivElement>(null);
 
@@ -84,10 +86,10 @@ export default function BookContextMenu({
 
   const statusLabel =
     bookStatus === "reading"
-      ? "Currently Reading"
+      ? t("bookMenu.currentlyReading")
       : bookStatus === "finished"
-        ? "Finished"
-        : "Not Started";
+        ? t("bookMenu.finished")
+        : t("bookMenu.notStarted");
 
   const handleAddToCollection = async (collectionId: string) => {
     await addBook(collectionId, bookId);
@@ -155,7 +157,7 @@ export default function BookContextMenu({
             <CheckCircle2 size={16} className="text-text-muted" />
           )}
           <span className="flex-1 text-[13px] font-medium text-text-primary tracking-[-0.08px]">
-            {bookStatus === "finished" ? "Continue Reading" : "Mark as Finished"}
+            {bookStatus === "finished" ? t("bookMenu.continueReading") : t("bookMenu.markFinished")}
           </span>
         </button>
 
@@ -175,7 +177,7 @@ export default function BookContextMenu({
         >
           <FolderPlus size={16} className="text-text-muted" />
           <span className="flex-1 text-[13px] font-medium text-text-primary tracking-[-0.08px]">
-            Add to Collection
+            {t("bookMenu.addToCollection")}
           </span>
           <ChevronRight size={12} className="text-text-muted" />
         </button>
@@ -188,7 +190,7 @@ export default function BookContextMenu({
           >
             <FolderMinus size={16} className="text-text-muted" />
             <span className="flex-1 text-[13px] font-medium text-text-primary tracking-[-0.08px] whitespace-nowrap">
-              Remove from Collection
+              {t("bookMenu.removeFromCollection")}
             </span>
           </button>
         )}
@@ -202,7 +204,7 @@ export default function BookContextMenu({
         >
           <Trash2 size={16} className="text-red-400" />
           <span className="flex-1 text-[13px] font-medium text-red-400 tracking-[-0.08px]">
-            Delete Book
+            {t("bookMenu.deleteBook")}
           </span>
         </button>
       </div>
@@ -222,7 +224,7 @@ export default function BookContextMenu({
         >
           {collections.length === 0 && !creatingNew && (
             <div className="px-4 py-2 text-[12px] text-text-muted">
-              No collections yet
+              {t("bookMenu.noCollections")}
             </div>
           )}
           {collections.map((c) => (
@@ -250,7 +252,7 @@ export default function BookContextMenu({
                   if (e.key === "Enter") handleCreateAndAdd();
                   if (e.key === "Escape") setCreatingNew(false);
                 }}
-                placeholder="Collection name"
+                placeholder={t("bookMenu.collectionPlaceholder")}
                 className="flex-1 min-w-0 text-[13px] bg-transparent outline-none placeholder:text-text-muted"
               />
               <button
@@ -267,7 +269,7 @@ export default function BookContextMenu({
             >
               <Plus size={16} className="text-text-muted" />
               <span className="flex-1 text-[13px] font-medium text-text-primary tracking-[-0.08px]">
-                New Collection
+                {t("bookMenu.newCollection")}
               </span>
             </button>
           )}

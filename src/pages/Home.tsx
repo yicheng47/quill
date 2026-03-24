@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { useTranslation } from "react-i18next";
 import { Search, LayoutGrid, List, Settings, Plus, Upload, BookOpen, Loader } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { invoke } from "@tauri-apps/api/core";
@@ -14,6 +15,7 @@ import { useBooks, importBookDialog, type Book } from "../hooks/useBooks";
 import { useCollections } from "../hooks/useCollections";
 
 export default function Home() {
+  const { t } = useTranslation();
   const [activeFilter, setActiveFilter] = useState("all");
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [searchQuery, setSearchQuery] = useState("");
@@ -131,13 +133,13 @@ export default function Home() {
 
   const title =
     activeFilter === "all"
-      ? "All Books"
+      ? t("home.title.all")
       : activeFilter === "reading"
-        ? "Currently Reading"
+        ? t("home.title.reading")
         : activeFilter === "finished"
-          ? "Finished"
+          ? t("home.title.finished")
           : isCollectionFilter
-            ? "Collection"
+            ? t("home.title.collection")
             : activeFilter;
 
   return (
@@ -191,7 +193,7 @@ export default function Home() {
 
             <Input
               icon={<Search size={16} />}
-              placeholder="Search books..."
+              placeholder={t("home.search")}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-[448px]"
@@ -200,22 +202,22 @@ export default function Home() {
 
           <div className="flex-1 overflow-auto p-page pb-20">
             {loading ? (
-              <p className="text-text-muted text-[14px]">Loading...</p>
+              <p className="text-text-muted text-[14px]">{t("home.loading")}</p>
             ) : displayBooks.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full gap-4">
                 <p className="text-text-muted text-[14px]">
                   {searchQuery
-                    ? "No results found"
+                    ? t("home.noResults")
                     : isCollectionFilter
-                      ? "No books in this collection"
+                      ? t("home.noCollectionBooks")
                       : activeFilter !== "all"
-                        ? `No ${activeFilter} books`
-                        : "No books yet — import an EPUB or PDF to get started"}
+                        ? t("home.noFilteredBooks", { filter: activeFilter })
+                        : t("home.empty")}
                 </p>
                 {activeFilter === "all" && !searchQuery && (
                   <Button variant="primary" size="md" onClick={handleImport}>
                     <Plus size={16} />
-                    Import Book
+                    {t("home.importBook")}
                   </Button>
                 )}
               </div>
@@ -231,7 +233,7 @@ export default function Home() {
             className="shrink-0 mx-page mb-page rounded-lg border border-dashed border-text-muted/40 py-4 flex items-center justify-center gap-2 text-[14px] text-text-secondary hover:border-accent hover:text-accent transition-colors cursor-pointer"
           >
             <Upload size={16} />
-            Drop files or click to import more books
+            {t("home.dropHint")}
           </button>
         </main>
       )}
@@ -243,9 +245,9 @@ export default function Home() {
               <BookOpen size={28} className="text-accent" />
             </div>
             <p className="text-[18px] font-semibold text-text-primary">
-              Drop to add to your library
+              {t("home.dropOverlay")}
             </p>
-            <p className="text-[14px] text-text-muted">EPUB & PDF</p>
+            <p className="text-[14px] text-text-muted">{t("home.dropFormats")}</p>
           </div>
         </div>
       )}
@@ -255,7 +257,7 @@ export default function Home() {
           <div className="flex flex-col items-center gap-4 rounded-xl border border-border bg-bg-surface px-16 py-12 shadow-popover">
             <Loader size={28} className="text-accent animate-spin" />
             <p className="text-[18px] font-semibold text-text-primary">
-              Importing book...
+              {t("home.importing")}
             </p>
           </div>
         </div>
