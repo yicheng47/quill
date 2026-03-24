@@ -4,6 +4,7 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import type { Book } from "../hooks/useBooks";
 import { deleteBook, markFinished, updateReadingProgress } from "../hooks/useBooks";
 import BookContextMenu from "./BookContextMenu";
+import { useTranslation } from "react-i18next";
 
 interface BookGridProps {
   books: Book[];
@@ -13,6 +14,7 @@ interface BookGridProps {
 
 export default function BookGrid({ books, activeCollectionId, onBooksChanged }: BookGridProps) {
   const navigate = useNavigate();
+  const { t } = useTranslation();
   const [contextMenu, setContextMenu] = useState<{
     x: number;
     y: number;
@@ -50,7 +52,7 @@ export default function BookGrid({ books, activeCollectionId, onBooksChanged }: 
               )}
               {book.status === "finished" && (
                 <div className="absolute top-2 right-2 bg-success text-white text-[12px] px-2 py-1 rounded-full">
-                  Finished
+                  {t("bookGrid.finished")}
                 </div>
               )}
             </div>

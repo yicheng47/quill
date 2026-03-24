@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Library, BookOpen, CheckCircle2, Sparkles, BookA, Plus, MessageSquare } from "lucide-react";
 import Button from "./ui/Button";
 import QuillLogo from "./QuillLogo";
@@ -15,13 +16,14 @@ interface SidebarProps {
   };
 }
 
-const libraryFilters = [
-  { id: "all", label: "All Books", icon: Library },
-  { id: "reading", label: "Currently Reading", icon: BookOpen },
-  { id: "finished", label: "Finished", icon: CheckCircle2 },
-];
-
 export default function Sidebar({ activeFilter, onFilterChange, books, collections: collectionsHook }: SidebarProps) {
+  const { t } = useTranslation();
+
+  const libraryFilters = [
+    { id: "all", label: t("sidebar.allBooks"), icon: Library },
+    { id: "reading", label: t("sidebar.currentlyReading"), icon: BookOpen },
+    { id: "finished", label: t("sidebar.finished"), icon: CheckCircle2 },
+  ];
   const { collections, create } = collectionsHook;
   const [isCreating, setIsCreating] = useState(false);
   const [newName, setNewName] = useState("");
@@ -53,7 +55,7 @@ export default function Sidebar({ activeFilter, onFilterChange, books, collectio
 
       <div className="flex flex-col gap-3">
         <h2 className="text-[12px] font-semibold uppercase tracking-[0.3px] text-text-muted">
-          Library
+          {t("sidebar.library")}
         </h2>
         <div className="flex flex-col gap-1">
           {libraryFilters.map((filter) => {
@@ -91,7 +93,7 @@ export default function Sidebar({ activeFilter, onFilterChange, books, collectio
 
       <div className="flex flex-col gap-3">
         <h2 className="text-[12px] font-semibold uppercase tracking-[0.3px] text-text-muted">
-          Tools
+          {t("sidebar.tools")}
         </h2>
         <div className="flex flex-col gap-1">
           <button
@@ -104,7 +106,7 @@ export default function Sidebar({ activeFilter, onFilterChange, books, collectio
             <span className={`text-[14px] font-medium tracking-[-0.15px] ${
               activeFilter === "vocab" ? "text-accent-text" : "text-text-secondary"
             }`}>
-              Dictionary
+              {t("sidebar.dictionary")}
             </span>
           </button>
           <button
@@ -117,7 +119,7 @@ export default function Sidebar({ activeFilter, onFilterChange, books, collectio
             <span className={`text-[14px] font-medium tracking-[-0.15px] ${
               activeFilter === "chats" ? "text-accent-text" : "text-text-secondary"
             }`}>
-              Chats
+              {t("sidebar.chats")}
             </span>
           </button>
         </div>
@@ -126,7 +128,7 @@ export default function Sidebar({ activeFilter, onFilterChange, books, collectio
       <div className="flex flex-col gap-3">
         <div className="flex items-center justify-between">
           <h2 className="text-[12px] font-semibold uppercase tracking-[0.3px] text-text-muted">
-            Collections
+            {t("sidebar.collections")}
           </h2>
           <Button
             variant="icon"
@@ -159,7 +161,7 @@ export default function Sidebar({ activeFilter, onFilterChange, books, collectio
                   setIsCreating(false);
                 }
               }}
-              placeholder="Collection name..."
+              placeholder={t("sidebar.collectionPlaceholder")}
               className="w-full h-9 px-3 rounded-lg bg-bg-input text-[14px] text-text-primary placeholder:text-text-placeholder outline-none border border-accent"
             />
           </form>

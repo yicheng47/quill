@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { useTranslation } from "react-i18next";
 import { Sparkles, Send, Loader2, Plus, ChevronDown, ChevronUp, Trash2 } from "lucide-react";
 import Markdown from "react-markdown";
 import { useAiChat, type ChatMessage } from "../hooks/useAiChat";
@@ -12,13 +13,14 @@ interface AiPanelProps {
   onNavigateToCfi?: (cfi: string) => void;
 }
 
-const SUGGESTED_PROMPTS = [
-  "Summarize this chapter",
-  "Explain the main themes",
-  "Who are the key characters?",
-];
-
 export default function AiPanel({ bookId, context, initialChatId, onContextConsumed, onNavigateToCfi }: AiPanelProps) {
+  const { t } = useTranslation();
+
+  const SUGGESTED_PROMPTS = [
+    t("ai.prompt.summarize"),
+    t("ai.prompt.themes"),
+    t("ai.prompt.characters"),
+  ];
   const {
     messages, streaming, send, initialize,
     chatId, chats, titling, loadChat, deleteChat, renameChat, reset,
@@ -126,7 +128,7 @@ export default function AiPanel({ bookId, context, initialChatId, onContextConsu
             <button
               onClick={() => setPickerOpen(!pickerOpen)}
               onDoubleClick={() => {
-                setTitleDraft(currentChat?.title || "New Chat");
+                setTitleDraft(currentChat?.title || t("ai.newChat"));
                 setEditingTitle(true);
               }}
               className="flex items-center gap-1.5 min-w-0 cursor-pointer"
@@ -134,11 +136,11 @@ export default function AiPanel({ bookId, context, initialChatId, onContextConsu
               {titling ? (
                 <span className="flex items-center gap-1.5 text-[15px] font-semibold text-text-muted tracking-[-0.23px]">
                   <Loader2 size={14} className="animate-spin" />
-                  Generating title...
+                  {t("ai.generatingTitle")}
                 </span>
               ) : (
                 <span className="text-[15px] font-semibold text-text-primary tracking-[-0.23px] truncate">
-                  {currentChat?.title || "New Chat"}
+                  {currentChat?.title || t("ai.newChat")}
                 </span>
               )}
               {pickerOpen ? (
@@ -196,7 +198,7 @@ export default function AiPanel({ bookId, context, initialChatId, onContextConsu
                 );
               })}
               {chats.length === 0 && (
-                <p className="px-3 py-3 text-[13px] text-text-muted">No chats yet</p>
+                <p className="px-3 py-3 text-[13px] text-text-muted">{t("ai.noChats")}</p>
               )}
             </div>
           </div>
@@ -212,10 +214,10 @@ export default function AiPanel({ bookId, context, initialChatId, onContextConsu
               <Sparkles size={28} className="text-text-muted" />
             </div>
             <h3 className="text-[16px] font-semibold text-text-primary tracking-[-0.31px]">
-              Start a new chat
+              {t("ai.startChat")}
             </h3>
             <p className="text-[13px] text-text-muted text-center tracking-[-0.08px] max-w-[215px]">
-              Ask anything about the book you're reading
+              {t("ai.startChatSub")}
             </p>
             <div className="flex flex-wrap justify-center gap-2 mt-2">
               {SUGGESTED_PROMPTS.map((prompt) => (
@@ -246,7 +248,7 @@ export default function AiPanel({ bookId, context, initialChatId, onContextConsu
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Ask me anything about what you're reading..."
+            placeholder={t("ai.placeholder")}
             rows={2}
             className="flex-1 h-[60px] bg-bg-input rounded-lg px-3 py-2 text-[14px] text-text-primary placeholder:text-text-placeholder tracking-[-0.15px] leading-5 outline-none border border-transparent focus:border-accent resize-none"
           />
@@ -265,7 +267,7 @@ export default function AiPanel({ bookId, context, initialChatId, onContextConsu
           </button>
         </div>
         <p className="text-[12px] text-text-muted">
-          Press Enter to send, Shift+Enter for new line
+          {t("ai.sendHint")}
         </p>
       </div>
     </div>
@@ -273,6 +275,7 @@ export default function AiPanel({ bookId, context, initialChatId, onContextConsu
 }
 
 function MessageBubble({ msg, messages, streaming, onNavigateToCfi }: { msg: ChatMessage; messages: ChatMessage[]; streaming: boolean; onNavigateToCfi?: (cfi: string) => void }) {
+  const { t } = useTranslation();
   const isLast = msg === messages[messages.length - 1];
 
   if (msg.role === "assistant") {
@@ -281,7 +284,7 @@ function MessageBubble({ msg, messages, streaming, onNavigateToCfi }: { msg: Cha
         {streaming && !msg.content && isLast ? (
           <span className="flex items-center gap-1.5 text-[14px] text-text-muted">
             <Loader2 size={14} className="animate-spin" />
-            Thinking...
+            {t("ai.thinking")}
           </span>
         ) : (
           <div className="prose prose-sm max-w-none text-[14px] text-text-primary leading-5 tracking-[-0.15px] [&_h1]:text-[16px] [&_h2]:text-[15px] [&_h3]:text-[14px] [&_h1]:font-semibold [&_h2]:font-semibold [&_h3]:font-semibold [&_h1]:mt-3 [&_h1]:mb-1 [&_h2]:mt-3 [&_h2]:mb-1 [&_h3]:mt-2 [&_h3]:mb-1 [&_p]:my-1.5 [&_ul]:my-1 [&_ol]:my-1 [&_li]:my-0.5 [&_blockquote]:border-l-2 [&_blockquote]:border-border [&_blockquote]:pl-3 [&_blockquote]:italic [&_blockquote]:text-text-muted [&_code]:bg-bg-muted [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_code]:text-[13px] [&_pre]:bg-bg-muted [&_pre]:p-3 [&_pre]:rounded-lg [&_pre]:overflow-x-auto [&_strong]:font-semibold [&_em]:italic [&_hr]:border-border [&_a]:text-accent [&_a]:underline">

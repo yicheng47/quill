@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import {
   ArrowLeft,
@@ -104,6 +105,7 @@ export default function Reader() {
   const { bookId } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
+  const { t } = useTranslation();
   const [book, setBook] = useState<Book | null>(null);
   const [loading, setLoading] = useState(true);
   const [sidePanel, setSidePanel] = useState<SidePanel>(null);
@@ -722,7 +724,7 @@ export default function Reader() {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-screen">
-        <p className="text-text-muted">Loading...</p>
+        <p className="text-text-muted">{t("reader.loading")}</p>
       </div>
     );
   }
@@ -730,7 +732,7 @@ export default function Reader() {
   if (!book) {
     return (
       <div className="flex items-center justify-center h-screen">
-        <p>Book not found</p>
+        <p>{t("reader.bookNotFound")}</p>
       </div>
     );
   }
@@ -761,8 +763,8 @@ export default function Reader() {
             </h1>
             <span className="text-[13px] text-text-muted leading-4">
               {book.format === "pdf"
-                ? pageInfo ? `Page ${pageInfo.current} of ${pageInfo.total}` : ""
-                : chapters.length > 0 ? `Chapter ${currentChapterIndex + 1} of ${chapters.length}` : ""}
+                ? pageInfo ? t("reader.pageOf", { current: pageInfo.current, total: pageInfo.total }) : ""
+                : chapters.length > 0 ? t("reader.chapterOf", { current: currentChapterIndex + 1, total: chapters.length }) : ""}
             </span>
           </div>
         </div>
@@ -838,7 +840,7 @@ export default function Reader() {
           >
             <Bot size={16} />
             <span className="text-[14px] font-medium tracking-[-0.15px]">
-              AI Assistant
+              {t("reader.aiAssistant")}
             </span>
           </button>
         </div>
@@ -864,7 +866,7 @@ export default function Reader() {
               <div className="absolute inset-0 z-20 bg-bg-surface flex items-center justify-center">
                 <div className="flex flex-col items-center gap-3">
                   <Loader2 size={24} className="animate-spin text-text-muted" />
-                  <span className="text-[14px] text-text-muted">Preparing book...</span>
+                  <span className="text-[14px] text-text-muted">{t("reader.preparingBook")}</span>
                 </div>
               </div>
             )}
@@ -881,7 +883,7 @@ export default function Reader() {
               </div>
               <div className="flex items-center justify-between h-8">
                 <span className="text-[12px] text-text-muted">
-                  {pageInfo ? `Page ${pageInfo.current} of ${pageInfo.total}` : `${progress}%`}
+                  {pageInfo ? t("reader.pageOf", { current: pageInfo.current, total: pageInfo.total }) : `${progress}%`}
                 </span>
                 {book.format === "pdf" && (
                   <div className="flex items-center gap-1">
@@ -898,7 +900,7 @@ export default function Reader() {
                 )}
                 <span className="text-[12px] text-text-muted">
                   {pageInfo && pageInfo.total > pageInfo.current
-                    ? `${pageInfo.total - pageInfo.current} page${pageInfo.total - pageInfo.current !== 1 ? "s" : ""} left`
+                    ? t("reader.pagesLeft", { count: pageInfo.total - pageInfo.current })
                     : ""}
                 </span>
               </div>
@@ -946,7 +948,7 @@ export default function Reader() {
                 const idx = currentChapterIndex;
                 return idx >= 0 && idx < chapters.length
                   ? chapters[idx].title
-                  : "Bookmark";
+                  : t("common.bookmark");
               }}
               getPageFromCfi={() => {
                 // foliate-js uses fraction-based progress, not location indices

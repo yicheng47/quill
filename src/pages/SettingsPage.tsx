@@ -1,19 +1,22 @@
 import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { invoke } from "@tauri-apps/api/core";
-import { ArrowLeft, Bot, BookOpen, SlidersHorizontal, Palette, KeyRound, Shield, Cloud, Loader2 } from "lucide-react";
+import { ArrowLeft, Bot, BookOpen, SlidersHorizontal, Palette, KeyRound, Shield, Cloud, Loader2, Globe } from "lucide-react";
+import i18n from "../i18n";
 import Button from "../components/ui/Button";
 import Select from "../components/ui/Select";
 import Input from "../components/ui/Input";
 import Toggle from "../components/ui/Toggle";
 import Slider from "../components/ui/Slider";
 import { useSettings } from "../hooks/useSettings";
+import { useTranslation } from "react-i18next";
 
 export default function SettingsPage() {
   const navigate = useNavigate();
   const [showToast, setShowToast] = useState(false);
-  const [toastMessage, setToastMessage] = useState("Settings saved");
+  const [toastMessage, setToastMessage] = useState("");
   const { settings, loading, save, saveBulk } = useSettings();
+  const { t } = useTranslation();
   const [aiDirty, setAiDirty] = useState(false);
 
   // AI config
@@ -42,6 +45,9 @@ export default function SettingsPage() {
   const [wordSpacing, setWordSpacing] = useState(0);
   const [margins, setMargins] = useState(0);
 
+  // Language
+  const [language, setLanguage] = useState("en");
+
   // Appearance
   const [theme, setTheme] = useState("system");
 
@@ -54,7 +60,7 @@ export default function SettingsPage() {
   const [icloudConfirm, setIcloudConfirm] = useState<"enable" | "disable" | null>(null);
 
   const toastTimeout = useRef<ReturnType<typeof setTimeout>>(undefined);
-  const showSavedToast = (msg = "Settings saved") => {
+  const showSavedToast = (msg = t("settings.saved")) => {
     if (toastTimeout.current) clearTimeout(toastTimeout.current);
     setToastMessage(msg);
     setShowToast(true);
@@ -82,7 +88,7 @@ export default function SettingsPage() {
         ai_auth_mode: authMode,
       });
       setAiDirty(false);
-      showSavedToast("AI configuration saved");
+      showSavedToast(t("settings.ai.savedToast"));
     } catch (err) {
       console.error("Failed to save AI settings:", err);
     }
@@ -106,6 +112,7 @@ export default function SettingsPage() {
     if (settings.margins) setMargins(parseInt(settings.margins));
     if (settings.auto_save) setAutoSave(settings.auto_save === "true");
     if (settings.theme) setTheme(settings.theme);
+    if (settings.language) setLanguage(settings.language);
   }, [settings, loading]);
 
   // Fetch iCloud status on mount
@@ -218,9 +225,9 @@ export default function SettingsPage() {
             <ArrowLeft size={16} />
           </Button>
           <div>
-            <h1 className="text-[18px] font-semibold text-text-primary">Settings</h1>
+            <h1 className="text-[18px] font-semibold text-text-primary">{t("settings.title")}</h1>
             <p className="text-[13px] text-text-muted">
-              Manage your reading preferences and AI configuration
+              {t("settings.subtitle")}
             </p>
           </div>
         </div>
@@ -235,18 +242,18 @@ export default function SettingsPage() {
             <div className="flex items-center gap-2 mb-1">
               <Bot size={20} className="text-text-muted" />
               <h2 className="text-[16px] font-semibold text-text-primary">
-                AI Assistant Configuration
+                {t("settings.ai.title")}
               </h2>
             </div>
             <p className="text-[13px] text-text-muted mb-4">
-              Configure your AI provider and model preferences for the reading assistant
+              {t("settings.ai.subtitle")}
             </p>
 
             <div className="space-y-5">
 
               {/* Provider */}
               <Select
-                label="AI Provider"
+                label={t("settings.ai.provider")}
                 value={provider}
                 onChange={(p) => {
                   setProvider(p);
@@ -272,13 +279,13 @@ export default function SettingsPage() {
                   { value: "ollama", label: "Ollama (Local)" },
                 ]}
               />
-              <p className="-mt-3 text-[12px] text-text-muted">Choose your preferred AI service provider</p>
+              <p className="-mt-3 text-[12px] text-text-muted">{t("settings.ai.providerHint")}</p>
 
               {/* Authentication Method (OpenAI only) */}
               {provider === "openai" && (
                 <div>
                   <label className="block text-[14px] font-semibold text-text-primary mb-1.5">
-                    Authentication Method
+                    {t("settings.ai.authMethod")}
                   </label>
                   <div className="flex rounded-lg border border-border overflow-hidden">
                     <button
@@ -291,7 +298,7 @@ export default function SettingsPage() {
                       onClick={() => { setAuthMode("api_key"); setModel("gpt-4o"); setAiDirty(true); }}
                     >
                       <KeyRound size={14} />
-                      API Key
+                      {t("settings.ai.apiKey")}
                     </button>
                     <button
                       type="button"
@@ -303,10 +310,10 @@ export default function SettingsPage() {
                       onClick={() => { setAuthMode("oauth"); setModel("gpt-5.3-codex"); setAiDirty(true); }}
                     >
                       <Shield size={14} />
-                      OAuth Login
+                      {t("settings.ai.oauthLogin")}
                     </button>
                   </div>
-                  <p className="text-[12px] text-text-muted mt-1.5">Choose how to authenticate with OpenAI</p>
+                  <p className="text-[12px] text-text-muted mt-1.5">{t("settings.ai.authMethodHint")}</p>
                 </div>
               )}
 
@@ -319,7 +326,7 @@ export default function SettingsPage() {
                         <span className="size-2 rounded-full bg-accent" />
                         <span className="size-2 rounded-full bg-green-500" />
                         <span className="text-[13px] text-text-primary font-medium">
-                          Connected: {oauthStatus.account_id ?? "Unknown"}
+                          {t("settings.ai.connected", { account: oauthStatus.account_id ?? "Unknown" })}
                         </span>
                       </div>
                       <button
@@ -327,7 +334,7 @@ export default function SettingsPage() {
                         className="text-[13px] font-medium text-text-muted hover:text-text-primary transition-colors"
                         onClick={handleOAuthLogout}
                       >
-                        Logout
+                        {t("settings.ai.logout")}
                       </button>
                     </div>
                   ) : (
@@ -339,24 +346,24 @@ export default function SettingsPage() {
                         disabled={oauthLoading}
                         onClick={handleOAuthLogin}
                       >
-                        {oauthLoading ? "Waiting for authentication..." : "Login with OpenAI"}
+                        {oauthLoading ? t("settings.ai.waitingAuth") : t("settings.ai.loginWithOpenAI")}
                       </Button>
                       {oauthError ? (
                         <div className="flex items-center justify-between mt-2 px-3 py-2 rounded-lg bg-red-50 dark:bg-red-950/30">
                           <span className="text-[12px] text-red-600 dark:text-red-400">
-                            Authentication failed. Please try again.
+                            {t("settings.ai.authFailed")}
                           </span>
                           <button
                             type="button"
                             className="text-[12px] font-medium text-red-600 dark:text-red-400 hover:underline"
                             onClick={handleOAuthLogin}
                           >
-                            Retry
+                            {t("settings.ai.retry")}
                           </button>
                         </div>
                       ) : (
                         <p className="text-[12px] text-text-muted mt-1.5">
-                          Sign in with your OpenAI account. A browser window will open for authentication.
+                          {t("settings.ai.oauthHint")}
                         </p>
                       )}
                     </>
@@ -368,7 +375,7 @@ export default function SettingsPage() {
               {(provider === "ollama" || (provider === "openai" && authMode === "api_key") || provider === "minimax" || provider === "anthropic") && (
                 <div>
                   <label className="block text-[14px] font-semibold text-text-primary mb-1.5">
-                    Base URL
+                    {t("settings.ai.baseUrl")}
                   </label>
                   <Input
                     value={baseUrl}
@@ -376,7 +383,7 @@ export default function SettingsPage() {
                     placeholder={provider === "ollama" ? "http://localhost:11434" : "https://api.openai.com"}
                   />
                   <p className="text-[12px] text-text-muted mt-1.5">
-                    {provider === "ollama" ? "Ollama server address" : "API base URL (e.g. https://api.openai.com)"}
+                    {provider === "ollama" ? t("settings.ai.baseUrlOllama") : t("settings.ai.baseUrlGeneric")}
                   </p>
                 </div>
               )}
@@ -385,7 +392,7 @@ export default function SettingsPage() {
               {(provider === "anthropic" || (provider === "openai" && authMode === "api_key") || provider === "minimax") && (
                 <div>
                   <label className="block text-[14px] font-semibold text-text-primary mb-1.5">
-                    API Key
+                    {t("settings.ai.apiKey")}
                   </label>
                   <Input
                     type="password"
@@ -394,7 +401,7 @@ export default function SettingsPage() {
                     placeholder={provider === "anthropic" ? "sk-ant-..." : "sk-..."}
                   />
                   <p className="text-[12px] text-text-muted mt-1.5">
-                    Your API key is stored locally and never shared
+                    {t("settings.ai.apiKeyHint")}
                   </p>
                 </div>
               )}
@@ -402,7 +409,7 @@ export default function SettingsPage() {
               {/* Model */}
               <div>
                 <label className="block text-[14px] font-semibold text-text-primary mb-1.5">
-                  Model
+                  {t("settings.ai.model")}
                 </label>
                 <Input
                   value={model}
@@ -417,7 +424,7 @@ export default function SettingsPage() {
                   }
                 />
                 <p className="text-[12px] text-text-muted mt-1.5">
-                  Enter the model name supported by your provider
+                  {t("settings.ai.modelHint")}
                 </p>
               </div>
 
@@ -425,20 +432,20 @@ export default function SettingsPage() {
 
               {/* Temperature */}
               <Slider
-                label="Temperature"
+                label={t("settings.ai.temperature")}
                 min={0}
                 max={100}
                 value={Math.round(temperature * 100)}
                 onChange={(v) => { setTemperature(v / 100); setAiDirty(true); }}
                 displayValue={temperature.toFixed(1)}
-                hint="Lower = more focused, Higher = more creative"
+                hint={t("settings.ai.temperatureHint")}
               />
 
               {/* Keep Alive (Ollama only) */}
               {provider === "ollama" && (
                 <div>
                   <label className="block text-[14px] font-semibold text-text-primary mb-1.5">
-                    Keep Alive
+                    {t("settings.ai.keepAlive")}
                   </label>
                   <Input
                     value={keepAlive}
@@ -446,7 +453,7 @@ export default function SettingsPage() {
                     placeholder="30m"
                   />
                   <p className="text-[12px] text-text-muted mt-1.5">
-                    How long to keep the model loaded in memory (e.g. "30m", "1h", "-1" for never unload)
+                    {t("settings.ai.keepAliveHint")}
                   </p>
                 </div>
               )}
@@ -454,7 +461,7 @@ export default function SettingsPage() {
               {/* Save AI Config */}
               <div className="h-px bg-border-light" />
               <Button variant="primary" size="md" className="w-full justify-center" disabled={!aiDirty} onClick={handleSaveAI}>
-                Save AI Configuration
+                {t("settings.ai.save")}
               </Button>
 
             </div>
@@ -465,31 +472,31 @@ export default function SettingsPage() {
             <div className="flex items-center gap-2 mb-1">
               <SlidersHorizontal size={20} className="text-accent" />
               <h2 className="text-[16px] font-semibold text-text-primary">
-                Default Layout
+                {t("settings.layout.title")}
               </h2>
             </div>
             <p className="text-[13px] text-text-muted mb-4">
-              Set default font and spacing applied when opening books
+              {t("settings.layout.subtitle")}
             </p>
 
             <div className="space-y-5">
               <Select
-                label="Font Family"
+                label={t("settings.layout.fontFamily")}
                 value={fontFamily}
                 onChange={(v) => { setFontFamily(v); autoSaveSetting("font_family", v); }}
                 options={[
-                  { value: "system", label: "System Default" },
+                  { value: "system", label: t("settings.layout.systemDefault") },
                   { value: "georgia", label: "Georgia" },
                   { value: "palatino", label: "Palatino" },
                   { value: "inter", label: "Inter" },
                   { value: "times", label: "Times New Roman" },
                 ]}
               />
-              <p className="-mt-3 text-[12px] text-text-muted">Choose your preferred reading font</p>
+              <p className="-mt-3 text-[12px] text-text-muted">{t("settings.layout.fontFamilyHint")}</p>
 
               <div>
                 <label className="block text-[14px] font-semibold text-text-primary mb-1.5">
-                  Font Size
+                  {t("settings.layout.fontSize")}
                 </label>
                 <Input
                   value={String(fontSize)}
@@ -508,53 +515,53 @@ export default function SettingsPage() {
                   }}
                   placeholder="18"
                 />
-                <p className="text-[12px] text-text-muted mt-1.5">Default font size in pixels (8–48)</p>
+                <p className="text-[12px] text-text-muted mt-1.5">{t("settings.layout.fontSizeHint")}</p>
               </div>
 
               <div className="h-px bg-border-light" />
 
               <Slider
-                label="Line Spacing"
+                label={t("settings.layout.lineSpacing")}
                 min={10}
                 max={30}
                 value={Math.round(lineSpacing * 10)}
                 onChange={(v) => setLineSpacing(v / 10)}
                 onChangeEnd={(v) => autoSaveSetting("line_spacing", String(v / 10))}
                 displayValue={lineSpacing.toFixed(1)}
-                hint="Default space between lines of text"
+                hint={t("settings.layout.lineSpacingHint")}
               />
 
               <Slider
-                label="Character Spacing"
+                label={t("settings.layout.charSpacing")}
                 min={-5}
                 max={20}
                 value={charSpacing}
                 onChange={setCharSpacing}
                 onChangeEnd={(v) => autoSaveSetting("char_spacing", String(v))}
                 displayValue={`${charSpacing}%`}
-                hint="Default space between individual characters"
+                hint={t("settings.layout.charSpacingHint")}
               />
 
               <Slider
-                label="Word Spacing"
+                label={t("settings.layout.wordSpacing")}
                 min={-10}
                 max={50}
                 value={wordSpacing}
                 onChange={setWordSpacing}
                 onChangeEnd={(v) => autoSaveSetting("word_spacing", String(v))}
                 displayValue={`${wordSpacing}%`}
-                hint="Default space between words"
+                hint={t("settings.layout.wordSpacingHint")}
               />
 
               <Slider
-                label="Margins"
+                label={t("settings.layout.margins")}
                 min={0}
                 max={120}
                 value={margins}
                 onChange={setMargins}
                 onChangeEnd={(v) => autoSaveSetting("margins", String(v))}
                 displayValue={`${margins}px`}
-                hint="Default margins around the reading area"
+                hint={t("settings.layout.marginsHint")}
               />
             </div>
           </section>
@@ -564,18 +571,18 @@ export default function SettingsPage() {
             <div className="flex items-center gap-2 mb-1">
               <BookOpen size={20} className="text-text-muted" />
               <h2 className="text-[16px] font-semibold text-text-primary">
-                Reading Preferences
+                {t("settings.reading.title")}
               </h2>
             </div>
             <p className="text-[13px] text-text-muted mb-4">
-              Customize your reading experience
+              {t("settings.reading.subtitle")}
             </p>
 
             <div className="space-y-5">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-[14px] font-semibold text-text-primary">Auto-save Progress</p>
-                  <p className="text-[13px] text-text-muted">Automatically save your reading position</p>
+                  <p className="text-[14px] font-semibold text-text-primary">{t("settings.reading.autoSave")}</p>
+                  <p className="text-[13px] text-text-muted">{t("settings.reading.autoSaveSub")}</p>
                 </div>
                 <Toggle checked={autoSave} onChange={(v) => { setAutoSave(v); autoSaveSetting("auto_save", String(v)); }} />
               </div>
@@ -587,11 +594,11 @@ export default function SettingsPage() {
             <div className="flex items-center gap-2 mb-1">
               <Cloud size={20} className="text-text-muted" />
               <h2 className="text-[16px] font-semibold text-text-primary">
-                iCloud Sync
+                {t("settings.icloud.title")}
               </h2>
             </div>
             <p className="text-[13px] text-text-muted mb-4">
-              Sync your books, reading progress, and highlights across your Macs
+              {t("settings.icloud.subtitle")}
             </p>
 
             <div className="space-y-4">
@@ -599,14 +606,14 @@ export default function SettingsPage() {
                 <div className="flex items-center gap-2">
                   <Loader2 size={16} className="text-text-muted animate-spin" />
                   <p className="text-[13px] text-text-muted">
-                    Moving files to iCloud Drive...
+                    {t("settings.icloud.moving")}
                   </p>
                 </div>
               ) : (
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-[14px] font-semibold text-text-primary">Enable iCloud Sync</p>
-                    <p className="text-[13px] text-text-muted">Store your library in iCloud Drive</p>
+                    <p className="text-[14px] font-semibold text-text-primary">{t("settings.icloud.enable")}</p>
+                    <p className="text-[13px] text-text-muted">{t("settings.icloud.enableSub")}</p>
                   </div>
                   <Toggle
                     checked={icloudEnabled}
@@ -618,29 +625,57 @@ export default function SettingsPage() {
 
               {!icloudAvailable && !icloudLoading && (
                 <p className="text-[12px] text-text-muted">
-                  Sign in to iCloud on your Mac to enable sync
+                  {t("settings.icloud.signIn")}
                 </p>
               )}
 
               {icloudError && (
                 <div className="flex items-center justify-between bg-[#fef2f2] border border-[#ffc9c9] rounded-lg px-3.5 py-2">
                   <span className="text-[12px] text-[#e7000b]">
-                    Failed to enable iCloud Sync. Please try again.
+                    {t("settings.icloud.error")}
                   </span>
                   <button
                     type="button"
                     className="text-[12px] font-medium text-[#e7000b] underline"
                     onClick={handleIcloudToggle}
                   >
-                    Retry
+                    {t("settings.ai.retry")}
                   </button>
                 </div>
               )}
 
               <p className="text-[12px] text-[#9f9fa9]">
-                API keys and login tokens are stored locally and will not sync
+                {t("settings.icloud.keysNote")}
               </p>
             </div>
+          </section>
+
+          {/* Language */}
+          <section className="bg-bg-surface rounded-xl border border-border p-6">
+            <div className="flex items-center gap-2 mb-1">
+              <Globe size={20} className="text-text-muted" />
+              <h2 className="text-[16px] font-semibold text-text-primary">
+                {t("settings.language")}
+              </h2>
+            </div>
+            <p className="text-[13px] text-text-muted mb-4">
+              {t("settings.languageSub")}
+            </p>
+
+            <Select
+              label={t("settings.language")}
+              value={language}
+              onChange={(lang) => {
+                setLanguage(lang);
+                save("language", lang);
+                i18n.changeLanguage(lang);
+                showSavedToast();
+              }}
+              options={[
+                { value: "en", label: "English" },
+                { value: "zh", label: "简体中文" },
+              ]}
+            />
           </section>
 
           {/* Appearance */}
@@ -648,24 +683,24 @@ export default function SettingsPage() {
             <div className="flex items-center gap-2 mb-1">
               <Palette size={20} className="text-text-muted" />
               <h2 className="text-[16px] font-semibold text-text-primary">
-                Appearance
+                {t("settings.appearance.title")}
               </h2>
             </div>
             <p className="text-[13px] text-text-muted mb-4">
-              Customize the look and feel of the app
+              {t("settings.appearance.subtitle")}
             </p>
 
             <Select
-              label="Theme"
+              label={t("settings.appearance.theme")}
               value={theme}
               onChange={(v) => { setTheme(v); autoSaveSetting("theme", v); }}
               options={[
-                { value: "system", label: "System" },
-                { value: "light", label: "Light" },
-                { value: "dark", label: "Dark" },
+                { value: "system", label: t("settings.appearance.system") },
+                { value: "light", label: t("settings.appearance.light") },
+                { value: "dark", label: t("settings.appearance.dark") },
               ]}
             />
-            <p className="text-[12px] text-text-muted mt-1.5">Choose your preferred color scheme</p>
+            <p className="text-[12px] text-text-muted mt-1.5">{t("settings.appearance.themeHint")}</p>
           </section>
         </div>
       </main>
@@ -677,25 +712,25 @@ export default function SettingsPage() {
             <h3 className="text-[18px] font-semibold text-text-primary mb-2">
               {icloudConfirm === "enable"
                 ? icloudHasExistingData
-                  ? "Sync with Existing iCloud Library?"
-                  : "Move Library to iCloud?"
-                : "Move Library Back to Local?"}
+                  ? t("settings.icloud.confirmEnableExisting")
+                  : t("settings.icloud.confirmEnable")
+                : t("settings.icloud.confirmDisable")}
             </h3>
             <p className="text-[14px] text-text-secondary leading-5 mb-6">
               {icloudConfirm === "enable"
                 ? icloudHasExistingData
-                  ? "An existing library was found in iCloud from another device. Your local library will be replaced by the iCloud library."
-                  : "Your books, reading progress, and highlights will be moved to iCloud Drive and synced across your Macs."
-                : "Your library will be copied back to local storage. The iCloud copy will remain until you delete it manually."}
+                  ? t("settings.icloud.confirmEnableExistingMsg")
+                  : t("settings.icloud.confirmEnableMsg")
+                : t("settings.icloud.confirmDisableMsg")}
             </p>
             <div className="flex justify-end gap-3">
               <Button variant="ghost" size="md" onClick={() => setIcloudConfirm(null)}>
-                Cancel
+                {t("common.cancel")}
               </Button>
               <Button variant="primary" size="md" onClick={confirmIcloudToggle}>
                 {icloudConfirm === "enable"
-                  ? icloudHasExistingData ? "Sync with iCloud" : "Move to iCloud"
-                  : "Move to Local"}
+                  ? icloudHasExistingData ? t("settings.icloud.syncWithIcloud") : t("settings.icloud.moveToIcloud")
+                  : t("settings.icloud.moveToLocal")}
               </Button>
             </div>
           </div>
@@ -710,7 +745,7 @@ export default function SettingsPage() {
       )}
       {oauthToast && (
         <div className="fixed top-6 left-1/2 -translate-x-1/2 z-50 bg-accent text-white text-[13px] font-medium px-4 py-2 rounded-lg shadow-popover flex items-center gap-2">
-          Successfully authenticated with OpenAI
+          {t("settings.ai.oauthSuccess")}
         </div>
       )}
     </div>

@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import {
   ArrowRight,
@@ -23,6 +24,7 @@ type SortMode = "newest" | "oldest" | "az";
 type ViewMode = "list" | "card";
 
 export default function DictionaryContent() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const { words, remove } = useAllDictionary();
   const [sort, setSort] = useState<SortMode>("newest");
@@ -56,7 +58,7 @@ export default function DictionaryContent() {
     const map = new Map<string, { title: string; words: DictionaryWord[] }>();
     for (const w of sorted) {
       if (!map.has(w.book_id)) {
-        map.set(w.book_id, { title: w.book_title || "Unknown Book", words: [] });
+        map.set(w.book_id, { title: w.book_title || t("common.unknownBook"), words: [] });
       }
       map.get(w.book_id)!.words.push(w);
     }
@@ -77,7 +79,7 @@ export default function DictionaryContent() {
     const map = new Map<string, { title: string; count: number }>();
     for (const w of words) {
       if (!map.has(w.book_id)) {
-        map.set(w.book_id, { title: w.book_title || "Unknown Book", count: 0 });
+        map.set(w.book_id, { title: w.book_title || t("common.unknownBook"), count: 0 });
       }
       map.get(w.book_id)!.count++;
     }
@@ -93,7 +95,7 @@ export default function DictionaryContent() {
         <div data-tauri-drag-region className="absolute top-0 left-0 right-0 h-11" />
         <div className="pt-11 flex items-center justify-between mb-6">
           <h1 className="text-[24px] font-semibold text-text-primary tracking-[0.07px]">
-            Dictionary
+            {t("vocab.title")}
           </h1>
           <div className="flex items-center gap-0">
             <Button variant="icon" size="md" active={view === "card"} onClick={() => setView("card")}>
@@ -113,7 +115,7 @@ export default function DictionaryContent() {
           <Search size={16} className="text-text-muted shrink-0" />
           <input
             type="search"
-            placeholder="Search words, definitions, or books..."
+            placeholder={t("vocab.search")}
             defaultValue=""
             onInput={(e) => setSearch((e.target as HTMLInputElement).value)}
             autoComplete="off"
@@ -137,7 +139,7 @@ export default function DictionaryContent() {
             }`}
           >
             <BookOpen size={12} className={bookFilter === null ? "text-accent-text" : ""} />
-            All Books
+            {t("common.allBooks")}
             <span className={`text-[11px] ${bookFilter === null ? "text-accent-text" : "text-text-muted"}`}>
               {words.length}
             </span>
@@ -168,7 +170,7 @@ export default function DictionaryContent() {
               }`}
             >
               <ArrowDownWideNarrow size={12} />
-              Newest
+              {t("vocab.newest")}
             </button>
             <button
               onClick={() => setSort("oldest")}
@@ -177,7 +179,7 @@ export default function DictionaryContent() {
               }`}
             >
               <ArrowUpWideNarrow size={12} />
-              Oldest
+              {t("vocab.oldest")}
             </button>
             <button
               onClick={() => { setSort("az"); setView("list"); }}
@@ -186,7 +188,7 @@ export default function DictionaryContent() {
               }`}
             >
               <ArrowDownAZ size={12} />
-              A-Z
+              {t("vocab.az")}
             </button>
           </div>
         </div>
@@ -200,10 +202,10 @@ export default function DictionaryContent() {
               <Languages size={28} className="text-text-muted" />
             </div>
             <h2 className="text-[18px] font-medium text-text-primary mb-2">
-              Start Building Your Dictionary
+              {t("vocab.empty")}
             </h2>
             <p className="text-[14px] text-text-muted text-center max-w-[296px]">
-              Select a word while reading, use "Look Up" to see its definition, then tap "Save to Dict" to add it here.
+              {t("vocab.emptySub")}
             </p>
           </div>
         ) : view === "list" ? (
@@ -249,7 +251,7 @@ export default function DictionaryContent() {
                           onClick={() => navigate(`/reader/${word.book_id}`, { state: { openVocab: true, cfi: word.cfi } })}
                           className="flex items-center gap-1 text-[12px] font-medium text-accent-text cursor-pointer hover:opacity-70"
                         >
-                          Open in Reader
+                          {t("vocab.openInReader")}
                           <ArrowRight size={12} />
                         </button>
                       </div>
@@ -316,7 +318,7 @@ export default function DictionaryContent() {
                             onClick={() => navigate(`/reader/${word.book_id}`, { state: { openVocab: true, cfi: word.cfi } })}
                             className="flex items-center gap-1 h-[24.5px] px-2.5 rounded-[10px] bg-accent-bg text-[11px] font-medium text-accent-text tracking-[0.06px] cursor-pointer hover:opacity-70"
                           >
-                            Open in Reader
+                            {t("vocab.openInReader")}
                             <ArrowRight size={12} />
                           </button>
                         </div>

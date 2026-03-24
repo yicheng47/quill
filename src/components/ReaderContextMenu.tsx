@@ -5,6 +5,7 @@ import {
   Sparkles,
   Highlighter,
 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 const HIGHLIGHT_COLORS = [
   { name: "yellow", hex: "#FBBF24" },
@@ -35,6 +36,7 @@ export default function ReaderContextMenu({
   onLookup,
   onHighlight,
 }: ReaderContextMenuProps) {
+  const { t } = useTranslation();
   const wordCount = text.trim().split(/\s+/).length;
   const showLookup = wordCount <= 5;
   const menuRef = useRef<HTMLDivElement>(null);
@@ -84,7 +86,7 @@ export default function ReaderContextMenu({
         >
           <Sparkles size={16} className="text-text-muted" />
           <span className="flex-1 text-[13px] font-medium text-text-primary tracking-[-0.08px]">
-            Look Up
+            {t("contextMenu.lookUp")}
           </span>
         </button>
       )}
@@ -96,7 +98,7 @@ export default function ReaderContextMenu({
       >
         <Bot size={16} className="text-text-muted" />
         <span className="flex-1 text-[13px] font-medium text-text-primary tracking-[-0.08px]">
-          Ask AI Assistant
+          {t("contextMenu.askAI")}
         </span>
       </button>
 
@@ -109,7 +111,7 @@ export default function ReaderContextMenu({
           >
             <Highlighter size={16} className="text-text-muted" />
             <span className="text-[13px] font-medium text-text-primary tracking-[-0.08px]">
-              Highlight
+              {t("contextMenu.highlight")}
             </span>
             <div className="flex items-center gap-1.5 ml-auto">
               {HIGHLIGHT_COLORS.map((c) => (
@@ -133,7 +135,7 @@ export default function ReaderContextMenu({
       >
         <Copy size={16} className="text-text-muted" />
         <span className="flex-1 text-[13px] font-medium text-text-primary tracking-[-0.08px]">
-          Copy
+          {t("contextMenu.copy")}
         </span>
         <span className="text-[11px] font-medium text-text-muted tracking-[0.06px]">
           ⌘C

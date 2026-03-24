@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Bookmark, BookmarkPlus, Trash2, Clock, Search } from "lucide-react";
 import { useBookmarks, useHighlights } from "../hooks/useBookmarks";
 import { timeAgo } from "../utils/timeAgo";
@@ -22,6 +23,7 @@ interface BookmarksPanelProps {
 type Tab = "bookmarks" | "highlights";
 
 export default function BookmarksPanel({ bookId, onNavigate, getCurrentCfi, getCurrentLabel, getPageFromCfi }: BookmarksPanelProps) {
+  const { t } = useTranslation();
   const [tab, setTab] = useState<Tab>("bookmarks");
   const [colorFilter, setColorFilter] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -53,7 +55,7 @@ export default function BookmarksPanel({ bookId, onNavigate, getCurrentCfi, getC
               : "text-text-muted hover:text-text-body"
           }`}
         >
-          Bookmarks
+          {t("bookmarks.tab.bookmarks")}
         </button>
         <button
           onClick={() => setTab("highlights")}
@@ -63,7 +65,7 @@ export default function BookmarksPanel({ bookId, onNavigate, getCurrentCfi, getC
               : "text-text-muted hover:text-text-body"
           }`}
         >
-          Highlights
+          {t("bookmarks.tab.highlights")}
         </button>
       </div>
 
@@ -78,7 +80,7 @@ export default function BookmarksPanel({ bookId, onNavigate, getCurrentCfi, getC
             >
               <BookmarkPlus size={16} className="text-text-primary" />
               <span className="text-[14px] font-medium text-text-primary tracking-[-0.15px]">
-                Saved
+                {t("bookmarks.saved")}
               </span>
             </button>
           </div>
@@ -86,7 +88,7 @@ export default function BookmarksPanel({ bookId, onNavigate, getCurrentCfi, getC
           <div className="flex-1 overflow-auto">
             {bookmarks.length === 0 ? (
               <p className="text-[13px] text-text-muted text-center mt-8 px-4">
-                No bookmarks yet. Add one to save your place.
+                {t("bookmarks.empty")}
               </p>
             ) : (
               bookmarks.map((bookmark) => (
@@ -105,7 +107,7 @@ export default function BookmarksPanel({ bookId, onNavigate, getCurrentCfi, getC
                         const page = getPageFromCfi(bookmark.cfi);
                         return page != null ? (
                           <span className="text-[11px] text-text-muted tracking-[0.06px]">
-                            Page {page}
+                            {t("bookmarks.page", { page })}
                           </span>
                         ) : null;
                       })()}
@@ -128,7 +130,7 @@ export default function BookmarksPanel({ bookId, onNavigate, getCurrentCfi, getC
 
           <div className="border-t border-border px-4 pt-[11px] pb-3 shrink-0">
             <p className="text-[11px] text-text-muted tracking-[0.06px] text-center">
-              {bookmarks.length} bookmark{bookmarks.length !== 1 ? "s" : ""}
+              {t("bookmarks.count", { count: bookmarks.length })}
             </p>
           </div>
         </>
@@ -147,7 +149,7 @@ export default function BookmarksPanel({ bookId, onNavigate, getCurrentCfi, getC
                   : "bg-bg-input text-text-muted hover:bg-border"
               }`}
             >
-              All
+              {t("bookmarks.highlightsAll")}
             </button>
             {HIGHLIGHT_COLORS.map((c) => (
               <div
@@ -163,7 +165,7 @@ export default function BookmarksPanel({ bookId, onNavigate, getCurrentCfi, getC
               <Search size={12} className="text-text-muted shrink-0" />
               <input
                 type="text"
-                placeholder="Search..."
+                placeholder={t("common.search")}
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 className="flex-1 text-[12px] text-text-primary bg-transparent outline-none placeholder:text-text-placeholder"
@@ -175,8 +177,8 @@ export default function BookmarksPanel({ bookId, onNavigate, getCurrentCfi, getC
             {filteredHighlights.length === 0 ? (
               <p className="text-[13px] text-text-muted text-center mt-8 px-4">
                 {highlights.length === 0
-                  ? "No highlights yet. Select text and choose a color to highlight."
-                  : "No highlights match your filter."}
+                  ? t("bookmarks.highlightsEmpty")
+                  : t("bookmarks.highlightsNoMatch")}
               </p>
             ) : (
               filteredHighlights.map((highlight) => (
@@ -200,7 +202,7 @@ export default function BookmarksPanel({ bookId, onNavigate, getCurrentCfi, getC
                         const page = getPageFromCfi(highlight.cfi_range);
                         return page != null ? (
                           <span className="text-[11px] text-text-muted tracking-[0.06px]">
-                            Page {page}
+                            {t("bookmarks.page", { page })}
                           </span>
                         ) : null;
                       })()}
@@ -223,7 +225,7 @@ export default function BookmarksPanel({ bookId, onNavigate, getCurrentCfi, getC
 
           <div className="border-t border-border px-4 pt-[11px] pb-3 shrink-0">
             <p className="text-[11px] text-text-muted tracking-[0.06px] text-center">
-              {filteredHighlights.length} highlight{filteredHighlights.length !== 1 ? "s" : ""}
+              {t("bookmarks.highlightCount", { count: filteredHighlights.length })}
             </p>
           </div>
         </>

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { BookOpen, Search, Trash2, Clock, FileText, ArrowRight, Sparkles } from "lucide-react";
 import { useDictionary } from "../hooks/useDictionary";
 import { timeAgo } from "../utils/timeAgo";
@@ -10,6 +11,7 @@ interface DictionaryPanelProps {
 }
 
 export default function DictionaryPanel({ bookId, onNavigate, getPageFromCfi }: DictionaryPanelProps) {
+  const { t } = useTranslation();
   const [search, setSearch] = useState("");
   const { words, remove } = useDictionary(bookId);
 
@@ -30,11 +32,11 @@ export default function DictionaryPanel({ bookId, onNavigate, getPageFromCfi }: 
             <Sparkles size={12} className="text-white" />
           </div>
           <span className="text-[14px] font-semibold text-text-primary tracking-[-0.15px]">
-            Dictionary
+            {t("vocab.title")}
           </span>
         </div>
         <span className="text-[11px] text-text-muted tracking-[0.06px]">
-          {words.length} word{words.length !== 1 ? "s" : ""}
+          {t("vocab.wordCount", { count: words.length })}
         </span>
       </div>
 
@@ -44,7 +46,7 @@ export default function DictionaryPanel({ bookId, onNavigate, getPageFromCfi }: 
           <Search size={12} className="text-text-muted shrink-0" />
           <input
             type="search"
-            placeholder="Search dictionary..."
+            placeholder={t("vocab.searchPanel")}
             defaultValue=""
             onInput={(e) => setSearch((e.target as HTMLInputElement).value)}
             onKeyDown={(e) => e.stopPropagation()}
@@ -65,11 +67,11 @@ export default function DictionaryPanel({ bookId, onNavigate, getPageFromCfi }: 
               <BookOpen size={20} className="text-text-muted" />
             </div>
             <p className="text-[14px] text-text-muted text-center">
-              {words.length === 0 ? "No saved words yet" : "No matches found"}
+              {words.length === 0 ? t("vocab.panelEmpty") : t("vocab.noMatches")}
             </p>
             {words.length === 0 && (
               <p className="text-[12px] text-text-muted text-center mt-1">
-                Use "Look Up" on selected text and tap Save
+                {t("vocab.panelEmptySub")}
               </p>
             )}
           </div>
@@ -131,7 +133,7 @@ export default function DictionaryPanel({ bookId, onNavigate, getPageFromCfi }: 
                       onClick={() => onNavigate?.(word.cfi!)}
                       className="flex items-center gap-1 text-[12px] font-medium text-accent-text cursor-pointer hover:opacity-70"
                     >
-                      {page != null ? `Go to p. ${page}` : "Go to location"}
+                      {page != null ? t("vocab.goToPage", { page }) : t("vocab.goToLocation")}
                       <ArrowRight size={12} />
                     </button>
                   )}
@@ -145,7 +147,7 @@ export default function DictionaryPanel({ bookId, onNavigate, getPageFromCfi }: 
       {/* Footer */}
       <div className="border-t border-border px-4 pt-[11px] pb-3 shrink-0">
         <p className="text-[11px] text-text-muted tracking-[0.06px] text-center">
-          {filtered.length} word{filtered.length !== 1 ? "s" : ""}
+          {t("vocab.wordCount", { count: filtered.length })}
         </p>
       </div>
     </div>
