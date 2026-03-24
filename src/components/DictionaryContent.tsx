@@ -63,7 +63,7 @@ export default function DictionaryContent() {
       map.get(w.book_id)!.words.push(w);
     }
     return Array.from(map.values());
-  }, [sorted]);
+  }, [sorted, t]);
 
   const groupedByLetter = useMemo(() => {
     const map = new Map<string, DictionaryWord[]>();
@@ -84,7 +84,7 @@ export default function DictionaryContent() {
       map.get(w.book_id)!.count++;
     }
     return Array.from(map.entries()).map(([id, { title, count }]) => ({ id, title, count }));
-  }, [words]);
+  }, [words, t]);
 
   const isEmpty = words.length === 0;
 
