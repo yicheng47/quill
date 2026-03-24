@@ -6,3 +6,4 @@ Specs for features that are in progress or planned. Shipped feature specs have b
 
 - [11 — i18n](11-i18n.md)
 - [12 — Auto-Update](12-auto-update.md)
+- [13 — Settings Modal & User Profile Region](13-settings-modal.md)
