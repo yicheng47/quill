@@ -91,6 +91,7 @@ type SidePanel = "ai" | "bookmarks" | "vocab" | null;
 interface TocChapter {
   title: string;
   href: string;
+  depth: number;
 }
 
 const highlightColorMap: Record<string, string> = {
@@ -263,11 +264,11 @@ export default function Reader() {
       const toc = view.book.toc;
       if (toc) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const flattenToc = (items: any[]): TocChapter[] =>
+        const flattenToc = (items: any[], depth = 0): TocChapter[] =>
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           items.flatMap((item: any) => [
-            { title: item.label?.trim() || "", href: item.href },
-            ...(item.subitems ? flattenToc(item.subitems) : []),
+            { title: item.label?.trim() || "", href: item.href, depth },
+            ...(item.subitems ? flattenToc(item.subitems, depth + 1) : []),
           ]);
         const chs = flattenToc(toc);
         chaptersRef.current = chs;
@@ -782,7 +783,7 @@ export default function Reader() {
           <TableOfContents
             open={tocOpen}
             onClose={() => setTocOpen(false)}
-            chapters={chapters.map((c, i) => ({ title: c.title, page: i + 1 }))}
+            chapters={chapters.map((c, i) => ({ title: c.title, page: i + 1, depth: c.depth }))}
             currentPage={currentChapterIndex + 1}
             onNavigate={(page) => {
               const ch = chapters[page - 1];

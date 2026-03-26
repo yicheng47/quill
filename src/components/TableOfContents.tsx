@@ -3,6 +3,7 @@ import { useEffect, useCallback, useRef } from "react";
 interface Chapter {
   title: string;
   page: number;
+  depth: number;
 }
 
 interface TableOfContentsProps {
@@ -84,7 +85,8 @@ export default function TableOfContents({
                 onNavigate(chapter.page);
                 onClose();
               }}
-              className={`flex items-center justify-between px-4 py-2 cursor-pointer transition-colors ${
+              style={{ paddingLeft: `${16 + chapter.depth * 16}px` }}
+              className={`flex items-center justify-between pr-4 py-2 cursor-pointer transition-colors ${
                 isActive
                   ? "bg-accent-bg"
                   : "hover:bg-bg-input"
