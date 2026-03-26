@@ -14,9 +14,11 @@ interface SidebarProps {
     collections: Collection[];
     create: (name: string) => Promise<Collection>;
   };
+  userName?: string;
+  onOpenSettings?: () => void;
 }
 
-export default function Sidebar({ activeFilter, onFilterChange, books, collections: collectionsHook }: SidebarProps) {
+export default function Sidebar({ activeFilter, onFilterChange, books, collections: collectionsHook, userName, onOpenSettings }: SidebarProps) {
   const { t } = useTranslation();
 
   const libraryFilters = [
@@ -198,6 +200,26 @@ export default function Sidebar({ activeFilter, onFilterChange, books, collectio
             );
           })}
         </div>
+      </div>
+      {/* Spacer */}
+      <div className="flex-1" />
+
+      {/* User profile */}
+      <div className="border-t border-border pt-3 pb-3">
+        <button
+          onClick={onOpenSettings}
+          className="flex items-center gap-2.5 px-2 py-1.5 rounded-lg w-full cursor-pointer hover:bg-bg-input"
+        >
+          <div className="size-7 rounded-full bg-accent flex items-center justify-center text-[12px] font-semibold text-white shrink-0">
+            {userName
+              ? userName.split(" ").map((n) => n[0]).join("").toUpperCase().slice(0, 2)
+              : "R"}
+          </div>
+          <div className="min-w-0">
+            <p className="text-[13px] font-medium text-text-primary truncate">{userName || "Reader"}</p>
+            <p className="text-[11px] text-text-muted">{t("settings.title")}</p>
+          </div>
+        </button>
       </div>
     </aside>
   );

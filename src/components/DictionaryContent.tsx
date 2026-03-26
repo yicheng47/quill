@@ -14,7 +14,6 @@ import {
   ArrowDownAZ,
   ArrowDownWideNarrow,
   ArrowUpWideNarrow,
-  Settings,
 } from "lucide-react";
 import Button from "./ui/Button";
 import { useAllDictionary, type DictionaryWord } from "../hooks/useDictionary";
@@ -103,10 +102,6 @@ export default function DictionaryContent() {
             </Button>
             <Button variant="icon" size="md" active={view === "list"} onClick={() => setView("list")}>
               <List size={16} />
-            </Button>
-            <div className="w-px h-6 bg-border mx-2" />
-            <Button variant="icon" size="md" onClick={() => navigate("/settings")}>
-              <Settings size={16} />
             </Button>
           </div>
         </div>

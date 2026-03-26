@@ -3,7 +3,6 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { invoke } from "@tauri-apps/api/core";
 import Home from "./pages/Home";
 import Reader from "./pages/Reader";
-import SettingsPage from "./pages/SettingsPage";
 
 function applyTheme(theme: string) {
   const root = document.documentElement;
@@ -38,7 +37,6 @@ export default function App() {
       <Routes>
         <Route path="/" element={<Home />} />
         <Route path="/reader/:bookId" element={<Reader />} />
-        <Route path="/settings" element={<SettingsPage />} />
       </Routes>
     </BrowserRouter>
   );

@@ -140,11 +140,40 @@
   "settings.subtitle": "Manage your reading preferences and AI configuration",
   "settings.saved": "Settings saved",
 
+  "settings.general.title": "General",
+  "settings.general.subtitle": "Language & appearance",
+  "settings.general.displayName": "Display Name",
+  "settings.general.displayNameHint": "Your local identity — used for highlights and notes",
+  "settings.general.edit": "Edit",
+  "settings.general.languageHint": "Interface language",
+  "settings.general.themeHint": "Choose your preferred color scheme",
+
   "settings.language": "Language",
   "settings.languageSub": "Choose your preferred language",
 
+  "settings.reading.title": "Reading",
+  "settings.reading.subtitle": "Font, spacing & layout",
+  "settings.reading.fontHint": "Default font for reading",
+  "settings.reading.autoSaveHint": "Automatically save your reading position",
+
+  "settings.ai.shortTitle": "AI Assistant",
+  "settings.ai.shortSubtitle": "Provider & model config",
+
+  "settings.icloud.title": "iCloud",
+  "settings.icloud.subtitle": "Sync across devices",
+
+  "settings.about.title": "About",
+  "settings.about.subtitle": "Version & updates",
+  "settings.about.version": "Version",
+  "settings.about.description": "An elegant eBook reader",
+  "settings.about.checkUpdates": "Check for Updates",
+  "settings.about.lastChecked": "Last checked",
+  "settings.about.checkNow": "Check Now",
+  "settings.about.buildInfo": "Build Info",
+
   "settings.lookup.title": "Lookup",
   "settings.lookup.sub": "Customize how word lookups appear",
+  "settings.lookup.shortSub": "Translation & dictionary",
   "settings.lookup.nativeLanguage": "Native Language",
   "settings.lookup.nativeLanguageHint": "Your native language for word translations",
   "settings.lookup.showTranslation": "Show Translation",
@@ -195,8 +224,6 @@
   "settings.layout.marginsHint": "Default margins around the reading area",
   "settings.layout.systemDefault": "System Default",
 
-  "settings.reading.title": "Reading Preferences",
-  "settings.reading.subtitle": "Customize your reading experience",
   "settings.reading.autoSave": "Auto-save Progress",
   "settings.reading.autoSaveSub": "Automatically save your reading position",
 

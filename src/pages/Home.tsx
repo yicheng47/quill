@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useTranslation } from "react-i18next";
-import { Search, LayoutGrid, List, Settings, Plus, Upload, BookOpen, Loader } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { Search, LayoutGrid, List, Plus, Upload, BookOpen, Loader } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import Sidebar from "../components/Sidebar";
@@ -9,6 +8,7 @@ import BookGrid from "../components/BookGrid";
 import BookList from "../components/BookList";
 import DictionaryContent from "../components/DictionaryContent";
 import ChatsContent from "../components/ChatsContent";
+import SettingsModal from "../components/SettingsModal";
 import Button from "../components/ui/Button";
 import Input from "../components/ui/Input";
 import { useBooks, importBookDialog, type Book } from "../hooks/useBooks";
@@ -21,8 +21,28 @@ export default function Home() {
   const [searchQuery, setSearchQuery] = useState("");
   const [isDragging, setIsDragging] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [userName, setUserName] = useState("");
   const collections = useCollections();
-  const navigate = useNavigate();
+
+  // Load user name
+  useEffect(() => {
+    invoke<Record<string, string>>("get_all_settings")
+      .then((s) => setUserName(s.user_name ?? ""))
+      .catch(() => {});
+  }, []);
+
+  // Cmd+, to open settings
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === ",") {
+        e.preventDefault();
+        setSettingsOpen(true);
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, []);
 
   // For collection filters, we need to fetch the book IDs in the collection
   // then filter client-side
@@ -149,6 +169,8 @@ export default function Home() {
         onFilterChange={setActiveFilter}
         books={allBooks.books}
         collections={collections}
+        userName={userName}
+        onOpenSettings={() => setSettingsOpen(true)}
       />
 
       {activeFilter === "vocab" ? (
@@ -179,14 +201,6 @@ export default function Home() {
                   onClick={() => setViewMode("list")}
                 >
                   <List size={16} />
-                </Button>
-                <div className="w-px h-6 bg-border mx-2" />
-                <Button
-                  variant="icon"
-                  size="md"
-                  onClick={() => navigate("/settings")}
-                >
-                  <Settings size={16} />
                 </Button>
               </div>
             </div>
@@ -262,6 +276,17 @@ export default function Home() {
           </div>
         </div>
       )}
+
+      <SettingsModal
+        open={settingsOpen}
+        onClose={() => {
+          setSettingsOpen(false);
+          // Reload user name in case it changed
+          invoke<Record<string, string>>("get_all_settings")
+            .then((s) => setUserName(s.user_name ?? ""))
+            .catch(() => {});
+        }}
+      />
     </div>
   );
 }
