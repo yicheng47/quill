@@ -46,7 +46,7 @@ export default function Select({ label, value, onChange, options, className = ""
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="w-full h-10 bg-bg-input rounded-lg px-3 text-[14px] text-text-primary flex items-center justify-between cursor-pointer border border-transparent hover:border-border transition-colors"
+        className="w-full h-9 bg-bg-input rounded-lg px-3 text-[13px] font-medium text-text-primary flex items-center justify-between cursor-pointer border border-transparent hover:border-border transition-colors"
       >
         <span>{selected?.label ?? ""}</span>
         <ChevronDown size={16} className={`text-text-muted transition-transform ${open ? "rotate-180" : ""}`} />
@@ -66,12 +66,12 @@ export default function Select({ label, value, onChange, options, className = ""
                 }}
                 className={`w-full flex items-center justify-between px-4 h-10 text-[14px] cursor-pointer transition-colors ${
                   isActive
-                    ? "bg-bg-input text-text-primary"
+                    ? "bg-accent-bg text-accent-text"
                     : "text-text-primary hover:bg-bg-input"
                 }`}
               >
                 <span>{option.label}</span>
-                {isActive && <Check size={16} className="text-text-muted" />}
+                {isActive && <Check size={16} className="text-accent-text" />}
               </button>
             );
           })}

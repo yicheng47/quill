@@ -140,11 +140,40 @@
   "settings.subtitle": "管理你的阅读偏好和 AI 配置",
   "settings.saved": "设置已保存",
 
+  "settings.general.title": "通用",
+  "settings.general.subtitle": "语言与外观",
+  "settings.general.displayName": "显示名称",
+  "settings.general.displayNameHint": "你的本地身份 — 用于高亮和笔记",
+  "settings.general.edit": "编辑",
+  "settings.general.languageHint": "界面语言",
+  "settings.general.themeHint": "选择你偏好的配色方案",
+
   "settings.language": "语言",
   "settings.languageSub": "选择你的首选语言",
 
+  "settings.reading.title": "阅读",
+  "settings.reading.subtitle": "字体、间距与排版",
+  "settings.reading.fontHint": "默认阅读字体",
+  "settings.reading.autoSaveHint": "自动保存阅读进度",
+
+  "settings.ai.shortTitle": "AI 助手",
+  "settings.ai.shortSubtitle": "服务商与模型配置",
+
+  "settings.icloud.title": "iCloud",
+  "settings.icloud.subtitle": "跨设备同步",
+
+  "settings.about.title": "关于",
+  "settings.about.subtitle": "版本与更新",
+  "settings.about.version": "版本",
+  "settings.about.description": "一个优雅的电子书阅读器",
+  "settings.about.checkUpdates": "检查更新",
+  "settings.about.lastChecked": "上次检查",
+  "settings.about.checkNow": "立即检查",
+  "settings.about.buildInfo": "构建信息",
+
   "settings.lookup.title": "查词",
   "settings.lookup.sub": "自定义查词显示方式",
+  "settings.lookup.shortSub": "翻译与词典",
   "settings.lookup.nativeLanguage": "母语",
   "settings.lookup.nativeLanguageHint": "查词时的翻译语言",
   "settings.lookup.showTranslation": "显示翻译",

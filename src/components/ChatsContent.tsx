@@ -8,7 +8,6 @@ import {
   Sparkles,
   Trash2,
   MessageSquare,
-  Settings,
   ArrowDownWideNarrow,
   ArrowUpWideNarrow,
 } from "lucide-react";
@@ -93,11 +92,7 @@ export default function ChatsContent() {
           <h1 className="text-[24px] font-semibold text-text-primary tracking-[0.07px]">
             {t("chats.title")}
           </h1>
-          <div className="flex items-center gap-0">
-            <Button variant="icon" size="md" onClick={() => navigate("/settings")}>
-              <Settings size={16} />
-            </Button>
-          </div>
+          <div className="flex items-center gap-0" />
         </div>
 
         <div className="flex items-center gap-2 h-9 px-3 rounded-lg bg-bg-input max-w-[448px]">
