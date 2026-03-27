@@ -28,10 +28,11 @@ Bilingual word lookup — when reading in a foreign language, the AI includes a 
 
 - **Status:** Planned
 
-### Notes
-Rich note-taking tied to books — capture thoughts, annotations, and reflections beyond simple highlights.
+### Notes (AI-Assisted)
+Rich note-taking tied to books — capture thoughts, annotations, and reflections beyond simple highlights. AI serves as a writing assistant (grammar, flow, expansion) and can respond to notes in a conversational thread, creating a dialogue anchored to the user's reflection rather than a standalone Q&A.
 
 - **Status:** Planned
+- **Spec:** [14 — Notes](../features/14-notes.md)
 
 ### Onboarding
 Simple first-launch flow guiding new users to set up their AI provider in Settings.
