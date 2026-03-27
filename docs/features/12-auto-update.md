@@ -107,14 +107,17 @@ The endpoint works because `tauri-apps/tauri-action` auto-generates and uploads 
 
 ## Phase 3: Updater UI (Frontend)
 
+The update UI has two surfaces: a **toast notification** for passive discovery, and the **Settings modal About section** for detailed update management.
+
 ### Files
 
 | File | Action |
 |------|--------|
 | `package.json` | MODIFY (add npm dependencies) |
 | `src/hooks/useUpdateChecker.ts` | CREATE |
-| `src/components/UpdateBanner.tsx` | CREATE |
-| `src/App.tsx` | MODIFY (wire in hook + banner) |
+| `src/components/UpdateToast.tsx` | CREATE |
+| `src/App.tsx` | MODIFY (wire in hook + toast) |
+| Settings modal About section | MODIFY (add update controls — part of feature #13) |
 
 ### Details
 
@@ -123,27 +126,39 @@ The endpoint works because `tauri-apps/tauri-action` auto-generates and uploads 
 npm install @tauri-apps/plugin-updater @tauri-apps/plugin-process
 ```
 
-**Figma design first** — Design the update banner in Figma before implementing.
+**Figma design first** — Design the update toast and About section in Figma before implementing.
 
-Style reference: **Arc browser's update banner**.
-- **Bottom banner**, not a centered modal — non-intrusive, doesn't block the app
-- **Compact**: single-line title ("New Quill Version Available"), progress bar, and a "Restart and Update" button
-- **No dismiss button** — stays at bottom unobtrusively until the user acts
-- **Inline progress bar** that fills as the update downloads
+#### Surface 1: Update toast (ChatGPT desktop-style)
+
+Style reference: **ChatGPT desktop app's update toast**.
+- **Small, non-intrusive toast** — appears in a corner when an update is detected
+- Shows: "Quill vX.Y.Z available" + "Update" button + dismiss (X)
+- **Dismissable** — doesn't persist if the user isn't ready to update
+- Clicking "Update" opens the Settings modal About section where the download happens
+- Auto-dismisses after ~30 seconds if the user doesn't interact
 - Minimal, clean — fits Quill's existing aesthetic
+
+#### Surface 2: Settings modal — About section
+
+The About section in the settings modal (feature #13) becomes the detailed update view:
+- **Current version** display
+- **"Check for Updates"** button (manual trigger)
+- When update available: new version number, changelog summary, **download progress bar**, "Restart and Update" button
+- This is the full update experience — the toast is just the nudge that gets you here
 
 **`useUpdateChecker.ts`** — Custom hook:
 - Calls `check()` from `@tauri-apps/plugin-updater` on mount (3s delay to let app load)
 - Returns: `update` object, `status` (idle/checking/available/downloading/ready/error), `progress`, `error`
 - Exposes `downloadAndInstall()` and `restart()` callbacks
 - Errors during auto-check are silently logged (don't bother the user)
+- Shared between the toast and the About section via context or prop drilling
 
-**`UpdateBanner.tsx`** — Implement from the Figma design. Arc-style bottom banner:
-- **Available/Downloading**: Title + progress bar + "Restart and Update" button
-- Progress bar fills inline as download progresses
-- Non-blocking — user can continue using the app
+**`UpdateToast.tsx`** — ChatGPT-style toast notification:
+- Appears as an overlay (top-right or bottom-right), not a fixed-bottom banner
+- Compact: version label + "Update" button + dismiss
+- Non-blocking — user can continue reading
 
-**`App.tsx`** — Add `useUpdateChecker()` hook and `<UpdateBanner>` as a fixed-bottom element. The banner appears when an update is detected and stays until the user restarts.
+**`App.tsx`** — Add `useUpdateChecker()` hook and `<UpdateToast>` as an overlay element. The toast appears when an update is detected and auto-dismisses or navigates to settings.
 
 ---
 
