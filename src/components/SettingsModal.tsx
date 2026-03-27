@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import { platform } from "@tauri-apps/plugin-os";
 import { Globe, BookOpen, Bot, Search, Cloud, Info, X, ChevronRight } from "lucide-react";
 import GeneralSettings from "./settings/GeneralSettings";
 import ReadingSettings from "./settings/ReadingSettings";
@@ -53,7 +54,9 @@ export default function SettingsModal({ open, onClose, initialSection = "general
 
   if (!open) return null;
 
-  const sections: { id: Section; label: string; subtitle: string; icon: typeof Globe }[] = [
+  const isMacos = platform() === "macos";
+
+  const allSections: { id: Section; label: string; subtitle: string; icon: typeof Globe }[] = [
     { id: "general", label: t("settings.general.title"), subtitle: t("settings.general.subtitle"), icon: Globe },
     { id: "reading", label: t("settings.reading.title"), subtitle: t("settings.reading.subtitle"), icon: BookOpen },
     { id: "ai", label: t("settings.ai.shortTitle"), subtitle: t("settings.ai.shortSubtitle"), icon: Bot },
@@ -61,6 +64,8 @@ export default function SettingsModal({ open, onClose, initialSection = "general
     { id: "icloud", label: t("settings.icloud.title"), subtitle: t("settings.icloud.subtitle"), icon: Cloud },
     { id: "about", label: t("settings.about.title"), subtitle: t("settings.about.subtitle"), icon: Info },
   ];
+
+  const sections = isMacos ? allSections : allSections.filter((s) => s.id !== "icloud");
 
   const settingsProps = { settings, loading, save, saveBulk, showSavedToast };
 
