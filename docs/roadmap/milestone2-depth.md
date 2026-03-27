@@ -23,10 +23,12 @@ Externalize all UI strings, add language switcher (English / 简体中文), adap
 - **Status:** Planned
 - **Issue:** [#44](https://github.com/yicheng47/quill/issues/44)
 
-### Translation
-Bilingual word lookup — when reading in a foreign language, the AI includes a native-language translation alongside the definition. Powered by the user's language setting.
+### AI Translation
+Passage-level translation and bilingual reading mode for reading foreign-language books. Passage translation via context menu with streaming + caching. Bilingual mode injects translations inline below each paragraph in the reader.
 
 - **Status:** Planned
+- **Issue:** [#73](https://github.com/yicheng47/quill/issues/73)
+- **Spec:** [15 — AI Translation](../features/15-ai-translation.md)
 
 ### Notes (AI-Assisted)
 Rich note-taking tied to books — capture thoughts, annotations, and reflections beyond simple highlights. AI serves as a writing assistant (grammar, flow, expansion) and can respond to notes in a conversational thread, creating a dialogue anchored to the user's reflection rather than a standalone Q&A.
