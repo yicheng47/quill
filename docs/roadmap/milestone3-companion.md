@@ -12,4 +12,9 @@ Turn the AI reading assistant into a personalized companion powered by the perso
 
 ## Features
 
-TBD — builds on the local user profile introduced in Milestone 2.
+### Universal Cloud Sync
+Bring your own cloud provider — let users choose where their library lives (iCloud, Google Drive, OneDrive, Dropbox, or any synced folder). Refactors the iCloud-specific storage code into a generic backend. Quill is the view layer; your cloud provider is the storage layer.
+
+- **Status:** Planned
+- **Issue:** [#74](https://github.com/yicheng47/quill/issues/74)
+- **Spec:** [16 — Universal Cloud Sync](../features/16-universal-cloud-sync.md)

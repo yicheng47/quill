@@ -9,3 +9,4 @@ Specs for features that are in progress or planned. Shipped feature specs have b
 - [13 — Settings Modal & User Profile Region](13-settings-modal.md)
 - [14 — Notes (AI-Assisted)](14-notes.md)
 - [15 — AI Translation](15-ai-translation.md)
+- [16 — Universal Cloud Sync](16-universal-cloud-sync.md)
