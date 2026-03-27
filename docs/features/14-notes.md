@@ -1,5 +1,6 @@
 # 14 — Notes (AI-Assisted)
 
+**Issue:** [#70](https://github.com/yicheng47/quill/issues/70)
 **Status:** Planned
 **Milestone:** 2 — Depth
 

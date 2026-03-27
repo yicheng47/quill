@@ -32,6 +32,7 @@ Bilingual word lookup — when reading in a foreign language, the AI includes a 
 Rich note-taking tied to books — capture thoughts, annotations, and reflections beyond simple highlights. AI serves as a writing assistant (grammar, flow, expansion) and can respond to notes in a conversational thread, creating a dialogue anchored to the user's reflection rather than a standalone Q&A.
 
 - **Status:** Planned
+- **Issue:** [#70](https://github.com/yicheng47/quill/issues/70)
 - **Spec:** [14 — Notes](../features/14-notes.md)
 
 ### Onboarding
