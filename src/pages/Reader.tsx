@@ -177,6 +177,9 @@ export default function Reader() {
     getAllSettings().then((s) => {
       setReaderSettings((prev) => ({
         ...prev,
+        theme: (s.reader_theme as ReaderSettingsState["theme"]) || prev.theme,
+        brightness: s.brightness ? parseInt(s.brightness) : prev.brightness,
+        pageColumns: s.page_columns ? (parseInt(s.page_columns) as ReaderSettingsState["pageColumns"]) : prev.pageColumns,
         font: (s.font_family as ReaderSettingsState["font"]) || prev.font,
         fontSize: s.font_size ? parseInt(s.font_size) : prev.fontSize,
         readingMode: (s.reading_mode as ReaderSettingsState["readingMode"]) || prev.readingMode,
@@ -187,6 +190,30 @@ export default function Reader() {
       }));
     }).catch(() => {});
   }, [bookId]);
+
+  // Persist reader settings to DB when they change
+  const settingsLoaded = useRef(false);
+  useEffect(() => {
+    if (!settingsLoaded.current) {
+      settingsLoaded.current = true;
+      return;
+    }
+    const { theme, brightness, pageColumns, font, fontSize, readingMode, lineSpacing, charSpacing, wordSpacing, margins } = readerSettings;
+    invoke("set_settings_bulk", {
+      settings: {
+        reader_theme: theme,
+        brightness: String(brightness),
+        page_columns: String(pageColumns),
+        font_family: font,
+        font_size: String(fontSize),
+        reading_mode: readingMode,
+        line_spacing: String(lineSpacing),
+        char_spacing: String(charSpacing),
+        word_spacing: String(wordSpacing),
+        margins: String(margins),
+      },
+    }).catch(() => {});
+  }, [readerSettings]);
 
   // Initialize foliate-js when book data is loaded
   useEffect(() => {
