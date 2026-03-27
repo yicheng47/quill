@@ -53,7 +53,9 @@ export default function SettingsModal({ open, onClose, initialSection = "general
 
   if (!open) return null;
 
-  const sections: { id: Section; label: string; subtitle: string; icon: typeof Globe }[] = [
+  const isMacos = navigator.userAgent.includes("Macintosh");
+
+  const allSections: { id: Section; label: string; subtitle: string; icon: typeof Globe }[] = [
     { id: "general", label: t("settings.general.title"), subtitle: t("settings.general.subtitle"), icon: Globe },
     { id: "reading", label: t("settings.reading.title"), subtitle: t("settings.reading.subtitle"), icon: BookOpen },
     { id: "ai", label: t("settings.ai.shortTitle"), subtitle: t("settings.ai.shortSubtitle"), icon: Bot },
@@ -61,6 +63,8 @@ export default function SettingsModal({ open, onClose, initialSection = "general
     { id: "icloud", label: t("settings.icloud.title"), subtitle: t("settings.icloud.subtitle"), icon: Cloud },
     { id: "about", label: t("settings.about.title"), subtitle: t("settings.about.subtitle"), icon: Info },
   ];
+
+  const sections = isMacos ? allSections : allSections.filter((s) => s.id !== "icloud");
 
   const settingsProps = { settings, loading, save, saveBulk, showSavedToast };
 

@@ -11,13 +11,15 @@ Create a new versioned release for Quill.
 
 1. Ask the user for the version number (e.g. `0.3.0`) if not provided as an argument.
 
-2. If there are uncommitted changes, include them in the release:
-   - Bump version in `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`, and `package.json`.
+2. Bump version in all three files. **IMPORTANT: Do NOT use `sed` for version bumps.** Instead:
+   - Read each file first with the Read tool to confirm the current version string.
+   - Use the Edit tool to replace the version in `package.json`, `src-tauri/tauri.conf.json`, and `src-tauri/Cargo.toml`.
+   - After editing, verify all three files show the correct new version.
    - Run `cargo check` in `src-tauri/` to update `Cargo.lock`.
    - Check if `public/foliate-js` submodule has changes. If so, commit and push the submodule, then stage the updated reference.
    - Stage everything and commit with message `chore: bump version to v{version}`.
 
-3. If the working tree is already clean, just bump version files, run `cargo check`, and commit as above.
+3. If the working tree is already clean, just bump version files as above and commit.
 
 4. Create a feature branch: `git checkout -b release/v{version}`
 
