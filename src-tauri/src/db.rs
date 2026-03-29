@@ -5,6 +5,13 @@ use std::sync::Mutex;
 
 use crate::error::AppResult;
 
+const MIGRATIONS: &[(i64, &str)] = &[
+    (1, include_str!("../migrations/001_init.sql")),
+    (2, include_str!("../migrations/002_vocab.sql")),
+    (3, include_str!("../migrations/003_chats.sql")),
+    (4, include_str!("../migrations/004_pdf_support.sql")),
+];
+
 pub struct Db {
     pub conn: Mutex<Connection>,
     pub data_dir: Mutex<PathBuf>,
@@ -21,18 +28,7 @@ impl Db {
 
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
 
-        let schema = include_str!("../migrations/001_init.sql");
-        conn.execute_batch(schema)?;
-
-        let schema2 = include_str!("../migrations/002_vocab.sql");
-        conn.execute_batch(schema2)?;
-
-        let schema3 = include_str!("../migrations/003_chats.sql");
-        conn.execute_batch(schema3)?;
-
-        let schema4 = include_str!("../migrations/004_pdf_support.sql");
-        // ALTER TABLE may fail if column already exists — ignore the error
-        let _ = conn.execute_batch(schema4);
+        Self::run_migrations(&conn)?;
 
         // One-time migration: convert absolute paths to relative
         Self::migrate_to_relative_paths(&conn, app_data_dir)?;
@@ -41,6 +37,41 @@ impl Db {
             conn: Mutex::new(conn),
             data_dir: Mutex::new(app_data_dir.clone()),
         })
+    }
+
+    fn run_migrations(conn: &Connection) -> AppResult<()> {
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);",
+        )?;
+
+        let current: i64 = conn
+            .query_row("SELECT COALESCE(MAX(version), 0) FROM schema_version", [], |r| {
+                r.get(0)
+            })
+            .unwrap_or(0);
+
+        for &(version, sql) in MIGRATIONS {
+            if version > current {
+                // Migration 004 uses ALTER TABLE which may fail if column already exists
+                if version == 4 {
+                    let _ = conn.execute_batch(sql);
+                } else {
+                    conn.execute_batch(sql)?;
+                }
+            }
+        }
+
+        // Set version to the latest migration
+        let latest = MIGRATIONS.last().map(|(v, _)| *v).unwrap_or(0);
+        if latest > current {
+            conn.execute("DELETE FROM schema_version", [])?;
+            conn.execute(
+                "INSERT INTO schema_version (version) VALUES (?1)",
+                params![latest],
+            )?;
+        }
+
+        Ok(())
     }
 
     /// Resolve a relative path (e.g. "books/abc.epub") to an absolute path using data_dir.
@@ -52,6 +83,12 @@ impl Db {
         } else {
             self.data_dir.lock().unwrap().join(relative)
         }
+    }
+
+    /// Run migrations on an already-open connection (for testing).
+    #[cfg(test)]
+    pub fn run_migrations_on(conn: &Connection) -> AppResult<()> {
+        Self::run_migrations(conn)
     }
 
     /// Migrate existing absolute paths in the books table to relative paths.
@@ -85,5 +122,84 @@ impl Db {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    fn setup() -> (TempDir, Db) {
+        let dir = TempDir::new().unwrap();
+        let db = Db::init(&dir.path().to_path_buf()).unwrap();
+        (dir, db)
+    }
+
+    #[test]
+    fn test_fresh_db_creates_schema_version() {
+        let (_dir, db) = setup();
+        let conn = db.conn.lock().unwrap();
+        let version: i64 =
+            conn.query_row("SELECT version FROM schema_version", [], |r| r.get(0)).unwrap();
+        assert_eq!(version, 4);
+    }
+
+    #[test]
+    fn test_fresh_db_creates_all_tables() {
+        let (_dir, db) = setup();
+        let conn = db.conn.lock().unwrap();
+        let tables: Vec<String> = conn
+            .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(tables.contains(&"books".to_string()));
+        assert!(tables.contains(&"settings".to_string()));
+        assert!(tables.contains(&"highlights".to_string()));
+        assert!(tables.contains(&"vocab_words".to_string()));
+        assert!(tables.contains(&"chats".to_string()));
+        assert!(tables.contains(&"chat_messages".to_string()));
+        assert!(tables.contains(&"schema_version".to_string()));
+    }
+
+    #[test]
+    fn test_idempotent_migrations() {
+        let (_dir, db) = setup();
+        // Running init again should not fail
+        let conn = db.conn.lock().unwrap();
+        Db::run_migrations_on(&conn).unwrap();
+        let version: i64 =
+            conn.query_row("SELECT version FROM schema_version", [], |r| r.get(0)).unwrap();
+        assert_eq!(version, 4);
+    }
+
+    #[test]
+    fn test_books_has_format_column() {
+        let (_dir, db) = setup();
+        let conn = db.conn.lock().unwrap();
+        let now = chrono::Utc::now().to_rfc3339();
+        // Insert without format — should default to 'epub'
+        conn.execute(
+            "INSERT INTO books (id, title, author, file_path, status, progress, created_at, updated_at)
+             VALUES ('b1', 'Test', 'Author', 'books/test.epub', 'reading', 0, ?1, ?1)",
+            params![now],
+        )
+        .unwrap();
+        let format: String =
+            conn.query_row("SELECT format FROM books WHERE id = 'b1'", [], |r| r.get(0)).unwrap();
+        assert_eq!(format, "epub");
+    }
+
+    #[test]
+    fn test_schema_version_count() {
+        let (_dir, db) = setup();
+        let conn = db.conn.lock().unwrap();
+        // Should have exactly one row
+        let count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM schema_version", [], |r| r.get(0)).unwrap();
+        assert_eq!(count, 1);
     }
 }

@@ -75,7 +75,7 @@ export default function SettingsModal({ open, onClose, initialSection = "general
       case "ai": return <AiSettings {...settingsProps} onDirtyChange={setAiDirty} onSaveRef={(fn) => { aiSaveRef.current = fn; }} />;
       case "lookup": return <LookupSettings {...settingsProps} />;
       case "icloud": return <ICloudSettings {...settingsProps} />;
-      case "about": return <AboutSettings />;
+      case "about": return <AboutSettings {...settingsProps} />;
     }
   };
 

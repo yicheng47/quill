@@ -22,6 +22,7 @@ export default function Home() {
   const [isDragging, setIsDragging] = useState(false);
   const [importing, setImporting] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsSection, setSettingsSection] = useState<"general" | "reading" | "ai" | "lookup" | "icloud" | "about">("general");
   const [userName, setUserName] = useState("");
   const collections = useCollections();
 
@@ -30,6 +31,17 @@ export default function Home() {
     invoke<Record<string, string>>("get_all_settings")
       .then((s) => setUserName(s.user_name ?? ""))
       .catch(() => {});
+  }, []);
+
+  // Listen for open-settings events from UpdateToast
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const section = (e as CustomEvent).detail ?? "general";
+      setSettingsSection(section);
+      setSettingsOpen(true);
+    };
+    window.addEventListener("open-settings", handler);
+    return () => window.removeEventListener("open-settings", handler);
   }, []);
 
   // Cmd+, to open settings
@@ -281,11 +293,13 @@ export default function Home() {
         open={settingsOpen}
         onClose={() => {
           setSettingsOpen(false);
+          setSettingsSection("general");
           // Reload user name in case it changed
           invoke<Record<string, string>>("get_all_settings")
             .then((s) => setUserName(s.user_name ?? ""))
             .catch(() => {});
         }}
+        initialSection={settingsSection}
       />
     </div>
   );

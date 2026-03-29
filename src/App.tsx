@@ -3,6 +3,8 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { invoke } from "@tauri-apps/api/core";
 import Home from "./pages/Home";
 import Reader from "./pages/Reader";
+import { UpdateProvider } from "./contexts/UpdateContext";
+import UpdateToast from "./components/UpdateToast";
 
 function applyTheme(theme: string) {
   const root = document.documentElement;
@@ -33,11 +35,16 @@ export default function App() {
   }, []);
 
   return (
-    <BrowserRouter>
-      <Routes>
-        <Route path="/" element={<Home />} />
-        <Route path="/reader/:bookId" element={<Reader />} />
-      </Routes>
-    </BrowserRouter>
+    <UpdateProvider>
+      <BrowserRouter>
+        <UpdateToast
+          onOpenSettings={() => window.dispatchEvent(new CustomEvent("open-settings", { detail: "about" }))}
+        />
+        <Routes>
+          <Route path="/" element={<Home />} />
+          <Route path="/reader/:bookId" element={<Reader />} />
+        </Routes>
+      </BrowserRouter>
+    </UpdateProvider>
   );
 }
