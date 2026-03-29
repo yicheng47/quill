@@ -249,6 +249,12 @@ export default function DictionaryContent() {
                           {t("vocab.openInReader")}
                           <ArrowRight size={12} />
                         </button>
+                        <button
+                          onClick={() => remove(word.id)}
+                          className="p-1 rounded hover:bg-bg-surface/80 cursor-pointer opacity-0 group-hover:opacity-100 transition-opacity"
+                        >
+                          <Trash2 size={14} className="text-text-muted" />
+                        </button>
                       </div>
                     </div>
                   );
