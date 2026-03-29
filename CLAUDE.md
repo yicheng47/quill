@@ -36,6 +36,7 @@ docs/
 - **Commits:** One commit per feature branch (amend), unless told otherwise.
 - **Backend tests:** Write unit tests for new backend commands before moving to frontend.
 - **Cargo.lock:** Run `cargo check` after version bumps to sync `Cargo.lock` before committing.
+- **Version bumps & releases:** Commit directly to main (no PR needed). Tag with `v` prefix, push tag to trigger release CI.
 
 ## Conventions
 
