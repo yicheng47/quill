@@ -12,3 +12,4 @@ Specs for features that are in progress or planned. Shipped feature specs have b
 - [16 — Universal Cloud Sync](16-universal-cloud-sync.md)
 - [17 — Voice (TTS)](17-voice-tts.md)
 - [18 — AI Summarization](18-ai-summarization.md)
+- [19 — Reading Status Control](19-reading-status-control.md)
