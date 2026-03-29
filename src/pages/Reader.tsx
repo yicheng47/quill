@@ -681,21 +681,34 @@ export default function Reader() {
     isDragging.current = true;
     const startX = e.clientX;
     const startWidth = panelWidthRef.current;
+    let rafId = 0;
+    let latestWidth = startWidth;
+
+    // Signal to foliate-js renderer to skip expensive re-renders during drag
+    const renderer = (viewRef.current as unknown as HTMLElement)?.shadowRoot
+      ?.querySelector("foliate-paginator, foliate-fxl");
+    renderer?.setAttribute("resize-dragging", "");
 
     const handleMouseMove = (e: MouseEvent) => {
       if (!isDragging.current) return;
       const delta = startX - e.clientX;
-      const newWidth = Math.min(
+      latestWidth = Math.min(
         PANEL_MAX_WIDTH,
         Math.max(PANEL_MIN_WIDTH, startWidth + delta)
       );
-      if (panelRef.current) {
-        panelRef.current.style.width = `${newWidth}px`;
+      if (!rafId) {
+        rafId = requestAnimationFrame(() => {
+          if (panelRef.current) {
+            panelRef.current.style.width = `${latestWidth}px`;
+          }
+          rafId = 0;
+        });
       }
     };
 
     const handleMouseUp = (e: MouseEvent) => {
       isDragging.current = false;
+      if (rafId) cancelAnimationFrame(rafId);
       document.removeEventListener("mousemove", handleMouseMove);
       document.removeEventListener("mouseup", handleMouseUp);
       document.body.style.cursor = "";
@@ -705,6 +718,8 @@ export default function Reader() {
         PANEL_MAX_WIDTH,
         Math.max(PANEL_MIN_WIDTH, startWidth + delta)
       );
+      // Remove drag signal — triggers one final render via attributeChangedCallback
+      renderer?.removeAttribute("resize-dragging");
       setPanelWidth(finalWidth);
     };
 
