@@ -10,3 +10,5 @@ Specs for features that are in progress or planned. Shipped feature specs have b
 - [14 — Notes (AI-Assisted)](14-notes.md)
 - [15 — AI Translation](15-ai-translation.md)
 - [16 — Universal Cloud Sync](16-universal-cloud-sync.md)
+- [17 — Voice (TTS)](17-voice-tts.md)
+- [18 — AI Summarization](18-ai-summarization.md)
