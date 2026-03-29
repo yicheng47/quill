@@ -221,8 +221,8 @@ export default function ReaderSettings({ open, onClose, anchorRef, settings, onS
         </div>
       </div>)}
 
-      {/* Page columns — single or two pages — EPUB only */}
-      <div className="px-4 py-3 border-b border-border-light">
+      {/* Page columns — single or two pages — PDF only */}
+      {bookFormat === "pdf" && (<div className="px-4 py-3 border-b border-border-light">
         <p className="text-[11px] font-medium text-text-muted tracking-[0.5px] uppercase mb-2">{t("readerSettings.pageLayout")}</p>
         <div className="flex gap-2">
           <button
@@ -248,7 +248,7 @@ export default function ReaderSettings({ open, onClose, anchorRef, settings, onS
             <span className="text-[12px] font-medium">{t("readerSettings.twoPages")}</span>
           </button>
         </div>
-      </div>
+      </div>)}
 
       {/* Layout section — hidden for PDFs */}
       {bookFormat !== "pdf" && (<div className="px-4 py-3 flex flex-col gap-4">
