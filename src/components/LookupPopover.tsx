@@ -119,21 +119,27 @@ export default function LookupPopover({
   const allDone = !definition.streaming && !context.streaming;
   const hasContent = definition.content || context.content;
 
-  // Position clamping — run once on mount
+  // Position clamping — re-run whenever the popover resizes (e.g. as content streams in)
   const [pos, setPos] = useState({ left: x, top: y });
 
   useEffect(() => {
-    if (!popoverRef.current) return;
-    const rect = popoverRef.current.getBoundingClientRect();
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-    let left = x;
-    let top = y;
-    if (left + rect.width > vw - 16) left = vw - rect.width - 16;
-    if (left < 16) left = 16;
-    if (top + rect.height > vh - 16) top = y - rect.height - 8;
-    if (top < 16) top = 16;
-    setPos({ left, top });
+    const el = popoverRef.current;
+    if (!el) return;
+    const clamp = () => {
+      const rect = el.getBoundingClientRect();
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      let left = x;
+      let top = y;
+      if (left + rect.width > vw - 16) left = vw - rect.width - 16;
+      if (left < 16) left = 16;
+      if (top + rect.height > vh - 16) top = y - rect.height - 8;
+      if (top < 16) top = 16;
+      setPos({ left, top });
+    };
+    const observer = new ResizeObserver(clamp);
+    observer.observe(el);
+    return () => observer.disconnect();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
