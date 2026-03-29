@@ -84,7 +84,7 @@ tauri-plugin-process = "2"
 ```
 
 ### `src-tauri/tauri.conf.json` (MODIFY)
-- Add `"updater"` to bundle targets: `["dmg", "app", "nsis", "updater"]`
+- Add `"createUpdaterArtifacts": true` to the `bundle` section (NOT a bundle target — `"updater"` is not a valid target in Tauri 2)
 - Add top-level `plugins` section:
   ```json
   "plugins": {
