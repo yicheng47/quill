@@ -10,6 +10,8 @@
     "dialog:default",
     "fs:default",
     "fs:allow-read-file",
+    "updater:default",
+    "process:allow-restart",
     "fs:allow-appdata-read",
     "fs:allow-appdata-write",
     {
