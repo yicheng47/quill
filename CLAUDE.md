@@ -38,6 +38,11 @@ docs/
 - **Cargo.lock:** Run `cargo check` after version bumps to sync `Cargo.lock` before committing.
 - **Version bumps & releases:** Commit directly to main (no PR needed). Tag with `v` prefix, push tag to trigger release CI.
 
+## Skills (slash commands)
+
+- `/release` — Bump version, tag, push, wait for CI, publish GitHub release with notes
+- `/feature` — Create, list, or manage feature specs (`docs/features/`) and GitHub issues
+
 ## Conventions
 
 - Settings are stored as key-value pairs in SQLite (`settings` table). Use `useSettings` hook on frontend, `commands/settings.rs` on backend.
