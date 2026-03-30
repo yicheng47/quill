@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { useTranslation } from "react-i18next";
-import { Library, BookOpen, CheckCircle2, Sparkles, BookA, Plus, MessageSquare } from "lucide-react";
+import { Library, BookOpen, CheckCircle2, Sparkles, BookA, Plus, MessageSquare, Pencil, Trash2, GripVertical } from "lucide-react";
 import Button from "./ui/Button";
 import QuillLogo from "./QuillLogo";
 import type { Book } from "../hooks/useBooks";
@@ -13,6 +13,9 @@ interface SidebarProps {
   collections: {
     collections: Collection[];
     create: (name: string) => Promise<Collection>;
+    rename: (id: string, name: string) => Promise<void>;
+    remove: (id: string) => Promise<void>;
+    reorder: (ids: string[]) => Promise<void>;
   };
   userName?: string;
   onOpenSettings?: () => void;
@@ -26,9 +29,62 @@ export default function Sidebar({ activeFilter, onFilterChange, books, collectio
     { id: "reading", label: t("sidebar.currentlyReading"), icon: BookOpen },
     { id: "finished", label: t("sidebar.finished"), icon: CheckCircle2 },
   ];
-  const { collections, create } = collectionsHook;
+  const { collections, create, rename, remove, reorder } = collectionsHook;
   const [isCreating, setIsCreating] = useState(false);
   const [newName, setNewName] = useState("");
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; collection: Collection } | null>(null);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+  const contextMenuRef = useRef<HTMLDivElement>(null);
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [dragOrder, setDragOrder] = useState<string[]>([]);
+  const collectionListRef = useRef<HTMLDivElement>(null);
+
+  const handlePointerDown = useCallback((e: React.PointerEvent, id: string) => {
+    // Only start drag from grip handle
+    if (!(e.target as HTMLElement).closest("[data-grip]")) return;
+    e.preventDefault();
+    const listEl = collectionListRef.current;
+    if (!listEl) return;
+    const items = Array.from(listEl.children) as HTMLElement[];
+    const startY = e.clientY;
+    const ids = collections.map((c) => c.id);
+    const startIdx = ids.indexOf(id);
+    const itemHeight = items[0]?.getBoundingClientRect().height ?? 36;
+
+    setDragId(id);
+    setDragOrder(ids);
+
+    const onMove = (ev: PointerEvent) => {
+      const dy = ev.clientY - startY;
+      const offset = Math.round(dy / itemHeight);
+      const newIdx = Math.max(0, Math.min(ids.length - 1, startIdx + offset));
+      if (newIdx !== startIdx) {
+        const newIds = [...ids];
+        newIds.splice(startIdx, 1);
+        newIds.splice(newIdx, 0, id);
+        setDragOrder(newIds);
+      } else {
+        setDragOrder(ids);
+      }
+    };
+
+    const onUp = () => {
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", onUp);
+      setDragId(null);
+      setDragOrder((current) => {
+        const original = collections.map((c) => c.id);
+        if (current.join() !== original.join()) reorder(current);
+        return current;
+      });
+    };
+
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", onUp);
+  }, [collections, reorder]);
+
+  const displayCollections = dragId ? dragOrder.map((id) => collections.find((c) => c.id === id)!).filter(Boolean) : collections;
 
   const getCount = (filterId: string) => {
     if (filterId === "all") return books.length;
@@ -44,6 +100,33 @@ export default function Sidebar({ activeFilter, onFilterChange, books, collectio
     setNewName("");
     setIsCreating(false);
   };
+
+  const handleRename = async () => {
+    const name = renameValue.trim();
+    if (renamingId && name) {
+      await rename(renamingId, name);
+    }
+    setRenamingId(null);
+    setRenameValue("");
+  };
+
+  const handleDelete = async (id: string) => {
+    if (activeFilter === `collection:${id}`) onFilterChange("all");
+    await remove(id);
+    setContextMenu(null);
+  };
+
+  // Dismiss context menu on outside click
+  useEffect(() => {
+    if (!contextMenu) return;
+    const handler = (e: MouseEvent) => {
+      if (contextMenuRef.current && !contextMenuRef.current.contains(e.target as Node)) {
+        setContextMenu(null);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [contextMenu]);
 
   return (
     <aside className="w-[224px] shrink-0 bg-bg-muted border-r border-border h-full flex flex-col gap-6 px-4 relative select-none">
@@ -169,18 +252,46 @@ export default function Sidebar({ activeFilter, onFilterChange, books, collectio
           </form>
         )}
 
-        <div className="flex flex-col gap-1">
-          {collections.map((collection) => {
+        <div ref={collectionListRef} className="flex flex-col gap-1">
+          {displayCollections.map((collection) => {
             const isActive = activeFilter === `collection:${collection.id}`;
+            if (renamingId === collection.id) {
+              return (
+                <form
+                  key={collection.id}
+                  onSubmit={(e) => { e.preventDefault(); handleRename(); }}
+                  className="px-1"
+                >
+                  <input
+                    autoFocus
+                    value={renameValue}
+                    onChange={(e) => setRenameValue(e.target.value)}
+                    onBlur={handleRename}
+                    onKeyDown={(e) => {
+                      if (e.key === "Escape") { setRenamingId(null); setRenameValue(""); }
+                    }}
+                    className="w-full h-9 px-3 rounded-lg bg-bg-input text-[14px] text-text-primary placeholder:text-text-placeholder outline-none border border-accent"
+                  />
+                </form>
+              );
+            }
             return (
-              <button
+              <div
                 key={collection.id}
+                onPointerDown={(e) => handlePointerDown(e, collection.id)}
                 onClick={() => onFilterChange(`collection:${collection.id}`)}
-                className={`flex items-center justify-between px-3 h-9 rounded-lg w-full cursor-pointer ${
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  setContextMenu({ x: e.clientX, y: e.clientY, collection });
+                }}
+                className={`flex items-center justify-between px-1 pr-3 h-9 rounded-lg w-full cursor-pointer ${
                   isActive ? "bg-accent-bg" : "hover:bg-bg-input"
-                }`}
+                } ${dragId === collection.id ? "opacity-50" : ""}`}
               >
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1">
+                  <div data-grip className="flex items-center justify-center w-5 h-9 cursor-grab touch-none">
+                    <GripVertical size={12} className="text-text-muted/40" />
+                  </div>
                   <Sparkles
                     size={16}
                     className={isActive ? "text-accent-text" : "text-text-muted"}
@@ -196,7 +307,7 @@ export default function Sidebar({ activeFilter, onFilterChange, books, collectio
                 <span className="text-[12px] font-medium text-text-muted">
                   {collection.book_count}
                 </span>
-              </button>
+              </div>
             );
           })}
         </div>
@@ -221,6 +332,38 @@ export default function Sidebar({ activeFilter, onFilterChange, books, collectio
           </div>
         </button>
       </div>
+      {/* Collection context menu */}
+      {contextMenu && (
+        <div
+          ref={contextMenuRef}
+          className="fixed z-50 bg-bg-surface/95 border border-border/80 rounded-[10px] py-1 w-[180px] backdrop-blur-sm shadow-[0px_20px_25px_0px_rgba(0,0,0,0.15),0px_8px_10px_0px_rgba(0,0,0,0.15)]"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+        >
+          <button
+            onClick={() => {
+              setRenamingId(contextMenu.collection.id);
+              setRenameValue(contextMenu.collection.name);
+              setContextMenu(null);
+            }}
+            className="flex items-center gap-3 w-[calc(100%-8px)] mx-1 px-3 h-[31.5px] rounded-sm text-left cursor-pointer hover:bg-accent-bg transition-colors"
+          >
+            <Pencil size={14} className="text-text-muted" />
+            <span className="text-[13px] font-medium text-text-primary tracking-[-0.08px]">
+              {t("sidebar.renameCollection")}
+            </span>
+          </button>
+          <div className="mx-3 my-1 h-px bg-border/80" />
+          <button
+            onClick={() => handleDelete(contextMenu.collection.id)}
+            className="flex items-center gap-3 w-[calc(100%-8px)] mx-1 px-3 h-[31.5px] rounded-sm text-left cursor-pointer hover:bg-accent-bg transition-colors"
+          >
+            <Trash2 size={14} className="text-red-500" />
+            <span className="text-[13px] font-medium text-red-500 tracking-[-0.08px]">
+              {t("sidebar.deleteCollection")}
+            </span>
+          </button>
+        </div>
+      )}
     </aside>
   );
 }

@@ -8,6 +8,8 @@
   "sidebar.chats": "对话",
   "sidebar.collections": "书单",
   "sidebar.collectionPlaceholder": "书单名称...",
+  "sidebar.renameCollection": "重命名",
+  "sidebar.deleteCollection": "删除",
 
   "home.title.all": "全部书籍",
   "home.title.reading": "正在阅读",

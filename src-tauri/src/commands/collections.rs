@@ -10,6 +10,7 @@ pub struct Collection {
     pub id: String,
     pub name: String,
     pub book_count: i32,
+    pub sort_order: i32,
     pub created_at: String,
 }
 
@@ -17,11 +18,11 @@ pub struct Collection {
 pub fn list_collections(db: State<'_, Db>) -> AppResult<Vec<Collection>> {
     let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
     let mut stmt = conn.prepare(
-        "SELECT c.id, c.name, c.created_at, COUNT(cb.book_id) as book_count
+        "SELECT c.id, c.name, c.created_at, c.sort_order, COUNT(cb.book_id) as book_count
          FROM collections c
          LEFT JOIN collection_books cb ON c.id = cb.collection_id
          GROUP BY c.id
-         ORDER BY c.name",
+         ORDER BY c.sort_order, c.created_at",
     )?;
     let collections = stmt
         .query_map([], |row| {
@@ -29,7 +30,8 @@ pub fn list_collections(db: State<'_, Db>) -> AppResult<Vec<Collection>> {
                 id: row.get(0)?,
                 name: row.get(1)?,
                 created_at: row.get(2)?,
-                book_count: row.get(3)?,
+                sort_order: row.get(3)?,
+                book_count: row.get(4)?,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -42,23 +44,52 @@ pub fn create_collection(name: String, db: State<'_, Db>) -> AppResult<Collectio
     let id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();
 
+    let max_order: i32 = conn
+        .query_row("SELECT COALESCE(MAX(sort_order), -1) FROM collections", [], |r| r.get(0))
+        .unwrap_or(-1);
+
+    let sort_order = max_order + 1;
+
     conn.execute(
-        "INSERT INTO collections (id, name, created_at) VALUES (?1, ?2, ?3)",
-        params![id, name, now],
+        "INSERT INTO collections (id, name, sort_order, created_at) VALUES (?1, ?2, ?3, ?4)",
+        params![id, name, sort_order, now],
     )?;
 
     Ok(Collection {
         id,
         name,
         book_count: 0,
+        sort_order,
         created_at: now,
     })
+}
+
+#[tauri::command]
+pub fn rename_collection(id: String, name: String, db: State<'_, Db>) -> AppResult<()> {
+    let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
+    conn.execute(
+        "UPDATE collections SET name = ?1 WHERE id = ?2",
+        params![name, id],
+    )?;
+    Ok(())
 }
 
 #[tauri::command]
 pub fn delete_collection(id: String, db: State<'_, Db>) -> AppResult<()> {
     let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
     conn.execute("DELETE FROM collections WHERE id = ?1", params![id])?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn reorder_collections(ids: Vec<String>, db: State<'_, Db>) -> AppResult<()> {
+    let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
+    for (i, id) in ids.iter().enumerate() {
+        conn.execute(
+            "UPDATE collections SET sort_order = ?1 WHERE id = ?2",
+            params![i as i32, id],
+        )?;
+    }
     Ok(())
 }
 

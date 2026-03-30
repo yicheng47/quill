@@ -94,7 +94,9 @@ pub fn run() {
             // Collections
             commands::collections::list_collections,
             commands::collections::create_collection,
+            commands::collections::rename_collection,
             commands::collections::delete_collection,
+            commands::collections::reorder_collections,
             commands::collections::add_book_to_collection,
             commands::collections::remove_book_from_collection,
             commands::collections::list_books_in_collection,
