@@ -188,16 +188,15 @@ export default function Reader() {
         wordSpacing: s.word_spacing ? parseInt(s.word_spacing) : prev.wordSpacing,
         margins: s.margins ? parseInt(s.margins) : prev.margins,
       }));
+      dbSettingsLoaded.current = true;
     }).catch(() => {});
   }, [bookId]);
 
-  // Persist reader settings to DB when they change
-  const settingsLoaded = useRef(false);
+  // Persist reader settings to DB when they change — only after DB load completes
+  // to avoid overwriting saved values with defaults during initialization
+  const dbSettingsLoaded = useRef(false);
   useEffect(() => {
-    if (!settingsLoaded.current) {
-      settingsLoaded.current = true;
-      return;
-    }
+    if (!dbSettingsLoaded.current) return;
     const { theme, brightness, pageColumns, font, fontSize, readingMode, lineSpacing, charSpacing, wordSpacing, margins } = readerSettings;
     invoke("set_settings_bulk", {
       settings: {
