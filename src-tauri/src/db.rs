@@ -10,6 +10,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (2, include_str!("../migrations/002_vocab.sql")),
     (3, include_str!("../migrations/003_chats.sql")),
     (4, include_str!("../migrations/004_pdf_support.sql")),
+    (5, include_str!("../migrations/005_collection_sort_order.sql")),
 ];
 
 pub struct Db {
@@ -52,8 +53,8 @@ impl Db {
 
         for &(version, sql) in MIGRATIONS {
             if version > current {
-                // Migration 004 uses ALTER TABLE which may fail if column already exists
-                if version == 4 {
+                // ALTER TABLE migrations may fail if column already exists
+                if version == 4 || version == 5 {
                     let _ = conn.execute_batch(sql);
                 } else {
                     conn.execute_batch(sql)?;

@@ -8,6 +8,8 @@
   "sidebar.chats": "Chats",
   "sidebar.collections": "Collections",
   "sidebar.collectionPlaceholder": "Collection name...",
+  "sidebar.renameCollection": "Rename",
+  "sidebar.deleteCollection": "Delete",
 
   "home.title.all": "All Books",
   "home.title.reading": "Currently Reading",
