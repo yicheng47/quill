@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import Select from "../ui/Select";
+import { fonts, FONT_SIZE_MIN, FONT_SIZE_MAX } from "../ReaderSettings";
 import type { SettingsProps } from "./types";
 
 function NumberInput({ value, onChange, onBlur, suffix, min, max }: {
@@ -60,13 +61,7 @@ export default function ReadingSettings({ settings, loading, save, showSavedToas
           className="w-[160px] shrink-0"
           value={fontFamily}
           onChange={(v) => { setFontFamily(v); save("font_family", v); showSavedToast(); }}
-          options={[
-            { value: "georgia", label: "Georgia" },
-            { value: "palatino", label: "Palatino" },
-            { value: "times", label: "Times New Roman" },
-            { value: "system-ui", label: "System" },
-            { value: "sans-serif", label: "Sans Serif" },
-          ]}
+          options={fonts.map((f) => ({ value: f.id, label: f.label }))}
         />
       </div>
       <div className="h-px bg-black/10" />
@@ -77,7 +72,7 @@ export default function ReadingSettings({ settings, loading, save, showSavedToas
           <p className="text-[14px] font-medium text-text-primary tracking-[-0.15px]">{t("settings.layout.fontSize")}</p>
           <p className="text-[12px] text-text-muted mt-0.5">{t("settings.layout.fontSizeHint")}</p>
         </div>
-        <NumberInput value={fontSize} onChange={setFontSize} onBlur={() => save("font_size", String(fontSize))} suffix="px" min={8} max={48} />
+        <NumberInput value={fontSize} onChange={setFontSize} onBlur={() => save("font_size", String(fontSize))} suffix="px" min={FONT_SIZE_MIN} max={FONT_SIZE_MAX} />
       </div>
       <div className="h-px bg-black/10" />
 
