@@ -112,6 +112,7 @@
   "bookMenu.notStarted": "Not Started",
   "bookMenu.continueReading": "Continue Reading",
   "bookMenu.markFinished": "Mark as Finished",
+  "bookMenu.markUnread": "Mark as Unread",
   "bookMenu.addToCollection": "Add to Collection",
   "bookMenu.removeFromCollection": "Remove from Collection",
   "bookMenu.deleteBook": "Delete Book",

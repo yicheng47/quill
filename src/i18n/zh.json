@@ -112,6 +112,7 @@
   "bookMenu.notStarted": "未开始",
   "bookMenu.continueReading": "继续阅读",
   "bookMenu.markFinished": "标记为已读完",
+  "bookMenu.markUnread": "标记为未读",
   "bookMenu.addToCollection": "添加到书单",
   "bookMenu.removeFromCollection": "从书单移除",
   "bookMenu.deleteBook": "删除书籍",
