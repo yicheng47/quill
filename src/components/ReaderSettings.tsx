@@ -13,7 +13,10 @@ const themes = [
   { id: "night", label: "Night", color: "bg-[#18181b] border border-[#3f3f46]", pdf: true },
 ] as const;
 
-const fonts = [
+export const FONT_SIZE_MIN = 12;
+export const FONT_SIZE_MAX = 48;
+
+export const fonts = [
   { id: "system", label: "System", family: "Inter, system-ui, sans-serif" },
   { id: "georgia", label: "Georgia", family: "Georgia, serif" },
   { id: "palatino", label: "Palatino", family: "Palatino, serif" },
@@ -123,7 +126,7 @@ export default function ReaderSettings({ open, onClose, anchorRef, settings, onS
       {/* Font size toggle */}
       {bookFormat !== "pdf" && (<div className="flex items-center h-[60px] px-4 border-b border-border-light">
         <button
-          onClick={() => update({ fontSize: Math.max(12, settings.fontSize - 2) })}
+          onClick={() => update({ fontSize: Math.max(FONT_SIZE_MIN, settings.fontSize - 2) })}
           className="flex-1 flex items-center justify-center h-7 border-r border-border cursor-pointer text-text-primary hover:bg-bg-input"
         >
           <span className="text-[14px] font-medium">A-</span>
@@ -132,7 +135,7 @@ export default function ReaderSettings({ open, onClose, anchorRef, settings, onS
           {settings.fontSize}px
         </span>
         <button
-          onClick={() => update({ fontSize: Math.min(28, settings.fontSize + 2) })}
+          onClick={() => update({ fontSize: Math.min(FONT_SIZE_MAX, settings.fontSize + 2) })}
           className="flex-1 flex items-center justify-center h-9 border-l border-border cursor-pointer text-text-primary hover:bg-bg-input"
         >
           <span className="text-[20px] font-medium tracking-[-0.45px]">A+</span>
