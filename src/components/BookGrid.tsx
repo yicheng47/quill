@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import type { Book } from "../hooks/useBooks";
-import { deleteBook, markFinished, updateReadingProgress } from "../hooks/useBooks";
+import { deleteBook, markFinished, updateBookStatus } from "../hooks/useBooks";
 import BookContextMenu from "./BookContextMenu";
 import { useTranslation } from "react-i18next";
 
@@ -78,7 +78,12 @@ export default function BookGrid({ books, activeCollectionId, onBooksChanged }: 
             onBooksChanged?.();
           }}
           onMarkReading={async () => {
-            await updateReadingProgress(contextMenu.book.id, contextMenu.book.progress ?? 0);
+            await updateBookStatus(contextMenu.book.id, "reading");
+            setContextMenu(null);
+            onBooksChanged?.();
+          }}
+          onMarkUnread={async () => {
+            await updateBookStatus(contextMenu.book.id, "unread");
             setContextMenu(null);
             onBooksChanged?.();
           }}

@@ -76,6 +76,7 @@ pub fn run() {
             commands::books::delete_book,
             commands::books::update_reading_progress,
             commands::books::mark_finished,
+            commands::books::update_book_status,
             commands::books::update_book_pages,
             // Settings
             commands::settings::get_all_settings,

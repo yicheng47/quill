@@ -262,7 +262,7 @@ pub fn update_reading_progress(
     let now = chrono::Utc::now().to_rfc3339();
 
     conn.execute(
-        "UPDATE books SET progress = ?1, current_cfi = ?2, status = 'reading', updated_at = ?3 WHERE id = ?4",
+        "UPDATE books SET progress = ?1, current_cfi = ?2, updated_at = ?3 WHERE id = ?4",
         params![progress, cfi, now, id],
     )?;
 
@@ -287,6 +287,19 @@ pub fn mark_finished(id: String, db: State<'_, Db>) -> AppResult<()> {
     conn.execute(
         "UPDATE books SET status = 'finished', progress = 100, updated_at = ?1 WHERE id = ?2",
         params![now, id],
+    )?;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn update_book_status(id: String, status: String, db: State<'_, Db>) -> AppResult<()> {
+    let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
+    let now = chrono::Utc::now().to_rfc3339();
+
+    conn.execute(
+        "UPDATE books SET status = ?1, updated_at = ?2 WHERE id = ?3",
+        params![status, now, id],
     )?;
 
     Ok(())

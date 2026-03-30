@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   BookOpen,
   CheckCircle2,
+  CircleDashed,
   FolderPlus,
   FolderMinus,
   Trash2,
@@ -21,6 +22,7 @@ interface BookContextMenuProps {
   onClose: () => void;
   onMarkFinished: () => void;
   onMarkReading: () => void;
+  onMarkUnread: () => void;
   onDelete: () => void;
   onBooksChanged?: () => void;
 }
@@ -34,6 +36,7 @@ export default function BookContextMenu({
   onClose,
   onMarkFinished,
   onMarkReading,
+  onMarkUnread,
   onDelete,
   onBooksChanged,
 }: BookContextMenuProps) {
@@ -146,20 +149,40 @@ export default function BookContextMenu({
           </span>
         </button>
 
-        {/* Toggle reading status */}
-        <button
-          onClick={bookStatus === "finished" ? onMarkReading : onMarkFinished}
-          className="flex items-center gap-3 w-[calc(100%-8px)] mx-1 px-3 h-[31.5px] rounded-sm text-left cursor-pointer hover:bg-accent-bg transition-colors"
-        >
-          {bookStatus === "finished" ? (
+        {/* Status actions — show all transitions except the current status */}
+        {bookStatus !== "reading" && (
+          <button
+            onClick={onMarkReading}
+            className="flex items-center gap-3 w-[calc(100%-8px)] mx-1 px-3 h-[31.5px] rounded-sm text-left cursor-pointer hover:bg-accent-bg transition-colors"
+          >
             <BookOpen size={16} className="text-text-muted" />
-          ) : (
+            <span className="flex-1 text-[13px] font-medium text-text-primary tracking-[-0.08px]">
+              {t("bookMenu.currentlyReading")}
+            </span>
+          </button>
+        )}
+        {bookStatus !== "finished" && (
+          <button
+            onClick={onMarkFinished}
+            className="flex items-center gap-3 w-[calc(100%-8px)] mx-1 px-3 h-[31.5px] rounded-sm text-left cursor-pointer hover:bg-accent-bg transition-colors"
+          >
             <CheckCircle2 size={16} className="text-text-muted" />
-          )}
-          <span className="flex-1 text-[13px] font-medium text-text-primary tracking-[-0.08px]">
-            {bookStatus === "finished" ? t("bookMenu.continueReading") : t("bookMenu.markFinished")}
-          </span>
-        </button>
+            <span className="flex-1 text-[13px] font-medium text-text-primary tracking-[-0.08px]">
+              {t("bookMenu.markFinished")}
+            </span>
+          </button>
+        )}
+        {bookStatus !== "unread" && (
+          <button
+            onClick={onMarkUnread}
+            className="flex items-center gap-3 w-[calc(100%-8px)] mx-1 px-3 h-[31.5px] rounded-sm text-left cursor-pointer hover:bg-accent-bg transition-colors"
+          >
+            <CircleDashed size={16} className="text-text-muted" />
+            <span className="flex-1 text-[13px] font-medium text-text-primary tracking-[-0.08px]">
+              {t("bookMenu.markUnread")}
+            </span>
+          </button>
+        )}
 
         <div className="mx-3 my-1 h-px bg-border/80" />
 

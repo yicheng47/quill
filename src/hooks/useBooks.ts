@@ -94,3 +94,7 @@ export async function updateReadingProgress(
 export async function markFinished(id: string): Promise<void> {
   return invoke("mark_finished", { id });
 }
+
+export async function updateBookStatus(id: string, status: "reading" | "finished" | "unread"): Promise<void> {
+  return invoke("update_book_status", { id, status });
+}
