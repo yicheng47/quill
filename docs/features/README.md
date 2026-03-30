@@ -14,3 +14,4 @@ Specs for features that are in progress or planned. Shipped feature specs have b
 - [18 — AI Summarization](18-ai-summarization.md)
 - [19 — Reading Status Control](19-reading-status-control.md)
 - [20 — Multi-Window Reader & Enhanced Reader Chrome](20-multi-window-reader.md)
+- [21 — AI Auto-Sort Books into Collections](21-ai-auto-sort-collections.md)
