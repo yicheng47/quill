@@ -7,6 +7,36 @@ use crate::db::Db;
 use crate::epub;
 use crate::error::{AppError, AppResult};
 
+/// Sanitize a book title into a safe filename slug.
+/// Keeps alphanumeric, spaces (→ hyphens), and common punctuation, then truncates.
+fn slugify(title: &str) -> String {
+    let slug: String = title
+        .chars()
+        .map(|c| if c.is_alphanumeric() || c == ' ' || c == '-' || c == '_' { c } else { ' ' })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join("-")
+        .to_lowercase();
+    // Truncate to ~60 chars at a word boundary
+    if slug.len() <= 60 {
+        slug
+    } else {
+        slug[..60].rfind('-').map_or(&slug[..60], |i| &slug[..i]).to_string()
+    }
+}
+
+/// Build a human-readable filename: `{slug}_{short-id}.{ext}`
+fn book_filename(title: &str, book_id: &str, ext: &str) -> String {
+    let slug = slugify(title);
+    let short_id = &book_id[..8]; // first 8 chars of UUID
+    if slug.is_empty() {
+        format!("{}.{}", book_id, ext)
+    } else {
+        format!("{}_{}.{}", slug, short_id, ext)
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Book {
     pub id: String,
@@ -61,14 +91,15 @@ pub async fn import_book(file_path: String, db: State<'_, Db>) -> AppResult<Book
     let metadata = epub::extract_metadata(src, &covers_dir, &book_id)?;
     let pages = epub::count_chapters(src)? as i32;
 
-    // Copy epub to app data
-    let dest = books_dir.join(format!("{}.epub", book_id));
+    // Copy epub to app data with readable filename
+    let filename = book_filename(&metadata.title, &book_id, "epub");
+    let dest = books_dir.join(&filename);
     fs::copy(src, &dest)?;
 
     let now = chrono::Utc::now().to_rfc3339();
 
     // Store relative path in DB
-    let rel_file_path = format!("books/{}.epub", book_id);
+    let rel_file_path = format!("books/{}", filename);
 
     let book = Book {
         id: book_id,
@@ -326,8 +357,9 @@ pub async fn import_pdf(
     let book_id = uuid::Uuid::new_v4().to_string();
     let src = std::path::Path::new(&source_path);
 
-    // Copy PDF to app data
-    let dest = books_dir.join(format!("{}.pdf", book_id));
+    // Copy PDF to app data with readable filename
+    let filename = book_filename(&title, &book_id, "pdf");
+    let dest = books_dir.join(&filename);
     fs::copy(src, &dest)?;
 
     // Save cover image if provided
@@ -340,7 +372,7 @@ pub async fn import_pdf(
     };
 
     let now = chrono::Utc::now().to_rfc3339();
-    let rel_file_path = format!("books/{}.pdf", book_id);
+    let rel_file_path = format!("books/{}", filename);
 
     let book = Book {
         id: book_id,
