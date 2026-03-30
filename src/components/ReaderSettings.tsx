@@ -8,7 +8,7 @@ const sliderClass =
 
 const themes = [
   { id: "original", label: "Original", color: "bg-white border border-[#d4d4d8]", pdf: true },
-  { id: "paper", label: "Sepia", color: "bg-[#f5e6c8]", pdf: true },
+  { id: "paper", label: "Sepia", color: "bg-[#F2E2C9]", pdf: true },
   { id: "quiet", label: "Gray", color: "bg-[#71717b]", pdf: true },
   { id: "night", label: "Night", color: "bg-[#18181b] border border-[#3f3f46]", pdf: true },
 ] as const;
@@ -59,7 +59,7 @@ export function getFontFamily(fontId: ReaderFont): string {
 export function getThemeStyles(themeId: ReaderTheme) {
   switch (themeId) {
     case "paper":
-      return { body: "#fef3c6", text: "#1c1917" };
+      return { body: "#F2E2C9", text: "#34271B" };
     case "quiet":
       return { body: "#71717b", text: "#fafafa" };
     case "night":

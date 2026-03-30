@@ -276,7 +276,7 @@ export default function Reader() {
         if (mainEl) {
           const pdfFilter = (() => {
             switch (readerSettings.theme) {
-              case "paper": return "sepia(100%) saturate(70%) brightness(0.92)";
+              case "paper": return "sepia(40%) saturate(60%) brightness(0.97)";
               case "quiet": return "grayscale(30%) brightness(0.75) contrast(1.1)";
               case "night": return "invert(0.9) hue-rotate(180deg) contrast(0.9)";
               default: return "";
@@ -533,7 +533,7 @@ export default function Reader() {
     if (mainEl && book?.format === "pdf") {
       const pdfFilter = (() => {
         switch (readerSettings.theme) {
-          case "paper": return "sepia(100%) saturate(70%) brightness(0.92)";
+          case "paper": return "sepia(40%) saturate(60%) brightness(0.97)";
           case "quiet": return "grayscale(30%) brightness(0.75) contrast(1.1)";
           case "night": return "invert(0.9) hue-rotate(180deg) contrast(0.9)";
           default: return "";
