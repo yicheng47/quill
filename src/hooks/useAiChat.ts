@@ -105,7 +105,13 @@ function nextMsgId() {
   return `local-${Date.now()}-${++msgIdCounter}`;
 }
 
-export function useAiChat(bookId?: string) {
+interface BookContext {
+  title?: string;
+  author?: string;
+  chapter?: string;
+}
+
+export function useAiChat(bookId?: string, bookContext?: BookContext) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [streaming, setStreaming] = useState(false);
   const [titling, setTitling] = useState(false);
@@ -347,6 +353,9 @@ export function useAiChat(bookId?: string) {
       try {
         await invoke("ai_chat", {
           messages: apiMessages,
+          bookTitle: bookContext?.title ?? null,
+          bookAuthor: bookContext?.author ?? null,
+          currentChapter: bookContext?.chapter ?? null,
         });
       } catch (err) {
         setStreaming(false);
