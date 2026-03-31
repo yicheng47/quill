@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
 import { convertFileSrc } from "@tauri-apps/api/core";
+import { openReaderWindow } from "../utils/openReaderWindow";
 import { Check } from "lucide-react";
 import type { Book } from "../hooks/useBooks";
 import { deleteBook, markFinished, updateBookStatus } from "../hooks/useBooks";
@@ -13,7 +13,6 @@ interface BookListProps {
 }
 
 export default function BookList({ books, activeCollectionId, onBooksChanged }: BookListProps) {
-  const navigate = useNavigate();
   const [contextMenu, setContextMenu] = useState<{
     x: number;
     y: number;
@@ -31,7 +30,7 @@ export default function BookList({ books, activeCollectionId, onBooksChanged }: 
         {books.map((book) => (
           <button
             key={book.id}
-            onClick={() => navigate(`/reader/${book.id}`)}
+            onClick={() => openReaderWindow(book.id)}
             onContextMenu={(e) => handleContextMenu(e, book)}
             className="flex items-start gap-4 p-4 border border-border rounded-lg text-left cursor-pointer hover:bg-bg-muted transition-colors"
           >

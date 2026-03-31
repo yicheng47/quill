@@ -1,10 +1,13 @@
 import { useEffect } from "react";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import Home from "./pages/Home";
 import Reader from "./pages/Reader";
 import { UpdateProvider } from "./contexts/UpdateContext";
 import UpdateToast from "./components/UpdateToast";
+
+const isMainWindow = getCurrentWebviewWindow().label === "main";
 
 function applyTheme(theme: string) {
   const root = document.documentElement;
@@ -34,17 +37,23 @@ export default function App() {
     return () => mq.removeEventListener("change", handler);
   }, []);
 
-  return (
-    <UpdateProvider>
-      <BrowserRouter>
+  const content = (
+    <>
+      {isMainWindow && (
         <UpdateToast
           onOpenSettings={() => window.dispatchEvent(new CustomEvent("open-settings", { detail: "about" }))}
         />
-        <Routes>
-          <Route path="/" element={<Home />} />
-          <Route path="/reader/:bookId" element={<Reader />} />
-        </Routes>
-      </BrowserRouter>
-    </UpdateProvider>
+      )}
+      <Routes>
+        <Route path="/" element={<Home />} />
+        <Route path="/reader/:bookId" element={<Reader />} />
+      </Routes>
+    </>
+  );
+
+  return (
+    <BrowserRouter>
+      {isMainWindow ? <UpdateProvider>{content}</UpdateProvider> : content}
+    </BrowserRouter>
   );
 }

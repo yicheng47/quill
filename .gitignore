@@ -24,4 +24,5 @@ dist-ssr
 *.sw?
 
 .claude/settings.local.json
+.nvmrc
 src-tauri/embedded.provisionprofile

@@ -2,6 +2,7 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import {
   ArrowLeft,
   BookOpen,
@@ -44,6 +45,74 @@ interface FoliateView extends HTMLElement {
   getContents(): Array<{ doc: Document; index: number }>;
 }
 /* eslint-enable @typescript-eslint/no-explicit-any */
+
+type PdfOverlay = { layers: React.CSSProperties[] } | null;
+
+function getPdfOverlays(theme: string): PdfOverlay {
+  switch (theme) {
+    case "paper": return { layers: [{
+      backgroundColor: getThemeStyles("paper").body,
+      mixBlendMode: "multiply",
+    }] };
+    case "quiet": return { layers: [
+      { backgroundColor: "#ffffff", mixBlendMode: "difference" },
+      { backgroundColor: getThemeStyles("quiet").body, mixBlendMode: "screen" },
+    ] };
+    case "dark": return { layers: [
+      { backgroundColor: "#ffffff", mixBlendMode: "difference" },
+      { backgroundColor: getThemeStyles("dark").body, mixBlendMode: "screen" },
+    ] };
+    default: return null;
+  }
+}
+
+function getReaderThemeVars(theme: string): Record<string, string> | undefined {
+  switch (theme) {
+    case "paper": return {
+      "--color-bg-page": "#E8D5B8",
+      "--color-bg-surface": "#F2E2C9",
+      "--color-bg-muted": "#ECD9BC",
+      "--color-bg-input": "#E2CEAF",
+      "--color-text-primary": "#34271B",
+      "--color-text-body": "#34271B",
+      "--color-text-secondary": "#5C4A38",
+      "--color-text-muted": "#8B7355",
+      "--color-text-placeholder": "#8B7355",
+      "--color-border": "#D4BA97",
+      "--color-border-light": "#E2CEAF",
+      "--color-accent-bg": "#E8D0B0",
+    };
+    case "quiet": return {
+      "--color-bg-page": "#5A5A63",
+      "--color-bg-surface": "#71717b",
+      "--color-bg-muted": "#68686F",
+      "--color-bg-input": "#5A5A63",
+      "--color-text-primary": "#fafafa",
+      "--color-text-body": "#fafafa",
+      "--color-text-secondary": "#d4d4d8",
+      "--color-text-muted": "#d4d4d8",
+      "--color-text-placeholder": "#a1a1aa",
+      "--color-border": "#9999a1",
+      "--color-border-light": "#5A5A63",
+      "--color-accent-bg": "#5A4D6E",
+    };
+    case "dark": return {
+      "--color-bg-page": "#09090b",
+      "--color-bg-surface": "#18181b",
+      "--color-bg-muted": "#1c1c1f",
+      "--color-bg-input": "#27272a",
+      "--color-text-primary": "#d4d4d8",
+      "--color-text-body": "#d4d4d8",
+      "--color-text-secondary": "#a1a1aa",
+      "--color-text-muted": "#71717a",
+      "--color-text-placeholder": "#52525c",
+      "--color-border": "#3f3f46",
+      "--color-border-light": "#27272a",
+      "--color-accent-bg": "#2d1b4e",
+    };
+    default: return undefined;
+  }
+}
 
 const getReaderCSS = (settings: ReaderSettingsState) => {
   const themeColors = getThemeStyles(settings.theme);
@@ -101,6 +170,9 @@ const highlightColorMap: Record<string, string> = {
   pink: "#F472B6",
   purple: "#A78BFA",
 };
+
+const appWindow = getCurrentWebviewWindow();
+const isStandaloneWindow = appWindow.label.startsWith("reader-");
 
 export default function Reader() {
   const { bookId } = useParams();
@@ -170,7 +242,12 @@ export default function Reader() {
   useEffect(() => {
     if (!bookId) return;
     getBook(bookId)
-      .then((b) => setBook(b))
+      .then((b) => {
+        setBook(b);
+        if (isStandaloneWindow && b) {
+          appWindow.setTitle(b.title);
+        }
+      })
       .catch(() => setBook(null))
       .finally(() => setLoading(false));
 
@@ -270,21 +347,7 @@ export default function Reader() {
       // Apply styles
       view.renderer.setStyles?.(getReaderCSS(readerSettings));
 
-      // Apply PDF theme filter on init
-      if (book.format === "pdf") {
-        const mainEl = viewerRef.current?.parentElement;
-        if (mainEl) {
-          const pdfFilter = (() => {
-            switch (readerSettings.theme) {
-              case "paper": return "sepia(40%) saturate(60%) brightness(0.97)";
-              case "quiet": return "grayscale(30%) brightness(0.75) contrast(1.1)";
-              case "night": return "invert(0.9) hue-rotate(180deg) contrast(0.9)";
-              default: return "";
-            }
-          })();
-          mainEl.style.filter = pdfFilter || "";
-        }
-      }
+      // PDF theming is handled by the overlay div in the JSX
 
       // Load TOC
       const toc = view.book.toc;
@@ -524,23 +587,11 @@ export default function Reader() {
     const marginOffset = readerSettings.margins * 2;
     view.renderer.setAttribute("max-inline-size", `${Math.max(400, baseWidth - marginOffset)}px`);
 
-    // Update brightness + PDF theme filter
+    // Update brightness
     if (viewerRef.current) {
       viewerRef.current.style.filter = `brightness(${readerSettings.brightness / 100})`;
     }
-    // For PDFs, apply theme filter on the main container so background + pages match
-    const mainEl = viewerRef.current?.parentElement;
-    if (mainEl && book?.format === "pdf") {
-      const pdfFilter = (() => {
-        switch (readerSettings.theme) {
-          case "paper": return "sepia(40%) saturate(60%) brightness(0.97)";
-          case "quiet": return "grayscale(30%) brightness(0.75) contrast(1.1)";
-          case "night": return "invert(0.9) hue-rotate(180deg) contrast(0.9)";
-          default: return "";
-        }
-      })();
-      mainEl.style.filter = pdfFilter || "";
-    }
+    // PDF theming is handled by the overlay div in the JSX
   }, [readerSettings, book?.format]);
 
   // Prepare renderer for GPU-accelerated zoom transforms
@@ -737,21 +788,28 @@ export default function Reader() {
   }, []);
 
   // Handle navigation state from ChatsPage ("Open in Reader")
+  // Supports both location.state (main window) and URL search params (standalone window)
   useEffect(() => {
     const state = location.state as { openChat?: boolean; chatId?: string } | null;
-    if (!state?.openChat || !bookReady) return;
+    const searchParams = new URLSearchParams(window.location.search);
+    const openChat = state?.openChat || searchParams.get("openChat") === "true";
+    const chatId = state?.chatId || searchParams.get("chatId") || undefined;
+    if (!openChat || !bookReady) return;
     setSidePanel("ai");
-    if (state.chatId) setInitialChatId(state.chatId);
-    navigate(location.pathname, { replace: true });
+    if (chatId) setInitialChatId(chatId);
+    if (!isStandaloneWindow) navigate(location.pathname, { replace: true });
   }, [bookReady, location.state, location.pathname, navigate]);
 
   // Handle navigation state from DictionaryPage ("Open in Reader")
+  // Supports both location.state (main window) and URL search params (standalone window)
   useEffect(() => {
     const state = location.state as { openVocab?: boolean; cfi?: string } | null;
-    if (!state?.openVocab || !bookReady) return;
+    const searchParams = new URLSearchParams(window.location.search);
+    const openVocab = state?.openVocab || searchParams.get("openVocab") === "true";
+    const cfi = state?.cfi || searchParams.get("cfi") || undefined;
+    if (!openVocab || !bookReady) return;
     setSidePanel("vocab");
-    if (state.cfi) {
-      const cfi = state.cfi;
+    if (cfi) {
       viewRef.current?.goTo(cfi).then(() => {
         viewRef.current?.addAnnotation({ value: cfi, color: "#c27aff" });
         setTimeout(() => {
@@ -760,7 +818,7 @@ export default function Reader() {
       });
     }
     // Clear the state so it doesn't re-trigger
-    navigate(location.pathname, { replace: true });
+    if (!isStandaloneWindow) navigate(location.pathname, { replace: true });
   }, [bookReady, location.state, location.pathname, navigate]);
 
   if (loading) {
@@ -780,7 +838,7 @@ export default function Reader() {
   }
 
   return (
-    <div className="flex flex-col h-screen bg-bg-page">
+    <div className="flex flex-col h-screen bg-bg-page" style={isStandaloneWindow ? getReaderThemeVars(readerSettings.theme) as React.CSSProperties : undefined}>
       {/* Invisible overlay to close popovers when clicking anywhere */}
       {(tocOpen || settingsOpen) && (
         <div
@@ -789,55 +847,124 @@ export default function Reader() {
         />
       )}
       {/* Header */}
-      <header className="flex items-center justify-between px-section pt-8 pb-2 bg-bg-surface border-b border-border shrink-0 relative select-none">
+      <header
+        className={`flex items-center justify-between px-section pt-8 pb-2 shrink-0 relative select-none ${isStandaloneWindow ? "" : "bg-bg-surface border-b border-border"}`}
+        style={isStandaloneWindow ? {
+          backgroundColor: getThemeStyles(readerSettings.theme).body,
+          color: getThemeStyles(readerSettings.theme).text,
+          borderBottom: `1px solid ${getThemeStyles(readerSettings.theme).text}1a`,
+        } : undefined}
+      >
         <div data-tauri-drag-region className="absolute top-0 left-0 right-0 h-8" />
+
+        {/* Left section */}
         <div className="flex items-center gap-3">
-          <Button variant="icon" size="md" onClick={() => navigate("/")}>
-            <ArrowLeft size={16} />
-          </Button>
-          <div className="w-px h-6 bg-border" />
-          <div className="size-10 rounded-lg bg-accent flex items-center justify-center">
-            <BookOpen size={18} className="text-white" />
-          </div>
-          <div className="flex flex-col">
-            <h1 className="text-[16px] font-semibold text-text-primary leading-5">
+          {isStandaloneWindow ? (
+            <div className="size-10 rounded-lg bg-accent flex items-center justify-center">
+              <BookOpen size={18} className="text-white" />
+            </div>
+          ) : (
+            <>
+              <Button variant="icon" size="md" onClick={() => navigate("/")}>
+                <ArrowLeft size={16} />
+              </Button>
+              <div className="w-px h-6 bg-border" />
+            </>
+          )}
+
+          {isStandaloneWindow ? (
+            <>
+              {/* TOC on left in standalone window */}
+              <div className="w-px h-6 bg-current opacity-15" />
+              <Button
+                ref={tocAnchorRef}
+                variant="icon"
+                size="md"
+                active={tocOpen}
+                onClick={() => { setTocOpen((v) => !v); setSettingsOpen(false); }}
+              >
+                <List size={16} />
+              </Button>
+              <TableOfContents
+                open={tocOpen}
+                onClose={() => setTocOpen(false)}
+                chapters={chapters.map((c, i) => ({ title: c.title, page: i + 1, depth: c.depth }))}
+                currentPage={currentChapterIndex + 1}
+                onNavigate={(page) => {
+                  const ch = chapters[page - 1];
+                  if (ch) navigateToChapter(ch.href);
+                }}
+                anchorRef={tocAnchorRef}
+                alignLeft
+              />
+            </>
+          ) : (
+            <>
+              {/* Book icon + title on left in main window */}
+              <div className="size-10 rounded-lg bg-accent flex items-center justify-center">
+                <BookOpen size={18} className="text-white" />
+              </div>
+              <div className="flex flex-col">
+                <h1 className="text-[16px] font-semibold text-text-primary leading-5">
+                  {book.title}
+                </h1>
+                <span className="text-[13px] text-text-muted leading-4">
+                  {book.format === "pdf"
+                    ? pageInfo ? t("reader.pageOf", { current: pageInfo.current, total: pageInfo.total }) : ""
+                    : chapters.length > 0 ? t("reader.chapterOf", { current: currentChapterIndex + 1, total: chapters.length }) : ""}
+                </span>
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Center — book title in standalone window */}
+        {isStandaloneWindow && (
+          <div className="absolute left-1/2 -translate-x-1/2 flex flex-col items-center pointer-events-none">
+            <h1 className="text-[14px] font-semibold leading-5" style={{ color: "inherit" }}>
               {book.title}
             </h1>
-            <span className="text-[13px] text-text-muted leading-4">
+            <span className="text-[12px] leading-4 opacity-60">
               {book.format === "pdf"
                 ? pageInfo ? t("reader.pageOf", { current: pageInfo.current, total: pageInfo.total }) : ""
                 : chapters.length > 0 ? t("reader.chapterOf", { current: currentChapterIndex + 1, total: chapters.length }) : ""}
             </span>
           </div>
-        </div>
+        )}
 
+        {/* Right section */}
         <div className="flex items-center">
-          <Button
-            ref={tocAnchorRef}
-            variant="icon"
-            size="md"
-            active={tocOpen}
-            onClick={() => { setTocOpen((v) => !v); setSettingsOpen(false); }}
-          >
-            <List size={16} />
-          </Button>
-          <TableOfContents
-            open={tocOpen}
-            onClose={() => setTocOpen(false)}
-            chapters={chapters.map((c, i) => ({ title: c.title, page: i + 1, depth: c.depth }))}
-            currentPage={currentChapterIndex + 1}
-            onNavigate={(page) => {
-              const ch = chapters[page - 1];
-              if (ch) navigateToChapter(ch.href);
-            }}
-            anchorRef={tocAnchorRef}
-          />
+          {/* TOC button in main window */}
+          {!isStandaloneWindow && (
+            <>
+              <Button
+                ref={tocAnchorRef}
+                variant="icon"
+                size="md"
+                active={tocOpen}
+                onClick={() => { setTocOpen((v) => !v); setSettingsOpen(false); }}
+              >
+                <List size={16} />
+              </Button>
+              <TableOfContents
+                open={tocOpen}
+                onClose={() => setTocOpen(false)}
+                chapters={chapters.map((c, i) => ({ title: c.title, page: i + 1, depth: c.depth }))}
+                currentPage={currentChapterIndex + 1}
+                onNavigate={(page) => {
+                  const ch = chapters[page - 1];
+                  if (ch) navigateToChapter(ch.href);
+                }}
+                anchorRef={tocAnchorRef}
+              />
+            </>
+          )}
 
           <button
             ref={settingsAnchorRef}
             onClick={() => { setSettingsOpen((v) => !v); setTocOpen(false); }}
             className={`flex items-center justify-center gap-1 size-9 rounded-lg cursor-pointer transition-colors ${
-              settingsOpen ? "text-accent-text" : "text-text-muted hover:bg-bg-input"
+              settingsOpen ? "text-accent-text" : isStandaloneWindow ? "opacity-60 hover:opacity-100" : "text-text-muted hover:bg-bg-input"
             }`}
           >
             <span className="text-[16px] font-semibold leading-6">A</span>
@@ -877,7 +1004,7 @@ export default function Reader() {
             className={`flex items-center gap-2 h-8 px-2.5 rounded-lg cursor-pointer transition-colors ${
               sidePanel === "ai"
                 ? "text-accent-text"
-                : "hover:bg-bg-input text-text-muted"
+                : isStandaloneWindow ? "opacity-60 hover:opacity-100" : "hover:bg-bg-input text-text-muted"
             }`}
           >
             <Bot size={16} />
@@ -904,6 +1031,17 @@ export default function Reader() {
               ref={viewerRef}
               className="w-full h-full"
             />
+            {book.format === "pdf" && (() => {
+              const overlay = getPdfOverlays(readerSettings.theme);
+              if (!overlay) return null;
+              return overlay.layers.map((style, i) => (
+                <div
+                  key={i}
+                  className="absolute inset-0 z-10 pointer-events-none"
+                  style={style}
+                />
+              ));
+            })()}
             {!bookReady && (
               <div className="absolute inset-0 z-20 bg-bg-surface flex items-center justify-center">
                 <div className="flex flex-col items-center gap-3">
@@ -915,16 +1053,22 @@ export default function Reader() {
           </main>
 
           {/* Bottom progress bar */}
-          <footer className="bg-bg-surface px-page pb-2 pt-0 shrink-0">
+          <footer
+            className={`px-page pb-2 pt-0 shrink-0 ${isStandaloneWindow ? "" : "bg-bg-surface"}`}
+            style={isStandaloneWindow ? {
+              backgroundColor: getThemeStyles(readerSettings.theme).body,
+              color: getThemeStyles(readerSettings.theme).text,
+            } : undefined}
+          >
             <div className="flex flex-col gap-2">
-              <div className="h-px bg-border w-full">
+              <div className={`h-px w-full ${isStandaloneWindow ? "opacity-10" : "bg-border"}`} style={isStandaloneWindow ? { backgroundColor: "currentColor" } : undefined}>
                 <div
-                  className="h-full bg-[#9f9fa9] transition-all"
-                  style={{ width: `${progress}%` }}
+                  className="h-full transition-all"
+                  style={{ width: `${progress}%`, backgroundColor: isStandaloneWindow ? "currentColor" : "#9f9fa9", opacity: isStandaloneWindow ? 0.4 : undefined }}
                 />
               </div>
               <div className="flex items-center justify-between h-8">
-                <span className="text-[12px] text-text-muted">
+                <span className={`text-[12px] ${isStandaloneWindow ? "opacity-60" : "text-text-muted"}`}>
                   {pageInfo ? t("reader.pageOf", { current: pageInfo.current, total: pageInfo.total }) : `${progress}%`}
                 </span>
                 {book.format === "pdf" && (
@@ -932,7 +1076,7 @@ export default function Reader() {
                     <Button variant="icon" size="sm" onClick={() => handleZoom(-10)}>
                       <Minus size={12} />
                     </Button>
-                    <span className="text-[12px] font-medium text-text-muted w-[36px] text-center tabular-nums">
+                    <span className={`text-[12px] font-medium w-[36px] text-center tabular-nums ${isStandaloneWindow ? "opacity-60" : "text-text-muted"}`}>
                       {zoomLevel}%
                     </span>
                     <Button variant="icon" size="sm" onClick={() => handleZoom(10)}>
@@ -940,7 +1084,7 @@ export default function Reader() {
                     </Button>
                   </div>
                 )}
-                <span className="text-[12px] text-text-muted">
+                <span className={`text-[12px] ${isStandaloneWindow ? "opacity-50" : "text-text-muted"}`}>
                   {pageInfo && pageInfo.total > pageInfo.current
                     ? t("reader.pagesLeft", { count: pageInfo.total - pageInfo.current })
                     : ""}

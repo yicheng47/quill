@@ -1,6 +1,5 @@
 import { useState, useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { useNavigate } from "react-router-dom";
 import {
   ArrowRight,
   Languages,
@@ -18,13 +17,13 @@ import {
 import Button from "./ui/Button";
 import { useAllDictionary, type DictionaryWord } from "../hooks/useDictionary";
 import { timeAgo } from "../utils/timeAgo";
+import { openReaderWindow } from "../utils/openReaderWindow";
 
 type SortMode = "newest" | "oldest" | "az";
 type ViewMode = "list" | "card";
 
 export default function DictionaryContent() {
   const { t } = useTranslation();
-  const navigate = useNavigate();
   const { words, remove } = useAllDictionary();
   const [sort, setSort] = useState<SortMode>("newest");
   const [view, setView] = useState<ViewMode>("list");
@@ -243,7 +242,7 @@ export default function DictionaryContent() {
                       <div className="flex items-center gap-3 shrink-0">
                         <span className="text-[11px] text-text-muted">{timeAgo(word.created_at)}</span>
                         <button
-                          onClick={() => navigate(`/reader/${word.book_id}`, { state: { openVocab: true, cfi: word.cfi } })}
+                          onClick={() => openReaderWindow(word.book_id, { openVocab: true, cfi: word.cfi })}
                           className="flex items-center gap-1 text-[12px] font-medium text-accent-text cursor-pointer hover:opacity-70"
                         >
                           {t("vocab.openInReader")}
@@ -316,7 +315,7 @@ export default function DictionaryContent() {
                             </span>
                           </div>
                           <button
-                            onClick={() => navigate(`/reader/${word.book_id}`, { state: { openVocab: true, cfi: word.cfi } })}
+                            onClick={() => openReaderWindow(word.book_id, { openVocab: true, cfi: word.cfi })}
                             className="flex items-center gap-1 h-[24.5px] px-2.5 rounded-[10px] bg-accent-bg text-[11px] font-medium text-accent-text tracking-[0.06px] cursor-pointer hover:opacity-70"
                           >
                             {t("vocab.openInReader")}

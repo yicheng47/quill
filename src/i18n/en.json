@@ -35,6 +35,7 @@
   "reader.loading": "Loading...",
   "reader.bookNotFound": "Book not found",
   "reader.preparingBook": "Preparing book...",
+  "reader.closeWindow": "Close",
 
   "ai.newChat": "New Chat",
   "ai.generatingTitle": "Generating title...",
@@ -137,7 +138,7 @@
   "readerSettings.themeOriginal": "Original",
   "readerSettings.themeSepia": "Sepia",
   "readerSettings.themeGray": "Gray",
-  "readerSettings.themeNight": "Night",
+  "readerSettings.themeDark": "Dark",
 
   "settings.title": "Settings",
   "settings.subtitle": "Manage your reading preferences and AI configuration",

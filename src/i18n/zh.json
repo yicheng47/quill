@@ -35,6 +35,7 @@
   "reader.loading": "加载中...",
   "reader.bookNotFound": "未找到书籍",
   "reader.preparingBook": "正在准备书籍...",
+  "reader.closeWindow": "关闭",
 
   "ai.newChat": "新对话",
   "ai.generatingTitle": "正在生成标题...",
@@ -137,7 +138,7 @@
   "readerSettings.themeOriginal": "原始",
   "readerSettings.themeSepia": "泛黄",
   "readerSettings.themeGray": "灰色",
-  "readerSettings.themeNight": "夜间",
+  "readerSettings.themeDark": "深色",
 
   "settings.title": "设置",
   "settings.subtitle": "管理你的阅读偏好和 AI 配置",
