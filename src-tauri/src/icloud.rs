@@ -54,10 +54,9 @@ pub fn migrate_to_icloud(db: &Db, local_dir: &Path, icloud_dir: &Path) -> AppRes
         let mut conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
         *conn = Connection::open_in_memory()?;
     } else {
-        // First device — checkpoint WAL, close DB, move files to iCloud
+        // First device — close DB, move files to iCloud
         {
             let mut conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
-            conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
             *conn = Connection::open_in_memory()?;
         }
 
@@ -75,7 +74,7 @@ pub fn migrate_to_icloud(db: &Db, local_dir: &Path, icloud_dir: &Path) -> AppRes
 
     // Open new connection at iCloud path
     let new_conn = Connection::open(&icloud_db_path)?;
-    new_conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
+    new_conn.execute_batch("PRAGMA journal_mode=DELETE; PRAGMA foreign_keys=ON;")?;
 
     {
         let mut conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
@@ -100,7 +99,6 @@ pub fn migrate_from_icloud(db: &Db, local_dir: &Path, icloud_dir: &Path) -> AppR
 
     {
         let mut conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
-        conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
         *conn = Connection::open_in_memory()?;
     }
 
@@ -114,7 +112,7 @@ pub fn migrate_from_icloud(db: &Db, local_dir: &Path, icloud_dir: &Path) -> AppR
     }
 
     let new_conn = Connection::open(&local_db_path)?;
-    new_conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
+    new_conn.execute_batch("PRAGMA journal_mode=DELETE; PRAGMA foreign_keys=ON;")?;
 
     {
         let mut conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
@@ -131,12 +129,6 @@ pub fn migrate_from_icloud(db: &Db, local_dir: &Path, icloud_dir: &Path) -> AppR
 }
 
 /// Flush the WAL to the main database file for safe iCloud sync.
-pub fn wal_checkpoint(db: &Db) -> AppResult<()> {
-    let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
-    conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
-    Ok(())
-}
-
 /// Trigger iCloud to download evicted files. Best-effort — errors are logged but don't block.
 #[cfg(target_os = "macos")]
 pub fn ensure_downloaded(icloud_dir: &Path) -> AppResult<()> {
@@ -258,32 +250,6 @@ mod tests {
         let dst = TempDir::new().unwrap();
         let src = dst.path().join("nonexistent");
         copy_dir_contents(&src, dst.path()).unwrap();
-    }
-
-    // --- wal_checkpoint ---
-
-    #[test]
-    fn test_wal_checkpoint() {
-        let dir = TempDir::new().unwrap();
-        let db = create_test_db(dir.path());
-
-        // Write some data so WAL has content
-        {
-            let conn = db.conn.lock().unwrap();
-            conn.execute(
-                "INSERT INTO settings (key, value) VALUES ('wal_test', 'value')",
-                [],
-            )
-            .unwrap();
-        }
-
-        wal_checkpoint(&db).unwrap();
-
-        // After TRUNCATE checkpoint, WAL file should be empty
-        let wal_path = dir.path().join("quill.db-wal");
-        if wal_path.exists() {
-            assert_eq!(fs::metadata(&wal_path).unwrap().len(), 0);
-        }
     }
 
     // --- migrate_to_icloud (first device) ---
