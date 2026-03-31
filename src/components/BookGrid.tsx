@@ -1,7 +1,7 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import type { Book } from "../hooks/useBooks";
+import { openReaderWindow } from "../utils/openReaderWindow";
 import { deleteBook, markFinished, updateBookStatus } from "../hooks/useBooks";
 import BookContextMenu from "./BookContextMenu";
 import { useTranslation } from "react-i18next";
@@ -13,7 +13,6 @@ interface BookGridProps {
 }
 
 export default function BookGrid({ books, activeCollectionId, onBooksChanged }: BookGridProps) {
-  const navigate = useNavigate();
   const { t } = useTranslation();
   const [contextMenu, setContextMenu] = useState<{
     x: number;
@@ -32,7 +31,7 @@ export default function BookGrid({ books, activeCollectionId, onBooksChanged }: 
         {books.map((book) => (
           <button
             key={book.id}
-            onClick={() => navigate(`/reader/${book.id}`)}
+            onClick={() => openReaderWindow(book.id)}
             onContextMenu={(e) => handleContextMenu(e, book)}
             className="text-left cursor-pointer group"
           >

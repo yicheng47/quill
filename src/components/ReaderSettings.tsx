@@ -10,7 +10,7 @@ const themes = [
   { id: "original", label: "Original", color: "bg-white border border-[#d4d4d8]", pdf: true },
   { id: "paper", label: "Sepia", color: "bg-[#F2E2C9]", pdf: true },
   { id: "quiet", label: "Gray", color: "bg-[#71717b]", pdf: true },
-  { id: "night", label: "Night", color: "bg-[#18181b] border border-[#3f3f46]", pdf: true },
+  { id: "dark", label: "Dark", color: "bg-[#18181b] border border-[#3f3f46]", pdf: true },
 ] as const;
 
 export const FONT_SIZE_MIN = 12;
@@ -62,7 +62,7 @@ export function getThemeStyles(themeId: ReaderTheme) {
       return { body: "#F2E2C9", text: "#34271B" };
     case "quiet":
       return { body: "#71717b", text: "#fafafa" };
-    case "night":
+    case "dark":
       return { body: "#18181b", text: "#d4d4d8" };
     default:
       return { body: "#ffffff", text: "#0a0a0a" };
@@ -70,7 +70,7 @@ export function getThemeStyles(themeId: ReaderTheme) {
 }
 
 export function getDefaultReaderTheme(): ReaderTheme {
-  return document.documentElement.classList.contains("dark") ? "night" : "original";
+  return document.documentElement.classList.contains("dark") ? "dark" : "original";
 }
 
 export default function ReaderSettings({ open, onClose, anchorRef, settings, onSettingsChange, bookFormat }: ReaderSettingsProps) {
@@ -112,7 +112,7 @@ export default function ReaderSettings({ open, onClose, anchorRef, settings, onS
     original: t("readerSettings.themeOriginal"),
     paper: t("readerSettings.themeSepia"),
     quiet: t("readerSettings.themeGray"),
-    night: t("readerSettings.themeNight"),
+    dark: t("readerSettings.themeDark"),
   };
 
   if (!open) return null;
@@ -172,7 +172,7 @@ export default function ReaderSettings({ open, onClose, anchorRef, settings, onS
               {settings.theme === theme.id && (
                 <Check
                   size={14}
-                  className={theme.id === "night" || theme.id === "quiet" ? "text-white" : "text-accent"}
+                  className={theme.id === "dark" || theme.id === "quiet" ? "text-white" : "text-accent"}
                 />
               )}
             </div>

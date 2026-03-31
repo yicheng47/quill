@@ -13,6 +13,7 @@ interface TableOfContentsProps {
   currentPage: number;
   onNavigate: (page: number) => void;
   anchorRef: React.RefObject<HTMLButtonElement | null>;
+  alignLeft?: boolean;
 }
 
 export default function TableOfContents({
@@ -22,6 +23,7 @@ export default function TableOfContents({
   currentPage,
   onNavigate,
   anchorRef,
+  alignLeft,
 }: TableOfContentsProps) {
   const popoverRef = useRef<HTMLDivElement>(null);
   const activeRef = useRef<HTMLButtonElement>(null);
@@ -34,7 +36,11 @@ export default function TableOfContents({
       if (!anchor) return;
       const rect = anchor.getBoundingClientRect();
       node.style.top = `${rect.bottom + 8}px`;
-      node.style.right = `${window.innerWidth - rect.right}px`;
+      if (alignLeft) {
+        node.style.left = `${rect.left}px`;
+      } else {
+        node.style.right = `${window.innerWidth - rect.right}px`;
+      }
     },
     [anchorRef],
   );

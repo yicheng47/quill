@@ -1,6 +1,5 @@
 import { useState, useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { useNavigate } from "react-router-dom";
 import {
   ArrowRight,
   Search,
@@ -14,12 +13,12 @@ import {
 import Button from "./ui/Button";
 import { useAllChats, type ChatSummary } from "../hooks/useChats";
 import { timeAgo } from "../utils/timeAgo";
+import { openReaderWindow } from "../utils/openReaderWindow";
 
 type SortMode = "newest" | "oldest";
 
 export default function ChatsContent() {
   const { t } = useTranslation();
-  const navigate = useNavigate();
   const { chats, remove } = useAllChats();
   const [sort, setSort] = useState<SortMode>("newest");
   const [search, setSearch] = useState("");
@@ -76,9 +75,7 @@ export default function ChatsContent() {
   }, [chats]);
 
   const handleOpenInReader = (chat: ChatSummary) => {
-    navigate(`/reader/${chat.book_id}`, {
-      state: { openChat: true, chatId: chat.id },
-    });
+    openReaderWindow(chat.book_id, { openChat: true, chatId: chat.id });
   };
 
   const isEmpty = chats.length === 0;

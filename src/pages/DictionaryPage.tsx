@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { useAllDictionary, type DictionaryWord } from "../hooks/useDictionary";
 import { timeAgo } from "../utils/timeAgo";
+import { openReaderWindow } from "../utils/openReaderWindow";
 
 type SortMode = "newest" | "oldest" | "az";
 type ViewMode = "list" | "card";
@@ -297,7 +298,7 @@ export default function DictionaryPage() {
                           {timeAgo(word.created_at)}
                         </span>
                         <button
-                          onClick={() => navigate(`/reader/${word.book_id}`, { state: { openVocab: true, cfi: word.cfi } })}
+                          onClick={() => openReaderWindow(word.book_id, { openVocab: true, cfi: word.cfi })}
                           className="flex items-center gap-1 text-[12px] font-medium text-accent-text cursor-pointer hover:opacity-70"
                         >
                           Open in Reader
@@ -376,7 +377,7 @@ export default function DictionaryPage() {
                             </span>
                           </div>
                           <button
-                            onClick={() => navigate(`/reader/${word.book_id}`, { state: { openVocab: true, cfi: word.cfi } })}
+                            onClick={() => openReaderWindow(word.book_id, { openVocab: true, cfi: word.cfi })}
                             className="flex items-center gap-1 h-[24.5px] px-2.5 rounded-[10px] bg-accent-bg text-[11px] font-medium text-accent-text tracking-[0.06px] cursor-pointer hover:opacity-70"
                           >
                             Open in Reader
