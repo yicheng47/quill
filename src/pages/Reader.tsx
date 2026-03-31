@@ -1112,6 +1112,9 @@ export default function Reader() {
           <div className={sidePanel === "ai" ? "h-full" : "hidden"}>
             <AiPanel
               bookId={bookId}
+              bookTitle={book.title}
+              bookAuthor={book.author}
+              currentChapter={currentChapterIndex >= 0 && currentChapterIndex < chapters.length ? chapters[currentChapterIndex].title : undefined}
               context={aiContext}
               initialChatId={initialChatId}
               onContextConsumed={() => setAiContext(undefined)}

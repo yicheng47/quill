@@ -7,13 +7,16 @@ import { timeAgo } from "../utils/timeAgo";
 
 interface AiPanelProps {
   bookId?: string;
+  bookTitle?: string;
+  bookAuthor?: string;
+  currentChapter?: string;
   context?: { text: string; cfi?: string };
   initialChatId?: string;
   onContextConsumed?: () => void;
   onNavigateToCfi?: (cfi: string) => void;
 }
 
-export default function AiPanel({ bookId, context, initialChatId, onContextConsumed, onNavigateToCfi }: AiPanelProps) {
+export default function AiPanel({ bookId, bookTitle, bookAuthor, currentChapter, context, initialChatId, onContextConsumed, onNavigateToCfi }: AiPanelProps) {
   const { t } = useTranslation();
 
   const SUGGESTED_PROMPTS = [
@@ -24,7 +27,7 @@ export default function AiPanel({ bookId, context, initialChatId, onContextConsu
   const {
     messages, streaming, send, initialize,
     chatId, chats, titling, loadChat, deleteChat, renameChat, reset,
-  } = useAiChat(bookId);
+  } = useAiChat(bookId, { title: bookTitle, author: bookAuthor, chapter: currentChapter });
 
   const [input, setInput] = useState("");
   const [pickerOpen, setPickerOpen] = useState(false);

@@ -255,6 +255,9 @@ pub async fn ai_generate_title(
 #[tauri::command]
 pub async fn ai_chat(
     messages: Vec<ChatMessage>,
+    book_title: Option<String>,
+    book_author: Option<String>,
+    current_chapter: Option<String>,
     app: AppHandle,
     db: State<'_, Db>,
     secrets: State<'_, Secrets>,
@@ -295,6 +298,16 @@ pub async fn ai_chat(
 
     // Build messages: system prompt + conversation history (context is inlined by frontend)
     let mut system_content = "You are a helpful reading assistant. Help the user understand and discuss the book they are reading.".to_string();
+    if let Some(ref title) = book_title {
+        system_content.push_str(&format!("\n\nThe user is currently reading \"{}\"", title));
+        if let Some(ref author) = book_author {
+            system_content.push_str(&format!(" by {}", author));
+        }
+        system_content.push('.');
+        if let Some(ref chapter) = current_chapter {
+            system_content.push_str(&format!(" They are on: {}.", chapter));
+        }
+    }
     if language == "zh" {
         system_content.push_str(" Always respond in Chinese (Simplified).");
     }
