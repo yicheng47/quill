@@ -42,7 +42,7 @@ export default function TableOfContents({
         node.style.right = `${window.innerWidth - rect.right}px`;
       }
     },
-    [anchorRef],
+    [anchorRef, alignLeft],
   );
 
   useEffect(() => {
