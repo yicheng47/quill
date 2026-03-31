@@ -135,11 +135,5 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 
-    app.run(|app_handle, event| {
-        if let tauri::RunEvent::ExitRequested { .. } = event {
-            if let Some(db) = app_handle.try_state::<Db>() {
-                let _ = icloud::wal_checkpoint(&db);
-            }
-        }
-    });
+    app.run(|_app_handle, _event| {});
 }

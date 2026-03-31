@@ -27,7 +27,7 @@ impl Db {
         let db_path = app_data_dir.join("quill.db");
         let conn = Connection::open(&db_path)?;
 
-        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
+        conn.execute_batch("PRAGMA journal_mode=DELETE; PRAGMA foreign_keys=ON;")?;
 
         Self::run_migrations(&conn)?;
 
