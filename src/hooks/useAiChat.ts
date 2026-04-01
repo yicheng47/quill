@@ -228,6 +228,7 @@ export function useAiChat(bookId?: string, bookContext?: BookContext) {
     }
   }, [bookId, refreshChats, loadChat]);
 
+  /* eslint-disable react-hooks/preserve-manual-memoization */
   const send = useCallback(
     async (content: string, context?: string, contextCfi?: string) => {
       let currentChatId = chatIdRef.current;
@@ -362,17 +363,21 @@ export function useAiChat(bookId?: string, bookContext?: BookContext) {
         streamingRef.current = false;
         unlistenRef.current?.();
         unlistenRef.current = null;
+        const errorContent = String(err).includes("AI_NOT_CONFIGURED")
+          ? "AI_NOT_CONFIGURED"
+          : `Error: ${err}`;
         updateMessages((prev) =>
           prev.map((m) =>
             m.id === assistantId
-              ? { ...m, content: `Error: ${err}` }
+              ? { ...m, content: errorContent }
               : m
           )
         );
       }
     },
-    [bookId, createChat, refreshChats]
+    [bookId, bookContext?.title, bookContext?.author, bookContext?.chapter, createChat, refreshChats]
   );
+  /* eslint-enable react-hooks/preserve-manual-memoization */
 
   const deleteChat = useCallback(async (id: string) => {
     const currentBookId = bookId;
