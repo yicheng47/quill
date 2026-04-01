@@ -51,6 +51,8 @@
   "ai.prompt.themes": "Explain the main themes",
   "ai.prompt.characters": "Who are the key characters?",
   "ai.noChats": "No chats yet",
+  "ai.notConfigured": "Set up your AI provider to use this feature",
+  "ai.openSettings": "Open AI Settings",
 
   "chats.title": "Chats",
   "chats.search": "Search chats...",

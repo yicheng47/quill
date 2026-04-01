@@ -33,7 +33,7 @@ export default function Home() {
       .catch(() => {});
   }, []);
 
-  // Listen for open-settings events from UpdateToast
+  // Listen for open-settings events (DOM from same window, storage from reader windows)
   useEffect(() => {
     const handler = (e: Event) => {
       const section = (e as CustomEvent).detail ?? "general";
@@ -41,7 +41,17 @@ export default function Home() {
       setSettingsOpen(true);
     };
     window.addEventListener("open-settings", handler);
-    return () => window.removeEventListener("open-settings", handler);
+
+    // Cross-window: reader uses emitTo("main", ...) — must use webview-specific listener
+    const unlisten = getCurrentWebview().listen<string>("open-settings", (event) => {
+      setSettingsSection((event.payload as typeof settingsSection) || "general");
+      setSettingsOpen(true);
+    });
+
+    return () => {
+      window.removeEventListener("open-settings", handler);
+      unlisten.then((fn) => fn());
+    };
   }, []);
 
   // Cmd+, to open settings

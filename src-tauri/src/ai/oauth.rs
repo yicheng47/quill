@@ -247,7 +247,7 @@ pub fn clear_tokens(secrets: &Secrets) -> AppResult<()> {
 /// Returns (access_token, account_id).
 pub async fn get_valid_token(secrets: &Secrets) -> AppResult<(String, Option<String>)> {
     let tokens = load_tokens(secrets).ok_or_else(|| {
-        AppError::Other("Not authenticated with OpenAI. Please log in via OAuth.".to_string())
+        AppError::Other("AI_NOT_CONFIGURED".to_string())
     })?;
 
     if tokens.expires_at > now_epoch() + 60 {

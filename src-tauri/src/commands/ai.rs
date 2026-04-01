@@ -60,6 +60,10 @@ pub async fn ai_lookup(
         let (token, acct_id) = crate::ai::oauth::get_valid_token(&secrets).await?;
         (token, acct_id)
     } else {
+        // Providers other than ollama require an API key
+        if api_key.is_empty() && provider != "ollama" {
+            return Err(AppError::Other("AI_NOT_CONFIGURED".to_string()));
+        }
         (api_key, None)
     };
 
@@ -293,6 +297,9 @@ pub async fn ai_chat(
         let (token, acct_id) = crate::ai::oauth::get_valid_token(&secrets).await?;
         (token, acct_id)
     } else {
+        if api_key.is_empty() && provider != "ollama" {
+            return Err(AppError::Other("AI_NOT_CONFIGURED".to_string()));
+        }
         (api_key, None)
     };
 

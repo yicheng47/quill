@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { X, Loader2, Sparkles, BookmarkPlus, Check, Copy } from "lucide-react";
+import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { X, Loader2, Sparkles, BookmarkPlus, Check, Copy, Settings } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 interface LookupPopoverProps {
@@ -26,6 +27,7 @@ function useStreamingLookup(
   const contentRef = useRef("");
   const [content, setContent] = useState("");
   const [streaming, setStreaming] = useState(true);
+  const [notConfigured, setNotConfigured] = useState(false);
   const unlistenRef = useRef<UnlistenFn | null>(null);
 
   useEffect(() => {
@@ -61,7 +63,12 @@ function useStreamingLookup(
         });
       } catch (err) {
         if (!cancelled) {
-          setContent(`Error: ${err}`);
+          const msg = String(err);
+          if (msg.includes("AI_NOT_CONFIGURED")) {
+            setNotConfigured(true);
+          } else {
+            setContent(`Error: ${msg}`);
+          }
           setStreaming(false);
         }
       }
@@ -76,7 +83,7 @@ function useStreamingLookup(
     };
   }, [word, sentence, bookTitle, chapter, kind]);
 
-  return { content, contentRef, streaming };
+  return { content, contentRef, streaming, notConfigured };
 }
 
 export default function LookupPopover({
@@ -116,6 +123,7 @@ export default function LookupPopover({
     ? definition.content.slice(definition.content.indexOf("\n") + 1).trim()
     : definition.content;
 
+  const aiNotConfigured = definition.notConfigured || context.notConfigured;
   const allDone = !definition.streaming && !context.streaming;
   const hasContent = definition.content || context.content;
 
@@ -232,8 +240,26 @@ export default function LookupPopover({
           <h3 className="text-[20px] font-bold text-text-primary leading-6">{word}</h3>
         </div>
 
+        {aiNotConfigured ? (
+          <div className="flex flex-col items-center gap-2 py-4 text-center">
+            <p className="text-[13px] text-text-muted">{t("ai.notConfigured")}</p>
+            <button
+              onClick={async () => {
+                onClose();
+                await invoke("open_settings_on_main", { section: "ai" });
+                const main = await WebviewWindow.getByLabel("main");
+                await main?.setFocus();
+              }}
+              className="flex items-center gap-1.5 text-[13px] font-medium text-accent-text hover:opacity-70 cursor-pointer"
+            >
+              <Settings size={14} />
+              {t("ai.openSettings")}
+            </button>
+          </div>
+        ) : null}
+
         {/* Definition section */}
-        {definition.streaming && !definition.content ? (
+        {!aiNotConfigured && (definition.streaming && !definition.content ? (
           <div className="flex items-center gap-1.5 py-1">
             <Loader2 size={14} className="animate-spin text-text-muted" />
             <span className="text-[13px] text-text-muted">{t("lookup.lookingUp")}</span>
@@ -250,10 +276,10 @@ export default function LookupPopover({
               )}
             </p>
           </>
-        )}
+        ))}
 
         {/* In this context — card */}
-        {(context.content || context.streaming) && (
+        {!aiNotConfigured && (context.content || context.streaming) && (
           <div className="mt-3 mb-1 p-3 rounded-lg bg-bg-muted border border-border/50">
             <span className="block text-[12px] font-medium text-text-muted mb-1">
               {t("lookup.inContext")}
