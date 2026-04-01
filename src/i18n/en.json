@@ -36,6 +36,8 @@
   "reader.bookNotFound": "Book not found",
   "reader.preparingBook": "Preparing book...",
   "reader.closeWindow": "Close",
+  "reader.downloadingFromICloud": "Downloading from iCloud...",
+  "reader.downloadTimeout": "Download is taking too long. Please check your internet connection.",
 
   "ai.newChat": "New Chat",
   "ai.generatingTitle": "Generating title...",

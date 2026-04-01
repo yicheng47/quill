@@ -5,6 +5,26 @@ import { openReaderWindow } from "../utils/openReaderWindow";
 import { deleteBook, markFinished, updateBookStatus } from "../hooks/useBooks";
 import BookContextMenu from "./BookContextMenu";
 import { useTranslation } from "react-i18next";
+import { CloudDownload } from "lucide-react";
+
+function CoverImage({ src, alt, title }: { src: string; alt: string; title: string }) {
+  const [failed, setFailed] = useState(false);
+  if (failed) {
+    return (
+      <div className="w-full h-full flex items-center justify-center bg-bg-muted">
+        <span className="text-[14px] text-text-muted text-center px-4">{title}</span>
+      </div>
+    );
+  }
+  return (
+    <img
+      src={src}
+      alt={alt}
+      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
+      onError={() => setFailed(true)}
+    />
+  );
+}
 
 interface BookGridProps {
   books: Book[];
@@ -31,17 +51,13 @@ export default function BookGrid({ books, activeCollectionId, onBooksChanged }: 
         {books.map((book) => (
           <button
             key={book.id}
-            onClick={() => openReaderWindow(book.id)}
+            onClick={() => book.available !== false && openReaderWindow(book.id)}
             onContextMenu={(e) => handleContextMenu(e, book)}
-            className="text-left cursor-pointer group"
+            className={`text-left cursor-pointer group ${book.available === false ? "opacity-60" : ""}`}
           >
             <div className="relative bg-border rounded-lg overflow-hidden shadow-card aspect-[3/4]">
               {book.cover_path ? (
-                <img
-                  src={convertFileSrc(book.cover_path)}
-                  alt={book.title}
-                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
-                />
+                <CoverImage src={convertFileSrc(book.cover_path)} alt={book.title} title={book.title} />
               ) : (
                 <div className="w-full h-full flex items-center justify-center bg-bg-muted">
                   <span className="text-[14px] text-text-muted text-center px-4">
@@ -49,7 +65,12 @@ export default function BookGrid({ books, activeCollectionId, onBooksChanged }: 
                   </span>
                 </div>
               )}
-              {book.status === "finished" && (
+              {book.available === false && (
+                <div className="absolute inset-0 flex items-center justify-center bg-black/30">
+                  <CloudDownload size={32} className="text-white" />
+                </div>
+              )}
+              {book.status === "finished" && book.available !== false && (
                 <div className="absolute top-2 right-2 bg-success text-white text-[12px] px-2 py-1 rounded-full">
                   {t("bookGrid.finished")}
                 </div>

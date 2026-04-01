@@ -17,6 +17,7 @@ export interface Book {
   current_cfi: string | null;
   created_at: string;
   updated_at: string;
+  available: boolean;
 }
 
 export function useBooks(filter?: string, search?: string) {
@@ -97,4 +98,8 @@ export async function markFinished(id: string): Promise<void> {
 
 export async function updateBookStatus(id: string, status: "reading" | "finished" | "unread"): Promise<void> {
   return invoke("update_book_status", { id, status });
+}
+
+export async function checkBookAvailable(id: string): Promise<boolean> {
+  return invoke<boolean>("check_book_available", { id });
 }

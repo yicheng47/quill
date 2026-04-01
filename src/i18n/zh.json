@@ -36,6 +36,8 @@
   "reader.bookNotFound": "未找到书籍",
   "reader.preparingBook": "正在准备书籍...",
   "reader.closeWindow": "关闭",
+  "reader.downloadingFromICloud": "正在从 iCloud 下载...",
+  "reader.downloadTimeout": "下载时间过长，请检查网络连接。",
 
   "ai.newChat": "新对话",
   "ai.generatingTitle": "正在生成标题...",
