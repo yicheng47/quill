@@ -246,11 +246,9 @@ export default function LookupPopover({
             <button
               onClick={async () => {
                 onClose();
+                await invoke("open_settings_on_main", { section: "ai" });
                 const main = await WebviewWindow.getByLabel("main");
-                if (main) {
-                  await main.emit("open-settings", "ai");
-                  await main.setFocus();
-                }
+                await main?.setFocus();
               }}
               className="flex items-center gap-1.5 text-[13px] font-medium text-accent-text hover:opacity-70 cursor-pointer"
             >

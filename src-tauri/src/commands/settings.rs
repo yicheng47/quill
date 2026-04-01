@@ -1,6 +1,6 @@
 use rusqlite::params;
 use std::collections::HashMap;
-use tauri::State;
+use tauri::{AppHandle, Emitter, State};
 
 use crate::db::Db;
 use crate::error::{AppError, AppResult};
@@ -68,5 +68,13 @@ pub fn set_settings_bulk(settings: HashMap<String, String>, db: State<'_, Db>, s
             )?;
         }
     }
+    Ok(())
+}
+
+/// Emit an open-settings event to the main window from any window.
+#[tauri::command]
+pub fn open_settings_on_main(section: String, app: AppHandle) -> AppResult<()> {
+    app.emit_to("main", "open-settings", &section)
+        .map_err(|e| AppError::Other(e.to_string()))?;
     Ok(())
 }
