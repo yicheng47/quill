@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { Sparkles, Send, Loader2, Plus, ChevronDown, ChevronUp, Trash2, Settings } from "lucide-react";
-import { emit } from "@tauri-apps/api/event";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import Markdown from "react-markdown";
 import { useAiChat, type ChatMessage } from "../hooks/useAiChat";
@@ -290,9 +289,11 @@ function MessageBubble({ msg, messages, streaming, onNavigateToCfi }: { msg: Cha
           <p className="text-[14px] text-text-muted mb-2">{t("ai.notConfigured")}</p>
           <button
             onClick={async () => {
-              await emit("open-settings", "ai");
               const main = await WebviewWindow.getByLabel("main");
-              main?.setFocus();
+              if (main) {
+                await main.emit("open-settings", "ai");
+                await main.setFocus();
+              }
             }}
             className="flex items-center gap-1.5 text-[13px] font-medium text-accent-text hover:opacity-70 cursor-pointer"
           >

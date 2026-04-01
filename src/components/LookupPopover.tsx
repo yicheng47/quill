@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen, emit, type UnlistenFn } from "@tauri-apps/api/event";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { X, Loader2, Sparkles, BookmarkPlus, Check, Copy, Settings } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -246,9 +246,11 @@ export default function LookupPopover({
             <button
               onClick={async () => {
                 onClose();
-                await emit("open-settings", "ai");
                 const main = await WebviewWindow.getByLabel("main");
-                main?.setFocus();
+                if (main) {
+                  await main.emit("open-settings", "ai");
+                  await main.setFocus();
+                }
               }}
               className="flex items-center gap-1.5 text-[13px] font-medium text-accent-text hover:opacity-70 cursor-pointer"
             >

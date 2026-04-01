@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Search, LayoutGrid, List, Plus, Upload, BookOpen, Loader } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { listen } from "@tauri-apps/api/event";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import Sidebar from "../components/Sidebar";
 import BookGrid from "../components/BookGrid";
 import BookList from "../components/BookList";
@@ -44,7 +44,7 @@ export default function Home() {
     window.addEventListener("open-settings", handler);
 
     // Also listen for Tauri events from other windows (e.g. reader)
-    const unlisten = listen<string>("open-settings", (event) => {
+    const unlisten = getCurrentWebviewWindow().listen<string>("open-settings", (event) => {
       setSettingsSection((event.payload as typeof settingsSection) || "general");
       setSettingsOpen(true);
     });
