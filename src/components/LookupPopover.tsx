@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen, emitTo, type UnlistenFn } from "@tauri-apps/api/event";
+import { listen, emit, type UnlistenFn } from "@tauri-apps/api/event";
+import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { X, Loader2, Sparkles, BookmarkPlus, Check, Copy, Settings } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
@@ -243,9 +244,11 @@ export default function LookupPopover({
           <div className="flex flex-col items-center gap-2 py-4 text-center">
             <p className="text-[13px] text-text-muted">{t("ai.notConfigured")}</p>
             <button
-              onClick={() => {
-                emitTo("main", "open-settings", "ai");
+              onClick={async () => {
                 onClose();
+                await emit("open-settings", "ai");
+                const main = await WebviewWindow.getByLabel("main");
+                main?.setFocus();
               }}
               className="flex items-center gap-1.5 text-[13px] font-medium text-accent-text hover:opacity-70 cursor-pointer"
             >
