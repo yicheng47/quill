@@ -16,3 +16,4 @@ Specs for features that are in progress or planned. Shipped feature specs have b
 - [20 — Multi-Window Reader & Enhanced Reader Chrome](20-multi-window-reader.md)
 - [21 — AI Auto-Sort Books into Collections](21-ai-auto-sort-collections.md)
 - [22 — AI Book Recommendations](22-book-recommendations.md)
+- [23 — Standalone Chat View](23-standalone-chat-view.md)
