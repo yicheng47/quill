@@ -23,7 +23,7 @@ import HighlightToolbar from "../components/HighlightToolbar";
 import LookupPopover from "../components/LookupPopover";
 import DictionaryPanel from "../components/DictionaryPanel";
 import TableOfContents from "../components/TableOfContents";
-import { getBook, updateReadingProgress, type Book } from "../hooks/useBooks";
+import { getBook, updateReadingProgress, checkBookAvailable, type Book } from "../hooks/useBooks";
 import { getAllSettings } from "../hooks/useSettings";
 import type { Highlight } from "../hooks/useBookmarks";
 
@@ -192,6 +192,8 @@ export default function Reader() {
   const [pageInfo, setPageInfo] = useState<{ current: number; total: number } | null>(null);
   const currentCfiRef = useRef<string | null>(null);
   const [bookReady, setBookReady] = useState(false);
+  const [icloudDownloading, setIcloudDownloading] = useState(false);
+  const [icloudTimeout, setIcloudTimeout] = useState(false);
   const [contextMenu, setContextMenu] = useState<{
     x: number;
     y: number;
@@ -291,9 +293,40 @@ export default function Reader() {
     }).catch(() => {});
   }, [readerSettings]);
 
+  // Wait for iCloud download if book is not locally available
+  useEffect(() => {
+    if (!book || book.available !== false) return;
+
+    setIcloudDownloading(true);
+    setIcloudTimeout(false);
+    let cancelled = false;
+    const startTime = Date.now();
+
+    const poll = async () => {
+      while (!cancelled) {
+        if (Date.now() - startTime > 60_000) {
+          setIcloudTimeout(true);
+          return;
+        }
+        const available = await checkBookAvailable(book.id).catch(() => false);
+        if (available) {
+          // Re-fetch book to get updated available flag
+          const updated = await getBook(book.id).catch(() => null);
+          if (updated) setBook(updated);
+          setIcloudDownloading(false);
+          return;
+        }
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+    };
+
+    poll();
+    return () => { cancelled = true; };
+  }, [book?.id, book?.available]);
+
   // Initialize foliate-js when book data is loaded
   useEffect(() => {
-    if (!book || !viewerRef.current) return;
+    if (!book || !viewerRef.current || book.available === false) return;
 
     const container = viewerRef.current;
     container.innerHTML = "";
@@ -833,6 +866,21 @@ export default function Reader() {
     return (
       <div className="flex items-center justify-center h-screen">
         <p>{t("reader.bookNotFound")}</p>
+      </div>
+    );
+  }
+
+  if (icloudDownloading) {
+    return (
+      <div className="flex flex-col items-center justify-center h-screen gap-3">
+        {icloudTimeout ? (
+          <p className="text-text-muted text-[14px]">{t("reader.downloadTimeout")}</p>
+        ) : (
+          <>
+            <Loader2 size={24} className="text-accent animate-spin" />
+            <p className="text-text-muted text-[14px]">{t("reader.downloadingFromICloud")}</p>
+          </>
+        )}
       </div>
     );
   }

@@ -6,6 +6,7 @@ use tauri::State;
 use crate::db::Db;
 use crate::epub;
 use crate::error::{AppError, AppResult};
+use crate::icloud;
 
 /// Sanitize a book title into a safe filename slug.
 /// Keeps alphanumeric, spaces (→ hyphens), and common punctuation, then truncates.
@@ -53,9 +54,17 @@ pub struct Book {
     pub current_cfi: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    /// Whether the book file is locally available (not an iCloud placeholder).
+    #[serde(default = "default_true")]
+    pub available: bool,
 }
 
-/// Resolve relative paths in a Book to absolute using data_dir.
+fn default_true() -> bool {
+    true
+}
+
+/// Resolve relative paths in a Book to absolute using data_dir,
+/// and check whether the book file is locally available.
 fn resolve_book_paths(book: &mut Book, db: &Db) {
     if !std::path::Path::new(&book.file_path).is_absolute() {
         book.file_path = db
@@ -72,6 +81,7 @@ fn resolve_book_paths(book: &mut Book, db: &Db) {
             );
         }
     }
+    book.available = icloud::is_file_downloaded(std::path::Path::new(&book.file_path));
 }
 
 #[tauri::command]
@@ -116,6 +126,7 @@ pub async fn import_book(file_path: String, db: State<'_, Db>) -> AppResult<Book
         current_cfi: None,
         created_at: now.clone(),
         updated_at: now,
+        available: true,
     };
 
     let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
@@ -208,6 +219,7 @@ pub fn list_books(
             current_cfi: row.get(11)?,
             created_at: row.get(12)?,
             updated_at: row.get(13)?,
+            available: true, // resolved by resolve_book_paths below
         })
     })?
     .collect::<Result<Vec<_>, _>>()?;
@@ -242,12 +254,33 @@ pub fn get_book(id: String, db: State<'_, Db>) -> AppResult<Book> {
                 current_cfi: row.get(11)?,
                 created_at: row.get(12)?,
                 updated_at: row.get(13)?,
+                available: true, // resolved by resolve_book_paths below
             })
         },
     )?;
 
     resolve_book_paths(&mut book, &db);
     Ok(book)
+}
+
+/// Check if a book's file is locally available and trigger iCloud download if not.
+#[tauri::command]
+pub fn check_book_available(id: String, db: State<'_, Db>) -> AppResult<bool> {
+    let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
+    let file_path: String = conn.query_row(
+        "SELECT file_path FROM books WHERE id = ?1",
+        params![id],
+        |row| row.get(0),
+    )?;
+
+    let abs_path = db.resolve_path(&file_path);
+    let available = icloud::is_file_downloaded(&abs_path);
+
+    if !available {
+        icloud::trigger_download_file(&abs_path);
+    }
+
+    Ok(available)
 }
 
 #[tauri::command]
@@ -389,6 +422,7 @@ pub async fn import_pdf(
         current_cfi: None,
         created_at: now.clone(),
         updated_at: now,
+        available: true,
     };
 
     let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
@@ -558,6 +592,7 @@ mod tests {
                 current_cfi: row.get(11)?,
                 created_at: row.get(12)?,
                 updated_at: row.get(13)?,
+                available: true,
             })
         }).unwrap().collect::<Result<Vec<_>, _>>().unwrap();
 
@@ -624,7 +659,7 @@ mod tests {
                 description: row.get(3)?, cover_path: row.get(4)?, file_path: row.get(5)?,
                 format: row.get(6)?, genre: row.get(7)?, pages: row.get(8)?,
                 status: row.get(9)?, progress: row.get(10)?, current_cfi: row.get(11)?,
-                created_at: row.get(12)?, updated_at: row.get(13)?,
+                created_at: row.get(12)?, updated_at: row.get(13)?, available: true,
             }),
         ).unwrap();
 
@@ -652,7 +687,7 @@ mod tests {
                 description: row.get(3)?, cover_path: row.get(4)?, file_path: row.get(5)?,
                 format: row.get(6)?, genre: row.get(7)?, pages: row.get(8)?,
                 status: row.get(9)?, progress: row.get(10)?, current_cfi: row.get(11)?,
-                created_at: row.get(12)?, updated_at: row.get(13)?,
+                created_at: row.get(12)?, updated_at: row.get(13)?, available: true,
             }),
         ).unwrap();
 

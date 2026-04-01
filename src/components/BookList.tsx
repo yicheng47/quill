@@ -1,10 +1,29 @@
 import { useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { openReaderWindow } from "../utils/openReaderWindow";
-import { Check } from "lucide-react";
+import { Check, CloudDownload } from "lucide-react";
 import type { Book } from "../hooks/useBooks";
 import { deleteBook, markFinished, updateBookStatus } from "../hooks/useBooks";
 import BookContextMenu from "./BookContextMenu";
+
+function CoverImage({ src, alt, title }: { src: string; alt: string; title: string }) {
+  const [failed, setFailed] = useState(false);
+  if (failed) {
+    return (
+      <div className="w-full h-full flex items-center justify-center bg-bg-muted">
+        <span className="text-[10px] text-text-muted text-center px-1">{title}</span>
+      </div>
+    );
+  }
+  return (
+    <img
+      src={src}
+      alt={alt}
+      className="w-full h-full object-cover"
+      onError={() => setFailed(true)}
+    />
+  );
+}
 
 interface BookListProps {
   books: Book[];
@@ -30,18 +49,14 @@ export default function BookList({ books, activeCollectionId, onBooksChanged }: 
         {books.map((book) => (
           <button
             key={book.id}
-            onClick={() => openReaderWindow(book.id)}
+            onClick={() => book.available !== false && openReaderWindow(book.id)}
             onContextMenu={(e) => handleContextMenu(e, book)}
-            className="flex items-start gap-4 p-4 border border-border rounded-lg text-left cursor-pointer hover:bg-bg-muted transition-colors"
+            className={`flex items-start gap-4 p-4 border border-border rounded-lg text-left cursor-pointer hover:bg-bg-muted transition-colors ${book.available === false ? "opacity-60" : ""}`}
           >
             {/* Cover */}
             <div className="relative w-[96px] h-[144px] shrink-0 rounded-lg overflow-hidden bg-border shadow-card">
               {book.cover_path ? (
-                <img
-                  src={convertFileSrc(book.cover_path)}
-                  alt={book.title}
-                  className="w-full h-full object-cover"
-                />
+                <CoverImage src={convertFileSrc(book.cover_path)} alt={book.title} title={book.title} />
               ) : (
                 <div className="w-full h-full flex items-center justify-center bg-bg-muted">
                   <span className="text-[10px] text-text-muted text-center px-1">
@@ -49,7 +64,12 @@ export default function BookList({ books, activeCollectionId, onBooksChanged }: 
                   </span>
                 </div>
               )}
-              {book.status === "finished" && (
+              {book.available === false && (
+                <div className="absolute inset-0 flex items-center justify-center bg-black/30">
+                  <CloudDownload size={24} className="text-white" />
+                </div>
+              )}
+              {book.status === "finished" && book.available !== false && (
                 <div className="absolute top-1 right-1 w-[22px] h-[20px] bg-success rounded-full flex items-center justify-center">
                   <Check size={12} className="text-white" strokeWidth={3} />
                 </div>
