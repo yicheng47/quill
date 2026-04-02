@@ -1,19 +1,14 @@
 # Feature Specs
 
-Specs for features that are in progress or planned. Shipped feature specs have been removed — the implementation is the source of truth. Bug and feature tracking lives in [GitHub Issues](https://github.com/yicheng47/quill/issues).
+Specs for features that are in progress or planned. Shipped specs are moved to [`../archive/features/`](../archive/features/). Bug and feature tracking lives in [GitHub Issues](https://github.com/yicheng47/quill/issues).
 
 ## In progress / Planned
 
-- [11 — i18n](11-i18n.md)
-- [12 — Auto-Update](12-auto-update.md)
-- [13 — Settings Modal & User Profile Region](13-settings-modal.md)
 - [14 — Notes (AI-Assisted)](14-notes.md)
 - [15 — AI Translation](15-ai-translation.md)
 - [16 — Universal Cloud Sync](16-universal-cloud-sync.md)
 - [17 — Voice (TTS)](17-voice-tts.md)
 - [18 — AI Summarization](18-ai-summarization.md)
-- [19 — Reading Status Control](19-reading-status-control.md)
-- [20 — Multi-Window Reader & Enhanced Reader Chrome](20-multi-window-reader.md)
 - [21 — AI Auto-Sort Books into Collections](21-ai-auto-sort-collections.md)
 - [22 — AI Book Recommendations](22-book-recommendations.md)
-- [23 — Standalone Chat View](23-standalone-chat-view.md)
+- [24 — Edit Book Metadata](24-edit-book-metadata.md)
