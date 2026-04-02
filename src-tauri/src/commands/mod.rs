@@ -6,4 +6,5 @@ pub mod collections;
 pub mod icloud;
 pub mod oauth;
 pub mod settings;
+pub mod translation;
 pub mod vocab;

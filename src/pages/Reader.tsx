@@ -22,6 +22,7 @@ import ReaderContextMenu from "../components/ReaderContextMenu";
 import HighlightToolbar from "../components/HighlightToolbar";
 import LookupPopover from "../components/LookupPopover";
 import DictionaryPanel from "../components/DictionaryPanel";
+import TranslationPopover from "../components/TranslationPopover";
 import TableOfContents from "../components/TableOfContents";
 import { getBook, updateReadingProgress, checkBookAvailable, type Book } from "../hooks/useBooks";
 import { getAllSettings } from "../hooks/useSettings";
@@ -210,6 +211,13 @@ export default function Reader() {
     sentence: string;
     bookTitle?: string;
     chapter?: string;
+    cfi?: string;
+  } | null>(null);
+  const [translation, setTranslation] = useState<{
+    x: number;
+    y: number;
+    text: string;
+    context?: string;
     cfi?: string;
   } | null>(null);
   const [highlightToolbar, setHighlightToolbar] = useState<{
@@ -1245,6 +1253,16 @@ export default function Reader() {
             });
             setContextMenu(null);
           }}
+          onTranslate={() => {
+            setTranslation({
+              x: contextMenu.x,
+              y: contextMenu.y,
+              text: contextMenu.text,
+              context: contextMenu.sentence,
+              cfi: contextMenu.cfiRange,
+            });
+            setContextMenu(null);
+          }}
           onHighlight={(color) => {
             const cfiRange = contextMenu.cfiRange;
             if (cfiRange && bookId) {
@@ -1273,6 +1291,18 @@ export default function Reader() {
           bookId={bookId!}
           cfi={lookup.cfi}
           onClose={() => setLookup(null)}
+        />
+      )}
+
+      {translation && (
+        <TranslationPopover
+          x={translation.x}
+          y={translation.y}
+          text={translation.text}
+          context={translation.context}
+          bookId={bookId!}
+          cfi={translation.cfi}
+          onClose={() => setTranslation(null)}
         />
       )}
 

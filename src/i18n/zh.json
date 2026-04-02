@@ -6,6 +6,7 @@
   "sidebar.tools": "工具",
   "sidebar.dictionary": "词典",
   "sidebar.chats": "对话",
+  "sidebar.translations": "翻译",
   "sidebar.collections": "书单",
   "sidebar.collectionPlaceholder": "书单名称...",
   "sidebar.renameCollection": "重命名",
@@ -109,6 +110,7 @@
 
   "contextMenu.lookUp": "查词",
   "contextMenu.askAI": "询问 AI 助手",
+  "contextMenu.translate": "翻译",
   "contextMenu.highlight": "高亮",
   "contextMenu.copy": "复制",
 
@@ -157,6 +159,7 @@
   "settings.general.themeHint": "选择你偏好的配色方案",
 
   "settings.language": "语言",
+  "settings.language.subtitle": "系统语言与母语",
   "settings.languageSub": "选择你的首选语言",
 
   "settings.reading.title": "阅读",
@@ -284,6 +287,24 @@
   "common.search": "搜索...",
   "common.unknownBook": "未知书籍",
   "common.bookmark": "书签",
+
+  "translation.title": "翻译",
+  "translation.original": "原文",
+  "translation.translating": "翻译中...",
+  "translation.save": "保存",
+  "translation.saved": "已保存",
+  "translation.copy": "复制",
+  "translation.copied": "已复制",
+  "translation.empty": "暂无保存的翻译",
+  "translation.emptySub": "阅读时选中文本，使用「翻译」查看译文，然后点击「保存」将其添加到这里。",
+  "translation.panelEmpty": "暂无保存的翻译",
+  "translation.panelEmptySub": "选中文本后使用「翻译」，然后点击保存",
+  "translation.noMatches": "未找到匹配",
+  "translation.search": "搜索翻译...",
+  "translation.newest": "最新",
+  "translation.oldest": "最早",
+  "translation.count_one": "{{count}} 条翻译",
+  "translation.count_other": "{{count}} 条翻译",
 
   "time.justNow": "刚刚",
   "time.minutesAgo": "{{count}}分钟前",

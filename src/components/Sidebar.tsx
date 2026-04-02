@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useTranslation } from "react-i18next";
-import { Library, BookOpen, CheckCircle2, Sparkles, BookA, Plus, MessageSquare, Pencil, Trash2, GripVertical } from "lucide-react";
+import { Library, BookOpen, CheckCircle2, Sparkles, BookA, Plus, MessageSquare, Globe, Pencil, Trash2, GripVertical } from "lucide-react";
 import Button from "./ui/Button";
 import QuillLogo from "./QuillLogo";
 import type { Book } from "../hooks/useBooks";
@@ -205,6 +205,19 @@ export default function Sidebar({ activeFilter, onFilterChange, books, collectio
               activeFilter === "chats" ? "text-accent-text" : "text-text-secondary"
             }`}>
               {t("sidebar.chats")}
+            </span>
+          </button>
+          <button
+            onClick={() => onFilterChange("translations")}
+            className={`flex items-center gap-2 px-3 h-9 rounded-lg w-full cursor-pointer ${
+              activeFilter === "translations" ? "bg-accent-bg" : "hover:bg-bg-input"
+            }`}
+          >
+            <Globe size={16} className={activeFilter === "translations" ? "text-accent-text" : "text-text-muted"} />
+            <span className={`text-[14px] font-medium tracking-[-0.15px] ${
+              activeFilter === "translations" ? "text-accent-text" : "text-text-secondary"
+            }`}>
+              {t("sidebar.translations")}
             </span>
           </button>
         </div>

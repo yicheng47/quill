@@ -129,6 +129,11 @@ pub fn run() {
             commands::chats::rename_chat,
             commands::chats::list_chat_messages,
             commands::chats::save_chat_message,
+            // Translation
+            commands::translation::ai_translate_passage,
+            commands::translation::save_translation,
+            commands::translation::remove_saved_translation,
+            commands::translation::list_translations,
             // iCloud
             commands::icloud::icloud_status,
             commands::icloud::icloud_enable,
