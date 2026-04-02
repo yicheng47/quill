@@ -137,5 +137,18 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 
-    app.run(|_app_handle, _event| {});
+    app.run(|app_handle, event| {
+        if let tauri::RunEvent::WindowEvent {
+            label,
+            event: tauri::WindowEvent::Destroyed,
+            ..
+        } = &event
+        {
+            if label == "main" {
+                for (_, window) in app_handle.webview_windows() {
+                    let _ = window.close();
+                }
+            }
+        }
+    });
 }
