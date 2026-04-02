@@ -61,6 +61,7 @@ Add `sha2 = "0.10"` to `Cargo.toml` dependencies.
 #[tauri::command]
 pub async fn ai_translate_passage(
     text: String,
+    context: Option<String>,  // surrounding paragraph for short selections
     book_id: String,
     section_index: Option<i64>,
     target_language: Option<String>,
@@ -77,12 +78,36 @@ Logic:
 2. Compute `source_hash` = SHA-256 hex of `text`.
 3. Query `translations` for a hit on `(book_id, section_index, source_hash, target_language)`.
 4. **Cache hit**: emit cached `translated_text` as `AiStreamChunk` events on `ai-translate-chunk-{request_id}`. Return the row `id` so the frontend knows it already exists.
-5. **Cache miss**: read AI provider settings (same pattern as `ai_lookup` in `commands/ai.rs:34-54`), build translation system prompt, spawn async streaming task. Accumulate full response, insert into `translations` with `saved = 0` on completion. Return `null`.
+5. **Cache miss**: read AI provider settings (same pattern as `ai_lookup` in `commands/ai.rs:34-54`), build context-aware translation prompt, spawn async streaming task. Accumulate full response, insert into `translations` with `saved = 0` on completion. Return `null`.
 
-System prompt:
+**Context-aware prompt design:**
+
+When `context` is provided and differs from `text` (short selection within a paragraph):
 ```
-You are a translator. Translate the following passage into {target_language}.
-Produce only the translation — no commentary, no labels, no original text.
+You are a translator embedded in an ebook reader. The user selected a portion
+of text they want translated into {target_language}.
+
+Full paragraph for context:
+"{context}"
+
+Translate ONLY the selected portion below — not the full paragraph. Use the
+surrounding context to ensure accuracy of meaning, tone, and any pronouns
+or references.
+
+Selected text:
+"{text}"
+
+Produce only the translation. No commentary, no labels, no original text.
+```
+
+When `context` is absent or same as `text` (full paragraph or long selection):
+```
+You are a translator embedded in an ebook reader. Translate the following
+passage into {target_language}.
+
+"{text}"
+
+Produce only the translation. No commentary, no labels, no original text.
 Preserve paragraph structure and tone.
 ```
 
@@ -173,6 +198,7 @@ interface TranslationPopoverProps {
   x: number;
   y: number;
   text: string;
+  context?: string;  // surrounding paragraph for short selections
   bookId: string;
   sectionIndex?: number;
   cfi?: string;
@@ -232,6 +258,7 @@ Full-page translations view in the main window. Same pattern as `DictionaryConte
    ```typescript
    const [translation, setTranslation] = useState<{
      x: number; y: number; text: string;
+     context?: string;  // surrounding paragraph for short selections
      sectionIndex?: number; cfi?: string;
    } | null>(null);
    ```
@@ -242,6 +269,7 @@ Full-page translations view in the main window. Same pattern as `DictionaryConte
      setTranslation({
        x: contextMenu.x, y: contextMenu.y,
        text: contextMenu.text,
+       context: contextMenu.sentence,  // block-level surrounding text
        sectionIndex: currentChapterIndex >= 0 ? currentChapterIndex : undefined,
        cfi: contextMenu.cfiRange,
      });

@@ -8,6 +8,7 @@ import BookGrid from "../components/BookGrid";
 import BookList from "../components/BookList";
 import DictionaryContent from "../components/DictionaryContent";
 import ChatsContent from "../components/ChatsContent";
+import TranslationsContent from "../components/TranslationsContent";
 import SettingsModal from "../components/SettingsModal";
 import Button from "../components/ui/Button";
 import Input from "../components/ui/Input";
@@ -199,6 +200,8 @@ export default function Home() {
         <DictionaryContent />
       ) : activeFilter === "chats" ? (
         <ChatsContent />
+      ) : activeFilter === "translations" ? (
+        <TranslationsContent />
       ) : (
         <main className="flex-1 flex flex-col min-w-0">
           <div className="border-b border-border px-page pb-section relative select-none">

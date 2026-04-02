@@ -1,15 +1,16 @@
 import { useState, useEffect, useRef, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { Globe, BookOpen, Bot, Search, Cloud, Info, X, ChevronRight } from "lucide-react";
+import { Globe, BookOpen, Bot, Search, Languages, Cloud, Info, X, ChevronRight } from "lucide-react";
 import GeneralSettings from "./settings/GeneralSettings";
 import ReadingSettings from "./settings/ReadingSettings";
 import AiSettings from "./settings/AiSettings";
+import LanguageSettings from "./settings/LanguageSettings";
 import LookupSettings from "./settings/LookupSettings";
 import ICloudSettings from "./settings/ICloudSettings";
 import AboutSettings from "./settings/AboutSettings";
 import { useSettings } from "../hooks/useSettings";
 
-type Section = "general" | "reading" | "ai" | "lookup" | "icloud" | "about";
+type Section = "general" | "language" | "reading" | "ai" | "lookup" | "icloud" | "about";
 
 interface SettingsModalProps {
   open: boolean;
@@ -57,6 +58,7 @@ export default function SettingsModal({ open, onClose, initialSection = "general
 
   const allSections: { id: Section; label: string; subtitle: string; icon: typeof Globe }[] = [
     { id: "general", label: t("settings.general.title"), subtitle: t("settings.general.subtitle"), icon: Globe },
+    { id: "language", label: t("settings.language"), subtitle: t("settings.language.subtitle"), icon: Languages },
     { id: "reading", label: t("settings.reading.title"), subtitle: t("settings.reading.subtitle"), icon: BookOpen },
     { id: "ai", label: t("settings.ai.shortTitle"), subtitle: t("settings.ai.shortSubtitle"), icon: Bot },
     { id: "lookup", label: t("settings.lookup.title"), subtitle: t("settings.lookup.shortSub"), icon: Search },
@@ -71,6 +73,7 @@ export default function SettingsModal({ open, onClose, initialSection = "general
   const renderContent = (): ReactNode => {
     switch (activeSection) {
       case "general": return <GeneralSettings {...settingsProps} />;
+      case "language": return <LanguageSettings {...settingsProps} />;
       case "reading": return <ReadingSettings {...settingsProps} />;
       case "ai": return <AiSettings {...settingsProps} onDirtyChange={setAiDirty} onSaveRef={(fn) => { aiSaveRef.current = fn; }} />;
       case "lookup": return <LookupSettings {...settingsProps} />;

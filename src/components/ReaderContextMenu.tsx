@@ -4,6 +4,7 @@ import {
   Bot,
   Sparkles,
   Highlighter,
+  Languages,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
@@ -23,6 +24,7 @@ interface ReaderContextMenuProps {
   onCopy: () => void;
   onAskAI: () => void;
   onLookup: () => void;
+  onTranslate: () => void;
   onHighlight?: (color: string) => void;
 }
 
@@ -34,6 +36,7 @@ export default function ReaderContextMenu({
   onCopy,
   onAskAI,
   onLookup,
+  onTranslate,
   onHighlight,
 }: ReaderContextMenuProps) {
   const { t } = useTranslation();
@@ -99,6 +102,17 @@ export default function ReaderContextMenu({
         <Bot size={16} className="text-text-muted" />
         <span className="flex-1 text-[13px] font-medium text-text-primary tracking-[-0.08px]">
           {t("contextMenu.askAI")}
+        </span>
+      </button>
+
+      {/* Translate */}
+      <button
+        onClick={onTranslate}
+        className="flex items-center gap-3 w-[calc(100%-8px)] mx-1 px-3 h-[31.5px] rounded-sm text-left cursor-pointer hover:bg-accent-bg transition-colors"
+      >
+        <Languages size={16} className="text-text-muted" />
+        <span className="flex-1 text-[13px] font-medium text-text-primary tracking-[-0.08px]">
+          {t("contextMenu.translate")}
         </span>
       </button>
 

@@ -1,51 +1,25 @@
 import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { Sparkles, X } from "lucide-react";
-import Select from "../ui/Select";
 import Toggle from "../ui/Toggle";
 import type { SettingsProps } from "./types";
 
 export default function LookupSettings({ settings, loading, save, showSavedToast }: SettingsProps) {
   const { t, i18n } = useTranslation();
-  const [nativeLanguage, setNativeLanguage] = useState("en");
   const [showTranslation, setShowTranslation] = useState(false);
 
   const language = i18n.language;
+  const nativeLanguage = settings.native_language || "en";
 
   useEffect(() => {
     if (loading) return;
-    if (settings.native_language) setNativeLanguage(settings.native_language);
     if (settings.show_translation) setShowTranslation(settings.show_translation === "true");
   }, [settings, loading]);
 
+  if (loading) return null;
+
   return (
     <div>
-      {/* Native Language */}
-      <div className="flex items-center justify-between h-[73px]">
-        <div>
-          <p className="text-[14px] font-medium text-text-primary tracking-[-0.15px]">
-            {t("settings.lookup.nativeLanguage")}
-          </p>
-          <p className="text-[12px] text-text-muted mt-0.5">
-            {t("settings.lookup.nativeLanguageHint")}
-          </p>
-        </div>
-        <Select
-          className="w-[130px] shrink-0"
-          value={nativeLanguage}
-          onChange={(lang) => {
-            setNativeLanguage(lang);
-            save("native_language", lang);
-            showSavedToast();
-          }}
-          options={[
-            { value: "en", label: "English" },
-            { value: "zh", label: "简体中文" },
-          ]}
-        />
-      </div>
-      <div className="h-px bg-black/10" />
-
       {/* Show Translation */}
       <div className="flex items-center justify-between h-[73px]">
         <div>

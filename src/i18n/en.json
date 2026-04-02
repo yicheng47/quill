@@ -6,6 +6,7 @@
   "sidebar.tools": "Tools",
   "sidebar.dictionary": "Dictionary",
   "sidebar.chats": "Chats",
+  "sidebar.translations": "Translations",
   "sidebar.collections": "Collections",
   "sidebar.collectionPlaceholder": "Collection name...",
   "sidebar.renameCollection": "Rename",
@@ -109,6 +110,7 @@
 
   "contextMenu.lookUp": "Look Up",
   "contextMenu.askAI": "Ask AI Assistant",
+  "contextMenu.translate": "Translate",
   "contextMenu.highlight": "Highlight",
   "contextMenu.copy": "Copy",
 
@@ -157,6 +159,7 @@
   "settings.general.themeHint": "Choose your preferred color scheme",
 
   "settings.language": "Language",
+  "settings.language.subtitle": "System language & native language",
   "settings.languageSub": "Choose your preferred language",
 
   "settings.reading.title": "Reading",
@@ -282,6 +285,24 @@
   "common.search": "Search...",
   "common.unknownBook": "Unknown Book",
   "common.bookmark": "Bookmark",
+
+  "translation.title": "Translation",
+  "translation.original": "Original",
+  "translation.translating": "Translating...",
+  "translation.save": "Save",
+  "translation.saved": "Saved",
+  "translation.copy": "Copy",
+  "translation.copied": "Copied",
+  "translation.empty": "No Saved Translations",
+  "translation.emptySub": "Select text while reading, use \"Translate\" to see its translation, then tap \"Save\" to add it here.",
+  "translation.panelEmpty": "No saved translations yet",
+  "translation.panelEmptySub": "Use \"Translate\" on selected text and tap Save",
+  "translation.noMatches": "No matches found",
+  "translation.search": "Search translations...",
+  "translation.newest": "Newest",
+  "translation.oldest": "Oldest",
+  "translation.count_one": "{{count}} translation",
+  "translation.count_other": "{{count}} translations",
 
   "time.justNow": "Just now",
   "time.minutesAgo": "{{count}}m ago",
