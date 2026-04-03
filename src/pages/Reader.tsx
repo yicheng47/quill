@@ -718,6 +718,26 @@ export default function Reader() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sidePanel]);
 
+  // Reset zoom to 100% on window resize so PDF re-fits to new size
+  useEffect(() => {
+    if (book?.format !== "pdf") return;
+    const resetZoom = () => {
+      if (zoomRef.current === 100) return;
+      const view = viewRef.current;
+      const viewer = viewerRef.current;
+      if (!view?.renderer || !viewer) return;
+      const renderer = view.renderer;
+      renderer.style.width = "";
+      renderer.style.height = "";
+      renderer.style.transform = "";
+      viewer.style.width = "";
+      viewer.style.height = "";
+      setZoomLevel(100);
+    };
+    window.addEventListener("resize", resetZoom);
+    return () => window.removeEventListener("resize", resetZoom);
+  }, [book?.format]);
+
   // Keyboard navigation — parent document listener
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
