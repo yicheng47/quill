@@ -125,9 +125,16 @@
   "bookMenu.deleteBook": "删除书籍",
   "bookMenu.noCollections": "暂无书单",
   "bookMenu.newCollection": "新建书单",
+  "bookMenu.editInfo": "编辑信息",
   "bookMenu.collectionPlaceholder": "书单名称",
 
   "bookGrid.finished": "已读完",
+
+  "editInfo.title": "编辑信息",
+  "editInfo.bookTitle": "标题",
+  "editInfo.bookAuthor": "作者",
+  "editInfo.cancel": "取消",
+  "editInfo.save": "保存",
 
   "readerSettings.font": "字体",
   "readerSettings.readingMode": "阅读模式",

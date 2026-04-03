@@ -5,6 +5,7 @@ import {
   CircleDashed,
   FolderPlus,
   FolderMinus,
+  Pencil,
   Trash2,
   ChevronRight,
   Plus,
@@ -23,6 +24,7 @@ interface BookContextMenuProps {
   onMarkFinished: () => void;
   onMarkReading: () => void;
   onMarkUnread: () => void;
+  onEditInfo: () => void;
   onDelete: () => void;
   onBooksChanged?: () => void;
 }
@@ -37,6 +39,7 @@ export default function BookContextMenu({
   onMarkFinished,
   onMarkReading,
   onMarkUnread,
+  onEditInfo,
   onDelete,
   onBooksChanged,
 }: BookContextMenuProps) {
@@ -183,6 +186,19 @@ export default function BookContextMenu({
             </span>
           </button>
         )}
+
+        <div className="mx-3 my-1 h-px bg-border/80" />
+
+        {/* Edit Info */}
+        <button
+          onClick={onEditInfo}
+          className="flex items-center gap-3 w-[calc(100%-8px)] mx-1 px-3 h-[31.5px] rounded-sm text-left cursor-pointer hover:bg-accent-bg transition-colors"
+        >
+          <Pencil size={16} className="text-text-muted" />
+          <span className="flex-1 text-[13px] font-medium text-text-primary tracking-[-0.08px]">
+            {t("bookMenu.editInfo")}
+          </span>
+        </button>
 
         <div className="mx-3 my-1 h-px bg-border/80" />
 

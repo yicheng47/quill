@@ -100,6 +100,14 @@ export async function updateBookStatus(id: string, status: "reading" | "finished
   return invoke("update_book_status", { id, status });
 }
 
+export async function updateBookMetadata(
+  id: string,
+  title: string,
+  author: string
+): Promise<void> {
+  return invoke("update_book_metadata", { id, title, author });
+}
+
 export async function checkBookAvailable(id: string): Promise<boolean> {
   return invoke<boolean>("check_book_available", { id });
 }
