@@ -261,7 +261,11 @@ export default function Reader() {
       .catch(() => setBook(null))
       .finally(() => setLoading(false));
 
-    getAllSettings().then((s) => {
+    Promise.all([
+      getAllSettings(),
+      invoke<Record<string, string>>("get_book_settings", { bookId }),
+    ]).then(([globalSettings, bookSettings]) => {
+      const s = { ...globalSettings, ...bookSettings };
       setReaderSettings((prev) => ({
         ...prev,
         theme: (s.reader_theme as ReaderSettingsState["theme"]) || prev.theme,
@@ -285,7 +289,8 @@ export default function Reader() {
   useEffect(() => {
     if (!dbSettingsLoaded.current) return;
     const { theme, brightness, pageColumns, font, fontSize, readingMode, lineSpacing, charSpacing, wordSpacing, margins } = readerSettings;
-    invoke("set_settings_bulk", {
+    invoke("set_book_settings_bulk", {
+      bookId,
       settings: {
         reader_theme: theme,
         brightness: String(brightness),

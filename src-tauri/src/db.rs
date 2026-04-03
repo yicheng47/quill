@@ -12,6 +12,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (4, include_str!("../migrations/004_pdf_support.sql")),
     (5, include_str!("../migrations/005_collection_sort_order.sql")),
     (6, include_str!("../migrations/006_translations.sql")),
+    (7, include_str!("../migrations/007_book_settings.sql")),
 ];
 
 pub struct Db {
@@ -144,7 +145,7 @@ mod tests {
         let conn = db.conn.lock().unwrap();
         let version: i64 =
             conn.query_row("SELECT version FROM schema_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 6);
+        assert_eq!(version, 7);
     }
 
     #[test]
@@ -165,6 +166,7 @@ mod tests {
         assert!(tables.contains(&"chats".to_string()));
         assert!(tables.contains(&"chat_messages".to_string()));
         assert!(tables.contains(&"translations".to_string()));
+        assert!(tables.contains(&"book_settings".to_string()));
         assert!(tables.contains(&"schema_version".to_string()));
     }
 
@@ -176,7 +178,7 @@ mod tests {
         Db::run_migrations_on(&conn).unwrap();
         let version: i64 =
             conn.query_row("SELECT version FROM schema_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 6);
+        assert_eq!(version, 7);
     }
 
     #[test]
