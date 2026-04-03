@@ -125,9 +125,16 @@
   "bookMenu.deleteBook": "Delete Book",
   "bookMenu.noCollections": "No collections yet",
   "bookMenu.newCollection": "New Collection",
+  "bookMenu.editInfo": "Edit Info",
   "bookMenu.collectionPlaceholder": "Collection name",
 
   "bookGrid.finished": "Finished",
+
+  "editInfo.title": "Edit Info",
+  "editInfo.bookTitle": "Title",
+  "editInfo.bookAuthor": "Author",
+  "editInfo.cancel": "Cancel",
+  "editInfo.save": "Save",
 
   "readerSettings.font": "Font",
   "readerSettings.readingMode": "Reading Mode",

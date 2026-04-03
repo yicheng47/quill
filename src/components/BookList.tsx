@@ -5,6 +5,7 @@ import { Check, CloudDownload } from "lucide-react";
 import type { Book } from "../hooks/useBooks";
 import { deleteBook, markFinished, updateBookStatus } from "../hooks/useBooks";
 import BookContextMenu from "./BookContextMenu";
+import EditMetadataModal from "./EditMetadataModal";
 
 function CoverImage({ src, alt, title }: { src: string; alt: string; title: string }) {
   const [failed, setFailed] = useState(false);
@@ -37,6 +38,7 @@ export default function BookList({ books, activeCollectionId, onBooksChanged }: 
     y: number;
     book: Book;
   } | null>(null);
+  const [editBook, setEditBook] = useState<Book | null>(null);
 
   const handleContextMenu = (e: React.MouseEvent, book: Book) => {
     e.preventDefault();
@@ -142,12 +144,29 @@ export default function BookList({ books, activeCollectionId, onBooksChanged }: 
             setContextMenu(null);
             onBooksChanged?.();
           }}
+          onEditInfo={() => {
+            setEditBook(contextMenu.book);
+            setContextMenu(null);
+          }}
           onDelete={async () => {
             await deleteBook(contextMenu.book.id);
             setContextMenu(null);
             onBooksChanged?.();
           }}
           onBooksChanged={onBooksChanged}
+        />
+      )}
+
+      {editBook && (
+        <EditMetadataModal
+          bookId={editBook.id}
+          currentTitle={editBook.title}
+          currentAuthor={editBook.author}
+          onClose={() => setEditBook(null)}
+          onSaved={() => {
+            setEditBook(null);
+            onBooksChanged?.();
+          }}
         />
       )}
     </>

@@ -4,6 +4,7 @@ import type { Book } from "../hooks/useBooks";
 import { openReaderWindow } from "../utils/openReaderWindow";
 import { deleteBook, markFinished, updateBookStatus } from "../hooks/useBooks";
 import BookContextMenu from "./BookContextMenu";
+import EditMetadataModal from "./EditMetadataModal";
 import { useTranslation } from "react-i18next";
 import { CloudDownload } from "lucide-react";
 
@@ -39,6 +40,7 @@ export default function BookGrid({ books, activeCollectionId, onBooksChanged }: 
     y: number;
     book: Book;
   } | null>(null);
+  const [editBook, setEditBook] = useState<Book | null>(null);
 
   const handleContextMenu = (e: React.MouseEvent, book: Book) => {
     e.preventDefault();
@@ -107,12 +109,29 @@ export default function BookGrid({ books, activeCollectionId, onBooksChanged }: 
             setContextMenu(null);
             onBooksChanged?.();
           }}
+          onEditInfo={() => {
+            setEditBook(contextMenu.book);
+            setContextMenu(null);
+          }}
           onDelete={async () => {
             await deleteBook(contextMenu.book.id);
             setContextMenu(null);
             onBooksChanged?.();
           }}
           onBooksChanged={onBooksChanged}
+        />
+      )}
+
+      {editBook && (
+        <EditMetadataModal
+          bookId={editBook.id}
+          currentTitle={editBook.title}
+          currentAuthor={editBook.author}
+          onClose={() => setEditBook(null)}
+          onSaved={() => {
+            setEditBook(null);
+            onBooksChanged?.();
+          }}
         />
       )}
     </>

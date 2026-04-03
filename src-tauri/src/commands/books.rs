@@ -370,6 +370,24 @@ pub fn update_book_status(id: String, status: String, db: State<'_, Db>) -> AppR
 }
 
 #[tauri::command]
+pub fn update_book_metadata(
+    id: String,
+    title: String,
+    author: String,
+    db: State<'_, Db>,
+) -> AppResult<()> {
+    let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
+    let now = chrono::Utc::now().to_rfc3339();
+
+    conn.execute(
+        "UPDATE books SET title = ?1, author = ?2, updated_at = ?3 WHERE id = ?4",
+        params![title, author, now, id],
+    )?;
+
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn import_pdf(
     source_path: String,
     title: String,
@@ -671,6 +689,80 @@ mod tests {
         assert!(book.cover_path.is_some());
         assert!(dest.exists());
         assert!(cover_file.exists());
+    }
+
+    #[test]
+    fn test_update_metadata_title_and_author() {
+        let (_dir, db) = setup();
+        insert_book(&db, "b1", "epub");
+
+        let conn = db.conn.lock().unwrap();
+        let now = chrono::Utc::now().to_rfc3339();
+        conn.execute(
+            "UPDATE books SET title = ?1, author = ?2, updated_at = ?3 WHERE id = ?4",
+            params!["New Title", "New Author", now, "b1"],
+        ).unwrap();
+
+        let (title, author): (String, String) = conn.query_row(
+            "SELECT title, author FROM books WHERE id = 'b1'", [], |r| Ok((r.get(0)?, r.get(1)?)),
+        ).unwrap();
+        assert_eq!(title, "New Title");
+        assert_eq!(author, "New Author");
+    }
+
+    #[test]
+    fn test_update_metadata_title_only() {
+        let (_dir, db) = setup();
+        insert_book(&db, "b1", "epub");
+
+        let conn = db.conn.lock().unwrap();
+        let now = chrono::Utc::now().to_rfc3339();
+        conn.execute(
+            "UPDATE books SET title = ?1, author = ?2, updated_at = ?3 WHERE id = ?4",
+            params!["Changed Title", "Author", now, "b1"],
+        ).unwrap();
+
+        let (title, author): (String, String) = conn.query_row(
+            "SELECT title, author FROM books WHERE id = 'b1'", [], |r| Ok((r.get(0)?, r.get(1)?)),
+        ).unwrap();
+        assert_eq!(title, "Changed Title");
+        assert_eq!(author, "Author"); // unchanged (same value passed)
+    }
+
+    #[test]
+    fn test_update_metadata_updates_timestamp() {
+        let (_dir, db) = setup();
+        insert_book(&db, "b1", "epub");
+
+        let conn = db.conn.lock().unwrap();
+        let before: String = conn.query_row(
+            "SELECT updated_at FROM books WHERE id = 'b1'", [], |r| r.get(0),
+        ).unwrap();
+
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        let now = chrono::Utc::now().to_rfc3339();
+        conn.execute(
+            "UPDATE books SET title = ?1, author = ?2, updated_at = ?3 WHERE id = ?4",
+            params!["New", "New", now, "b1"],
+        ).unwrap();
+
+        let after: String = conn.query_row(
+            "SELECT updated_at FROM books WHERE id = 'b1'", [], |r| r.get(0),
+        ).unwrap();
+        assert_ne!(before, after);
+    }
+
+    #[test]
+    fn test_update_metadata_nonexistent_book() {
+        let (_dir, db) = setup();
+
+        let conn = db.conn.lock().unwrap();
+        let now = chrono::Utc::now().to_rfc3339();
+        let rows = conn.execute(
+            "UPDATE books SET title = ?1, author = ?2, updated_at = ?3 WHERE id = ?4",
+            params!["Title", "Author", now, "nonexistent"],
+        ).unwrap();
+        assert_eq!(rows, 0); // no rows affected
     }
 
     #[test]
