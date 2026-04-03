@@ -12,3 +12,4 @@ Specs for features that are in progress or planned. Shipped specs are moved to [
 - [21 — AI Auto-Sort Books into Collections](21-ai-auto-sort-collections.md)
 - [22 — AI Book Recommendations](22-book-recommendations.md)
 - [24 — Edit Book Metadata](24-edit-book-metadata.md)
+- [25 — Collection Folders](25-collection-folders.md)
