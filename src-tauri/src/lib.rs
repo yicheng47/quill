@@ -85,6 +85,8 @@ pub fn run() {
             commands::settings::get_setting,
             commands::settings::set_setting,
             commands::settings::set_settings_bulk,
+            commands::settings::get_book_settings,
+            commands::settings::set_book_settings_bulk,
             commands::settings::open_settings_on_main,
             // Bookmarks & Highlights
             commands::bookmarks::add_bookmark,
