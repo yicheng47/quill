@@ -118,6 +118,9 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: var(--color-text-muted);
 }
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
 
 [data-tauri-drag-region] {
   cursor: default;

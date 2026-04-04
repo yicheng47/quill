@@ -1099,27 +1099,33 @@ export default function Reader() {
       {/* Body */}
       <div
         className={`flex flex-1 ${book.format === "pdf" && zoomLevel !== 100 ? "overflow-auto" : "overflow-hidden"}`}
-        style={{ backgroundColor: book.format === "pdf" ? "#ffffff" : getThemeStyles(readerSettings.theme).body }}
+        style={{ backgroundColor: getThemeStyles(readerSettings.theme).body }}
       >
-        <div className="flex-1 flex flex-col min-w-0" style={{ backgroundColor: book.format === "pdf" ? "#ffffff" : getThemeStyles(readerSettings.theme).body }}>
+        <div className="flex-1 flex flex-col min-w-0" style={{ backgroundColor: getThemeStyles(readerSettings.theme).body }}>
           <main
             className={`flex-1 relative ${book.format === "pdf" && zoomLevel !== 100 ? "overflow-auto" : "overflow-hidden"}`}
-            style={{ backgroundColor: book.format === "pdf" ? "#ffffff" : getThemeStyles(readerSettings.theme).body }}
+            style={{ backgroundColor: getThemeStyles(readerSettings.theme).body }}
             onContextMenu={handleContextMenu}
             onClick={() => { setTocOpen(false); setSettingsOpen(false); }}
           >
             <div
               ref={viewerRef}
               className="w-full h-full"
+              style={book.format === "pdf" ? { backgroundColor: "#ffffff" } : undefined}
             />
             {book.format === "pdf" && (() => {
               const overlay = getPdfOverlays(readerSettings.theme);
               if (!overlay) return null;
+              const zoomed = zoomLevel !== 100 && viewerRef.current;
+              const overlayStyle = zoomed ? {
+                width: viewerRef.current!.style.width || "100%",
+                height: viewerRef.current!.style.height || "100%",
+              } : undefined;
               return overlay.layers.map((style, i) => (
                 <div
                   key={i}
-                  className="absolute inset-0 z-10 pointer-events-none"
-                  style={style}
+                  className={`z-10 pointer-events-none ${zoomed ? "absolute top-0 left-0" : "absolute inset-0"}`}
+                  style={zoomed ? { ...style, ...overlayStyle } : style}
                 />
               ));
             })()}
