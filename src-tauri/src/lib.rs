@@ -10,6 +10,8 @@ use std::path::PathBuf;
 
 use db::Db;
 use secrets::Secrets;
+#[cfg(target_os = "macos")]
+use tauri::Emitter;
 use tauri::Manager;
 
 /// The resolved local app data directory, accounting for dev-mode isolation.
@@ -145,18 +147,34 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 
-    app.run(|app_handle, event| {
-        if let tauri::RunEvent::WindowEvent {
+    app.run(|app_handle, event| match &event {
+        #[cfg(target_os = "macos")]
+        tauri::RunEvent::Opened { urls } => {
+            // Files dropped on dock icon or opened via file association
+            let paths: Vec<String> = urls
+                .iter()
+                .filter_map(|url| url.to_file_path().ok())
+                .filter(|p: &PathBuf| {
+                    let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("");
+                    ext.eq_ignore_ascii_case("epub") || ext.eq_ignore_ascii_case("pdf")
+                })
+                .filter_map(|p: PathBuf| p.to_str().map(String::from))
+                .collect();
+            if !paths.is_empty() {
+                let _ = app_handle.emit("file-open", paths);
+            }
+        }
+        tauri::RunEvent::WindowEvent {
             label,
             event: tauri::WindowEvent::Destroyed,
             ..
-        } = &event
-        {
+        } => {
             if label == "main" {
                 for (_, window) in app_handle.webview_windows() {
                     let _ = window.close();
                 }
             }
         }
+        _ => {}
     });
 }
