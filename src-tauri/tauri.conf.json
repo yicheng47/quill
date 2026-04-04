@@ -46,6 +46,18 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "fileAssociations": [
+      {
+        "ext": ["epub"],
+        "mimeType": "application/epub+zip",
+        "description": "EPUB Ebook"
+      },
+      {
+        "ext": ["pdf"],
+        "mimeType": "application/pdf",
+        "description": "PDF Document"
+      }
+    ],
     "macOS": {
       "signingIdentity": null,
       "entitlements": "Entitlements.plist",

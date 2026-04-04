@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { Search, LayoutGrid, List, Plus, Upload, BookOpen, Loader } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import Sidebar from "../components/Sidebar";
 import BookGrid from "../components/BookGrid";
@@ -149,6 +150,42 @@ export default function Home() {
       cancelled = true;
       unlisten.then((fn) => fn());
     };
+  }, []);
+
+  // Listen for files opened via dock icon drop or file association
+  useEffect(() => {
+    const unlisten = listen<string[]>("file-open", async (event) => {
+      const paths = event.payload;
+      if (paths.length === 0) return;
+      setImporting(true);
+      try {
+        for (const filePath of paths) {
+          try {
+            if (filePath.toLowerCase().endsWith(".pdf")) {
+              const { extractPdfMetadata } = await import("../utils/pdfMetadata");
+              const meta = await extractPdfMetadata(filePath);
+              await invoke<Book>("import_pdf", {
+                sourcePath: filePath,
+                title: meta.title,
+                author: meta.author,
+                description: meta.description,
+                pages: meta.pages,
+                coverData: meta.coverData ? Array.from(meta.coverData) : null,
+              });
+            } else {
+              await invoke<Book>("import_book", { filePath });
+            }
+          } catch (err) {
+            console.error("Failed to import file-open book:", err);
+          }
+        }
+        refreshRef.current();
+        allBooksRefreshRef.current();
+      } finally {
+        setImporting(false);
+      }
+    });
+    return () => { unlisten.then((fn) => fn()); };
   }, []);
 
   const displayBooks = isCollectionFilter
