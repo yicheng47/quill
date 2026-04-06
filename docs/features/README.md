@@ -13,3 +13,4 @@ Specs for features that are in progress or planned. Shipped specs are moved to [
 - [22 — AI Book Recommendations](22-book-recommendations.md)
 - [24 — Edit Book Metadata](24-edit-book-metadata.md)
 - [25 — Collection Folders](25-collection-folders.md)
+- [26 — Smooth PDF Page Transitions](26-smooth-pdf-page-transitions.md)
