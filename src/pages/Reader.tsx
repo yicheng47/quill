@@ -638,7 +638,9 @@ export default function Reader() {
       viewerRef.current.style.filter = `brightness(${readerSettings.brightness / 100})`;
     }
     // PDF theming is handled by the overlay div in the JSX
-  }, [readerSettings, book?.format]);
+    // bookReady is in deps so this re-runs once foliate finishes init —
+    // fixes a race where DB-loaded settings arrive before view.renderer exists.
+  }, [readerSettings, book?.format, bookReady]);
 
   // Prepare renderer for GPU-accelerated zoom transforms
   useEffect(() => {
