@@ -14,3 +14,4 @@ Specs for features that are in progress or planned. Shipped specs are moved to [
 - [24 — Edit Book Metadata](24-edit-book-metadata.md)
 - [25 — Collection Folders](25-collection-folders.md)
 - [26 — Smooth PDF Page Transitions](26-smooth-pdf-page-transitions.md)
+- [27 — Reading Stats](27-reading-stats.md)
