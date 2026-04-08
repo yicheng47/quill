@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { BookOpen, Search, Trash2, Clock, FileText, ArrowRight, Languages } from "lucide-react";
-import { useDictionary } from "../hooks/useDictionary";
+import { useDictionary, type DictionaryWord } from "../hooks/useDictionary";
 import { useTranslations } from "../hooks/useTranslations";
 import { timeAgo } from "../utils/timeAgo";
+import VocabDetailModal from "./VocabDetailModal";
 
 interface DictionaryPanelProps {
   bookId: string;
@@ -19,6 +20,7 @@ export default function DictionaryPanel({ bookId, initialTab = "dictionary", onN
   const [tab, setTab] = useState<Tab>(initialTab);
   const [dictSearch, setDictSearch] = useState("");
   const [transSearch, setTransSearch] = useState("");
+  const [activeWord, setActiveWord] = useState<DictionaryWord | null>(null);
   const { words, remove: removeWord } = useDictionary(bookId);
   const { translations, remove: removeTranslation } = useTranslations(bookId);
 
@@ -104,12 +106,17 @@ export default function DictionaryPanel({ bookId, initialTab = "dictionary", onN
                 const defText = parts[0] || "";
                 const ctxText = parts.length > 1 ? parts.slice(1).join(" ") : null;
                 return (
-                  <div
+                  <button
                     key={word.id}
-                    className="group relative border-l-[3px] border-accent bg-bg-surface mx-3 mb-2 rounded-r-lg px-4 pt-3 pb-3"
+                    type="button"
+                    onClick={() => setActiveWord(word)}
+                    className="group relative border-l-[3px] border-accent bg-bg-surface mx-3 mb-2 rounded-r-lg px-4 pt-3 pb-3 w-[calc(100%-1.5rem)] text-left cursor-pointer hover:bg-bg-input transition-colors"
                   >
                     <button
-                      onClick={() => removeWord(word.id)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        removeWord(word.id);
+                      }}
                       className="absolute top-3 right-3 p-1 rounded hover:bg-bg-input cursor-pointer"
                     >
                       <Trash2 size={15} className="text-text-muted" />
@@ -127,30 +134,19 @@ export default function DictionaryPanel({ bookId, initialTab = "dictionary", onN
                         {ctxText}
                       </p>
                     )}
-                    <div className="flex items-center justify-between mt-2.5">
-                      <div className="flex items-center gap-3">
-                        {page != null && (
-                          <span className="flex items-center gap-1 text-[11px] text-text-muted tracking-[0.06px]">
-                            <FileText size={12} />
-                            p. {page}
-                          </span>
-                        )}
+                    <div className="flex items-center gap-3 mt-2.5">
+                      {page != null && (
                         <span className="flex items-center gap-1 text-[11px] text-text-muted tracking-[0.06px]">
-                          <Clock size={12} />
-                          {timeAgo(word.created_at)}
+                          <FileText size={12} />
+                          p. {page}
                         </span>
-                      </div>
-                      {word.cfi && (
-                        <button
-                          onClick={() => onNavigate?.(word.cfi!)}
-                          className="flex items-center gap-1 text-[12px] font-medium text-accent-text cursor-pointer hover:opacity-70"
-                        >
-                          {page != null ? t("vocab.goToPage", { page }) : t("vocab.goToLocation")}
-                          <ArrowRight size={12} />
-                        </button>
                       )}
+                      <span className="flex items-center gap-1 text-[11px] text-text-muted tracking-[0.06px]">
+                        <Clock size={12} />
+                        {timeAgo(word.created_at)}
+                      </span>
                     </div>
-                  </div>
+                  </button>
                 );
               })
             )}
@@ -262,6 +258,17 @@ export default function DictionaryPanel({ bookId, initialTab = "dictionary", onN
           </div>
         </>
       )}
+
+      <VocabDetailModal
+        word={activeWord}
+        onClose={() => setActiveWord(null)}
+        onDelete={async (id) => {
+          await removeWord(id);
+          setActiveWord(null);
+        }}
+        navigateMode="inline"
+        onNavigateInline={(cfi) => onNavigate?.(cfi)}
+      />
     </div>
   );
 }
