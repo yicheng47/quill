@@ -23,7 +23,7 @@ An eBook reader with a built-in AI reading assistant. Works with your ChatGPT su
 ### AI
 - **Chat Assistant** — Ask questions about passages, get explanations, discuss themes — with your highlighted text as context
 - **Word Lookup** — Select any word for instant definitions, contextual meaning, or deep explanations
-- **Multiple Providers** — OpenAI (OAuth or API key), Anthropic, Ollama (local), OpenAI-compatible, MiniMax
+- **Multiple Providers** — OpenAI (OAuth or API key), OpenAI-compatible, Anthropic, Ollama (local)
 
 ### Organization
 - **Library** — Grid/list views, search, status filters, collections
@@ -50,8 +50,7 @@ Quill supports multiple AI providers. Configure in Settings:
 | **Ollama** | Install [Ollama](https://ollama.com/), run `ollama pull llama3.2`, no API key needed |
 | **OpenAI (API key)** | Add your OpenAI API key (pay-per-use) |
 | **Anthropic** | Add your API key |
-| **OpenAI-compatible** | Any OpenAI-compatible endpoint (e.g. local models, third-party hosts) |
-| **MiniMax** | Add your API key |
+| **OpenAI-compatible** | Pick the OpenAI provider, switch auth to API key, then point Base URL at any OpenAI-compatible endpoint |
 
 <details>
 <summary><h2 style="display:inline">Development</h2></summary>

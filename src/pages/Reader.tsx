@@ -43,7 +43,7 @@ interface FoliateView extends HTMLElement {
   getCFI(index: number, range: Range): string;
   addAnnotation(annotation: { value: string; color?: string }): Promise<any>;
   deleteAnnotation(annotation: { value: string }): Promise<void>;
-  getContents(): Array<{ doc: Document; index: number }>;
+  deselect(): void;
 }
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
@@ -527,6 +527,24 @@ export default function Reader() {
         // Click to dismiss context menu and highlight toolbar
         doc.addEventListener("click", () => {
           setContextMenu(null);
+          setHighlightToolbar(null);
+        });
+
+        // Cross-iframe deselect: each PDF page renders in its own iframe
+        // with its own Selection object, so clicking on a neighbor page
+        // (e.g. the right page in two-page spread mode, or any other page
+        // in scroll mode) wouldn't normally clear the selection on the
+        // page you came from. Wipe other iframes' selections on mousedown
+        // — the current iframe is left alone so the browser can place a
+        // fresh caret at the click point.
+        doc.addEventListener("mousedown", () => {
+          // getContents() lives on the renderer, not the View element.
+          const contents = view.renderer?.getContents?.() ?? [];
+          for (const { doc: otherDoc } of contents) {
+            if (otherDoc && otherDoc !== doc) {
+              otherDoc.defaultView?.getSelection()?.removeAllRanges();
+            }
+          }
           setHighlightToolbar(null);
         });
       }) as EventListener);
@@ -1159,7 +1177,17 @@ export default function Reader() {
             className={`flex-1 relative ${book.format === "pdf" && zoomLevel !== 100 ? "overflow-auto" : "overflow-hidden"}`}
             style={{ backgroundColor: getThemeStyles(readerSettings.theme).body }}
             onContextMenu={handleContextMenu}
-            onClick={() => { setTocOpen(false); setSettingsOpen(false); }}
+            onClick={() => {
+              setTocOpen(false);
+              setSettingsOpen(false);
+              // Clicks inside the iframe (text content) don't bubble out
+              // through the sandbox boundary, so this fires only for clicks
+              // on the margins/white space around the page — i.e. "anywhere
+              // else" from the reader's perspective. Drop the in-iframe text
+              // selection so the highlight doesn't linger.
+              viewRef.current?.deselect?.();
+              setHighlightToolbar(null);
+            }}
           >
             <div
               ref={viewerRef}
