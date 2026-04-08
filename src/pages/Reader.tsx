@@ -69,6 +69,23 @@ function getPdfOverlays(theme: string): PdfOverlay {
 
 function getReaderThemeVars(theme: string): Record<string, string> | undefined {
   switch (theme) {
+    case "original": return {
+      // Mirrors the :root light palette in src/index.css so the reader view
+      // stays cohesive when the reader theme is Original but the system /
+      // app theme is dark.
+      "--color-bg-page": "#f4f4f5",
+      "--color-bg-surface": "#ffffff",
+      "--color-bg-muted": "#fafafa",
+      "--color-bg-input": "#f3f3f5",
+      "--color-text-primary": "#18181b",
+      "--color-text-body": "#0a0a0a",
+      "--color-text-secondary": "#52525c",
+      "--color-text-muted": "#71717b",
+      "--color-text-placeholder": "#a1a1aa",
+      "--color-border": "#e4e4e7",
+      "--color-border-light": "#f4f4f5",
+      "--color-accent-bg": "#f3e8ff",
+    };
     case "paper": return {
       "--color-bg-page": "#E8D5B8",
       "--color-bg-surface": "#F2E2C9",
@@ -955,7 +972,7 @@ export default function Reader() {
   }
 
   return (
-    <div className="flex flex-col h-screen bg-bg-page" style={isStandaloneWindow ? getReaderThemeVars(readerSettings.theme) as React.CSSProperties : undefined}>
+    <div className="flex flex-col h-screen bg-bg-page" style={getReaderThemeVars(readerSettings.theme) as React.CSSProperties}>
       {/* Invisible overlay to close popovers when clicking anywhere */}
       {(tocOpen || settingsOpen) && (
         <div
