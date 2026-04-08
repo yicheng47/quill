@@ -367,6 +367,11 @@ export default function Reader() {
       const view = document.createElement("foliate-view") as FoliateView;
       view.style.width = "100%";
       view.style.height = "100%";
+      // Opt into the continuous-scroll PDF renderer before open(); view.js
+      // branches its internal renderer pick on this attribute. EPUBs ignore it.
+      if (book.format === "pdf" && readerSettings.readingMode === "scrolling") {
+        view.setAttribute("pdf-mode", "scroll");
+      }
       container.appendChild(view);
       viewRef.current = view;
 
@@ -578,8 +583,11 @@ export default function Reader() {
         }
       }) as EventListener);
 
-      // Navigate to saved position
-      const startCfi = book.current_cfi;
+      // Navigate to saved position. Prefer the in-memory cursor (kept fresh
+      // by the relocate handler) over the stale `book.current_cfi` from
+      // initial load — matters when re-init is triggered by a reading-mode
+      // toggle mid-session.
+      const startCfi = currentCfiRef.current || book.current_cfi;
       await view.init({ lastLocation: startCfi || undefined, showTextStart: !startCfi });
 
       if (cancelled) return;
@@ -605,8 +613,13 @@ export default function Reader() {
         viewRef.current = null;
       }
     };
+    // PDFs need a fresh `view` element when reading mode flips because
+    // `pdf-mode="scroll"` is read once inside view.js's renderer pick.
+    // EPUBs handle scroll/paginated switching live via the reactive effect
+    // below, so the derived dep stays `null` for them and the effect won't
+    // re-run.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [book]);
+  }, [book, book?.format === "pdf" ? readerSettings.readingMode : null]);
 
   // Apply reader settings reactively
   useEffect(() => {
@@ -659,6 +672,15 @@ export default function Reader() {
     const next = Math.min(300, Math.max(50, zoomRef.current + delta));
     const renderer = view.renderer;
 
+    // Scroll mode (foliate-pdf-scroll): the renderer observes a `zoom`
+    // attribute and re-lays out rows + re-renders canvases via the pdfjs
+    // onZoom hook. CSS transform would break IntersectionObserver math.
+    if (book?.format === "pdf" && readerSettings.readingMode === "scrolling") {
+      renderer.setAttribute("zoom", String(next / 100));
+      setZoomLevel(next);
+      return;
+    }
+
     if (next === 100) {
       // Reset to fit-page: fluid sizing, no transform
       renderer.style.width = "";
@@ -691,6 +713,11 @@ export default function Reader() {
   // When side panel toggles while zoomed, re-fit the renderer to the new container size
   useEffect(() => {
     if (book?.format !== "pdf" || zoomLevel === 100) return;
+    // Scroll mode reflows automatically as the container resizes (rows are
+    // sized in CSS pixels at the current zoom attribute, not via CSS
+    // transforms), so the lock-and-rescale dance below would actively break
+    // it. Skip.
+    if (readerSettings.readingMode === "scrolling") return;
     const view = viewRef.current;
     const viewer = viewerRef.current;
     if (!view?.renderer || !viewer) return;
@@ -729,6 +756,13 @@ export default function Reader() {
       const viewer = viewerRef.current;
       if (!view?.renderer || !viewer) return;
       const renderer = view.renderer;
+      // Scroll mode handles its own re-layout via the `zoom` attribute and
+      // the IntersectionObserver; don't poke at inline styles.
+      if (readerSettings.readingMode === "scrolling") {
+        renderer.setAttribute("zoom", "1");
+        setZoomLevel(100);
+        return;
+      }
       renderer.style.width = "";
       renderer.style.height = "";
       renderer.style.transform = "";
@@ -738,7 +772,7 @@ export default function Reader() {
     };
     window.addEventListener("resize", resetZoom);
     return () => window.removeEventListener("resize", resetZoom);
-  }, [book?.format]);
+  }, [book?.format, readerSettings.readingMode]);
 
   // Keyboard navigation — parent document listener
   useEffect(() => {

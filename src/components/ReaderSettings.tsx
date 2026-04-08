@@ -195,8 +195,8 @@ export default function ReaderSettings({ open, onClose, anchorRef, settings, onS
       </div>
       )}
 
-      {/* Reading Mode — EPUB only (PDF uses fixed layout renderer) */}
-      {bookFormat !== "pdf" && (<div className="px-4 py-3 border-b border-border-light">
+      {/* Reading Mode — supported for both EPUB and PDF */}
+      <div className="px-4 py-3 border-b border-border-light">
         <p className="text-[11px] font-medium text-text-muted tracking-[0.5px] uppercase mb-2">{t("readerSettings.readingMode")}</p>
         <div className="flex gap-2">
           <button
@@ -222,7 +222,7 @@ export default function ReaderSettings({ open, onClose, anchorRef, settings, onS
             <span className="text-[12px] font-medium">{t("readerSettings.pageTurning")}</span>
           </button>
         </div>
-      </div>)}
+      </div>
 
       {/* Page columns — single or two pages — PDF only */}
       {bookFormat === "pdf" && (<div className="px-4 py-3 border-b border-border-light">
