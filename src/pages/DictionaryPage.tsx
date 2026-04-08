@@ -2,7 +2,6 @@ import { useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   ArrowLeft,
-  ArrowRight,
   Languages,
   Search,
   BookOpen,
@@ -17,7 +16,7 @@ import {
 } from "lucide-react";
 import { useAllDictionary, type DictionaryWord } from "../hooks/useDictionary";
 import { timeAgo } from "../utils/timeAgo";
-import { openReaderWindow } from "../utils/openReaderWindow";
+import VocabDetailModal from "../components/VocabDetailModal";
 
 type SortMode = "newest" | "oldest" | "az";
 type ViewMode = "list" | "card";
@@ -29,6 +28,7 @@ export default function DictionaryPage() {
   const [view, setView] = useState<ViewMode>("list");
   const [search, setSearch] = useState("");
   const [bookFilter, setBookFilter] = useState<string | null>(null);
+  const [activeWord, setActiveWord] = useState<DictionaryWord | null>(null);
 
   // Filter
   const filtered = useMemo(() => {
@@ -265,9 +265,11 @@ export default function DictionaryPage() {
                   const defText = parts[0] || "";
                   const ctxText = parts.length > 1 ? parts.slice(1).join(" ") : null;
                   return (
-                    <div
+                    <button
                       key={word.id}
-                      className="flex items-start gap-4 px-3 pt-3 pb-3 rounded-[10px] hover:bg-bg-input group"
+                      type="button"
+                      onClick={() => setActiveWord(word)}
+                      className="flex items-start gap-4 px-3 pt-3 pb-3 rounded-[10px] hover:bg-bg-input group w-full text-left cursor-pointer"
                     >
                       {/* Left column */}
                       <div className="w-[160px] shrink-0">
@@ -297,15 +299,8 @@ export default function DictionaryPage() {
                         <span className="text-[11px] text-text-muted">
                           {timeAgo(word.created_at)}
                         </span>
-                        <button
-                          onClick={() => openReaderWindow(word.book_id, { openVocab: true, cfi: word.cfi })}
-                          className="flex items-center gap-1 text-[12px] font-medium text-accent-text cursor-pointer hover:opacity-70"
-                        >
-                          Open in Reader
-                          <ArrowRight size={12} />
-                        </button>
                       </div>
-                    </div>
+                    </button>
                   );
                 })}
               </div>
@@ -331,13 +326,18 @@ export default function DictionaryPage() {
                     const defText = parts[0] || "";
                     const ctxText = parts.length > 1 ? parts.slice(1).join(" ") : null;
                     return (
-                      <div
+                      <button
                         key={word.id}
-                        className="group relative bg-bg-muted border border-border rounded-[14px] p-[17px] flex flex-col gap-2"
+                        type="button"
+                        onClick={() => setActiveWord(word)}
+                        className="group relative bg-bg-muted border border-border rounded-[14px] p-[17px] flex flex-col gap-2 w-full text-left cursor-pointer hover:bg-bg-input transition-colors"
                       >
                         {/* Trash — top right */}
                         <button
-                          onClick={() => remove(word.id)}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            remove(word.id);
+                          }}
                           className="absolute top-4 right-4 p-1 rounded hover:bg-bg-surface/80 cursor-pointer opacity-0 group-hover:opacity-100 transition-opacity"
                         >
                           <Trash2 size={15} className="text-text-muted" />
@@ -363,28 +363,19 @@ export default function DictionaryPage() {
                         )}
 
                         {/* Footer */}
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-3">
-                            {word.cfi && (
-                              <span className="flex items-center gap-1 text-[11px] text-text-muted tracking-[0.06px]">
-                                <FileText size={12} />
-                                p. 1
-                              </span>
-                            )}
+                        <div className="flex items-center gap-3">
+                          {word.cfi && (
                             <span className="flex items-center gap-1 text-[11px] text-text-muted tracking-[0.06px]">
-                              <Clock size={12} />
-                              {timeAgo(word.created_at)}
+                              <FileText size={12} />
+                              p. 1
                             </span>
-                          </div>
-                          <button
-                            onClick={() => openReaderWindow(word.book_id, { openVocab: true, cfi: word.cfi })}
-                            className="flex items-center gap-1 h-[24.5px] px-2.5 rounded-[10px] bg-accent-bg text-[11px] font-medium text-accent-text tracking-[0.06px] cursor-pointer hover:opacity-70"
-                          >
-                            Open in Reader
-                            <ArrowRight size={12} />
-                          </button>
+                          )}
+                          <span className="flex items-center gap-1 text-[11px] text-text-muted tracking-[0.06px]">
+                            <Clock size={12} />
+                            {timeAgo(word.created_at)}
+                          </span>
                         </div>
-                      </div>
+                      </button>
                     );
                   })}
                 </div>
@@ -393,6 +384,15 @@ export default function DictionaryPage() {
           </div>
         )}
       </div>
+
+      <VocabDetailModal
+        word={activeWord}
+        onClose={() => setActiveWord(null)}
+        onDelete={async (id) => {
+          await remove(id);
+          setActiveWord(null);
+        }}
+      />
     </div>
   );
 }
