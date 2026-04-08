@@ -271,8 +271,6 @@ export default function SettingsPage() {
                     setBaseUrl("https://api.openai.com"); setModel("gpt-5.3-codex"); setAuthMode("oauth");
                   } else if (p === "anthropic") {
                     setBaseUrl(""); setModel("claude-sonnet-4-20250514");
-                  } else if (p === "minimax") {
-                    setBaseUrl("https://api.minimax.io/anthropic"); setModel("MiniMax-M2.5");
                   } else {
                     setBaseUrl(""); setModel("");
                   }
@@ -280,8 +278,6 @@ export default function SettingsPage() {
                 options={[
                   { value: "openai", label: "OpenAI" },
                   { value: "anthropic", label: "Anthropic" },
-                  { value: "minimax", label: "MiniMax" },
-                  { value: "google", label: "Google AI" },
                   { value: "ollama", label: "Ollama (Local)" },
                 ]}
               />
@@ -377,8 +373,8 @@ export default function SettingsPage() {
                 </div>
               )}
 
-              {/* Base URL (for Ollama / OpenAI Compatible) */}
-              {(provider === "ollama" || (provider === "openai" && authMode === "api_key") || provider === "minimax" || provider === "anthropic") && (
+              {/* Base URL (for Ollama / OpenAI Compatible / Anthropic) */}
+              {(provider === "ollama" || (provider === "openai" && authMode === "api_key") || provider === "anthropic") && (
                 <div>
                   <label className="block text-[14px] font-semibold text-text-primary mb-1.5">
                     {t("settings.ai.baseUrl")}
@@ -395,7 +391,7 @@ export default function SettingsPage() {
               )}
 
               {/* API Key (for Anthropic / OpenAI Compatible — hidden when OpenAI + OAuth) */}
-              {(provider === "anthropic" || (provider === "openai" && authMode === "api_key") || provider === "minimax") && (
+              {(provider === "anthropic" || (provider === "openai" && authMode === "api_key")) && (
                 <div>
                   <label className="block text-[14px] font-semibold text-text-primary mb-1.5">
                     {t("settings.ai.apiKey")}
@@ -423,8 +419,6 @@ export default function SettingsPage() {
                   placeholder={
                     provider === "ollama" ? "qwen3.5" :
                     provider === "anthropic" ? "claude-sonnet-4-20250514" :
-                    provider === "minimax" ? "MiniMax-M2.5" :
-                    provider === "google" ? "gemini-2.0-flash" :
                     (provider === "openai" && authMode === "oauth") ? "gpt-5.3-codex" :
                     "gpt-4o"
                   }

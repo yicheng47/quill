@@ -129,10 +129,6 @@ pub async fn ai_translate_passage(
                 let url = base_url.unwrap_or_else(|| "https://api.anthropic.com".to_string());
                 crate::ai::anthropic::stream_chat(&app_clone, &url, &api_key, &model, 0.3, &messages, false, &event_name, None).await
             }
-            "minimax" => {
-                let url = base_url.unwrap_or_else(|| "https://api.minimax.io/anthropic".to_string());
-                crate::ai::anthropic::stream_chat(&app_clone, &url, &api_key, &model, 0.3, &messages, true, &event_name, None).await
-            }
             _ if use_responses_api => {
                 let url = "https://chatgpt.com/backend-api/codex".to_string();
                 crate::ai::openai_responses::stream_chat(&app_clone, &url, &api_key, &model, &messages, oauth_account_id.as_deref(), &event_name).await
