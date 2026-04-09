@@ -4,6 +4,12 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { X, Loader2, Sparkles, BookmarkPlus, Check, Copy, Settings } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import Markdown from "react-markdown";
+
+// Shared prose classes for lookup markdown rendering — tight spacing for the
+// 13px popover body so bullets/paragraphs don't blow out the card height.
+const LOOKUP_PROSE =
+  "prose prose-sm max-w-none leading-[1.55] [&_p]:my-0 [&_p+p]:mt-1.5 [&_ul]:my-1 [&_ol]:my-1 [&_li]:my-0 [&_strong]:font-semibold [&_em]:italic [&_code]:bg-bg-muted [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_code]:text-[12px]";
 
 interface LookupPopoverProps {
   x: number;
@@ -269,12 +275,12 @@ export default function LookupPopover({
             {translationLine && (
               <p className="text-[13px] text-accent-text mb-1.5">{translationLine}</p>
             )}
-            <p className="text-[13px] text-text-primary leading-[1.55]">
-              {definitionText}
+            <div className={`${LOOKUP_PROSE} text-[13px] text-text-primary`}>
+              <Markdown>{definitionText}</Markdown>
               {definition.streaming && (
                 <Loader2 size={12} className="inline-block ml-0.5 animate-spin text-text-muted" />
               )}
-            </p>
+            </div>
           </>
         ))}
 
@@ -290,12 +296,12 @@ export default function LookupPopover({
                 <span className="text-[12px] text-text-muted">{t("lookup.analyzing")}</span>
               </div>
             ) : (
-              <p className="text-[13px] text-text-secondary leading-[1.5]">
-                {context.content}
+              <div className={`${LOOKUP_PROSE} text-[13px] text-text-secondary`}>
+                <Markdown>{context.content}</Markdown>
                 {context.streaming && (
                   <Loader2 size={12} className="inline-block ml-0.5 animate-spin text-text-muted" />
                 )}
-              </p>
+              </div>
             )}
           </div>
         )}
