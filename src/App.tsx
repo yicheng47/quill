@@ -6,6 +6,7 @@ import Home from "./pages/Home";
 import Reader from "./pages/Reader";
 import { UpdateProvider } from "./contexts/UpdateContext";
 import UpdateToast from "./components/UpdateToast";
+import { reconcileLanguage } from "./i18n";
 
 const isMainWindow = getCurrentWebviewWindow().label === "main";
 
@@ -24,8 +25,25 @@ function applyTheme(theme: string) {
 export default function App() {
   useEffect(() => {
     invoke<Record<string, string>>("get_all_settings")
-      .then((settings) => applyTheme(settings.theme ?? "system"))
+      .then((settings) => {
+        const theme = settings.theme ?? "system";
+        applyTheme(theme);
+        localStorage.setItem("quill-theme", theme);
+      })
       .catch(() => applyTheme("system"));
+
+    // Reconcile the language we picked synchronously from localStorage with
+    // the persisted DB value (and persist to the DB on first launch).
+    reconcileLanguage();
+
+    // Tell the backend the UI has mounted so it can show the (currently
+    // hidden) main window. We don't wrap this in requestAnimationFrame —
+    // macOS pauses rAF for hidden windows, so the callback would never fire.
+    // useEffect runs after React commits the DOM, which is good enough; the
+    // OS composites the committed tree when window.show() is called.
+    if (isMainWindow) {
+      invoke("app_ready").catch(() => {});
+    }
 
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
     const handler = () => {

@@ -5,6 +5,7 @@ import en from "./en.json";
 import zh from "./zh.json";
 
 const SUPPORTED_LANGUAGES = ["en", "zh"];
+const CACHE_KEY = "quill-language";
 
 /**
  * Detect the system language from the browser locale.
@@ -21,31 +22,39 @@ function detectSystemLanguage(): string {
   return SUPPORTED_LANGUAGES.includes(primary) ? primary : "en";
 }
 
-/**
- * Read persisted language from the settings DB.
- * On first launch (no setting stored), detect from the OS and persist it
- * so the Rust backend (AI system prompts) can also read it.
- */
-async function getInitialLanguage(): Promise<string> {
-  try {
-    const stored = await invoke<string | null>("get_setting", { key: "language" });
-    if (stored && SUPPORTED_LANGUAGES.includes(stored)) return stored;
-
-    const detected = detectSystemLanguage();
-    await invoke("set_setting", { key: "language", value: detected }).catch(() => {});
-    return detected;
-  } catch {
-    return detectSystemLanguage();
-  }
+// Resolve initial language synchronously from localStorage cache (or OS), so
+// React can mount immediately without waiting on a Tauri IPC roundtrip.
+function initialLanguage(): string {
+  const cached = localStorage.getItem(CACHE_KEY);
+  if (cached && SUPPORTED_LANGUAGES.includes(cached)) return cached;
+  return detectSystemLanguage();
 }
 
-export const i18nReady = getInitialLanguage().then((lng) =>
-  i18n.use(initReactI18next).init({
-    resources: { en: { translation: en }, zh: { translation: zh } },
-    lng,
-    fallbackLng: "en",
-    interpolation: { escapeValue: false },
-  })
-);
+i18n.use(initReactI18next).init({
+  resources: { en: { translation: en }, zh: { translation: zh } },
+  lng: initialLanguage(),
+  fallbackLng: "en",
+  interpolation: { escapeValue: false },
+});
+
+// Reconcile with the persisted setting in the DB after mount. If the stored
+// value differs from the cache, swap languages and update the cache. On first
+// launch (no stored value), persist the detected language so the Rust backend
+// (AI system prompts) can read it too.
+export async function reconcileLanguage(): Promise<void> {
+  try {
+    const stored = await invoke<string | null>("get_setting", { key: "language" });
+    if (stored && SUPPORTED_LANGUAGES.includes(stored)) {
+      if (stored !== i18n.language) await i18n.changeLanguage(stored);
+      localStorage.setItem(CACHE_KEY, stored);
+      return;
+    }
+    const detected = detectSystemLanguage();
+    await invoke("set_setting", { key: "language", value: detected }).catch(() => {});
+    localStorage.setItem(CACHE_KEY, detected);
+  } catch {
+    // Best-effort — keep the synchronously-resolved language
+  }
+}
 
 export default i18n;

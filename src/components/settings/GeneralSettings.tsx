@@ -58,6 +58,7 @@ export default function GeneralSettings({ settings, loading, save, showSavedToas
           onChange={(value) => {
             setTheme(value);
             save("theme", value);
+            localStorage.setItem("quill-theme", value);
             applyTheme(value);
             showSavedToast();
           }}

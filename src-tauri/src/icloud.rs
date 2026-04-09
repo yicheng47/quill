@@ -34,6 +34,36 @@ pub fn icloud_data_dir() -> Option<PathBuf> {
     get_icloud_container_url().map(|p| p.join("Documents"))
 }
 
+/// Returns the iCloud Documents directory using a hardcoded path derived from
+/// the container identifier — does NOT call `URLForUbiquityContainerIdentifier`,
+/// which is the slowest call on cold start (queries the iCloud daemon).
+///
+/// The path layout is deterministic: `~/Library/Mobile Documents/<container>/Documents`,
+/// where `<container>` is the identifier with dots replaced by tildes.
+///
+/// Returns `None` if `$HOME` is unset or the directory doesn't exist on disk
+/// (e.g. user signed out of iCloud since enabling sync). Callers should fall
+/// back to the local directory in that case.
+#[cfg(target_os = "macos")]
+pub fn icloud_data_dir_fast() -> Option<PathBuf> {
+    let home = std::env::var_os("HOME")?;
+    let folder_name = ICLOUD_CONTAINER_ID.replace('.', "~");
+    let path = PathBuf::from(home)
+        .join("Library/Mobile Documents")
+        .join(folder_name)
+        .join("Documents");
+    if path.is_dir() {
+        Some(path)
+    } else {
+        None
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn icloud_data_dir_fast() -> Option<PathBuf> {
+    None
+}
+
 /// Check if iCloud sync is enabled by looking for the marker file in the local app dir.
 pub fn is_icloud_enabled(local_dir: &Path) -> bool {
     local_dir.join(MARKER_FILE).exists()
@@ -251,6 +281,34 @@ mod tests {
         fs::write(&placeholder, "placeholder").unwrap();
         let file = dir.path().join("book.epub");
         assert!(!is_file_downloaded(&file));
+    }
+
+    // --- icloud_data_dir_fast ---
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn test_icloud_data_dir_fast_path_format() {
+        // The fast path should be derived from $HOME + the container ID with
+        // dots replaced by tildes. We can't assert it returns Some without an
+        // actual iCloud directory present, but we CAN verify the derivation
+        // matches what the system NSFileManager API would produce by checking
+        // a temporary $HOME with a stub directory.
+        let tmp = TempDir::new().unwrap();
+        let stub = tmp
+            .path()
+            .join("Library/Mobile Documents/iCloud~com~wycstudios~quill/Documents");
+        fs::create_dir_all(&stub).unwrap();
+
+        // SAFETY: tests run single-threaded by default for this crate's
+        // env-mutating tests; we restore HOME after the assertion.
+        let prev = std::env::var_os("HOME");
+        std::env::set_var("HOME", tmp.path());
+        let resolved = icloud_data_dir_fast();
+        if let Some(home) = prev {
+            std::env::set_var("HOME", home);
+        }
+
+        assert_eq!(resolved, Some(stub));
     }
 
     // --- icloud_placeholder_path ---
