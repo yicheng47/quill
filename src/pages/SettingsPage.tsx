@@ -668,6 +668,7 @@ export default function SettingsPage() {
               onChange={(lang) => {
                 setLanguage(lang);
                 save("language", lang);
+                localStorage.setItem("quill-language", lang);
                 i18n.changeLanguage(lang);
                 showSavedToast();
               }}

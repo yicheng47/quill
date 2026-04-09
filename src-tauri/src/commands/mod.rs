@@ -1,4 +1,5 @@
 pub mod ai;
+pub mod app;
 pub mod bookmarks;
 pub mod books;
 pub mod chats;

@@ -25,6 +25,26 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .on_window_event(|window, event| {
+            // On macOS, closing the main window via the red button should hide
+            // it, not quit the app — matches the standard Mac convention. The
+            // user reopens it from the dock icon (RunEvent::Reopen below) or
+            // by relaunching from Spotlight. cmd-Q still quits because that
+            // path goes through applicationShouldTerminate, not CloseRequested.
+            //
+            // Reader windows are unaffected and close normally.
+            #[cfg(target_os = "macos")]
+            if window.label() == "main" {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                let _ = (window, event);
+            }
+        })
         .setup(|app| {
             let local_dir = {
                 let base = app
@@ -39,15 +59,18 @@ pub fn run() {
             };
             std::fs::create_dir_all(&local_dir).expect("failed to create app data dir");
 
-            // If iCloud sync is enabled and available, use the iCloud directory
+            // If iCloud sync is enabled, resolve the iCloud Documents path from
+            // the deterministic hardcoded location. This avoids calling
+            // `URLForUbiquityContainerIdentifier` on the main thread, which
+            // queries the iCloud daemon and is the slowest call on cold start
+            // (often >1s, sometimes several seconds after sleep/reboot).
+            //
+            // The actual `URLForUbiquityContainerIdentifier` call still has to
+            // happen at some point to register the container with the iCloud
+            // daemon and trigger sync — we do that in a background thread
+            // below, after setup has unblocked.
             let data_dir = if icloud::is_icloud_enabled(&local_dir) {
-                match icloud::icloud_data_dir() {
-                    Some(dir) => {
-                        let _ = icloud::ensure_downloaded(&dir);
-                        dir
-                    }
-                    None => local_dir.clone(),
-                }
+                icloud::icloud_data_dir_fast().unwrap_or_else(|| local_dir.clone())
             } else {
                 local_dir.clone()
             };
@@ -63,6 +86,21 @@ pub fn run() {
                 .migrate_from_settings(&db)
                 .expect("failed to migrate secrets");
 
+            // Establish iCloud daemon access + trigger evicted-file downloads
+            // in the background, off the main thread.
+            #[cfg(target_os = "macos")]
+            if icloud::is_icloud_enabled(&local_dir) {
+                tauri::async_runtime::spawn_blocking(|| {
+                    if let Some(icloud_dir) = icloud::icloud_data_dir() {
+                        let _ = icloud::ensure_downloaded(&icloud_dir);
+                    } else {
+                        eprintln!(
+                            "iCloud: daemon unreachable; running against the cached path. Sync will resume on next launch."
+                        );
+                    }
+                });
+            }
+
             app.manage(LocalDir(local_dir));
             app.manage(db);
             app.manage(secrets);
@@ -70,6 +108,8 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            // App lifecycle
+            commands::app::app_ready,
             // Books
             commands::books::import_book,
             commands::books::import_pdf,
@@ -164,6 +204,23 @@ pub fn run() {
                 let _ = app_handle.emit("file-open", paths);
             }
         }
+        // Dock icon click while the app is already running. If the main
+        // (library) window is hidden — including when only reader windows are
+        // visible — bring it back. The user explicitly asked for this so the
+        // library is always one dock-click away.
+        #[cfg(target_os = "macos")]
+        tauri::RunEvent::Reopen { .. } => {
+            if let Some(window) = app_handle.get_webview_window("main") {
+                if !window.is_visible().unwrap_or(true) {
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+            }
+        }
+        // On non-macOS, closing the main window quits the app (close-all-windows
+        // convention). On macOS the main window is hidden instead (handled above
+        // in on_window_event), so this branch is a no-op there.
+        #[cfg(not(target_os = "macos"))]
         tauri::RunEvent::WindowEvent {
             label,
             event: tauri::WindowEvent::Destroyed,

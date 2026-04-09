@@ -33,6 +33,7 @@ export default function LanguageSettings({ settings, loading, save, showSavedToa
           onChange={(lang) => {
             setLanguage(lang);
             save("language", lang);
+            localStorage.setItem("quill-language", lang);
             i18n.changeLanguage(lang);
             showSavedToast();
           }}
