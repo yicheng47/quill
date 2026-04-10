@@ -86,21 +86,6 @@ pub fn run() {
                 .migrate_from_settings(&db)
                 .expect("failed to migrate secrets");
 
-            // Establish iCloud daemon access + trigger evicted-file downloads
-            // in the background, off the main thread.
-            #[cfg(target_os = "macos")]
-            if icloud::is_icloud_enabled(&local_dir) {
-                tauri::async_runtime::spawn_blocking(|| {
-                    if let Some(icloud_dir) = icloud::icloud_data_dir() {
-                        let _ = icloud::ensure_downloaded(&icloud_dir);
-                    } else {
-                        eprintln!(
-                            "iCloud: daemon unreachable; running against the cached path. Sync will resume on next launch."
-                        );
-                    }
-                });
-            }
-
             app.manage(LocalDir(local_dir));
             app.manage(db);
             app.manage(secrets);

@@ -11,6 +11,7 @@
   "sidebar.collectionPlaceholder": "书单名称...",
   "sidebar.renameCollection": "重命名",
   "sidebar.deleteCollection": "删除",
+  "sidebar.icloudSyncing": "正在与 iCloud 同步…",
 
   "home.title.all": "全部书籍",
   "home.title.reading": "正在阅读",
