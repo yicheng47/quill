@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useTranslation } from "react-i18next";
-import { Library, BookOpen, CheckCircle2, Sparkles, BookA, Plus, MessageSquare, Globe, Pencil, Trash2, GripVertical } from "lucide-react";
+import { Library, BookOpen, CheckCircle2, FolderClosed, BookA, Plus, MessageSquare, Globe, Pencil, Trash2, GripVertical } from "lucide-react";
 import Button from "./ui/Button";
 import QuillLogo from "./QuillLogo";
 import type { Book } from "../hooks/useBooks";
@@ -265,7 +265,7 @@ export default function Sidebar({ activeFilter, onFilterChange, books, collectio
           </form>
         )}
 
-        <div ref={collectionListRef} className="flex flex-col gap-1 overflow-y-auto min-h-0">
+        <div ref={collectionListRef} className="flex flex-col gap-1 overflow-y-auto min-h-0 scrollbar-none">
           {displayCollections.map((collection) => {
             const isActive = activeFilter === `collection:${collection.id}`;
             if (renamingId === collection.id) {
@@ -305,7 +305,7 @@ export default function Sidebar({ activeFilter, onFilterChange, books, collectio
                   <div data-grip className="flex items-center justify-center w-5 h-9 cursor-grab touch-none">
                     <GripVertical size={12} className="text-text-muted/40" />
                   </div>
-                  <Sparkles
+                  <FolderClosed
                     size={16}
                     className={isActive ? "text-accent-text" : "text-text-muted"}
                   />
