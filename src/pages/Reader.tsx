@@ -748,10 +748,8 @@ export default function Reader() {
   // When side panel toggles while zoomed, re-fit the renderer to the new container size
   useEffect(() => {
     if (book?.format !== "pdf" || zoomLevel === 100) return;
-    // Scroll mode reflows automatically as the container resizes (rows are
-    // sized in CSS pixels at the current zoom attribute, not via CSS
-    // transforms), so the lock-and-rescale dance below would actively break
-    // it. Skip.
+    // Scroll mode reflows via its own ResizeObserver in pdf-scroll.js,
+    // so the lock-and-rescale dance below is not needed. Skip.
     if (readerSettings.readingMode === "scrolling") return;
     const view = viewRef.current;
     const viewer = viewerRef.current;
