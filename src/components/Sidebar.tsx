@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useTranslation } from "react-i18next";
-import { Library, BookOpen, CheckCircle2, FolderClosed, BookA, Plus, MessageSquare, Globe, Pencil, Trash2, GripVertical } from "lucide-react";
+import { Library, BookOpen, CheckCircle2, FolderClosed, BookA, Plus, MessageSquare, Globe, Pencil, Trash2, GripVertical, Cloud } from "lucide-react";
 import Button from "./ui/Button";
 import QuillLogo from "./QuillLogo";
 import type { Book } from "../hooks/useBooks";
@@ -19,6 +19,7 @@ interface SidebarProps {
   };
   userName?: string;
   onOpenSettings?: () => void;
+  icloudSyncing?: boolean;
 }
 
 const SIDEBAR_MIN = 180;
@@ -35,7 +36,7 @@ function getStoredWidth(): number {
   return SIDEBAR_DEFAULT;
 }
 
-export default function Sidebar({ activeFilter, onFilterChange, books, collections: collectionsHook, userName, onOpenSettings }: SidebarProps) {
+export default function Sidebar({ activeFilter, onFilterChange, books, collections: collectionsHook, userName, onOpenSettings, icloudSyncing }: SidebarProps) {
   const { t } = useTranslation();
   const [sidebarWidth, setSidebarWidth] = useState(getStoredWidth);
   const resizingRef = useRef(false);
@@ -178,6 +179,11 @@ export default function Sidebar({ activeFilter, onFilterChange, books, collectio
         <span className="text-[18px] font-semibold tracking-[0.5px] text-text-primary" style={{ fontFamily: "Georgia, 'Times New Roman', serif" }}>
           Quill
         </span>
+        {icloudSyncing && (
+          <span title={t("sidebar.icloudSyncing")} className="ml-auto shrink-0">
+            <Cloud size={14} className="text-text-muted animate-pulse" />
+          </span>
+        )}
       </div>
 
       <div className="flex flex-col gap-3">

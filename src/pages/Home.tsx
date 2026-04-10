@@ -23,6 +23,7 @@ export default function Home() {
   const [searchQuery, setSearchQuery] = useState("");
   const [isDragging, setIsDragging] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [icloudSyncing, setIcloudSyncing] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<"general" | "reading" | "ai" | "lookup" | "icloud" | "about">("general");
   const [userName, setUserName] = useState("");
@@ -100,6 +101,20 @@ export default function Home() {
   const allBooksRefreshRef = useRef(allBooks.refresh);
   useEffect(() => { refreshRef.current = refresh; }, [refresh]);
   useEffect(() => { allBooksRefreshRef.current = allBooks.refresh; }, [allBooks.refresh]);
+
+  // iCloud background sync indicator + refresh books when sync finishes
+  useEffect(() => {
+    const unlistenStart = listen("icloud-sync-start", () => setIcloudSyncing(true));
+    const unlistenDone = listen("icloud-sync-done", () => {
+      setIcloudSyncing(false);
+      refreshRef.current();
+      allBooksRefreshRef.current();
+    });
+    return () => {
+      unlistenStart.then((fn) => fn());
+      unlistenDone.then((fn) => fn());
+    };
+  }, []);
 
   // Listen for Tauri file drag-and-drop events
   useEffect(() => {
@@ -231,6 +246,7 @@ export default function Home() {
         collections={collections}
         userName={userName}
         onOpenSettings={() => setSettingsOpen(true)}
+        icloudSyncing={icloudSyncing}
       />
 
       {activeFilter === "vocab" ? (

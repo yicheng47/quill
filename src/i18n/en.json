@@ -11,6 +11,7 @@
   "sidebar.collectionPlaceholder": "Collection name...",
   "sidebar.renameCollection": "Rename",
   "sidebar.deleteCollection": "Delete",
+  "sidebar.icloudSyncing": "Syncing with iCloud…",
 
   "home.title.all": "All Books",
   "home.title.reading": "Currently Reading",

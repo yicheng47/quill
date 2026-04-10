@@ -1,12 +1,20 @@
 use tauri::{AppHandle, Manager};
 
+#[cfg(target_os = "macos")]
+use tauri::Emitter;
+
 use crate::error::{AppError, AppResult};
+use crate::LocalDir;
 
 /// Called by the frontend after React has mounted and painted its first frame.
 /// Shows the main window — the window starts hidden so the user sees the dock
 /// bounce → fully-rendered window instead of a beach ball over a blank webview.
+///
+/// Also kicks off background iCloud daemon registration + evicted-file downloads.
+/// We do this here (not in setup) so the frontend event listeners are already
+/// registered and can show the sync indicator.
 #[tauri::command]
-pub fn app_ready(app: AppHandle) -> AppResult<()> {
+pub fn app_ready(app: AppHandle, _local_dir: tauri::State<'_, LocalDir>) -> AppResult<()> {
     let window = app
         .get_webview_window("main")
         .ok_or_else(|| AppError::Other("main window not found".into()))?;
@@ -16,5 +24,22 @@ pub fn app_ready(app: AppHandle) -> AppResult<()> {
     window
         .set_focus()
         .map_err(|e| AppError::Other(e.to_string()))?;
+
+    #[cfg(target_os = "macos")]
+    if crate::icloud::is_icloud_enabled(&_local_dir.0) {
+        let handle = app.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            let _ = handle.emit("icloud-sync-start", ());
+            if let Some(icloud_dir) = crate::icloud::icloud_data_dir() {
+                let _ = crate::icloud::ensure_downloaded(&icloud_dir);
+            } else {
+                eprintln!(
+                    "iCloud: daemon unreachable; running against the cached path. Sync will resume on next launch."
+                );
+            }
+            let _ = handle.emit("icloud-sync-done", ());
+        });
+    }
+
     Ok(())
 }
