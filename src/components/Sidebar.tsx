@@ -21,8 +21,24 @@ interface SidebarProps {
   onOpenSettings?: () => void;
 }
 
+const SIDEBAR_MIN = 180;
+const SIDEBAR_MAX = 400;
+const SIDEBAR_DEFAULT = 224;
+const STORAGE_KEY = "sidebar-width";
+
+function getStoredWidth(): number {
+  const stored = localStorage.getItem(STORAGE_KEY);
+  if (stored) {
+    const n = parseInt(stored, 10);
+    if (!isNaN(n) && n >= SIDEBAR_MIN && n <= SIDEBAR_MAX) return n;
+  }
+  return SIDEBAR_DEFAULT;
+}
+
 export default function Sidebar({ activeFilter, onFilterChange, books, collections: collectionsHook, userName, onOpenSettings }: SidebarProps) {
   const { t } = useTranslation();
+  const [sidebarWidth, setSidebarWidth] = useState(getStoredWidth);
+  const resizingRef = useRef(false);
 
   const libraryFilters = [
     { id: "all", label: t("sidebar.allBooks"), icon: Library },
@@ -128,8 +144,34 @@ export default function Sidebar({ activeFilter, onFilterChange, books, collectio
     return () => document.removeEventListener("mousedown", handler);
   }, [contextMenu]);
 
+  const handleResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    resizingRef.current = true;
+    const startX = e.clientX;
+    const startWidth = sidebarWidth;
+    const onMouseMove = (ev: MouseEvent) => {
+      const newWidth = Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, startWidth + ev.clientX - startX));
+      setSidebarWidth(newWidth);
+    };
+    const onMouseUp = () => {
+      resizingRef.current = false;
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      setSidebarWidth((w) => {
+        localStorage.setItem(STORAGE_KEY, String(w));
+        return w;
+      });
+    };
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+  }, [sidebarWidth]);
+
   return (
-    <aside className="w-[224px] shrink-0 bg-bg-muted border-r border-border h-full flex flex-col gap-6 px-4 relative select-none overflow-hidden">
+    <aside style={{ width: sidebarWidth }} className="shrink-0 bg-bg-muted border-r border-border h-full flex flex-col gap-6 px-4 relative select-none overflow-hidden">
       <div data-tauri-drag-region className="absolute top-0 left-0 right-0 h-11" />
       <div className="flex items-center gap-2.5 pb-2 pt-11">
         <QuillLogo size={28} />
@@ -374,6 +416,11 @@ export default function Sidebar({ activeFilter, onFilterChange, books, collectio
           </button>
         </div>
       )}
+      {/* Resize handle */}
+      <div
+        onMouseDown={handleResizeStart}
+        className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-accent/30 transition-colors"
+      />
     </aside>
   );
 }
