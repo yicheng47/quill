@@ -64,6 +64,8 @@
   "chats.empty": "No Chats Yet",
   "chats.emptySub": "Start a conversation in the AI panel while reading a book.",
   "chats.noMatch": "No matching chats",
+  "chats.detailEmpty": "No messages yet",
+  "chats.detailEmptySub": "Send a message to continue the conversation.",
   "chats.deleteTitle": "Delete Chat?",
   "chats.deleteMsg": "\"{{title}}\" and all its messages will be permanently deleted. This action cannot be undone.",
   "chats.newest": "Newest",
