@@ -27,9 +27,7 @@ Create a new versioned release for Quill.
 
 6. Create a PR: `gh pr create --title "chore: release v{version}" --body "..."` with a summary of changes.
 
-7. Wait for CI to pass: `gh pr checks <pr-number> --watch`
-
-8. Once CI passes, merge the PR: `gh pr merge <pr-number> --squash --delete-branch`
+7. Merge the PR immediately — version bump commits don't need to wait for CI: `gh pr merge <pr-number> --squash --delete-branch`
 
 9. Pull main and tag: `git checkout main && git pull && git tag -a v{version} -m "v{version}"`
 

@@ -64,6 +64,8 @@
   "chats.empty": "暂无对话",
   "chats.emptySub": "在阅读书籍时打开 AI 面板，开始一段对话。",
   "chats.noMatch": "没有匹配的对话",
+  "chats.detailEmpty": "还没有消息",
+  "chats.detailEmptySub": "发送消息继续对话。",
   "chats.deleteTitle": "删除对话？",
   "chats.deleteMsg": "\"{{title}}\" 及其所有消息将被永久删除，此操作无法撤销。",
   "chats.newest": "最新",

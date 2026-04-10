@@ -1,19 +1,16 @@
 import { useState, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import {
-  ArrowRight,
   Search,
   BookOpen,
   Sparkles,
-  Trash2,
   MessageSquare,
   ArrowDownWideNarrow,
   ArrowUpWideNarrow,
 } from "lucide-react";
-import Button from "./ui/Button";
 import { useAllChats, type ChatSummary } from "../hooks/useChats";
 import { timeAgo } from "../utils/timeAgo";
-import { openReaderWindow } from "../utils/openReaderWindow";
+import ChatDetailView from "./ChatDetailView";
 
 type SortMode = "newest" | "oldest";
 
@@ -23,7 +20,7 @@ export default function ChatsContent() {
   const [sort, setSort] = useState<SortMode>("newest");
   const [search, setSearch] = useState("");
   const [bookFilter, setBookFilter] = useState<string | null>(null);
-  const [deleteConfirm, setDeleteConfirm] = useState<ChatSummary | null>(null);
+  const [selectedChat, setSelectedChat] = useState<ChatSummary | null>(null);
 
   const filtered = useMemo(() => {
     let result = chats;
@@ -74,11 +71,20 @@ export default function ChatsContent() {
     return Array.from(map.values());
   }, [chats]);
 
-  const handleOpenInReader = (chat: ChatSummary) => {
-    openReaderWindow(chat.book_id, { openChat: true, chatId: chat.id });
-  };
-
   const isEmpty = chats.length === 0;
+
+  if (selectedChat) {
+    return (
+      <ChatDetailView
+        chat={selectedChat}
+        onBack={() => setSelectedChat(null)}
+        onChatDeleted={(id) => {
+          setSelectedChat(null);
+          remove(id);
+        }}
+      />
+    );
+  }
 
   return (
     <div className="flex-1 flex flex-col min-w-0">
@@ -195,16 +201,24 @@ export default function ChatsContent() {
                 {group.chats.map((chat) => (
                   <div
                     key={chat.id}
-                    className="flex items-start gap-4 px-3 pt-3 pb-3 rounded-[10px] hover:bg-bg-input group"
+                    onClick={() => setSelectedChat(chat)}
+                    className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] hover:bg-bg-input cursor-pointer"
                   >
-                    <div className="size-9 rounded-[10px] flex items-center justify-center shrink-0 mt-0.5 bg-accent-bg border border-accent/20">
+                    <div className="size-9 rounded-[10px] flex items-center justify-center shrink-0 bg-accent-bg border border-accent/20">
                       <Sparkles size={16} className="text-accent-text" />
                     </div>
 
                     <div className="flex-1 min-w-0">
-                      <span className="block text-[14px] font-semibold text-text-primary leading-5">
-                        {chat.title}
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[14px] font-semibold text-text-primary leading-5 truncate tracking-[-0.08px]">
+                          {chat.title}
+                        </span>
+                        {(chat.message_count ?? 0) > 0 && (
+                          <span className="flex items-center justify-center h-[18px] px-[7px] rounded-full bg-bg-input text-[10px] font-medium text-text-muted shrink-0">
+                            {chat.message_count}
+                          </span>
+                        )}
+                      </div>
                       <p className="text-[12px] text-text-muted leading-[18px] truncate mt-0.5">
                         {chat.last_message
                           ? `AI: ${chat.last_message.substring(0, 80)}${chat.last_message.length > 80 ? "..." : ""}`
@@ -212,27 +226,9 @@ export default function ChatsContent() {
                       </p>
                     </div>
 
-                    <div className="flex items-center gap-3 shrink-0">
-                      <div className="flex flex-col items-end gap-0.5">
-                        <span className="text-[11px] text-text-muted">{timeAgo(chat.updated_at)}</span>
-                        <span className="text-[11px] text-text-muted">
-                          {t("chats.msgs", { count: chat.message_count ?? 0 })}
-                        </span>
-                      </div>
-                      <button
-                        onClick={() => handleOpenInReader(chat)}
-                        className="flex items-center gap-1 h-[24.5px] px-2.5 rounded-[10px] bg-accent-bg text-[11px] font-medium text-accent-text tracking-[0.06px] cursor-pointer hover:opacity-70"
-                      >
-                        {t("chats.openInReader")}
-                        <ArrowRight size={12} />
-                      </button>
-                      <button
-                        onClick={() => setDeleteConfirm(chat)}
-                        className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-bg-surface/80 cursor-pointer transition-opacity"
-                      >
-                        <Trash2 size={15} className="text-text-muted" />
-                      </button>
-                    </div>
+                    <span className="text-[11px] text-text-muted shrink-0">
+                      {timeAgo(chat.updated_at)}
+                    </span>
                   </div>
                 ))}
               </div>
@@ -246,33 +242,6 @@ export default function ChatsContent() {
         )}
       </div>
 
-      {/* Delete confirmation dialog */}
-      {deleteConfirm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-overlay">
-          <div className="bg-bg-surface rounded-xl shadow-lg w-[400px] p-6">
-            <h3 className="text-[18px] font-semibold text-text-primary mb-2">
-              {t("chats.deleteTitle")}
-            </h3>
-            <p className="text-[14px] text-text-secondary leading-5 mb-6">
-              {t("chats.deleteMsg", { title: deleteConfirm.title })}
-            </p>
-            <div className="flex justify-end gap-3">
-              <Button variant="ghost" size="md" onClick={() => setDeleteConfirm(null)}>
-                {t("common.cancel")}
-              </Button>
-              <button
-                onClick={() => {
-                  remove(deleteConfirm.id);
-                  setDeleteConfirm(null);
-                }}
-                className="h-9 px-4 rounded-lg bg-red-500 text-white text-[14px] font-medium cursor-pointer hover:bg-red-600 transition-colors"
-              >
-                {t("common.delete")}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
