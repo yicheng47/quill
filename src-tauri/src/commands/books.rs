@@ -387,9 +387,44 @@ pub fn update_book_metadata(
     Ok(())
 }
 
+#[derive(Debug, Serialize)]
+pub struct StagedPdf {
+    pub book_id: String,
+    /// Absolute path to the staged file inside `$APPDATA/books/`,
+    /// safe for the frontend to fetch via the asset protocol.
+    pub abs_path: String,
+}
+
+/// Step 1 of PDF import: copy the user-selected file into `$APPDATA/books/`
+/// under a UUID filename. Returns an absolute path the frontend can read via
+/// the asset protocol (so PDF metadata extraction never has to fetch from
+/// arbitrary user paths, which is fragile across macOS/Tauri configurations).
 #[tauri::command]
-pub async fn import_pdf(
-    source_path: String,
+pub async fn stage_pdf_import(source_path: String, db: State<'_, Db>) -> AppResult<StagedPdf> {
+    let data_dir = db
+        .data_dir
+        .lock()
+        .map_err(|e| AppError::Other(e.to_string()))?
+        .clone();
+    let books_dir = data_dir.join("books");
+    fs::create_dir_all(&books_dir)?;
+
+    let book_id = uuid::Uuid::new_v4().to_string();
+    let staged = books_dir.join(format!("{}.pdf", book_id));
+    fs::copy(std::path::Path::new(&source_path), &staged)?;
+
+    Ok(StagedPdf {
+        book_id,
+        abs_path: staged.to_string_lossy().to_string(),
+    })
+}
+
+/// Step 2 of PDF import: rename the staged file to a slugged name, write the
+/// cover, and insert the DB row. Caller must have first called
+/// `stage_pdf_import` to obtain `book_id`.
+#[tauri::command]
+pub async fn commit_pdf_import(
+    book_id: String,
     title: String,
     author: Option<String>,
     description: Option<String>,
@@ -405,16 +440,24 @@ pub async fn import_pdf(
     let books_dir = data_dir.join("books");
     let covers_dir = data_dir.join("covers");
 
-    let book_id = uuid::Uuid::new_v4().to_string();
-    let src = std::path::Path::new(&source_path);
+    let staged = books_dir.join(format!("{}.pdf", book_id));
+    if !staged.exists() {
+        return Err(AppError::Other(format!(
+            "staged PDF not found for book_id {}",
+            book_id
+        )));
+    }
 
-    // Copy PDF to app data with readable filename
+    // Rename to a human-readable filename
     let filename = book_filename(&title, &book_id, "pdf");
     let dest = books_dir.join(&filename);
-    fs::copy(src, &dest)?;
+    if dest != staged {
+        fs::rename(&staged, &dest)?;
+    }
 
     // Save cover image if provided
     let cover_path = if let Some(ref data) = cover_data {
+        fs::create_dir_all(&covers_dir)?;
         let cover_file = covers_dir.join(format!("{}.png", book_id));
         fs::write(&cover_file, data)?;
         Some(format!("covers/{}.png", book_id))
@@ -468,6 +511,20 @@ pub async fn import_pdf(
     let mut result = book;
     resolve_book_paths(&mut result, &db);
     Ok(result)
+}
+
+/// Roll back a staged PDF import by deleting the staged file. Used by the
+/// frontend when metadata extraction or commit fails.
+#[tauri::command]
+pub async fn cancel_pdf_import(book_id: String, db: State<'_, Db>) -> AppResult<()> {
+    let data_dir = db
+        .data_dir
+        .lock()
+        .map_err(|e| AppError::Other(e.to_string()))?
+        .clone();
+    let staged = data_dir.join("books").join(format!("{}.pdf", book_id));
+    let _ = fs::remove_file(&staged);
+    Ok(())
 }
 
 #[cfg(test)]

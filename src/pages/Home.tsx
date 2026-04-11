@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useTranslation } from "react-i18next";
-import { Search, LayoutGrid, List, Plus, Upload, BookOpen, Loader } from "lucide-react";
+import { Search, LayoutGrid, List, Plus, Upload, BookOpen, Loader, AlertCircle, X } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
@@ -13,8 +13,18 @@ import TranslationsContent from "../components/TranslationsContent";
 import SettingsModal from "../components/SettingsModal";
 import Button from "../components/ui/Button";
 import Input from "../components/ui/Input";
-import { useBooks, importBookDialog, type Book } from "../hooks/useBooks";
+import { useBooks, importBookDialog } from "../hooks/useBooks";
 import { useCollections } from "../hooks/useCollections";
+
+function formatError(err: unknown): string {
+  if (typeof err === "string") return err;
+  if (err instanceof Error) return err.message;
+  try {
+    return JSON.stringify(err);
+  } catch {
+    return String(err);
+  }
+}
 
 export default function Home() {
   const { t } = useTranslation();
@@ -23,6 +33,7 @@ export default function Home() {
   const [searchQuery, setSearchQuery] = useState("");
   const [isDragging, setIsDragging] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
   const [icloudSyncing, setIcloudSyncing] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<"general" | "reading" | "ai" | "lookup" | "icloud" | "about">("general");
@@ -102,6 +113,13 @@ export default function Home() {
   useEffect(() => { refreshRef.current = refresh; }, [refresh]);
   useEffect(() => { allBooksRefreshRef.current = allBooks.refresh; }, [allBooks.refresh]);
 
+  // Auto-dismiss import error after 10s
+  useEffect(() => {
+    if (!importError) return;
+    const timer = setTimeout(() => setImportError(null), 10000);
+    return () => clearTimeout(timer);
+  }, [importError]);
+
   // iCloud background sync indicator + refresh books when sync finishes
   useEffect(() => {
     const unlistenStart = listen("icloud-sync-start", () => setIcloudSyncing(true));
@@ -133,22 +151,10 @@ export default function Home() {
           try {
             for (const filePath of books) {
               try {
-                if (filePath.toLowerCase().endsWith(".pdf")) {
-                  const { extractPdfMetadata } = await import("../utils/pdfMetadata");
-                  const meta = await extractPdfMetadata(filePath);
-                  await invoke<Book>("import_pdf", {
-                    sourcePath: filePath,
-                    title: meta.title,
-                    author: meta.author,
-                    description: meta.description,
-                    pages: meta.pages,
-                    coverData: meta.coverData ? Array.from(meta.coverData) : null,
-                  });
-                } else {
-                  await invoke<Book>("import_book", { filePath });
-                }
+                await importBookDialog.importFile(filePath);
               } catch (err) {
                 console.error("Failed to import dropped book:", err);
+                setImportError(`${filePath.split("/").pop()}: ${formatError(err)}`);
               }
             }
             refreshRef.current();
@@ -176,22 +182,10 @@ export default function Home() {
       try {
         for (const filePath of paths) {
           try {
-            if (filePath.toLowerCase().endsWith(".pdf")) {
-              const { extractPdfMetadata } = await import("../utils/pdfMetadata");
-              const meta = await extractPdfMetadata(filePath);
-              await invoke<Book>("import_pdf", {
-                sourcePath: filePath,
-                title: meta.title,
-                author: meta.author,
-                description: meta.description,
-                pages: meta.pages,
-                coverData: meta.coverData ? Array.from(meta.coverData) : null,
-              });
-            } else {
-              await invoke<Book>("import_book", { filePath });
-            }
+            await importBookDialog.importFile(filePath);
           } catch (err) {
             console.error("Failed to import file-open book:", err);
+            setImportError(`${filePath.split("/").pop()}: ${formatError(err)}`);
           }
         }
         refreshRef.current();
@@ -208,8 +202,9 @@ export default function Home() {
     : books;
 
   const handleImport = async () => {
+    let selected: string | null = null;
     try {
-      const selected = await importBookDialog.pickFile();
+      selected = await importBookDialog.pickFile();
       if (!selected) return;
       setImporting(true);
       try {
@@ -223,6 +218,8 @@ export default function Home() {
       }
     } catch (err) {
       console.error("Failed to import book:", err);
+      const name = selected ? selected.split("/").pop() : null;
+      setImportError(name ? `${name}: ${formatError(err)}` : formatError(err));
     }
   };
 
@@ -352,6 +349,26 @@ export default function Home() {
               {t("home.importing")}
             </p>
           </div>
+        </div>
+      )}
+
+      {importError && (
+        <div className="fixed top-5 left-1/2 -translate-x-1/2 z-[60] max-w-[600px] bg-white dark:bg-bg-surface border border-border rounded-[14px] shadow-popover flex items-start gap-3 pl-4 pr-3 py-3">
+          <AlertCircle size={16} className="shrink-0 mt-0.5 text-red-500" />
+          <div className="flex-1 min-w-0">
+            <p className="text-[13px] font-medium text-text-primary tracking-[-0.08px]">
+              {t("home.importError")}
+            </p>
+            <p className="text-[12px] text-text-secondary mt-0.5 break-words">
+              {importError}
+            </p>
+          </div>
+          <button
+            onClick={() => setImportError(null)}
+            className="shrink-0 size-6 flex items-center justify-center rounded-lg hover:bg-bg-input cursor-pointer transition-colors"
+          >
+            <X size={14} className="text-text-muted" />
+          </button>
         </div>
       )}
 

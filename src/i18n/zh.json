@@ -28,6 +28,7 @@
   "home.dropOverlay": "松开以添加到书库",
   "home.dropFormats": "EPUB & PDF",
   "home.importing": "正在导入书籍...",
+  "home.importError": "无法导入书籍",
 
   "reader.pageOf": "第 {{current}} 页，共 {{total}} 页",
   "reader.chapterOf": "第 {{current}} 章，共 {{total}} 章",

@@ -28,6 +28,7 @@
   "home.dropOverlay": "Drop to add to your library",
   "home.dropFormats": "EPUB & PDF",
   "home.importing": "Importing book...",
+  "home.importError": "Couldn't import book",
 
   "reader.pageOf": "Page {{current}} of {{total}}",
   "reader.chapterOf": "Chapter {{current}} of {{total}}",
