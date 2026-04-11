@@ -53,7 +53,10 @@ async function pickFile(): Promise<string | null> {
   });
 }
 
-async function importFile(filePath: string): Promise<Book> {
+async function importFile(
+  filePath: string,
+  onMetadataWarning?: (warning: string) => void,
+): Promise<Book> {
   if (!filePath.toLowerCase().endsWith(".pdf")) {
     return invoke<Book>("import_book", { filePath });
   }
@@ -65,8 +68,26 @@ async function importFile(filePath: string): Promise<Book> {
     sourcePath: filePath,
   });
   try {
-    const { extractPdfMetadata } = await import("../utils/pdfMetadata");
-    const meta = await extractPdfMetadata(staged.abs_path);
+    const { extractPdfMetadata, filenameToTitle } = await import("../utils/pdfMetadata");
+    let meta;
+    try {
+      meta = await extractPdfMetadata(staged.abs_path);
+    } catch (err) {
+      // Metadata extraction failed (PDF.js error, missing CMaps, malformed
+      // PDF, etc.). Don't block the import — fall back to filename-based
+      // metadata so the user still gets their book. Surface the diagnostic
+      // via onMetadataWarning so we can debug what actually broke.
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn("PDF metadata extraction failed, importing with filename only:", err);
+      onMetadataWarning?.(message);
+      meta = {
+        title: filenameToTitle(filePath),
+        author: null,
+        description: null,
+        pages: 0,
+        coverData: null as Uint8Array | null,
+      };
+    }
     return await invoke<Book>("commit_pdf_import", {
       bookId: staged.book_id,
       title: meta.title,
