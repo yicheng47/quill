@@ -54,20 +54,35 @@ async function pickFile(): Promise<string | null> {
 }
 
 async function importFile(filePath: string): Promise<Book> {
-  if (filePath.toLowerCase().endsWith(".pdf")) {
+  if (!filePath.toLowerCase().endsWith(".pdf")) {
+    return invoke<Book>("import_book", { filePath });
+  }
+
+  // PDF: stage → extract metadata from the staged copy → commit.
+  // Staging into $APPDATA/books/ avoids fetching arbitrary user paths via
+  // the asset protocol, which can fail on some Macs (TCC, scope, encoding).
+  const staged = await invoke<{ book_id: string; abs_path: string }>("stage_pdf_import", {
+    sourcePath: filePath,
+  });
+  try {
     const { extractPdfMetadata } = await import("../utils/pdfMetadata");
-    const meta = await extractPdfMetadata(filePath);
-    return invoke<Book>("import_pdf", {
-      sourcePath: filePath,
+    const meta = await extractPdfMetadata(staged.abs_path);
+    return await invoke<Book>("commit_pdf_import", {
+      bookId: staged.book_id,
       title: meta.title,
       author: meta.author,
       description: meta.description,
       pages: meta.pages,
       coverData: meta.coverData ? Array.from(meta.coverData) : null,
     });
+  } catch (err) {
+    try {
+      await invoke("cancel_pdf_import", { bookId: staged.book_id });
+    } catch {
+      // Ignore rollback failure — original error is more useful
+    }
+    throw err;
   }
-
-  return invoke<Book>("import_book", { filePath });
 }
 
 export const importBookDialog = { pickFile, importFile };

@@ -97,7 +97,9 @@ pub fn run() {
             commands::app::app_ready,
             // Books
             commands::books::import_book,
-            commands::books::import_pdf,
+            commands::books::stage_pdf_import,
+            commands::books::commit_pdf_import,
+            commands::books::cancel_pdf_import,
             commands::books::list_books,
             commands::books::get_book,
             commands::books::delete_book,
