@@ -9,11 +9,18 @@ export interface PdfMetadata {
 }
 
 /**
- * Extract metadata from a PDF file using foliate-js.
+ * Extract metadata from a PDF file by importing pdf.mjs directly.
+ *
+ * We deliberately bypass foliate-js's view.js and pdf.js wrappers: pdf.js
+ * does `import './vendor/pdfjs/pdf.mjs'; const pdfjsLib = globalThis.pdfjsLib`,
+ * which depends on a side-effect assignment inside pdf.mjs and can leave
+ * `pdfjsLib.getDocument` reading as undefined on some Macs — producing the
+ * signature "undefined is not a function (near '...}...')" at the
+ * `pdfjsLib.getDocument({...}).promise` call site. Using pdf.mjs's named
+ * ES-module exports sidesteps the indirection entirely.
  *
  * Each step is labeled so a thrown error names the exact failing step —
- * Safari/JavaScriptCore's "undefined is not a function (near '...}...')"
- * is otherwise impossible to localize without a stack trace.
+ * Safari/JavaScriptCore otherwise refuses to give a useful stack.
  */
 export async function extractPdfMetadata(filePath: string): Promise<PdfMetadata> {
   let step = "init";
@@ -27,73 +34,111 @@ export async function extractPdfMetadata(filePath: string): Promise<PdfMetadata>
       throw new Error(`fetch returned ${response.status} ${response.statusText}`);
     }
 
-    step = "blob → File";
-    const blob = new File([await response.blob()], "book.pdf");
+    step = "response → ArrayBuffer";
+    const buffer = await response.arrayBuffer();
 
-    step = "dynamic import view.js";
-    const viewModule = await import(
-      /* @vite-ignore */ new URL("/foliate-js/view.js", window.location.origin).href
-    );
+    step = "dynamic import pdf.mjs";
+    const pdfjsUrl = new URL("/foliate-js/vendor/pdfjs/pdf.mjs", window.location.origin).href;
+    const pdfjs = await import(/* @vite-ignore */ pdfjsUrl);
 
-    step = "viewModule.makeBook lookup";
-    if (typeof viewModule.makeBook !== "function") {
+    step = "configure worker";
+    const workerUrl = new URL(
+      "/foliate-js/vendor/pdfjs/pdf.worker.mjs",
+      window.location.origin,
+    ).href;
+    if (pdfjs.GlobalWorkerOptions) {
+      pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
+    }
+
+    step = "getDocument lookup";
+    if (typeof pdfjs.getDocument !== "function") {
       throw new Error(
-        `viewModule.makeBook is ${typeof viewModule.makeBook}; exports: [${Object.keys(viewModule).join(", ")}]`
+        `pdfjs.getDocument is ${typeof pdfjs.getDocument}; exports: [${Object.keys(pdfjs).slice(0, 20).join(", ")}${Object.keys(pdfjs).length > 20 ? ", ..." : ""}]`,
       );
     }
-    const makeBook = viewModule.makeBook;
 
-    step = "makeBook(blob)";
-    const book = await makeBook(blob);
-    if (!book) {
-      throw new Error(`makeBook returned ${book}`);
-    }
+    step = "getDocument(buffer)";
+    const cMapUrl = new URL("/foliate-js/vendor/pdfjs/cmaps/", window.location.origin).href;
+    const standardFontDataUrl = new URL(
+      "/foliate-js/vendor/pdfjs/standard_fonts/",
+      window.location.origin,
+    ).href;
+    const loadingTask = pdfjs.getDocument({
+      data: new Uint8Array(buffer),
+      cMapUrl,
+      cMapPacked: true,
+      standardFontDataUrl,
+      isEvalSupported: false,
+    });
 
-    step = "read metadata";
-    const meta = book.metadata || {};
-    const title = flatten(meta.title) || filenameToTitle(filePath);
-    const author = flatten(meta.author) || null;
-    const description = flatten(meta.description) || null;
-    const pages = book.sections?.length || 0;
+    step = "loadingTask.promise";
+    const pdf = await loadingTask.promise;
 
-    step = "getCover";
+    step = "pdf.getMetadata()";
+    const metaResult = await pdf.getMetadata();
+    const info = (metaResult && metaResult.info) || {};
+    const metaObj = metaResult && metaResult.metadata;
+    const getMeta = (key: string): string | null => {
+      if (metaObj && typeof metaObj.get === "function") {
+        const v = metaObj.get(key);
+        if (v) return String(v);
+      }
+      return null;
+    };
+
+    const title = getMeta("dc:title") || info.Title || filenameToTitle(filePath);
+    const author = getMeta("dc:creator") || info.Author || null;
+    const description = getMeta("dc:description") || info.Subject || null;
+
+    step = "pdf.numPages";
+    const pages = pdf.numPages || 0;
+
+    step = "render cover";
     let coverData: Uint8Array | null = null;
     try {
-      if (typeof book.getCover === "function") {
-        const coverBlob: Blob = await book.getCover();
+      const page = await pdf.getPage(1);
+      const viewport = page.getViewport({ scale: 1 });
+      const canvas = document.createElement("canvas");
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      const ctx = canvas.getContext("2d");
+      if (ctx) {
+        await page.render({ canvasContext: ctx, viewport }).promise;
+        const coverBlob: Blob | null = await new Promise((resolve) =>
+          canvas.toBlob((b) => resolve(b), "image/png"),
+        );
         if (coverBlob) {
-          const buffer = await coverBlob.arrayBuffer();
-          coverData = new Uint8Array(buffer);
+          const coverBuffer = await coverBlob.arrayBuffer();
+          coverData = new Uint8Array(coverBuffer);
         }
       }
     } catch {
-      // Cover extraction failed — not critical, continue without one
+      // Cover is nice-to-have; if it fails, just skip it
     }
 
     step = "destroy";
     try {
-      book.destroy?.();
+      pdf.destroy?.();
     } catch {
       // Ignore cleanup errors
     }
 
-    return { title, author, description, pages, coverData };
+    return {
+      title: String(title),
+      author: author ? String(author) : null,
+      description: description ? String(description) : null,
+      pages,
+      coverData,
+    };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    const wrapped = new Error(`PDF metadata failed at "${step}": ${message}`);
-    if (err instanceof Error && err.stack) {
-      wrapped.stack = err.stack;
-    }
+    const stackSnippet =
+      err instanceof Error && err.stack
+        ? ` | ${err.stack.split("\n").slice(0, 2).join(" / ")}`
+        : "";
+    const wrapped = new Error(`PDF metadata failed at "${step}": ${message}${stackSnippet}`);
     throw wrapped;
   }
-}
-
-/** Flatten a value that may be a string, array, or null into a single string. */
-function flatten(value: unknown): string | null {
-  if (!value) return null;
-  if (Array.isArray(value)) return value.join(", ") || null;
-  if (typeof value === "string") return value || null;
-  return String(value);
 }
 
 /** Derive a title from a filename: strip extension, replace separators, title-case. */
