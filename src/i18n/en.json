@@ -29,6 +29,7 @@
   "home.dropFormats": "EPUB & PDF",
   "home.importing": "Importing book...",
   "home.importError": "Couldn't import book",
+  "home.importWarning": "Imported with limited metadata",
 
   "reader.pageOf": "Page {{current}} of {{total}}",
   "reader.chapterOf": "Chapter {{current}} of {{total}}",
