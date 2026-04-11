@@ -40,6 +40,8 @@ Grab the latest `.dmg` from the [Releases](https://github.com/yicheng47/quill/re
 
 Open the `.dmg` and drag **Quill.app** to your Applications folder.
 
+**Requirements:** macOS 14.4 (Sonoma) or later for PDF support. EPUB files work on earlier versions.
+
 ## AI Setup
 
 Quill supports multiple AI providers. Configure in Settings:

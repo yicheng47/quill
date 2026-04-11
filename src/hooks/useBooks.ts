@@ -61,6 +61,16 @@ async function importFile(
     return invoke<Book>("import_book", { filePath });
   }
 
+  // PDF.js uses Promise.withResolvers() everywhere internally. That API
+  // shipped in Safari 17.4 / macOS Sonoma 14.4; older systems can't load
+  // PDF.js at all. Fail fast with a clear message instead of letting it
+  // explode deep inside pdf.mjs with "undefined is not a function".
+  if (typeof (Promise as unknown as { withResolvers?: unknown }).withResolvers !== "function") {
+    throw new Error(
+      "PDF support requires macOS 14.4 (Sonoma) or later. Please update macOS to import PDFs. EPUB files work on older systems.",
+    );
+  }
+
   // PDF: stage → extract metadata from the staged copy → commit.
   // Staging into $APPDATA/books/ avoids fetching arbitrary user paths via
   // the asset protocol, which can fail on some Macs (TCC, scope, encoding).
