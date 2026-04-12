@@ -179,7 +179,7 @@
   "settings.general.themeHint": "选择你偏好的配色方案",
 
   "settings.language": "语言",
-  "settings.language.subtitle": "系统语言与母语",
+  "settings.language.subtitle": "界面语言",
   "settings.languageSub": "选择你的首选语言",
 
   "settings.reading.title": "阅读",
@@ -221,8 +221,15 @@
   "settings.lookup.shortSub": "翻译与词典",
   "settings.lookup.nativeLanguage": "母语",
   "settings.lookup.nativeLanguageHint": "查词时的翻译语言",
+  "settings.lookup.language": "查词语言",
+  "settings.lookup.languageHint": "查词使用的语言",
   "settings.lookup.showTranslation": "显示翻译",
   "settings.lookup.showTranslationHint": "在查词结果中显示母语翻译",
+
+  "settings.translation.title": "翻译",
+  "settings.translation.subtitle": "语言与设置",
+  "settings.translation.language": "翻译语言",
+  "settings.translation.languageHint": "翻译的目标语言",
 
   "settings.ai.title": "AI 助手配置",
   "settings.ai.subtitle": "配置阅读助手的 AI 服务商和模型偏好",

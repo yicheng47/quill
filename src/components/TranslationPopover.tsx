@@ -208,6 +208,8 @@ export default function TranslationPopover({
   const langName = LANG_NAMES[targetLang] || targetLang;
 
   return (
+    <>
+    <div className="fixed inset-0 z-40" onClick={onClose} />
     <div
       ref={popoverRef}
       className="fixed z-50 w-[520px] bg-bg-surface border border-border/80 rounded-xl shadow-context"
@@ -323,5 +325,6 @@ export default function TranslationPopover({
         </div>
       )}
     </div>
+    </>
   );
 }

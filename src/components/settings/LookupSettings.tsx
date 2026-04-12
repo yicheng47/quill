@@ -2,17 +2,19 @@ import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { Sparkles, X } from "lucide-react";
 import Toggle from "../ui/Toggle";
+import Select from "../ui/Select";
 import type { SettingsProps } from "./types";
 
 export default function LookupSettings({ settings, loading, save, showSavedToast }: SettingsProps) {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
+  const [lookupLanguage, setLookupLanguage] = useState("en");
   const [showTranslation, setShowTranslation] = useState(false);
 
-  const language = i18n.language;
   const nativeLanguage = settings.native_language || "en";
 
   useEffect(() => {
     if (loading) return;
+    if (settings.lookup_language) setLookupLanguage(settings.lookup_language);
     if (settings.show_translation) setShowTranslation(settings.show_translation === "true");
   }, [settings, loading]);
 
@@ -20,6 +22,37 @@ export default function LookupSettings({ settings, loading, save, showSavedToast
 
   return (
     <div>
+      {/* Lookup Language */}
+      <div className="flex items-center justify-between h-[73px]">
+        <div>
+          <p className="text-[14px] font-medium text-text-primary tracking-[-0.15px]">
+            {t("settings.lookup.language")}
+          </p>
+          <p className="text-[12px] text-text-muted mt-0.5">
+            {t("settings.lookup.languageHint")}
+          </p>
+        </div>
+        <Select
+          className="w-[130px] shrink-0"
+          value={lookupLanguage}
+          onChange={(lang) => {
+            setLookupLanguage(lang);
+            save("lookup_language", lang);
+            showSavedToast();
+          }}
+          options={[
+            { value: "en", label: "English" },
+            { value: "zh", label: "简体中文" },
+            { value: "ja", label: "日本語" },
+            { value: "ko", label: "한국어" },
+            { value: "es", label: "Español" },
+            { value: "fr", label: "Français" },
+            { value: "de", label: "Deutsch" },
+          ]}
+        />
+      </div>
+      <div className="h-px bg-black/10" />
+
       {/* Show Translation */}
       <div className="flex items-center justify-between h-[73px]">
         <div>
@@ -54,17 +87,17 @@ export default function LookupSettings({ settings, loading, save, showSavedToast
           </div>
           <div className="px-3 py-2.5">
             <p className="text-[15px] font-bold text-text-primary mb-0.5">interfaces</p>
-            {language !== "en" ? (
+            {lookupLanguage !== "en" ? (
               <>
                 <p className="text-[12px] text-text-secondary leading-[1.5] mb-2">
-                  {language === "zh"
+                  {lookupLanguage === "zh"
                     ? "\u540d\u8bcd\u3002\u4e24\u4e2a\u7cfb\u7edf\u76f8\u4e92\u8fde\u63a5\u548c\u4ea4\u4e92\u7684\u70b9\u6216\u533a\u57df\u3002"
                     : "A term used in this passage to convey a specific quality relevant to themes of technological advancement."}
                 </p>
                 <div className="p-2 rounded-md bg-bg-muted border border-border/50">
                   <p className="text-[10px] font-medium text-text-muted mb-0.5">{t("lookup.inContext")}</p>
                   <p className="text-[10px] text-text-secondary leading-[1.5]">
-                    {language === "zh"
+                    {lookupLanguage === "zh"
                       ? "\u5728\u8fd9\u6bb5\u6587\u5b57\u4e2d\uff0cinterfaces \u6307\u7684\u662f\u4eba\u7c7b\u4e0e\u6280\u672f\u4e4b\u95f4\u7684\u8fb9\u754c\u3002"
                       : 'This word contributes to the author\u2019s exploration of the intersection between humanity and technology.'}
                   </p>

@@ -179,7 +179,7 @@
   "settings.general.themeHint": "Choose your preferred color scheme",
 
   "settings.language": "Language",
-  "settings.language.subtitle": "System language & native language",
+  "settings.language.subtitle": "Interface language",
   "settings.languageSub": "Choose your preferred language",
 
   "settings.reading.title": "Reading",
@@ -221,8 +221,15 @@
   "settings.lookup.shortSub": "Translation & dictionary",
   "settings.lookup.nativeLanguage": "Native Language",
   "settings.lookup.nativeLanguageHint": "Your native language for word translations",
+  "settings.lookup.language": "Lookup Language",
+  "settings.lookup.languageHint": "Language for word lookup",
   "settings.lookup.showTranslation": "Show Translation",
   "settings.lookup.showTranslationHint": "Include a brief translation in your native language",
+
+  "settings.translation.title": "Translation",
+  "settings.translation.subtitle": "Language & settings",
+  "settings.translation.language": "Translation Language",
+  "settings.translation.languageHint": "Target language for translations",
 
   "settings.ai.title": "AI Assistant Configuration",
   "settings.ai.subtitle": "Configure your AI provider and model preferences for the reading assistant",

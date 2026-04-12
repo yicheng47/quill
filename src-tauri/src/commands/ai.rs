@@ -41,13 +41,16 @@ pub async fn ai_lookup(
             )
             .ok()
         };
+        let sys_language = get("language").unwrap_or_else(|| "en".to_string());
+        // lookup_language overrides system language for lookup prompts
+        let lookup_language = get("lookup_language").unwrap_or(sys_language.clone());
         (
             get("ai_provider").unwrap_or_else(|| "ollama".to_string()),
             get("ai_model").unwrap_or_else(|| "llama3.2".to_string()),
             get("ai_base_url"),
             get("ai_keep_alive").unwrap_or_else(|| "30m".to_string()),
             get("ai_auth_mode").unwrap_or_else(|| "api_key".to_string()),
-            get("language").unwrap_or_else(|| "en".to_string()),
+            lookup_language,
             get("native_language").unwrap_or_else(|| "en".to_string()),
             get("show_translation").unwrap_or_else(|| "false".to_string()),
         )
@@ -77,9 +80,9 @@ pub async fn ai_lookup(
 
     let kind = kind.unwrap_or_else(|| "full".to_string());
 
-    // Language-aware lookup:
-    // 1. When system language is non-English, respond entirely in that language
-    // 2. When system language is English but translation is enabled, prepend a native translation
+    // Language-aware lookup (uses lookup_language, falling back to system language):
+    // 1. When lookup language is non-English, respond entirely in that language
+    // 2. When English but translation is enabled, prepend a native translation
     let language_prefix = if language != "en" {
         let lang_name = match language.as_str() {
             "zh" => "Chinese (Simplified)",

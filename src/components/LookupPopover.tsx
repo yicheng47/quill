@@ -218,6 +218,8 @@ export default function LookupPopover({
   }, [onClose]);
 
   return (
+    <>
+    <div className="fixed inset-0 z-40" onClick={onClose} />
     <div
       ref={popoverRef}
       className="fixed z-50 w-[440px] bg-bg-surface border border-border/80 rounded-xl shadow-context"
@@ -328,5 +330,6 @@ export default function LookupPopover({
         </div>
       )}
     </div>
+    </>
   );
 }
