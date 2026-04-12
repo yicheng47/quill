@@ -35,6 +35,7 @@
   "reader.chapterOf": "Chapter {{current}} of {{total}}",
   "reader.pagesLeft_one": "{{count}} page left",
   "reader.pagesLeft_other": "{{count}} pages left",
+  "reader.back": "Back",
   "reader.aiAssistant": "AI Assistant",
   "reader.loading": "Loading...",
   "reader.bookNotFound": "Book not found",
