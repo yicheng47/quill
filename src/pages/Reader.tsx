@@ -280,49 +280,33 @@ export default function Reader() {
       .catch(() => setBook(null))
       .finally(() => setLoading(false));
 
-    Promise.all([
-      getAllSettings(),
-      invoke<Record<string, string>>("get_book_settings", { bookId }),
-    ]).then(([globalSettings, bookSettings]) => {
-      const s = { ...globalSettings, ...bookSettings };
+    getAllSettings().then((globalSettings) => {
+      const saved = localStorage.getItem(`reader-settings-${bookId}`);
+      const bookSettings = saved ? JSON.parse(saved) as Partial<ReaderSettingsState> : {};
+      const g = globalSettings;
       setReaderSettings((prev) => ({
         ...prev,
-        theme: (s.reader_theme as ReaderSettingsState["theme"]) || prev.theme,
-        brightness: s.brightness ? parseInt(s.brightness) : prev.brightness,
-        pageColumns: s.page_columns ? (parseInt(s.page_columns) as ReaderSettingsState["pageColumns"]) : prev.pageColumns,
-        font: (s.font_family as ReaderSettingsState["font"]) || prev.font,
-        fontSize: s.font_size ? parseInt(s.font_size) : prev.fontSize,
-        readingMode: (s.reading_mode as ReaderSettingsState["readingMode"]) || prev.readingMode,
-        lineSpacing: s.line_spacing ? parseFloat(s.line_spacing) : prev.lineSpacing,
-        charSpacing: s.char_spacing ? parseInt(s.char_spacing) : prev.charSpacing,
-        wordSpacing: s.word_spacing ? parseInt(s.word_spacing) : prev.wordSpacing,
-        margins: s.margins ? parseInt(s.margins) : prev.margins,
+        theme: bookSettings.theme || (g.reader_theme as ReaderSettingsState["theme"]) || prev.theme,
+        brightness: bookSettings.brightness ?? (g.brightness ? parseInt(g.brightness) : prev.brightness),
+        pageColumns: bookSettings.pageColumns ?? (g.page_columns ? parseInt(g.page_columns) as ReaderSettingsState["pageColumns"] : prev.pageColumns),
+        font: bookSettings.font || (g.font_family as ReaderSettingsState["font"]) || prev.font,
+        fontSize: bookSettings.fontSize ?? (g.font_size ? parseInt(g.font_size) : prev.fontSize),
+        readingMode: bookSettings.readingMode || (g.reading_mode as ReaderSettingsState["readingMode"]) || prev.readingMode,
+        lineSpacing: bookSettings.lineSpacing ?? (g.line_spacing ? parseFloat(g.line_spacing) : prev.lineSpacing),
+        charSpacing: bookSettings.charSpacing ?? (g.char_spacing ? parseInt(g.char_spacing) : prev.charSpacing),
+        wordSpacing: bookSettings.wordSpacing ?? (g.word_spacing ? parseInt(g.word_spacing) : prev.wordSpacing),
+        margins: bookSettings.margins ?? (g.margins ? parseInt(g.margins) : prev.margins),
       }));
       dbSettingsLoaded.current = true;
     }).catch(() => {});
   }, [bookId]);
 
-  // Persist reader settings to DB when they change — only after DB load completes
+  // Persist reader settings to localStorage when they change — only after load completes
   // to avoid overwriting saved values with defaults during initialization
   const dbSettingsLoaded = useRef(false);
   useEffect(() => {
     if (!dbSettingsLoaded.current) return;
-    const { theme, brightness, pageColumns, font, fontSize, readingMode, lineSpacing, charSpacing, wordSpacing, margins } = readerSettings;
-    invoke("set_book_settings_bulk", {
-      bookId,
-      settings: {
-        reader_theme: theme,
-        brightness: String(brightness),
-        page_columns: String(pageColumns),
-        font_family: font,
-        font_size: String(fontSize),
-        reading_mode: readingMode,
-        line_spacing: String(lineSpacing),
-        char_spacing: String(charSpacing),
-        word_spacing: String(wordSpacing),
-        margins: String(margins),
-      },
-    }).catch(() => {});
+    localStorage.setItem(`reader-settings-${bookId}`, JSON.stringify(readerSettings));
   }, [readerSettings]);
 
   // Wait for iCloud download if book is not locally available
