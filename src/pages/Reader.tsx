@@ -40,6 +40,7 @@ interface FoliateView extends HTMLElement {
   book: any;
   renderer: any;
   lastLocation: any;
+  history: { back(): void; forward(): void; canGoBack: boolean; canGoForward: boolean; addEventListener: EventTarget["addEventListener"]; removeEventListener: EventTarget["removeEventListener"] };
   getCFI(index: number, range: Range): string;
   addAnnotation(annotation: { value: string; color?: string }): Promise<any>;
   deleteAnnotation(annotation: { value: string }): Promise<void>;
@@ -210,6 +211,7 @@ export default function Reader() {
   const [pageInfo, setPageInfo] = useState<{ current: number; total: number } | null>(null);
   const currentCfiRef = useRef<string | null>(null);
   const [bookReady, setBookReady] = useState(false);
+  const [canGoBack, setCanGoBack] = useState(false);
   const [icloudDownloading, setIcloudDownloading] = useState(false);
   const [icloudTimeout, setIcloudTimeout] = useState(false);
   const [contextMenu, setContextMenu] = useState<{
@@ -454,6 +456,11 @@ export default function Reader() {
         }
       }) as EventListener);
 
+      // Track navigation history for back button
+      view.history.addEventListener("index-change", () => {
+        setCanGoBack(view.history.canGoBack);
+      });
+
       // Handle section loads — text selection, keyboard, highlights
       view.addEventListener("load", ((e: CustomEvent) => {
         const { doc, index } = e.detail;
@@ -513,7 +520,13 @@ export default function Reader() {
 
         // Keyboard navigation inside content docs
         doc.addEventListener("keydown", (ev: KeyboardEvent) => {
-          if (ev.key === "ArrowLeft") view.prev();
+          if ((ev.metaKey || ev.ctrlKey) && ev.key === "[") {
+            ev.preventDefault();
+            view.history.back();
+          } else if ((ev.metaKey || ev.ctrlKey) && ev.key === "]") {
+            ev.preventDefault();
+            view.history.forward();
+          } else if (ev.key === "ArrowLeft") view.prev();
           else if (ev.key === "ArrowRight") view.next();
           else if ((ev.metaKey || ev.ctrlKey) && (ev.key === "=" || ev.key === "+")) {
             ev.preventDefault();
@@ -1215,6 +1228,15 @@ export default function Reader() {
                   <span className="text-[14px] text-text-muted">{t("reader.preparingBook")}</span>
                 </div>
               </div>
+            )}
+            {canGoBack && (
+              <button
+                onClick={() => viewRef.current?.history.back()}
+                className="absolute bottom-4 left-6 z-20 flex items-center gap-1.5 px-3.5 py-2 rounded-full bg-accent-bg text-accent-text shadow-sm cursor-pointer transition-opacity hover:opacity-80"
+              >
+                <ArrowLeft size={14} />
+                <span className="text-[13px] font-medium">{t("reader.back")}</span>
+              </button>
             )}
           </main>
 

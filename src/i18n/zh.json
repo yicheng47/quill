@@ -35,6 +35,7 @@
   "reader.chapterOf": "第 {{current}} 章，共 {{total}} 章",
   "reader.pagesLeft_one": "本章还剩 {{count}} 页",
   "reader.pagesLeft_other": "本章还剩 {{count}} 页",
+  "reader.back": "返回",
   "reader.aiAssistant": "AI 助手",
   "reader.loading": "加载中...",
   "reader.bookNotFound": "未找到书籍",
