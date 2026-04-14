@@ -15,8 +15,8 @@ export interface Book {
   status: "reading" | "finished" | "unread";
   progress: number;
   current_cfi: string | null;
-  created_at: string;
-  updated_at: string;
+  created_at: number;
+  updated_at: number;
   available: boolean;
 }
 

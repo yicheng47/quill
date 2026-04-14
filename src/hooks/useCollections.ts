@@ -6,7 +6,8 @@ export interface Collection {
   name: string;
   book_count: number;
   sort_order: number;
-  created_at: string;
+  created_at: number;
+  updated_at: number;
 }
 
 export function useCollections() {

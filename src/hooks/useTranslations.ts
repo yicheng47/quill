@@ -8,7 +8,8 @@ export interface SavedTranslation {
   translated_text: string;
   target_language: string;
   cfi: string | null;
-  created_at: string;
+  created_at: number;
+  updated_at: number;
   book_title?: string | null;
 }
 

@@ -15,9 +15,9 @@ pub struct VocabWord {
     pub cfi: Option<String>,
     pub mastery: String,
     pub review_count: i64,
-    pub next_review_at: Option<String>,
-    pub created_at: String,
-    pub updated_at: String,
+    pub next_review_at: Option<i64>,
+    pub created_at: i64,
+    pub updated_at: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub book_title: Option<String>,
 }
@@ -95,7 +95,7 @@ pub fn add_vocab_word(
     }
 
     let id = uuid::Uuid::new_v4().to_string();
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = chrono::Utc::now().timestamp_millis();
 
     conn.execute(
         "INSERT INTO vocab_words (id, book_id, word, definition, context_sentence, cfi, mastery, review_count, next_review_at, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'new', 0, NULL, ?7, ?7)",
@@ -112,7 +112,7 @@ pub fn add_vocab_word(
         mastery: "new".to_string(),
         review_count: 0,
         next_review_at: None,
-        created_at: now.clone(),
+        created_at: now,
         updated_at: now,
         book_title: None,
     })
@@ -171,11 +171,11 @@ pub fn list_all_vocab_words(db: State<'_, Db>) -> AppResult<Vec<VocabWord>> {
 pub fn update_vocab_mastery(
     id: String,
     mastery: String,
-    next_review_at: Option<String>,
+    next_review_at: Option<i64>,
     db: State<'_, Db>,
 ) -> AppResult<()> {
     let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = chrono::Utc::now().timestamp_millis();
     conn.execute(
         "UPDATE vocab_words SET mastery = ?1, next_review_at = ?2, review_count = review_count + 1, updated_at = ?3 WHERE id = ?4",
         params![mastery, next_review_at, now, id],
@@ -186,12 +186,13 @@ pub fn update_vocab_mastery(
 #[tauri::command]
 pub fn list_vocab_due_for_review(db: State<'_, Db>) -> AppResult<Vec<VocabWord>> {
     let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
+    let now_ms = chrono::Utc::now().timestamp_millis();
     let mut stmt = conn.prepare(&format!(
-        "SELECT {} FROM vocab_words WHERE next_review_at IS NOT NULL AND next_review_at <= datetime('now') ORDER BY next_review_at ASC",
+        "SELECT {} FROM vocab_words WHERE next_review_at IS NOT NULL AND next_review_at <= ?1 ORDER BY next_review_at ASC",
         SELECT_COLS
     ))?;
     let words = stmt
-        .query_map([], row_to_vocab)?
+        .query_map(params![now_ms], row_to_vocab)?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(words)
 }
@@ -199,6 +200,7 @@ pub fn list_vocab_due_for_review(db: State<'_, Db>) -> AppResult<Vec<VocabWord>>
 #[tauri::command]
 pub fn get_vocab_stats(db: State<'_, Db>) -> AppResult<VocabStats> {
     let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
+    let now_ms = chrono::Utc::now().timestamp_millis();
     let total: i64 = conn.query_row("SELECT COUNT(*) FROM vocab_words", [], |r| r.get(0))?;
     let new_count: i64 = conn.query_row(
         "SELECT COUNT(*) FROM vocab_words WHERE mastery = 'new'",
@@ -216,8 +218,8 @@ pub fn get_vocab_stats(db: State<'_, Db>) -> AppResult<VocabStats> {
         |r| r.get(0),
     )?;
     let due_for_review: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM vocab_words WHERE next_review_at IS NOT NULL AND next_review_at <= datetime('now')",
-        [],
+        "SELECT COUNT(*) FROM vocab_words WHERE next_review_at IS NOT NULL AND next_review_at <= ?1",
+        params![now_ms],
         |r| r.get(0),
     )?;
     Ok(VocabStats {

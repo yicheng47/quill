@@ -14,8 +14,8 @@ pub struct Chat {
     pub model: Option<String>,
     pub pinned: bool,
     pub metadata: Option<String>,
-    pub created_at: String,
-    pub updated_at: String,
+    pub created_at: i64,
+    pub updated_at: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub book_title: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -32,7 +32,8 @@ pub struct ChatMsg {
     pub content: String,
     pub context: Option<String>,
     pub metadata: Option<String>,
-    pub created_at: String,
+    pub created_at: i64,
+    pub updated_at: i64,
 }
 
 fn row_to_chat(row: &rusqlite::Row) -> rusqlite::Result<Chat> {
@@ -76,6 +77,7 @@ fn row_to_msg(row: &rusqlite::Row) -> rusqlite::Result<ChatMsg> {
         context: row.get(4)?,
         metadata: row.get(5)?,
         created_at: row.get(6)?,
+        updated_at: row.get(7)?,
     })
 }
 
@@ -88,7 +90,7 @@ pub fn create_chat(
 ) -> AppResult<Chat> {
     let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
     let id = Uuid::new_v4().to_string();
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = chrono::Utc::now().timestamp_millis();
     let title = title.unwrap_or_else(|| "New chat".to_string());
 
     conn.execute(
@@ -104,7 +106,7 @@ pub fn create_chat(
         model,
         pinned: false,
         metadata: None,
-        created_at: now.clone(),
+        created_at: now,
         updated_at: now,
         book_title: None,
         message_count: None,
@@ -171,7 +173,7 @@ pub fn delete_chat(chat_id: String, db: State<'_, Db>) -> AppResult<()> {
 #[tauri::command]
 pub fn rename_chat(chat_id: String, title: String, db: State<'_, Db>) -> AppResult<()> {
     let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = chrono::Utc::now().timestamp_millis();
     conn.execute(
         "UPDATE chats SET title = ?1, updated_at = ?2 WHERE id = ?3",
         params![title, now, chat_id],
@@ -183,7 +185,7 @@ pub fn rename_chat(chat_id: String, title: String, db: State<'_, Db>) -> AppResu
 pub fn list_chat_messages(chat_id: String, db: State<'_, Db>) -> AppResult<Vec<ChatMsg>> {
     let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
     let mut stmt = conn.prepare(
-        "SELECT id, chat_id, role, content, context, metadata, created_at
+        "SELECT id, chat_id, role, content, context, metadata, created_at, updated_at
          FROM chat_messages WHERE chat_id = ?1
          ORDER BY created_at ASC",
     )?;
@@ -204,12 +206,12 @@ pub fn save_chat_message(
 ) -> AppResult<ChatMsg> {
     let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
     let id = Uuid::new_v4().to_string();
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = chrono::Utc::now().timestamp_millis();
 
     let tx = conn.unchecked_transaction()?;
     tx.execute(
-        "INSERT INTO chat_messages (id, chat_id, role, content, context, metadata, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        "INSERT INTO chat_messages (id, chat_id, role, content, context, metadata, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
         params![id, chat_id, role, content, context, metadata, now],
     )?;
     tx.execute(
@@ -226,6 +228,7 @@ pub fn save_chat_message(
         context,
         metadata,
         created_at: now,
+        updated_at: now,
     })
 }
 
@@ -240,15 +243,16 @@ mod tests {
         let db = Db::init(&dir.path().to_path_buf()).unwrap();
         // Insert a test book for foreign key references
         let conn = db.conn.lock().unwrap();
+        let t0: i64 = 1704067200000; // 2024-01-01T00:00:00Z
         conn.execute(
             "INSERT INTO books (id, title, author, file_path, status, progress, created_at, updated_at)
-             VALUES ('book1', 'Test Book', 'Author', 'books/test.epub', 'reading', 0, '2024-01-01', '2024-01-01')",
-            [],
+             VALUES ('book1', 'Test Book', 'Author', 'books/test.epub', 'reading', 0, ?1, ?1)",
+            params![t0],
         ).unwrap();
         conn.execute(
             "INSERT INTO books (id, title, author, file_path, status, progress, created_at, updated_at)
-             VALUES ('book2', 'Second Book', 'Author 2', 'books/test2.epub', 'reading', 0, '2024-01-01', '2024-01-01')",
-            [],
+             VALUES ('book2', 'Second Book', 'Author 2', 'books/test2.epub', 'reading', 0, ?1, ?1)",
+            params![t0],
         ).unwrap();
         drop(conn);
         (dir, db)
@@ -256,7 +260,7 @@ mod tests {
 
     fn insert_chat(db: &Db, id: &str, book_id: &str, title: &str) {
         let conn = db.conn.lock().unwrap();
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = chrono::Utc::now().timestamp_millis();
         conn.execute(
             "INSERT INTO chats (id, book_id, title, pinned, created_at, updated_at)
              VALUES (?1, ?2, ?3, 0, ?4, ?4)",
@@ -267,10 +271,10 @@ mod tests {
     fn insert_msg(db: &Db, chat_id: &str, role: &str, content: &str) {
         let conn = db.conn.lock().unwrap();
         let id = Uuid::new_v4().to_string();
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = chrono::Utc::now().timestamp_millis();
         conn.execute(
-            "INSERT INTO chat_messages (id, chat_id, role, content, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO chat_messages (id, chat_id, role, content, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
             params![id, chat_id, role, content, now],
         ).unwrap();
     }
@@ -292,7 +296,7 @@ mod tests {
         let (_dir, db) = setup();
         let conn = db.conn.lock().unwrap();
         let id = Uuid::new_v4().to_string();
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = chrono::Utc::now().timestamp_millis();
         conn.execute(
             "INSERT INTO chats (id, book_id, title, pinned, created_at, updated_at)
              VALUES (?1, 'book1', 'New chat', 0, ?2, ?2)",
@@ -316,7 +320,7 @@ mod tests {
         let (_dir, db) = setup();
         let conn = db.conn.lock().unwrap();
         let id = Uuid::new_v4().to_string();
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = chrono::Utc::now().timestamp_millis();
         conn.execute(
             "INSERT INTO chats (id, book_id, title, model, pinned, created_at, updated_at)
              VALUES (?1, 'book1', 'My Discussion', 'gpt-4o', 0, ?2, ?2)",
@@ -482,7 +486,7 @@ mod tests {
         insert_chat(&db, "c1", "book1", "New chat");
 
         let conn = db.conn.lock().unwrap();
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = chrono::Utc::now().timestamp_millis();
         conn.execute(
             "UPDATE chats SET title = ?1, updated_at = ?2 WHERE id = ?3",
             params!["Renamed", now, "c1"],
@@ -504,7 +508,7 @@ mod tests {
         let (_dir, db) = setup();
         insert_chat(&db, "c1", "book1", "Chat A");
 
-        let original_updated: String = {
+        let original_updated: i64 = {
             let conn = db.conn.lock().unwrap();
             conn.query_row("SELECT updated_at FROM chats WHERE id = 'c1'", [], |r| r.get(0)).unwrap()
         };
@@ -514,10 +518,10 @@ mod tests {
         // Insert message and update chat's updated_at
         {
             let conn = db.conn.lock().unwrap();
-            let now = chrono::Utc::now().to_rfc3339();
+            let now = chrono::Utc::now().timestamp_millis();
             conn.execute(
-                "INSERT INTO chat_messages (id, chat_id, role, content, created_at)
-                 VALUES ('m1', 'c1', 'user', 'Hello', ?1)",
+                "INSERT INTO chat_messages (id, chat_id, role, content, created_at, updated_at)
+                 VALUES ('m1', 'c1', 'user', 'Hello', ?1, ?1)",
                 params![now],
             ).unwrap();
             conn.execute(
@@ -526,7 +530,7 @@ mod tests {
             ).unwrap();
         }
 
-        let new_updated: String = {
+        let new_updated: i64 = {
             let conn = db.conn.lock().unwrap();
             conn.query_row("SELECT updated_at FROM chats WHERE id = 'c1'", [], |r| r.get(0)).unwrap()
         };
@@ -543,26 +547,29 @@ mod tests {
 
         {
             let conn = db.conn.lock().unwrap();
+            let t1: i64 = 1704067200000; // 2024-01-01T00:00:00Z
+            let t2: i64 = 1704067201000; // 2024-01-01T00:00:01Z
+            let t3: i64 = 1704067202000; // 2024-01-01T00:00:02Z
             conn.execute(
-                "INSERT INTO chat_messages (id, chat_id, role, content, created_at)
-                 VALUES ('m1', 'c1', 'user', 'First', '2024-01-01T00:00:00Z')",
-                [],
+                "INSERT INTO chat_messages (id, chat_id, role, content, created_at, updated_at)
+                 VALUES ('m1', 'c1', 'user', 'First', ?1, ?1)",
+                params![t1],
             ).unwrap();
             conn.execute(
-                "INSERT INTO chat_messages (id, chat_id, role, content, context, created_at)
-                 VALUES ('m2', 'c1', 'assistant', 'Second', NULL, '2024-01-01T00:00:01Z')",
-                [],
+                "INSERT INTO chat_messages (id, chat_id, role, content, context, created_at, updated_at)
+                 VALUES ('m2', 'c1', 'assistant', 'Second', NULL, ?1, ?1)",
+                params![t2],
             ).unwrap();
             conn.execute(
-                "INSERT INTO chat_messages (id, chat_id, role, content, context, created_at)
-                 VALUES ('m3', 'c1', 'user', 'Third', 'some highlighted text', '2024-01-01T00:00:02Z')",
-                [],
+                "INSERT INTO chat_messages (id, chat_id, role, content, context, created_at, updated_at)
+                 VALUES ('m3', 'c1', 'user', 'Third', 'some highlighted text', ?1, ?1)",
+                params![t3],
             ).unwrap();
         }
 
         let conn = db.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, chat_id, role, content, context, metadata, created_at
+            "SELECT id, chat_id, role, content, context, metadata, created_at, updated_at
              FROM chat_messages WHERE chat_id = ?1 ORDER BY created_at ASC",
         ).unwrap();
         let msgs: Vec<ChatMsg> = stmt
@@ -582,7 +589,7 @@ mod tests {
     fn test_metadata_json_roundtrip() {
         let (_dir, db) = setup();
         let conn = db.conn.lock().unwrap();
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = chrono::Utc::now().timestamp_millis();
         let meta = r#"{"temperature":0.7,"tokens":150}"#;
 
         conn.execute(

@@ -10,9 +10,9 @@ export interface DictionaryWord {
   cfi: string | null;
   mastery: string;
   review_count: number;
-  next_review_at: string | null;
-  created_at: string;
-  updated_at: string;
+  next_review_at: number | null;
+  created_at: number;
+  updated_at: number;
   book_title: string | null;
 }
 

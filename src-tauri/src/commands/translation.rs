@@ -14,7 +14,8 @@ pub struct Translation {
     pub translated_text: String,
     pub target_language: String,
     pub cfi: Option<String>,
-    pub created_at: String,
+    pub created_at: i64,
+    pub updated_at: i64,
     pub book_title: Option<String>,
 }
 
@@ -166,9 +167,9 @@ pub fn save_translation(
 ) -> AppResult<String> {
     let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
     let id = uuid::Uuid::new_v4().to_string();
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = chrono::Utc::now().timestamp_millis();
     conn.execute(
-        "INSERT INTO translations (id, book_id, source_text, translated_text, target_language, cfi, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        "INSERT INTO translations (id, book_id, source_text, translated_text, target_language, cfi, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
         rusqlite::params![id, book_id, source_text, translated_text, target_language, cfi, now],
     )?;
     Ok(id)
@@ -191,7 +192,7 @@ pub fn list_translations(
 ) -> AppResult<Vec<Translation>> {
     let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
 
-    let mut sql = "SELECT t.id, t.book_id, t.source_text, t.translated_text, t.target_language, t.cfi, t.created_at, b.title FROM translations t LEFT JOIN books b ON t.book_id = b.id".to_string();
+    let mut sql = "SELECT t.id, t.book_id, t.source_text, t.translated_text, t.target_language, t.cfi, t.created_at, t.updated_at, b.title FROM translations t LEFT JOIN books b ON t.book_id = b.id".to_string();
     let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
 
     if let Some(ref bid) = book_id {
@@ -212,7 +213,8 @@ pub fn list_translations(
             target_language: row.get(4)?,
             cfi: row.get(5)?,
             created_at: row.get(6)?,
-            book_title: row.get(7)?,
+            updated_at: row.get(7)?,
+            book_title: row.get(8)?,
         })
     })?;
 

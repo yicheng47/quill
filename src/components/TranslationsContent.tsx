@@ -42,7 +42,7 @@ export default function TranslationsContent() {
   const sorted = useMemo(() => {
     const copy = [...filtered];
     if (sort === "oldest") {
-      copy.sort((a, b) => a.created_at.localeCompare(b.created_at));
+      copy.sort((a, b) => a.created_at - b.created_at);
     }
     return copy;
   }, [filtered, sort]);
