@@ -6,7 +6,6 @@ Specs for features that are in progress or planned. Shipped specs are moved to [
 
 - [14 — Notes (AI-Assisted)](14-notes.md)
 - [15 — AI Translation](15-ai-translation.md)
-- [16 — Universal Cloud Sync](16-universal-cloud-sync.md)
 - [17 — Voice (TTS)](17-voice-tts.md)
 - [18 — AI Summarization](18-ai-summarization.md)
 - [21 — AI Auto-Sort Books into Collections](21-ai-auto-sort-collections.md)
@@ -15,5 +14,7 @@ Specs for features that are in progress or planned. Shipped specs are moved to [
 - [25 — Collection Folders](25-collection-folders.md)
 - [26 — Smooth PDF Page Transitions](26-smooth-pdf-page-transitions.md)
 - [27 — Reading Stats](27-reading-stats.md)
-- [28 — CloudKit Sync](28-cloudkit-sync.md)
+- [29 — CLI AI Providers (Claude Code & Codex)](29-cli-ai-providers.md)
+- [30 — MCP Server](30-mcp-server.md)
+- [31 — Sync](31-sync.md)
 - [146 — PDF Continuous Scroll Mode](146-pdf-scroll-mode.md)
