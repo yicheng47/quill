@@ -37,7 +37,7 @@ export default function ChatsContent() {
   const sorted = useMemo(() => {
     const copy = [...filtered];
     if (sort === "oldest") {
-      copy.sort((a, b) => a.updated_at.localeCompare(b.updated_at));
+      copy.sort((a, b) => a.updated_at - b.updated_at);
     }
     return copy;
   }, [filtered, sort]);

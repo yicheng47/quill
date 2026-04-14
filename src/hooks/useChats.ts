@@ -8,8 +8,8 @@ export interface ChatSummary {
   model: string | null;
   pinned: boolean;
   metadata: string | null;
-  created_at: string;
-  updated_at: string;
+  created_at: number;
+  updated_at: number;
   book_title: string | null;
   message_count: number | null;
   last_message: string | null;

@@ -6,7 +6,8 @@ export interface Bookmark {
   book_id: string;
   cfi: string;
   label: string | null;
-  created_at: string;
+  created_at: number;
+  updated_at: number;
 }
 
 export interface Highlight {
@@ -16,7 +17,8 @@ export interface Highlight {
   color: string;
   note: string | null;
   text_content: string | null;
-  created_at: string;
+  created_at: number;
+  updated_at: number;
 }
 
 export function useBookmarks(bookId: string) {

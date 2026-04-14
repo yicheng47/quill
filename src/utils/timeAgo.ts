@@ -1,10 +1,10 @@
 import i18n from "../i18n";
 
-export function timeAgo(dateStr: string): string {
+/** Relative-time formatter. Input is a unix timestamp in **milliseconds** — the
+ *  shape returned by all Tauri commands since migration 009. */
+export function timeAgo(millis: number): string {
   const t = i18n.t.bind(i18n);
-  const now = Date.now();
-  const then = new Date(dateStr).getTime();
-  const diff = now - then;
+  const diff = Date.now() - millis;
   if (diff < 60000) return t("time.justNow");
   const minutes = Math.floor(diff / 60000);
   if (minutes < 60) return t("time.minutesAgo", { count: minutes });

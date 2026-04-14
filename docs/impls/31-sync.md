@@ -6,11 +6,14 @@
 
 ## Context
 
-Replace today's "SQLite file in iCloud ubiquity container" sync with a per-device append-only event log stored in a user-chosen shared folder. Local `quill.db` becomes a materialized view, rebuildable from merged peer logs. No backend, no CloudKit, no file-level conflicts.
+Replace today's "SQLite file in iCloud ubiquity container" sync with a per-device append-only event log stored in the same iCloud ubiquity container (BYOC deferred to a later release — see v1 scope below). Local `quill.db` becomes a materialized view, rebuildable from merged peer logs. No backend, no CloudKit, no file-level conflicts.
 
 This rewrites the write path. Every mutation becomes `SQL write + event append` in one transaction. Reads are unchanged — still pure SQLite.
 
-**First shipping version:** migrate iCloud-on users directly (no dual-write phase — pre-1.0). iCloud-off users are unaffected until they enable sync. BYOC (custom folder) is a later phase.
+**First shipping version (v1):**
+- **iCloud-only.** The `<shared-folder>` is always the existing iCloud ubiquity container (`iCloud~com~wycstudios~quill/Documents`). No folder picker, no backend enum. BYOC (custom folder) is a later release, landing alongside the next cloud provider.
+- **Same UX as today.** Settings shows a single "Sync with iCloud" Toggle — identical surface to the current `ICloudSettings.tsx`. Users shouldn't notice a UI-level change; the engine underneath is what's new.
+- **No dual-write phase** — pre-1.0, so we migrate iCloud-on users directly on first launch. iCloud-off users are unaffected until they enable sync.
 
 ---
 
@@ -19,7 +22,7 @@ This rewrites the write path. Every mutation becomes `SQL write + event append` 
 ### File layout
 
 ```
-<shared-folder>/                       # iCloud Documents, or user-chosen dir
+<shared-folder>/                       # iCloud Documents container (v1); any user-chosen dir in a future release
   logs/
     <device-uuid>.jsonl                # append-only; this device writes only here
     <device-uuid>.snapshot.json        # latest compaction/migration snapshot
@@ -37,13 +40,13 @@ This rewrites the write path. Every mutation becomes `SQL write + event append` 
 ### Event format
 
 ```jsonc
-{"id":"01HV2X9KQRPTZC8F9EKH2MBAAT","ts":"2026-04-14T12:34:56.789Z","device":"7b6f...","v":1,"type":"highlight.add","payload":{"id":"h1","book":"b1","cfi":"...","color":"yellow"}}
+{"id":"01HV2X9KQRPTZC8F9EKH2MBAAT","ts":1776429296789,"device":"7b6f...","v":1,"type":"highlight.add","payload":{"id":"h1","book":"b1","cfi":"...","color":"yellow"}}
 ```
 
 | Field | Type | Details |
 |---|---|---|
 | `id` | string, 26 chars | ULID — see below |
-| `ts` | string | ISO-8601 UTC with millisecond precision and trailing `Z`, e.g. `2026-04-14T12:34:56.789Z`. Produced by `chrono::Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true)`. |
+| `ts` | i64 (JSON number) | Unix time in **milliseconds** since epoch, UTC. Produced by `chrono::Utc::now().timestamp_millis()`. Fits comfortably in JS `number` — `Date.now()` returns exactly this shape; the JS safe-integer limit (2⁵³) holds another ~285,000 years of headroom over current unix millis (~1.78 × 10¹²). Aligns with the 48-bit millis embedded in the ULID. |
 | `device` | string | UUIDv4 of the originating device, as 36-char hyphenated form (e.g. `7b6f4c3a-1e2d-4f5b-8a9c-0d1e2f3a4b5c`) |
 | `v` | u32 | Event schema version. Starts at `1`. Bumped on any breaking payload change. |
 | `type` | string | Dotted event type from the catalog — see spec §Event catalog & merge rules |
@@ -51,7 +54,7 @@ This rewrites the write path. Every mutation becomes `SQL write + event append` 
 
 Wire encoding: one event per line, UTF-8, no BOM, trailing `\n` after every line including the last. Pretty-printing is forbidden — each event must be exactly one line. Unknown fields on read are preserved via `#[serde(flatten)]` on an `extra: serde_json::Map<String, Value>` field, so a newer peer's additions survive a round trip through an older reader.
 
-Total order across peers: sort ascending by the pair `(ts, device)`, where `device` is the UUID string (arbitrary but deterministic tiebreak). The `id` is NOT used for cross-device ordering — only for per-device watermarks.
+Total order across peers: sort ascending by the pair `(ts, device)`, where `device` is the UUID string (arbitrary but deterministic tiebreak). The `id` is NOT used for cross-device ordering — only for per-device watermarks. Because `ts` is an integer, the merge engine's LWW comparisons are native integer compares — no string-lex format traps.
 
 ### ULID format
 
@@ -90,20 +93,41 @@ let id = generator.generate()?;    // use MonotonicGenerator owned by EventLog
 ```sql
 CREATE TABLE _replay_state (
   peer_device        TEXT PRIMARY KEY,
-  last_event_id      TEXT,              -- resume point in peer's tail
-  last_snapshot_id   TEXT,              -- latest applied snapshot from peer
-  updated_at         TEXT NOT NULL
+  last_event_id      TEXT,              -- resume point in peer's tail (ULID string)
+  last_snapshot_id   TEXT,              -- latest applied snapshot from peer (ULID string)
+  updated_at         INTEGER NOT NULL   -- unix millis
 );
 
 CREATE TABLE _tombstones (
   entity TEXT NOT NULL,
   id     TEXT NOT NULL,
-  ts     TEXT NOT NULL,
+  ts     INTEGER NOT NULL,              -- unix millis
   PRIMARY KEY (entity, id)
 );
 ```
 
 Never appear in any event; never synced.
+
+### Schema normalization — every synced table gets `created_at` + `updated_at` as `INTEGER` unix millis
+
+Before sync code lands, normalize every synced table to carry both `created_at` and `updated_at` as `INTEGER NOT NULL` storing unix time in **milliseconds**. Two changes in one migration:
+
+1. **Shape uniformity.** Every synced table carries both columns. Append-only tables get `updated_at` too — it just equals `created_at` and never changes — so the merge engine can LWW-compare against a single column name on every table, no per-table special cases.
+2. **Type change: TEXT → INTEGER millis.** LWW compares timestamps natively via integer order instead of string-lex order (which is brittle across RFC-3339 format variants — `to_rfc3339()` emits variable sub-second precision and `+00:00`, which string-compares incorrectly against `...Z` millis format). Int64 also aligns with the 48-bit millis embedded in every ULID, so the sync engine uses one time representation end-to-end.
+
+| Table | Today | After migration 009 |
+|---|---|---|
+| `books`, `vocab_words`, `chats` | `created_at TEXT`, `updated_at TEXT` | `created_at INTEGER`, `updated_at INTEGER` (unix millis) |
+| `bookmarks`, `highlights`, `collections`, `chat_messages`, `translations` | `created_at TEXT` only | both columns as `INTEGER` |
+| `vocab_words.next_review_at` | `TEXT` | `INTEGER` (nullable — represents a scheduled future instant) |
+| `collection_books` | no timestamps | both columns as `INTEGER`, backfilled with migration time |
+| `settings`, `book_settings`, `schema_version`, `secrets` | local-only | skip — never synced |
+
+**Migration mechanics.** SQLite can't retype a column in place, so the migration is Rust-driven (not a pure `.sql` file) and runs inside a single transaction: `ALTER TABLE ... ADD COLUMN <col>_ms INTEGER` on every affected column → iterate existing rows, parse the old TEXT via `chrono::DateTime::parse_from_rfc3339`, write `timestamp_millis()` into the new column → `DROP COLUMN` the old TEXT → `RENAME COLUMN <col>_ms TO <col>`. Any parse or SQL failure rolls the entire transaction back, so the DB is either fully migrated or identical to pre-migration. `schema_version` only advances on successful commit, so a crash mid-flight re-runs cleanly on next launch.
+
+**Frontend contract change.** Every Tauri command that returned a timestamp as `string` now returns `number`. TypeScript types switch `created_at: string` → `created_at: number`. Components rendering timestamps use `new Date(millis)` / `toLocaleString()` (or a shared formatter util) in place of ISO string display. This is the only outward-visible change; the UI behavior is unchanged.
+
+This lands as a single normalization commit (Chunk 1 below). It's a breaking internal change, not a feature — it's the moment before sync solidifies the format to fix the choice once.
 
 ---
 
@@ -120,13 +144,14 @@ Never appear in any event; never synced.
 - `src-tauri/src/sync/migration.rs` — one-shot migration from legacy file-sync
 - `src-tauri/src/sync/watcher.rs` — fs-notify wrapper (macOS FSEvents, Linux inotify)
 - `src-tauri/src/commands/sync.rs` — Tauri commands for settings UI
-- `src-tauri/migrations/010_replay_state.sql`
+- `src-tauri/src/migrations_009.rs` — Rust-driven migration 009 (schema normalization + TEXT→INTEGER millis conversion; see "Schema normalization" above)
+- `src-tauri/migrations/010_replay_state.sql` — creates `_replay_state` and `_tombstones`
 - `src/components/settings/LibrarySyncSettings.tsx`
 
 **Modified:**
 - `src-tauri/src/lib.rs` — wire sync module, register commands, spawn watcher task
-- `src-tauri/src/db.rs` — add migration 010; helpers to write local-only rows
-- `src-tauri/src/commands/{bookmarks,books,collections,vocab,chats,translations,settings}.rs` — route every mutation through `SyncWriter`
+- `src-tauri/src/db.rs` — register migrations 009 and 010; helpers to write local-only rows
+- `src-tauri/src/commands/{bookmarks,books,collections,vocab,chats,translation,settings}.rs` — route every mutation through `SyncWriter`; in Chunk 1, additionally start writing `updated_at` on every INSERT/UPDATE to newly-normalized tables
 - `src-tauri/src/icloud.rs` — deprecated; keep only the legacy migration entry point used by the one-shot migration routine
 - `src/components/settings/ICloudSettings.tsx` → replaced by `LibrarySyncSettings.tsx`
 - `src/i18n/en.json`, `src/i18n/zh.json` — new keys under `settings.librarySync`
@@ -145,7 +170,7 @@ Never appear in any event; never synced.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Event {
     pub id: String,          // ULID
-    pub ts: String,          // RFC-3339
+    pub ts: i64,             // unix millis
     pub device: String,      // UUID
     pub v: u32,              // schema version
     #[serde(flatten)]
@@ -310,10 +335,10 @@ pub fn apply_event(tx: &Transaction, event: &Event) -> AppResult<()> {
             tx.execute("INSERT OR IGNORE INTO _tombstones (entity, id, ts) VALUES ('book', ?1, ?2)", params![id, event.ts])?;
         }
         EventBody::BookProgressSet { book, progress, cfi } => {
-            let existing_ts: Option<String> = tx.query_row(
+            let existing_ts: Option<i64> = tx.query_row(
                 "SELECT updated_at FROM books WHERE id = ?1", params![book], |r| r.get(0),
             ).optional()?;
-            if existing_ts.as_deref().map_or(true, |t| t < event.ts.as_str()) {
+            if existing_ts.map_or(true, |t| t < event.ts) {
                 tx.execute(
                     "UPDATE books SET progress = ?1, current_cfi = ?2, updated_at = ?3 WHERE id = ?4",
                     params![progress, cfi, event.ts, book],
@@ -548,34 +573,26 @@ Lifetime: spawned from `lib.rs::setup` if sync is enabled; cancelled on disable.
 **Component:** `src/components/settings/LibrarySyncSettings.tsx` (replaces `ICloudSettings.tsx`).
 
 **Tauri commands** (`src-tauri/src/commands/sync.rs`):
-- `sync_status() -> SyncStatus { backend, shared_dir, device_uuid, peers: Vec<Peer>, last_replay_at, pending_events, last_error }`
-- `sync_enable(backend: "icloud" | "custom", path: Option<String>) -> AppResult<()>`
-- `sync_disable() -> AppResult<()>`  (local-only fallback; keeps logs, stops writing new ones)
+- `sync_status() -> SyncStatus { enabled, shared_dir, device_uuid, peers: Vec<Peer>, last_replay_at, pending_events, last_error }`
+- `sync_enable() -> AppResult<()>` — no args; always iCloud in v1. Same semantics as today's `icloud_enable`.
+- `sync_disable() -> AppResult<()>` — keeps logs on disk, stops appending. Same semantics as today's `icloud_disable`.
 - `sync_now() -> AppResult<ReplayReport>`
-- `sync_revert_to_legacy() -> AppResult<()>` (grace-period rollback)
+- `sync_revert_to_legacy() -> AppResult<()>` — grace-period rollback (30 days).
+
+Keep `icloud_status`/`icloud_enable`/`icloud_disable` aliased to these during the transition so in-flight builds don't break; remove in cleanup.
 
 **Sections:**
-1. **Storage backend** — segmented control: Local / iCloud Drive / Custom folder. Path display. Folder picker for Custom.
-2. **Migration status** — banner if `migration.complete == false` with a "Migrate now" button; hidden once complete.
-3. **Peers** — list of other devices writing to the shared folder. Each row: device name (editable), last seen, events in tail, snapshot age.
-4. **Actions** — "Sync now", "Compact own log", "Export local backup", "Revert to legacy sync" (only visible within 30 days of migration).
-5. **Notes** — "Secrets are never synced." / "Avoid editing simultaneously on multiple devices."
+1. **Sync toggle** — a single 73px row with a Toggle labelled "Sync with iCloud" / subtitle "Store your library in iCloud Drive". Identical copy and layout to today's `ICloudSettings.tsx`. Loading/error/confirmation states mirror the existing component exactly — users shouldn't notice a UI change at this level.
+2. **Migration banner** — conditional amber card when `migration.complete == false`, with title "Migration pending", body "Your library is still using the legacy iCloud file sync. Migrate now for record-level sync across devices.", and a "Migrate now" button. Hidden once complete; never appears on fresh installs.
+3. **Peers** — expandable "Other devices" row. Each peer row: device icon, device name, last-seen timestamp (relative, e.g. "2 min ago"), pending-events count as a subtle pill. Read-only in v1.
+4. **Actions** — compact cluster of secondary buttons: "Sync now" (icon + label) and "Compact log" (icon + label). Right-aligned destructive-style link "Revert to legacy sync" visible only during the 30-day grace window. Export backup deferred.
+5. **Notes** — "API keys and tokens are stored locally and never synced." / "Avoid editing on multiple devices simultaneously for best results."
 
-### Figma prompt
-
-> Design a settings section titled "Library & Sync". Layout: 73px-tall rows, `flex justify-between`, 1px `black/10` dividers — matches `GeneralSettings.tsx`.
->
-> Section 1: **Storage backend** — single row. Left: label "Library storage" + small-caps helper "Where your books and reading data live". Right: a segmented control with three options: "This device", "iCloud Drive", "Custom folder". Below (when Custom is selected): a second row with a path display (monospace, truncated left) and a "Choose folder…" button.
->
-> Section 2: **Migration banner** (conditional) — full-width amber card above the rows: title "Migration pending", body "Your library is still using the legacy iCloud file sync. Migrate now for record-level sync across devices.", right-aligned primary button "Migrate now".
->
-> Section 3: **Peers** — expandable list under a row titled "Other devices". Each peer row: device icon, editable device name, last-seen timestamp (relative, e.g. "2 min ago"), pending-events count as a subtle pill.
->
-> Section 4: **Actions** — a compact cluster of secondary buttons: "Sync now" (icon + label), "Compact log" (icon + label), "Export local backup" (icon + label). Right-aligned destructive-style link "Revert to legacy sync" (visible only during the 30-day grace window).
->
-> Section 5: **Notes** — small-text section at the bottom: "API keys and tokens are stored locally and never synced." and "Avoid editing on multiple devices simultaneously for best results."
->
-> Palette: keep the existing Quill Settings palette (`quillSurface`, `quillBorder`, `quillText`, `quillTextTertiary`, `quillAccent`, `quillElevated`). Loading/error states match existing `ICloudSettings.tsx` conventions.
+**Deferred to a future release** (alongside the next cloud provider):
+- Segmented control (This device / iCloud Drive / Custom folder).
+- Folder picker via `@tauri-apps/plugin-dialog`'s `open({ directory: true })`.
+- `sync_enable(backend, path)` signature with a `backend` argument.
+- "Export local backup" action.
 
 ---
 
@@ -589,6 +606,121 @@ Because we're shipping end-to-end in v1 (no dual-write):
 4. Ship. Release notes call out migration: "Quill now uses a per-device event log to sync your library. On first launch we'll migrate your existing iCloud data."
 
 Cross-device testing against iOS is blocked until quill-ios ships its mirror — can be done in parallel or staged later.
+
+---
+
+## Shipping chunks
+
+Cross-cutting work — land as a sequence of narrow PRs, each independently reviewable and leaving the app in a working state. The user-facing switch doesn't flip until Chunk 7.
+
+### Chunk 1 — Schema normalization (standalone refactor, no sync code)
+
+Shape + type normalization as a single commit. Lands separately from the sync work so the sync PR doesn't mix two concerns. Internally breaking (all Tauri commands that returned timestamps now return numbers) but no end-user behavior change.
+
+**Backend:**
+- `src-tauri/src/migrations_009.rs` — new module. Single `fn migrate(conn: &Connection) -> AppResult<()>` driven from `db.rs::run_migrations`. One transaction: ADD new `*_ms INTEGER` columns → backfill from existing TEXT via `chrono::DateTime::parse_from_rfc3339` → DROP old TEXT columns → RENAME `*_ms` to final names. Tables touched: `books`, `bookmarks`, `highlights`, `collections`, `collection_books` (adds both cols), `vocab_words` (incl. `next_review_at`), `chats`, `chat_messages`, `translations`.
+- `src-tauri/src/db.rs` — register migration 9 (call `migrations_009::migrate`); bump the two `assert_eq!(version, 8)` tests to 9.
+- `src-tauri/src/commands/{books,bookmarks,collections,vocab,chats,translation}.rs` — every `created_at: String` / `updated_at: String` / `next_review_at: Option<String>` struct field becomes `i64` / `Option<i64>`. Every `chrono::Utc::now().to_rfc3339()` becomes `chrono::Utc::now().timestamp_millis()`. Every row mapper reads `INTEGER` instead of `TEXT`. Commands on tables that previously lacked `updated_at` (bookmarks add, highlights add/color/note, collections rename/reorder, collection_books add, chat_messages add, translations add) now set it.
+- **Migration tests** (in `migrations_009.rs`): seed a fresh DB at schema v8 with realistic old-format TEXT timestamps across every affected table → run `migrate()` → assert (a) each new INTEGER equals `DateTime::parse_from_rfc3339(original).timestamp_millis()`; (b) row counts unchanged; (c) no NULL in any NOT NULL timestamp column; (d) rollback on injected parse failure leaves DB identical to v8 state.
+
+**Frontend:**
+- TypeScript types: every timestamp field becomes `number` (likely in `src/types/` or inline interfaces — grep to find them all).
+- Display sites: every place that rendered the ISO string now formats via `new Date(millis).toLocaleString()` or a shared formatter. Affected components at minimum: book cards, chat list, vocab panel, translations panel, bookmarks list, highlights list. Find via grep on `created_at` / `updated_at` usage.
+
+**Verification:**
+- `cargo check` + `cargo test` pass; migration tests specifically green.
+- Manual: copy a real v0.9.14 `quill.db` to a scratch dir, point a dev build at it, confirm the app opens and shows existing books/highlights/chats correctly with their real historical timestamps (rendered from the migrated INTEGER values).
+- Verify timestamps render identically pre- and post-migration in the UI.
+
+### Chunk 2 — Crates + sync module skeleton + `_replay_state`
+
+- `src-tauri/Cargo.toml` — add `ulid = "1"` (feature `serde`), `notify = "6"`. `cargo check` to sync `Cargo.lock`.
+- `src-tauri/migrations/010_replay_state.sql` — `_replay_state` and `_tombstones` tables.
+- `src-tauri/src/db.rs` — register migration 10.
+- `src-tauri/src/sync/mod.rs` — declare submodules as empty stubs so `cargo check` compiles.
+- `src-tauri/src/lib.rs` — `mod sync;`.
+
+**Verification:** `cargo check` passes. DB advances 9→10; `_replay_state` and `_tombstones` exist.
+
+### Chunk 3 — Event schema + EventLog (pure code, no wiring)
+
+- `src-tauri/src/sync/events.rs` — `Event` struct + `EventBody` enum per Step 1. `#[serde(flatten)] extra` for forward-compat.
+- `src-tauri/src/sync/log.rs` — `EventLog::{open, append, append_batch, read_all, read_after}` per Step 2. Owns a monotonic `ulid::Generator` + `BufWriter<File>` behind one `Mutex`. macOS: `NSFileCoordinator` wrapper via `objc2` in a `#[cfg(target_os = "macos")]` block — net-new helper (current `icloud.rs` doesn't use it).
+- `src-tauri/src/sync/device.rs` — `DeviceIdentity::load_or_create(&local_dir)` reads/writes `device.json` with `{ device_uuid, created_at }`. UUIDv4 via the existing `uuid` crate.
+
+**Tests** (colocated `#[cfg(test)] mod tests`): round-trip every `EventBody` variant; append-then-read ordering; torn-write recovery (truncate last byte); unknown-field preservation.
+
+**Verification:** `cargo test --lib sync::` green. Not wired to the rest of the app yet.
+
+### Chunk 4 — Merge + replay + snapshot (pure)
+
+- `src-tauri/src/sync/merge.rs` — `apply_event` match per `EventBody` variant (Step 4). Helpers: `lww_update_if_newer`, `is_tombstoned`, `insert_tombstone`. Every INSERT uses `OR IGNORE`; every LWW update compares `existing.updated_at < event.ts`; tombstone check precedes every add.
+- `src-tauri/src/sync/replay.rs` — `ReplayEngine::tick()` per Step 5. Lists peer logs + snapshots, skips own files, merges events sorted by `(ts, device)`, applies in one SQL tx. Process-wide `Mutex` serializes concurrent ticks.
+- `src-tauri/src/sync/snapshot.rs` — `Snapshot::{from_log, write_atomic, apply_peer}` per Step 6. Apply follows the 6-step procedure exactly (stat → header parse → watermark compare → full parse → apply under tombstone guard → monotonic watermark update).
+
+**Tests:** merge determinism property test (shuffled apply → byte-identical `SELECT *`); tombstone wins; LWW correctness; snapshot equivalence (events vs snapshot+tail yield identical state).
+
+**Verification:** `cargo test` green. Still not wired to any command.
+
+### Chunk 5 — SyncWriter + command instrumentation
+
+- `src-tauri/src/sync/writer.rs` — `SyncWriter::with_tx<F>(f: F)` per Step 3. Opens SQL tx, passes `(tx, events: &mut Vec<EventBody>)` to closure, on success appends events to log (single fsync) and commits the tx. Disabled case: events vec dropped, tx commits normally. Progress-event debounce ring: per-book trailing 2-second window via `HashMap<book_id, Instant>`.
+- `src-tauri/src/commands/books.rs` — route `import_book`, `commit_pdf_import`, `delete_book`, `update_reading_progress`, `update_book_status`, `mark_finished`, `update_book_metadata` through `SyncWriter`.
+- `src-tauri/src/commands/bookmarks.rs` — all 6 commands; highlight writes also set `updated_at`.
+- `src-tauri/src/commands/collections.rs` — all 6 commands; `rename_collection` and `reorder_collections` also set `updated_at`.
+- `src-tauri/src/commands/vocab.rs`, `chats.rs`, `translation.rs` — remaining events per the Step 3 table.
+- `src-tauri/src/commands/settings.rs` + `book_settings` path — explicitly no-op (local-only).
+- `src-tauri/src/lib.rs` — construct `SyncWriter::new(db, Option<Arc<EventLog>>)` once in `setup`, store in Tauri state. Commands now take `State<SyncWriter>` instead of `State<Db>`.
+
+**Tests:** for each command — sync off → no events; sync on → event content matches SQL write. Progress debounce: 10 rapid calls within 2s → exactly 1 event appended.
+
+**Verification:** existing frontend works unchanged with sync off. `cargo test` green. Manual: import a book with sync off, confirm no log file.
+
+### Chunk 6 — Migration routine + replay wiring on launch
+
+- `src-tauri/src/sync/migration.rs` — `run_migration(...)` per Step 7. Reuses `icloud::ensure_downloaded` and `icloud::icloud_data_dir_fast`. Writes `Snapshot::from_legacy_db(&old_db, device_id)` + empty log, copies ubiquity `quill.db` → local bit-exact, retires ubiquity DB via rename to `quill.db.migrated-<iso-ts>`. Conflict-copy merge for `quill (1).db`, `quill (2).db`.
+- `src-tauri/src/sync/watcher.rs` — `notify` wrapper on `<shared>/logs/`. Debounce 250ms, call `replay_engine.tick()` on tokio task. Skip while a reader session is active (shared `AtomicBool` flag set from reader commands).
+- `src-tauri/src/lib.rs` launch flow per Step 7:
+  ```
+  read migration.complete from local settings
+  if icloud_was_enabled && !migration.complete:
+      run_migration(...)
+  else if migration.complete:
+      retire_ubiquity_db(...)   # self-healing
+  open <local>/quill.db          # always local post-migration
+  replay_engine.tick()           # catch up from peer logs
+  spawn watcher if sync enabled
+  ```
+- `src-tauri/src/commands/sync.rs` — `sync_now` command (manual tick).
+
+**Tests:** migration idempotency; conflict-copy merge; fresh-install replay from existing peer log; no-op tick.
+
+**Verification:** manual E2E on a dev iCloud account — copy a v0.9.x DB to ubiquity, launch v1 build, confirm migration completes, retired file appears, local DB row counts match source.
+
+### Chunk 7 — Settings UI (swap `ICloudSettings` → `LibrarySyncSettings`)
+
+- `src/components/settings/LibrarySyncSettings.tsx` — new, single Toggle + migration banner + peers + actions (see §Step 9 above).
+- `src/components/SettingsModal.tsx` — swap import and section id (`icloud` → `librarySync`).
+- `src/i18n/{en,zh}.json` — add `settings.librarySync.*` namespace mirroring existing `settings.icloud.*` copy. Keep old keys during the transition.
+- `src-tauri/src/commands/sync.rs` — `sync_status`, `sync_enable`, `sync_disable`, `sync_revert_to_legacy`. Register in `generate_handler!`.
+
+**Verification:** Tauri dev server, open Settings → Library & Sync, toggle iCloud off → on → verify `<icloud-container>/logs/<device-uuid>.jsonl` appears and grows with usage.
+
+### Chunk 8 — Compaction
+
+- Wire triggers in `snapshot.rs` per Step 6: own log > 2 MB **OR** > 5000 events **OR** monthly. Invoked at end of migration, from "Compact log" button, and after each launch's `replay_engine.tick()`.
+
+**Verification:** compact round-trip on real usage data produces a snapshot + truncated log that replays to the same state.
+
+### Chunk 9 — Cleanup (Phase D, post-ship, separate follow-up issue)
+
+After v1 ships and stabilizes over 2 releases:
+- Delete `src-tauri/src/icloud.rs` legacy paths.
+- Delete `src-tauri/src/commands/icloud.rs`.
+- Delete old `settings.icloud.*` i18n keys.
+- Delete `src/components/settings/ICloudSettings.tsx` (unreferenced after Chunk 7).
+
+Tracked separately; not part of #185.
 
 ---
 
@@ -616,5 +748,4 @@ Manual / E2E:
 - [ ] Read past existing progress on A while B is open on older position; verify A doesn't clobber B's newer writes.
 - [ ] Delete book on A, verify it disappears on B.
 - [ ] Settings "Revert to legacy sync" restores old DB and sync path; re-migration runs cleanly.
-- [ ] Switch shared folder from iCloud Drive to Dropbox; library follows.
 - [ ] Secrets never appear in shared folder.

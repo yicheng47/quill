@@ -52,8 +52,8 @@ pub struct Book {
     pub status: String,
     pub progress: i32,
     pub current_cfi: Option<String>,
-    pub created_at: String,
-    pub updated_at: String,
+    pub created_at: i64,
+    pub updated_at: i64,
     /// Whether the book file is locally available (not an iCloud placeholder).
     #[serde(default = "default_true")]
     pub available: bool,
@@ -106,7 +106,7 @@ pub async fn import_book(file_path: String, db: State<'_, Db>) -> AppResult<Book
     let dest = books_dir.join(&filename);
     fs::copy(src, &dest)?;
 
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = chrono::Utc::now().timestamp_millis();
 
     // Store relative path in DB
     let rel_file_path = format!("books/{}", filename);
@@ -124,7 +124,7 @@ pub async fn import_book(file_path: String, db: State<'_, Db>) -> AppResult<Book
         status: "unread".to_string(),
         progress: 0,
         current_cfi: None,
-        created_at: now.clone(),
+        created_at: now,
         updated_at: now,
         available: true,
     };
@@ -323,7 +323,7 @@ pub fn update_reading_progress(
     db: State<'_, Db>,
 ) -> AppResult<()> {
     let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = chrono::Utc::now().timestamp_millis();
 
     conn.execute(
         "UPDATE books SET progress = ?1, current_cfi = ?2, updated_at = ?3 WHERE id = ?4",
@@ -346,7 +346,7 @@ pub fn update_book_pages(id: String, pages: i32, db: State<'_, Db>) -> AppResult
 #[tauri::command]
 pub fn mark_finished(id: String, db: State<'_, Db>) -> AppResult<()> {
     let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = chrono::Utc::now().timestamp_millis();
 
     conn.execute(
         "UPDATE books SET status = 'finished', progress = 100, updated_at = ?1 WHERE id = ?2",
@@ -359,7 +359,7 @@ pub fn mark_finished(id: String, db: State<'_, Db>) -> AppResult<()> {
 #[tauri::command]
 pub fn update_book_status(id: String, status: String, db: State<'_, Db>) -> AppResult<()> {
     let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = chrono::Utc::now().timestamp_millis();
 
     conn.execute(
         "UPDATE books SET status = ?1, updated_at = ?2 WHERE id = ?3",
@@ -377,7 +377,7 @@ pub fn update_book_metadata(
     db: State<'_, Db>,
 ) -> AppResult<()> {
     let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = chrono::Utc::now().timestamp_millis();
 
     conn.execute(
         "UPDATE books SET title = ?1, author = ?2, updated_at = ?3 WHERE id = ?4",
@@ -465,7 +465,7 @@ pub async fn commit_pdf_import(
         None
     };
 
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = chrono::Utc::now().timestamp_millis();
     let rel_file_path = format!("books/{}", filename);
 
     let book = Book {
@@ -481,7 +481,7 @@ pub async fn commit_pdf_import(
         status: "unread".to_string(),
         progress: 0,
         current_cfi: None,
-        created_at: now.clone(),
+        created_at: now,
         updated_at: now,
         available: true,
     };
@@ -542,7 +542,7 @@ mod tests {
 
     fn insert_book(db: &Db, id: &str, format: &str) {
         let conn = db.conn.lock().unwrap();
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = chrono::Utc::now().timestamp_millis();
         conn.execute(
             "INSERT INTO books (id, title, author, file_path, format, status, progress, created_at, updated_at)
              VALUES (?1, 'Test', 'Author', 'books/test.epub', ?2, 'reading', 0, ?3, ?3)",
@@ -554,7 +554,7 @@ mod tests {
     fn test_format_defaults_to_epub() {
         let (_dir, db) = setup();
         let conn = db.conn.lock().unwrap();
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = chrono::Utc::now().timestamp_millis();
         conn.execute(
             "INSERT INTO books (id, title, author, file_path, status, progress, created_at, updated_at)
              VALUES ('b1', 'Test', 'Author', 'books/test.epub', 'reading', 0, ?1, ?1)",
@@ -588,7 +588,7 @@ mod tests {
 
         let conn = db.conn.lock().unwrap();
         let book_id = uuid::Uuid::new_v4().to_string();
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = chrono::Utc::now().timestamp_millis();
         let rel_file_path = format!("books/{}.pdf", book_id);
 
         let dest = dir.path().join("books").join(format!("{}.pdf", book_id));
@@ -622,7 +622,7 @@ mod tests {
         fs::write(&cover_file, cover_data).unwrap();
 
         let conn = db.conn.lock().unwrap();
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = chrono::Utc::now().timestamp_millis();
         let cover_path = format!("covers/{}.png", book_id);
 
         conn.execute(
@@ -680,7 +680,7 @@ mod tests {
     fn test_import_pdf_none_author_defaults() {
         let (_dir, db) = setup();
         let conn = db.conn.lock().unwrap();
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = chrono::Utc::now().timestamp_millis();
 
         // Simulate import_pdf with author = None
         let author: Option<String> = None;
@@ -707,7 +707,7 @@ mod tests {
         fs::write(&src, b"%PDF-1.7 fake").unwrap();
 
         let book_id = uuid::Uuid::new_v4().to_string();
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = chrono::Utc::now().timestamp_millis();
         let rel_path = format!("books/{}.pdf", book_id);
         let cover_rel = format!("covers/{}.png", book_id);
 
@@ -754,7 +754,7 @@ mod tests {
         insert_book(&db, "b1", "epub");
 
         let conn = db.conn.lock().unwrap();
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = chrono::Utc::now().timestamp_millis();
         conn.execute(
             "UPDATE books SET title = ?1, author = ?2, updated_at = ?3 WHERE id = ?4",
             params!["New Title", "New Author", now, "b1"],
@@ -773,7 +773,7 @@ mod tests {
         insert_book(&db, "b1", "epub");
 
         let conn = db.conn.lock().unwrap();
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = chrono::Utc::now().timestamp_millis();
         conn.execute(
             "UPDATE books SET title = ?1, author = ?2, updated_at = ?3 WHERE id = ?4",
             params!["Changed Title", "Author", now, "b1"],
@@ -792,18 +792,18 @@ mod tests {
         insert_book(&db, "b1", "epub");
 
         let conn = db.conn.lock().unwrap();
-        let before: String = conn.query_row(
+        let before: i64 = conn.query_row(
             "SELECT updated_at FROM books WHERE id = 'b1'", [], |r| r.get(0),
         ).unwrap();
 
         std::thread::sleep(std::time::Duration::from_millis(10));
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = chrono::Utc::now().timestamp_millis();
         conn.execute(
             "UPDATE books SET title = ?1, author = ?2, updated_at = ?3 WHERE id = ?4",
             params!["New", "New", now, "b1"],
         ).unwrap();
 
-        let after: String = conn.query_row(
+        let after: i64 = conn.query_row(
             "SELECT updated_at FROM books WHERE id = 'b1'", [], |r| r.get(0),
         ).unwrap();
         assert_ne!(before, after);
@@ -814,7 +814,7 @@ mod tests {
         let (_dir, db) = setup();
 
         let conn = db.conn.lock().unwrap();
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = chrono::Utc::now().timestamp_millis();
         let rows = conn.execute(
             "UPDATE books SET title = ?1, author = ?2, updated_at = ?3 WHERE id = ?4",
             params!["Title", "Author", now, "nonexistent"],

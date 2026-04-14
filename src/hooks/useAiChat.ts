@@ -18,8 +18,8 @@ interface ChatRecord {
   model: string | null;
   pinned: boolean;
   metadata: string | null;
-  created_at: string;
-  updated_at: string;
+  created_at: number;
+  updated_at: number;
 }
 
 interface ChatMsgRecord {
@@ -29,7 +29,8 @@ interface ChatMsgRecord {
   content: string;
   context: string | null;
   metadata: string | null;
-  created_at: string;
+  created_at: number;
+  updated_at: number;
 }
 
 /** Derive a short title from the user's first message (truncated at word boundary). */

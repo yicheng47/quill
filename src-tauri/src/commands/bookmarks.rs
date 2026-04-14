@@ -11,7 +11,8 @@ pub struct Bookmark {
     pub book_id: String,
     pub cfi: String,
     pub label: Option<String>,
-    pub created_at: String,
+    pub created_at: i64,
+    pub updated_at: i64,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -22,7 +23,8 @@ pub struct Highlight {
     pub color: String,
     pub note: Option<String>,
     pub text_content: Option<String>,
-    pub created_at: String,
+    pub created_at: i64,
+    pub updated_at: i64,
 }
 
 #[tauri::command]
@@ -34,10 +36,10 @@ pub fn add_bookmark(
 ) -> AppResult<Bookmark> {
     let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
     let id = uuid::Uuid::new_v4().to_string();
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = chrono::Utc::now().timestamp_millis();
 
     conn.execute(
-        "INSERT INTO bookmarks (id, book_id, cfi, label, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+        "INSERT INTO bookmarks (id, book_id, cfi, label, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
         params![id, book_id, cfi, label, now],
     )?;
 
@@ -47,6 +49,7 @@ pub fn add_bookmark(
         cfi,
         label,
         created_at: now,
+        updated_at: now,
     })
 }
 
@@ -61,7 +64,7 @@ pub fn remove_bookmark(id: String, db: State<'_, Db>) -> AppResult<()> {
 pub fn list_bookmarks(book_id: String, db: State<'_, Db>) -> AppResult<Vec<Bookmark>> {
     let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
     let mut stmt = conn.prepare(
-        "SELECT id, book_id, cfi, label, created_at FROM bookmarks WHERE book_id = ?1 ORDER BY created_at DESC",
+        "SELECT id, book_id, cfi, label, created_at, updated_at FROM bookmarks WHERE book_id = ?1 ORDER BY created_at DESC",
     )?;
     let bookmarks = stmt
         .query_map(params![book_id], |row| {
@@ -71,6 +74,7 @@ pub fn list_bookmarks(book_id: String, db: State<'_, Db>) -> AppResult<Vec<Bookm
                 cfi: row.get(2)?,
                 label: row.get(3)?,
                 created_at: row.get(4)?,
+                updated_at: row.get(5)?,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -88,11 +92,11 @@ pub fn add_highlight(
 ) -> AppResult<Highlight> {
     let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
     let id = uuid::Uuid::new_v4().to_string();
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = chrono::Utc::now().timestamp_millis();
     let color = color.unwrap_or_else(|| "yellow".to_string());
 
     conn.execute(
-        "INSERT INTO highlights (id, book_id, cfi_range, color, note, text_content, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        "INSERT INTO highlights (id, book_id, cfi_range, color, note, text_content, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
         params![id, book_id, cfi_range, color, note, text_content, now],
     )?;
 
@@ -104,6 +108,7 @@ pub fn add_highlight(
         note,
         text_content,
         created_at: now,
+        updated_at: now,
     })
 }
 
@@ -118,7 +123,7 @@ pub fn remove_highlight(id: String, db: State<'_, Db>) -> AppResult<()> {
 pub fn list_highlights(book_id: String, db: State<'_, Db>) -> AppResult<Vec<Highlight>> {
     let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
     let mut stmt = conn.prepare(
-        "SELECT id, book_id, cfi_range, color, note, text_content, created_at FROM highlights WHERE book_id = ?1 ORDER BY created_at DESC",
+        "SELECT id, book_id, cfi_range, color, note, text_content, created_at, updated_at FROM highlights WHERE book_id = ?1 ORDER BY created_at DESC",
     )?;
     let highlights = stmt
         .query_map(params![book_id], |row| {
@@ -130,6 +135,7 @@ pub fn list_highlights(book_id: String, db: State<'_, Db>) -> AppResult<Vec<High
                 note: row.get(4)?,
                 text_content: row.get(5)?,
                 created_at: row.get(6)?,
+                updated_at: row.get(7)?,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -139,9 +145,10 @@ pub fn list_highlights(book_id: String, db: State<'_, Db>) -> AppResult<Vec<High
 #[tauri::command]
 pub fn update_highlight_note(id: String, note: String, db: State<'_, Db>) -> AppResult<()> {
     let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
+    let now = chrono::Utc::now().timestamp_millis();
     conn.execute(
-        "UPDATE highlights SET note = ?1 WHERE id = ?2",
-        params![note, id],
+        "UPDATE highlights SET note = ?1, updated_at = ?2 WHERE id = ?3",
+        params![note, now, id],
     )?;
     Ok(())
 }
@@ -149,9 +156,10 @@ pub fn update_highlight_note(id: String, note: String, db: State<'_, Db>) -> App
 #[tauri::command]
 pub fn update_highlight_color(id: String, color: String, db: State<'_, Db>) -> AppResult<()> {
     let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
+    let now = chrono::Utc::now().timestamp_millis();
     conn.execute(
-        "UPDATE highlights SET color = ?1 WHERE id = ?2",
-        params![color, id],
+        "UPDATE highlights SET color = ?1, updated_at = ?2 WHERE id = ?3",
+        params![color, now, id],
     )?;
     Ok(())
 }
