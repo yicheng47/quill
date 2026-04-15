@@ -5,6 +5,7 @@ mod epub;
 mod error;
 mod icloud;
 mod secrets;
+mod sync;
 
 use std::path::PathBuf;
 
