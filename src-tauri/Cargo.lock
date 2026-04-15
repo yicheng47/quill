@@ -3022,6 +3022,7 @@ name = "quill"
 version = "0.9.15"
 dependencies = [
  "base64 0.22.1",
+ "block2",
  "chrono",
  "epub",
  "futures",

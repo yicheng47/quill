@@ -1,9 +1,13 @@
 //! Per-device event-log sync engine (issue #185).
 //!
-//! Scaffolding only — submodules are empty stubs here; each will be filled
-//! out in its own chunk per `docs/impls/31-sync.md`. Keeping them present
-//! from the start lets callers and tests land incrementally without a
-//! mega-PR.
+//! Scaffolding grows chunk by chunk per `docs/impls/31-sync.md`. Keeping the
+//! submodules present from the start lets callers and tests land
+//! incrementally without a mega-PR.
+//!
+//! `dead_code` is silenced module-wide until Chunk 5 wires `SyncWriter` into
+//! the command layer; at that point every symbol has a caller and this
+//! allow can be removed.
+#![allow(dead_code)]
 
 pub mod device;
 pub mod events;
