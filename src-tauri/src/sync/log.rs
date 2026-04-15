@@ -1,12 +1,20 @@
 //! Append-only JSONL log per device.
 //!
-//! Lives at `<shared>/logs/<device-uuid>.jsonl`. One line per event. Appends
-//! are serialized through a `Mutex<ulid::Generator>` so IDs stay monotonic
-//! within a process even under bursts, and fsync'd per batch for durability.
+//! Lives at `<shared>/logs/<device-uuid>.jsonl`. One line per event.
 //!
-//! On macOS every append is wrapped in `NSFileCoordinator` — see
-//! `sync/mod.rs` and `docs/impls/31-sync.md` for why. Non-macOS platforms
-//! use a plain POSIX append path.
+//! A single `Mutex<Inner>` covers both the `ulid::Generator` and the file
+//! append. This is load-bearing: without it two concurrent appends can
+//! generate IDs `id_A < id_B` but reach the file in the other order
+//! (`id_B\nid_A\n`), which permanently hides `id_A` from
+//! `read_after(last_id=id_B)`. Holding the lock across generation AND the
+//! write keeps the on-disk order strictly monotonic with the ID order.
+//!
+//! `NSFileCoordinator` wrapping is opt-in via `use_coordinator`. It's only
+//! meaningful when the file lives inside an iCloud ubiquity container —
+//! elsewhere the coordinator has no presenters to notify, so it's just
+//! overhead and (on some machines) a source of spurious
+//! `NSFileWriteUnknownError`. Callers pass `true` only when sync is enabled
+//! and writing to the iCloud path.
 
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
@@ -23,15 +31,22 @@ use super::events::{Event, EventBody, EVENT_SCHEMA_VERSION};
 pub struct EventLog {
     path: PathBuf,
     device: String,
-    gen: Mutex<ulid::Generator>,
+    use_coordinator: bool,
+    inner: Mutex<Inner>,
+}
+
+struct Inner {
+    gen: ulid::Generator,
 }
 
 impl EventLog {
-    /// Open (or create) the log at `path`. Creates parent dirs. Safe to call
-    /// many times; each call yields an independent `EventLog` with its own
-    /// monotonic generator — callers are expected to hold one long-lived
-    /// instance and share it.
-    pub fn open(path: &Path, device: &str) -> AppResult<Self> {
+    /// Open (or create) the log at `path`. Creates parent dirs.
+    ///
+    /// `use_coordinator = true` wraps each append in `NSFileCoordinator` on
+    /// macOS; pass `true` when writing to an iCloud ubiquity container and
+    /// `false` for local-only paths (tests, future non-iCloud backends).
+    /// The flag is silently ignored on non-macOS platforms.
+    pub fn open(path: &Path, device: &str, use_coordinator: bool) -> AppResult<Self> {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
@@ -40,7 +55,10 @@ impl EventLog {
         Ok(Self {
             path: path.to_path_buf(),
             device: device.to_string(),
-            gen: Mutex::new(ulid::Generator::new()),
+            use_coordinator,
+            inner: Mutex::new(Inner {
+                gen: ulid::Generator::new(),
+            }),
         })
     }
 
@@ -56,39 +74,40 @@ impl EventLog {
         Ok(out.pop().expect("append_batch returns one for one input"))
     }
 
-    /// Append many events atomically against the coordinator (single file
-    /// open + fsync). All events share the same `ts`; IDs are drawn from the
-    /// monotonic generator in order.
+    /// Append many events atomically (single file open + fsync).
+    ///
+    /// The `Inner` mutex is held for the entire method — both ULID
+    /// generation and the file write happen under it. See the module
+    /// docstring for why that's required.
     pub fn append_batch(&self, bodies: Vec<EventBody>, ts: i64) -> AppResult<Vec<Event>> {
         if bodies.is_empty() {
             return Ok(Vec::new());
         }
 
-        let events = {
-            let mut gen = self
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|e| AppError::Other(format!("EventLog inner lock poisoned: {e}")))?;
+
+        // ULID timestamps come from wall clock to preserve generator
+        // monotonicity across process restarts; `ts` on the event is the
+        // caller-supplied value (usually a few milliseconds earlier).
+        let now = SystemTime::now();
+        let mut events = Vec::with_capacity(bodies.len());
+        for body in bodies {
+            let ulid = inner
                 .gen
-                .lock()
-                .map_err(|e| AppError::Other(format!("EventLog gen lock poisoned: {e}")))?;
-            // ULID timestamps come from wall clock to preserve generator
-            // monotonicity across process restarts; `ts` on the event is the
-            // caller-supplied value (usually a few milliseconds earlier).
-            let now = SystemTime::now();
-            let mut events = Vec::with_capacity(bodies.len());
-            for body in bodies {
-                let ulid = gen
-                    .generate_from_datetime(now)
-                    .map_err(|e| AppError::Other(format!("ulid generate: {e:?}")))?;
-                events.push(Event {
-                    id: ulid.to_string(),
-                    ts,
-                    device: self.device.clone(),
-                    v: EVENT_SCHEMA_VERSION,
-                    body,
-                    extra: Map::new(),
-                });
-            }
-            events
-        };
+                .generate_from_datetime(now)
+                .map_err(|e| AppError::Other(format!("ulid generate: {e:?}")))?;
+            events.push(Event {
+                id: ulid.to_string(),
+                ts,
+                device: self.device.clone(),
+                v: EVENT_SCHEMA_VERSION,
+                body,
+                extra: Map::new(),
+            });
+        }
 
         let mut buf = Vec::with_capacity(events.len() * 256);
         for ev in &events {
@@ -96,7 +115,7 @@ impl EventLog {
                 .map_err(|e| AppError::Other(format!("event serialize: {e}")))?;
             buf.push(b'\n');
         }
-        append_bytes(&self.path, &buf)?;
+        append_bytes(&self.path, &buf, self.use_coordinator)?;
 
         Ok(events)
     }
@@ -144,18 +163,18 @@ impl EventLog {
     }
 }
 
-fn append_bytes(path: &Path, bytes: &[u8]) -> AppResult<()> {
+fn append_bytes(path: &Path, bytes: &[u8], use_coordinator: bool) -> AppResult<()> {
     #[cfg(target_os = "macos")]
     {
-        coordinated_append(path, bytes).map_err(AppError::Io)
+        if use_coordinator {
+            return coordinated_append(path, bytes).map_err(AppError::Io);
+        }
     }
     #[cfg(not(target_os = "macos"))]
-    {
-        naive_append(path, bytes).map_err(AppError::Io)
-    }
+    let _ = use_coordinator; // silence unused on non-macOS
+    naive_append(path, bytes).map_err(AppError::Io)
 }
 
-#[cfg(not(target_os = "macos"))]
 fn naive_append(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let mut f = OpenOptions::new().create(true).append(true).open(path)?;
     f.write_all(bytes)?;
@@ -173,6 +192,9 @@ fn naive_append(path: &Path, bytes: &[u8]) -> io::Result<()> {
 // NSFileCoordinator's writing accessor tells presenters (including the
 // daemon) to pause, waits for in-flight downloads/uploads, materializes
 // placeholders, and hands us a URL to write through.
+//
+// Only meaningful on paths inside a ubiquity container. Callers gate via
+// `use_coordinator`.
 // -------------------------------------------------------------------------
 #[cfg(target_os = "macos")]
 fn coordinated_append(path: &Path, bytes: &[u8]) -> io::Result<()> {
@@ -205,12 +227,7 @@ fn coordinated_append(path: &Path, bytes: &[u8]) -> io::Result<()> {
                 return;
             }
         };
-        *inner_result.borrow_mut() = (|| -> io::Result<()> {
-            let mut f = OpenOptions::new().create(true).append(true).open(&target)?;
-            f.write_all(bytes)?;
-            f.sync_all()?;
-            Ok(())
-        })();
+        *inner_result.borrow_mut() = naive_append(&target, bytes);
     });
 
     let mut nserror: Option<objc2::rc::Retained<objc2_foundation::NSError>> = None;
@@ -233,6 +250,7 @@ fn coordinated_append(path: &Path, bytes: &[u8]) -> io::Result<()> {
 mod tests {
     use super::*;
     use crate::sync::events::BookImportPayload;
+    use std::sync::Arc;
     use tempfile::TempDir;
 
     fn sample_body(n: usize) -> EventBody {
@@ -249,15 +267,18 @@ mod tests {
         })
     }
 
-    fn open(tmp: &TempDir) -> EventLog {
+    /// Tests run against TempDir — no ubiquity container, no file presenters,
+    /// nothing for NSFileCoordinator to coordinate with. We always pass
+    /// `use_coordinator = false` so tests are hermetic and fast.
+    fn open_log(tmp: &TempDir) -> EventLog {
         let p = tmp.path().join("logs").join("dev-A.jsonl");
-        EventLog::open(&p, "dev-A").unwrap()
+        EventLog::open(&p, "dev-A", false).unwrap()
     }
 
     #[test]
     fn open_creates_parent_dirs() {
         let tmp = TempDir::new().unwrap();
-        let log = open(&tmp);
+        let log = open_log(&tmp);
         assert!(log.path().exists());
         assert!(log.path().parent().unwrap().exists());
     }
@@ -265,7 +286,7 @@ mod tests {
     #[test]
     fn append_then_read_all_one_event() {
         let tmp = TempDir::new().unwrap();
-        let log = open(&tmp);
+        let log = open_log(&tmp);
         let ev = log.append(sample_body(1), 1_714_770_000_000).unwrap();
         let events = log.read_all().unwrap();
         assert_eq!(events.len(), 1);
@@ -275,7 +296,7 @@ mod tests {
     #[test]
     fn append_preserves_order_and_monotonic_ids() {
         let tmp = TempDir::new().unwrap();
-        let log = open(&tmp);
+        let log = open_log(&tmp);
         for i in 0..10 {
             log.append(sample_body(i), 1_714_770_000_000 + i as i64)
                 .unwrap();
@@ -290,7 +311,7 @@ mod tests {
     #[test]
     fn append_batch_shares_ts_and_generates_distinct_ids() {
         let tmp = TempDir::new().unwrap();
-        let log = open(&tmp);
+        let log = open_log(&tmp);
         let bodies = vec![sample_body(1), sample_body(2), sample_body(3)];
         let ts = 1_714_770_000_000;
         let evs = log.append_batch(bodies, ts).unwrap();
@@ -301,7 +322,6 @@ mod tests {
         let ids: std::collections::HashSet<&str> =
             evs.iter().map(|e| e.id.as_str()).collect();
         assert_eq!(ids.len(), 3, "ulid collision in batch");
-        // Read-back matches.
         let read = log.read_all().unwrap();
         assert_eq!(read, evs);
     }
@@ -309,7 +329,7 @@ mod tests {
     #[test]
     fn read_after_filters_by_last_id() {
         let tmp = TempDir::new().unwrap();
-        let log = open(&tmp);
+        let log = open_log(&tmp);
         let mut ids = Vec::new();
         for i in 0..5 {
             ids.push(
@@ -330,9 +350,8 @@ mod tests {
     #[test]
     fn read_all_on_missing_file_returns_empty() {
         let tmp = TempDir::new().unwrap();
-        // Construct EventLog on a path we'll then delete to simulate never-written.
         let p = tmp.path().join("nope.jsonl");
-        let log = EventLog::open(&p, "dev-A").unwrap();
+        let log = EventLog::open(&p, "dev-A", false).unwrap();
         std::fs::remove_file(&p).unwrap();
         let events = log.read_all().unwrap();
         assert_eq!(events.len(), 0);
@@ -341,15 +360,12 @@ mod tests {
     #[test]
     fn torn_write_tail_is_skipped() {
         let tmp = TempDir::new().unwrap();
-        let log = open(&tmp);
+        let log = open_log(&tmp);
         log.append(sample_body(1), 1_714_770_000_000).unwrap();
         log.append(sample_body(2), 1_714_770_000_001).unwrap();
         log.append(sample_body(3), 1_714_770_000_002).unwrap();
 
-        // Chop the last line mid-JSON to simulate a crash between write_all
-        // and fsync (or a crash mid-buffer before the newline reached disk).
         let mut bytes = std::fs::read(log.path()).unwrap();
-        // Find the newline before the last line, truncate 20 bytes past it.
         let last_nl = bytes[..bytes.len() - 1]
             .iter()
             .rposition(|&b| b == b'\n')
@@ -364,8 +380,7 @@ mod tests {
     #[test]
     fn read_preserves_unknown_top_level_fields() {
         let tmp = TempDir::new().unwrap();
-        let log = open(&tmp);
-        // Write a raw JSONL line with an extra field that didn't exist in our schema.
+        let log = open_log(&tmp);
         let raw = r#"{"id":"01HYZX0000000000000000EVTZ","ts":1714770000000,"device":"dev-A","v":2,"type":"bookmark.add","payload":{"id":"bm1","book_id":"b1","cfi":"epubcfi(/6/4!)","label":null},"future_field":"keep-me"}"#;
         let mut bytes = Vec::new();
         bytes.extend_from_slice(raw.as_bytes());
@@ -383,20 +398,16 @@ mod tests {
 
     #[test]
     fn ids_increase_across_processes_via_wall_clock_prefix() {
-        // Two EventLog instances against the same file — simulates a restart.
-        // Each has its own monotonic generator; but because both draw ULIDs
-        // from wall time, later one's ids strictly sort after the first.
         let tmp = TempDir::new().unwrap();
         let p = tmp.path().join("dev-A.jsonl");
-        let log_a = EventLog::open(&p, "dev-A").unwrap();
+        let log_a = EventLog::open(&p, "dev-A", false).unwrap();
         let id_a = log_a
             .append(sample_body(1), 1_714_770_000_000)
             .unwrap()
             .id;
-        // Sleep 2ms so the wall-clock prefix differs.
         std::thread::sleep(std::time::Duration::from_millis(2));
         drop(log_a);
-        let log_b = EventLog::open(&p, "dev-A").unwrap();
+        let log_b = EventLog::open(&p, "dev-A", false).unwrap();
         let id_b = log_b
             .append(sample_body(2), 1_714_770_000_002)
             .unwrap()
@@ -407,4 +418,42 @@ mod tests {
         );
     }
 
+    #[test]
+    fn concurrent_appends_preserve_id_file_order() {
+        // Regression test for finding #1: previously the mutex only covered
+        // ULID generation, not the file write. That let two threads generate
+        // id_A < id_B but write in the reverse order, permanently hiding
+        // id_A from read_after(id_B). This test stresses that race and
+        // verifies file order matches id order.
+        let tmp = TempDir::new().unwrap();
+        let log = Arc::new(open_log(&tmp));
+
+        let mut handles = Vec::new();
+        for t in 0..8 {
+            let log = Arc::clone(&log);
+            handles.push(std::thread::spawn(move || {
+                let mut ids = Vec::new();
+                for i in 0..50 {
+                    let ev = log
+                        .append(sample_body(t * 100 + i), 1_714_770_000_000 + i as i64)
+                        .unwrap();
+                    ids.push(ev.id);
+                }
+                ids
+            }));
+        }
+        let _: Vec<Vec<String>> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+
+        // Read the file back; verify ids are strictly increasing in file order.
+        let events = log.read_all().unwrap();
+        assert_eq!(events.len(), 8 * 50);
+        for w in events.windows(2) {
+            assert!(
+                w[0].id < w[1].id,
+                "file order broke: {} then {}",
+                w[0].id,
+                w[1].id
+            );
+        }
+    }
 }

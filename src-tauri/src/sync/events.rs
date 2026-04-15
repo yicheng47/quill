@@ -82,6 +82,11 @@ pub enum EventBody {
         id: String,
         mastery: String,
         next_review_at: Option<i64>,
+        /// Absolute review count after the writer's increment. Carrying it
+        /// as an absolute value (not a delta) keeps replay idempotent — a
+        /// snapshot rebuild that re-applies the same event lands on the
+        /// same number instead of double-counting.
+        review_count: i64,
     },
     #[serde(rename = "vocab.delete")]
     VocabDelete { id: String },
@@ -288,6 +293,7 @@ mod tests {
             id: "v1".into(),
             mastery: "learning".into(),
             next_review_at: Some(1_714_942_800_000),
+            review_count: 3,
         }));
         roundtrip(&mk(EventBody::VocabDelete { id: "v1".into() }));
     }
