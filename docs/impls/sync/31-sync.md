@@ -1,7 +1,8 @@
 # Sync — Per-Device Event Log (Desktop)
 
 **Issue:** [#185](https://github.com/yicheng47/quill/issues/185)
-**Spec:** [31 — Sync](../features/31-sync.md)
+**Spec:** [31 — Sync](../../features/31-sync.md)
+**Known Problems:** [31 — Sync Known Problems](31-sync-known-problems.md)
 **Scope:** desktop only. iOS mirrors the same design and ships from `yicheng47/quill-ios` with its own impls doc once this one is proven. Event schema and merge rules below are the cross-platform contract.
 
 ## Context
@@ -104,30 +105,53 @@ CREATE TABLE _tombstones (
   ts     INTEGER NOT NULL,              -- unix millis
   PRIMARY KEY (entity, id)
 );
+
+CREATE TABLE _pending_publish (
+  id         TEXT PRIMARY KEY,          -- local outbox row id (UUID)
+  ts         INTEGER NOT NULL,          -- event timestamp to publish
+  body_json  TEXT NOT NULL,             -- serialized EventBody JSON
+  created_at INTEGER NOT NULL           -- unix millis
+);
 ```
+
+`_replay_state` and `_tombstones` ship in migration 010 (Chunk 2, already on the umbrella branch). `_pending_publish` ships in migration 011 alongside Chunk 4, bundled with the `updated_by_device` column addition — see "Schema normalization" above for the why-bundled rationale. Chunk 4 is where the outbox first gets consumed (`ReplayEngine::tick()` drains it); Chunk 5's `SyncWriter::with_tx` is where rows first get inserted into it.
 
 Never appear in any event; never synced.
 
 ### Schema normalization — every synced table gets `created_at` + `updated_at` as `INTEGER` unix millis
 
+LWW-backed tables also get `updated_by_device TEXT NOT NULL` so equal-millisecond
+writes resolve deterministically by the tuple `(updated_at, updated_by_device)`.
+This applies to:
+- `books`
+- `highlights`
+- `collections`
+- `collection_books`
+- `vocab_words`
+- `chats`
+
 Before sync code lands, normalize every synced table to carry both `created_at` and `updated_at` as `INTEGER NOT NULL` storing unix time in **milliseconds**. Two changes in one migration:
 
 1. **Shape uniformity.** Every synced table carries both columns. Append-only tables get `updated_at` too — it just equals `created_at` and never changes — so the merge engine can LWW-compare against a single column name on every table, no per-table special cases.
 2. **Type change: TEXT → INTEGER millis.** LWW compares timestamps natively via integer order instead of string-lex order (which is brittle across RFC-3339 format variants — `to_rfc3339()` emits variable sub-second precision and `+00:00`, which string-compares incorrectly against `...Z` millis format). Int64 also aligns with the 48-bit millis embedded in every ULID, so the sync engine uses one time representation end-to-end.
+3. **Deterministic same-ms tiebreak.** Every LWW-backed row stores the device UUID that last won the register, so merge helpers can compare `(event.ts, event.device)` against `(stored.updated_at, stored.updated_by_device)` rather than dropping equal-ms writes nondeterministically.
 
-| Table | Today | After migration 009 |
-|---|---|---|
-| `books`, `vocab_words`, `chats` | `created_at TEXT`, `updated_at TEXT` | `created_at INTEGER`, `updated_at INTEGER` (unix millis) |
-| `bookmarks`, `highlights`, `collections`, `chat_messages`, `translations` | `created_at TEXT` only | both columns as `INTEGER` |
-| `vocab_words.next_review_at` | `TEXT` | `INTEGER` (nullable — represents a scheduled future instant) |
-| `collection_books` | no timestamps | both columns as `INTEGER`, backfilled with migration time |
-| `settings`, `book_settings`, `schema_version`, `secrets` | local-only | skip — never synced |
+| Table | Today | After migration 009 | After migration 011 (LWW tiebreak) |
+|---|---|---|---|
+| `books`, `vocab_words`, `chats` | `created_at TEXT`, `updated_at TEXT` | `created_at INTEGER`, `updated_at INTEGER` | + `updated_by_device TEXT NOT NULL DEFAULT 'migration'` |
+| `highlights`, `collections` | `created_at TEXT` only | `created_at INTEGER`, `updated_at INTEGER` | + `updated_by_device TEXT NOT NULL DEFAULT 'migration'` |
+| `collection_books` | no timestamps | `created_at INTEGER`, `updated_at INTEGER` | + `updated_by_device TEXT NOT NULL DEFAULT 'migration'` |
+| `bookmarks`, `chat_messages`, `translations` | `created_at TEXT` only | both columns as `INTEGER` | unchanged (append-only, not LWW-targeted) |
+| `vocab_words.next_review_at` | `TEXT` | `INTEGER` (nullable — scheduled future instant) | unchanged |
+| `settings`, `book_settings`, `schema_version`, `secrets` | local-only | skip — never synced | skip |
 
-**Migration mechanics.** SQLite can't retype a column in place, so the migration is Rust-driven (not a pure `.sql` file) and runs inside a single transaction: `ALTER TABLE ... ADD COLUMN <col>_ms INTEGER` on every affected column → iterate existing rows, parse the old TEXT via `chrono::DateTime::parse_from_rfc3339`, write `timestamp_millis()` into the new column → `DROP COLUMN` the old TEXT → `RENAME COLUMN <col>_ms TO <col>`. Any parse or SQL failure rolls the entire transaction back, so the DB is either fully migrated or identical to pre-migration. `schema_version` only advances on successful commit, so a crash mid-flight re-runs cleanly on next launch.
+**Migration 009 mechanics (shipped).** SQLite can't retype a column in place, so 009 rebuilds each affected table inside a single transaction: `CREATE TABLE <x>_new` with the final schema → `INSERT ... SELECT` converting timestamps in SQL via `CAST(strftime('%s', ts) AS INTEGER) * 1000 + CAST(substr(strftime('%f', ts), -3) AS INTEGER)` → `DROP` old table → `RENAME` new table. Any failure rolls the entire transaction back, so the DB is either fully migrated or identical to pre-migration. `schema_version` advances only on successful commit, so a crash mid-flight re-runs cleanly on next launch. Pure SQL (`src-tauri/migrations/009_normalize_timestamps.sql`), not Rust-driven.
+
+**Migration 011 — `updated_by_device` + `_pending_publish` (bundled).** Migration 009 shipped before Problem 2's resolution was adopted (see `31-sync-known-problems.md` §2), so it does not add `updated_by_device`. A follow-up migration 011 — landing alongside Chunk 4 — adds the column to the six LWW-backed tables via `ALTER TABLE ... ADD COLUMN updated_by_device TEXT NOT NULL DEFAULT 'migration'` and simultaneously creates the `_pending_publish` outbox (Problem 1's durable queue, originally slated for migration 010 before that migration shipped on the umbrella branch). Both changes are sync-infrastructure additions that the merge engine (Chunk 4) and `SyncWriter` (Chunk 5) depend on, so bundling them in one migration keeps the sync series coherent.
 
 **Frontend contract change.** Every Tauri command that returned a timestamp as `string` now returns `number`. TypeScript types switch `created_at: string` → `created_at: number`. Components rendering timestamps use `new Date(millis)` / `toLocaleString()` (or a shared formatter util) in place of ISO string display. This is the only outward-visible change; the UI behavior is unchanged.
 
-This lands as a single normalization commit (Chunk 1 below). It's a breaking internal change, not a feature — it's the moment before sync solidifies the format to fix the choice once.
+Chunk 1 below handles the 009 portion (already shipped via PR #186); 011 is scoped to Chunk 4.
 
 ---
 
@@ -144,13 +168,14 @@ This lands as a single normalization commit (Chunk 1 below). It's a breaking int
 - `src-tauri/src/sync/migration.rs` — one-shot migration from legacy file-sync
 - `src-tauri/src/sync/watcher.rs` — fs-notify wrapper (macOS FSEvents, Linux inotify)
 - `src-tauri/src/commands/sync.rs` — Tauri commands for settings UI
-- `src-tauri/src/migrations_009.rs` — Rust-driven migration 009 (schema normalization + TEXT→INTEGER millis conversion; see "Schema normalization" above)
-- `src-tauri/migrations/010_replay_state.sql` — creates `_replay_state` and `_tombstones`
+- `src-tauri/migrations/009_normalize_timestamps.sql` — pure-SQL migration 009 (schema normalization + TEXT→INTEGER millis conversion; see "Schema normalization" above). Shipped via PR #186.
+- `src-tauri/migrations/010_replay_state.sql` — creates `_replay_state` and `_tombstones`. On the umbrella branch via Chunk 2.
+- `src-tauri/migrations/011_lww_tiebreak_and_outbox.sql` — adds `updated_by_device` to the six LWW-backed tables and creates `_pending_publish`. Lands with Chunk 4.
 - `src/components/settings/LibrarySyncSettings.tsx`
 
 **Modified:**
 - `src-tauri/src/lib.rs` — wire sync module, register commands, spawn watcher task
-- `src-tauri/src/db.rs` — register migrations 009 and 010; helpers to write local-only rows
+- `src-tauri/src/db.rs` — register migrations 009, 010, and 011; helpers to write local-only rows
 - `src-tauri/src/commands/{bookmarks,books,collections,vocab,chats,translation,settings}.rs` — route every mutation through `SyncWriter`; in Chunk 1, additionally start writing `updated_at` on every INSERT/UPDATE to newly-normalized tables
 - `src-tauri/src/icloud.rs` — deprecated; keep only the legacy migration entry point used by the one-shot migration routine
 - `src/components/settings/ICloudSettings.tsx` → replaced by `LibrarySyncSettings.tsx`
@@ -273,7 +298,12 @@ sync_writer.with_tx(|tx, events| {
 })?;
 ```
 
-`SyncWriter::with_tx` opens the SQL transaction, runs the closure to collect events, appends them to the log, and commits the transaction together with the log fsync. Partial failure (log fsync fails after SQL commit, or vice versa): log at error and surface; the state machine is resilient because re-applying the same event on the next launch is a no-op (INSERT OR IGNORE + LWW guards).
+`SyncWriter::with_tx` opens a SQL transaction, runs the closure to collect events, writes those events into the local `_pending_publish` outbox inside the same transaction, **commits the transaction, then flushes `_pending_publish` into the device log** (single fsync). Order is deliberate: commit-then-append. The asymmetric failure modes:
+
+- SQL commit fails → nothing in log, nothing for peers to ingest. Self-consistent; user sees the error and retries.
+- SQL commit succeeds, log append fails → local row and `_pending_publish` rows are durable but no event published yet. This is recovered by retrying the outbox flush on the next launch/focus/manual sync tick. The inverted order ("append then commit") would produce the dual failure — event visible to peers without a local row — which is catastrophic because the origin device would have no principled way to reconstruct the missing SQL state.
+
+If the process crashes after appending to the log but before deleting the `_pending_publish` rows, the next outbox flush may publish the same logical event twice with a fresh ULID. This is acceptable because the merge rules are idempotent: add/delete events key on stable entity ids, and LWW events carry the same `(ts, payload)` and therefore converge to the same state. Partial failures are rare; the design guarantees that when they happen we fail toward "peers lag the origin" rather than "origin lags peers."
 
 **If sync is disabled** (user hasn't enabled it): the writer's `EventSink` is a no-op that discards events. Zero disk cost, uniform command signatures whether or not sync is on.
 
@@ -335,13 +365,17 @@ pub fn apply_event(tx: &Transaction, event: &Event) -> AppResult<()> {
             tx.execute("INSERT OR IGNORE INTO _tombstones (entity, id, ts) VALUES ('book', ?1, ?2)", params![id, event.ts])?;
         }
         EventBody::BookProgressSet { book, progress, cfi } => {
-            let existing_ts: Option<i64> = tx.query_row(
-                "SELECT updated_at FROM books WHERE id = ?1", params![book], |r| r.get(0),
+            let existing: Option<(i64, String)> = tx.query_row(
+                "SELECT updated_at, updated_by_device FROM books WHERE id = ?1",
+                params![book],
+                |r| Ok((r.get(0)?, r.get(1)?)),
             ).optional()?;
-            if existing_ts.map_or(true, |t| t < event.ts) {
+            if existing.map_or(true, |(ts, dev)| (ts, dev) < (event.ts, event.device.clone())) {
                 tx.execute(
-                    "UPDATE books SET progress = ?1, current_cfi = ?2, updated_at = ?3 WHERE id = ?4",
-                    params![progress, cfi, event.ts, book],
+                    "UPDATE books
+                     SET progress = ?1, current_cfi = ?2, updated_at = ?3, updated_by_device = ?4
+                     WHERE id = ?5",
+                    params![progress, cfi, event.ts, event.device, book],
                 )?;
             }
         }
@@ -368,7 +402,7 @@ pub fn apply_event(tx: &Transaction, event: &Event) -> AppResult<()> {
 
 Applying the same events in any order must produce the same SQLite state. Enforced by:
 1. Sorting by `(ts, device)` before apply.
-2. `INSERT OR IGNORE` for add-events; `WHERE updated_at < event_ts` for LWW-events.
+2. `INSERT OR IGNORE` for add-events; `WHERE (updated_at, updated_by_device) < (event_ts, event_device)` for LWW-events.
 3. Tombstone check **before** every add.
 
 Property test: shuffle N events, apply, assert `SELECT * FROM <every table> ORDER BY id` is byte-identical across runs.
@@ -390,15 +424,16 @@ impl<'a> ReplayEngine<'a> {
 ```
 
 `tick()`:
-1. List `<shared>/logs/*.jsonl` and `*.snapshot.json`. Skip own files.
-2. For each peer:
+0. Drain local `_pending_publish`: append any unpublished outbox rows to the device log, then delete them on success. This is the publish-retry path for Step 3's `commit succeeds, append fails` case.
+1. List `<shared>/logs/*.jsonl` and `*.snapshot.json`. **Include own files** — the local device is treated as a peer keyed by `self_device` in `_replay_state`. This is primarily for migration snapshot apply-back (Step 7) and for idempotent replay of already-published own-log events.
+2. For each peer (including self):
    a. If `snapshot_id > last_snapshot_id` in `_replay_state`: apply peer snapshot (step 6).
    b. Iterate log events with `id > last_event_id`. Collect.
 3. Merge all collected events across peers, sort by `(ts, device)`.
 4. Open a single SQL transaction, call `merge::apply_event` for each, update `_replay_state` per peer.
 5. Commit.
 
-**Invariant:** `tick()` is always safe to call. Concurrent calls are serialized by a process-wide mutex.
+**Invariant:** `tick()` is always safe to call. Concurrent calls are serialized by a process-wide mutex. Own events that were already applied to local SQL (the common case) cost one `SELECT updated_at` each and then skip.
 
 **Triggers:**
 - On app launch (before UI).
@@ -512,17 +547,17 @@ pub fn run_migration(
     shared_dir: &Path,                     // = ubiquity_dir in the iCloud case
     device_id: &str,
 ) -> AppResult<()> {
-    // 1. Build snapshot from old_db
+    // 1. Build snapshot from old_db (merged with any conflict copies — see below)
     let snap = Snapshot::from_legacy_db(&old_db, device_id)?;
 
     // 2. Write snapshot + empty log
     snap.write_atomic(shared_dir.join("logs").join(format!("{device_id}.snapshot.json")))?;
     EventLog::create_empty(shared_dir.join("logs").join(format!("{device_id}.jsonl")))?;
 
-    // 3. Copy ubiquity quill.db -> local quill.db (bit-exact)
+    // 3. Copy ubiquity quill.db -> local quill.db (bit-exact starting point)
     fs::copy(ubiquity_dir.join("quill.db"), local_dir.join("quill.db"))?;
 
-    // 4. Verify row counts
+    // 4. Verify row counts match the primary source DB
     verify_counts(&old_db, &Connection::open(local_dir.join("quill.db"))?, &snap)?;
 
     // 5. Flip the flag (durable)
@@ -534,6 +569,8 @@ pub fn run_migration(
     Ok(())
 }
 ```
+
+The caller in `lib.rs` always runs `replay_engine.tick()` after `run_migration` returns. Because Step 5's `tick()` now treats the local device as a peer, the snapshot written in step 2 is immediately applied back to local `quill.db`. This is how conflict-copy rows that don't exist in the primary source DB reach the migrating device — `Snapshot::apply_peer` uses `INSERT OR IGNORE` + LWW, so primary-copy rows stay put and extra rows from `quill (1).db`, `quill (2).db` are merged in. Without this step the migrating device would only see the primary DB's rows while peers see the full union. (See `31-sync-known-problems.md` §3.)
 
 `Snapshot::from_legacy_db` reads every synced table, packs into snapshot format. Timestamps:
 - Use the row's `updated_at` if present, else `created_at`, else `MIGRATION_TS` (`2000-01-01T00:00:00Z`).
@@ -613,15 +650,15 @@ Cross-device testing against iOS is blocked until quill-ios ships its mirror —
 
 Cross-cutting work — land as a sequence of narrow PRs, each independently reviewable and leaving the app in a working state. The user-facing switch doesn't flip until Chunk 7.
 
-### Chunk 1 — Schema normalization (standalone refactor, no sync code)
+### Chunk 1 — Schema normalization (standalone refactor, no sync code) — SHIPPED (PR #186)
 
-Shape + type normalization as a single commit. Lands separately from the sync work so the sync PR doesn't mix two concerns. Internally breaking (all Tauri commands that returned timestamps now return numbers) but no end-user behavior change.
+Shape + type normalization as a single commit. Landed separately from the sync work so the sync PR doesn't mix two concerns. Internally breaking (all Tauri commands that returned timestamps now return numbers) but no end-user behavior change.
 
 **Backend:**
-- `src-tauri/src/migrations_009.rs` — new module. Single `fn migrate(conn: &Connection) -> AppResult<()>` driven from `db.rs::run_migrations`. One transaction: ADD new `*_ms INTEGER` columns → backfill from existing TEXT via `chrono::DateTime::parse_from_rfc3339` → DROP old TEXT columns → RENAME `*_ms` to final names. Tables touched: `books`, `bookmarks`, `highlights`, `collections`, `collection_books` (adds both cols), `vocab_words` (incl. `next_review_at`), `chats`, `chat_messages`, `translations`.
-- `src-tauri/src/db.rs` — register migration 9 (call `migrations_009::migrate`); bump the two `assert_eq!(version, 8)` tests to 9.
-- `src-tauri/src/commands/{books,bookmarks,collections,vocab,chats,translation}.rs` — every `created_at: String` / `updated_at: String` / `next_review_at: Option<String>` struct field becomes `i64` / `Option<i64>`. Every `chrono::Utc::now().to_rfc3339()` becomes `chrono::Utc::now().timestamp_millis()`. Every row mapper reads `INTEGER` instead of `TEXT`. Commands on tables that previously lacked `updated_at` (bookmarks add, highlights add/color/note, collections rename/reorder, collection_books add, chat_messages add, translations add) now set it.
-- **Migration tests** (in `migrations_009.rs`): seed a fresh DB at schema v8 with realistic old-format TEXT timestamps across every affected table → run `migrate()` → assert (a) each new INTEGER equals `DateTime::parse_from_rfc3339(original).timestamp_millis()`; (b) row counts unchanged; (c) no NULL in any NOT NULL timestamp column; (d) rollback on injected parse failure leaves DB identical to v8 state.
+- `src-tauri/migrations/009_normalize_timestamps.sql` — pure SQL migration. Per-table rebuild inside one transaction: `CREATE TABLE <x>_new` with final INTEGER-timestamp schema → `INSERT ... SELECT` converting each TEXT timestamp via `CAST(strftime('%s', ts) AS INTEGER) * 1000 + CAST(substr(strftime('%f', ts), -3) AS INTEGER)` → `DROP` old → `RENAME`. Tables touched: `books`, `bookmarks`, `highlights`, `collections`, `collection_books` (adds both `created_at` and `updated_at`), `vocab_words` (incl. `next_review_at`), `chats`, `chat_messages`, `translations`. **Did not add `updated_by_device`** — deferred to migration 011 (Chunk 4).
+- `src-tauri/src/db.rs` — registered migration 9 via `include_str!`; per-migration `schema_version` bump so a later failure doesn't force 9 to re-run; bumped the `assert_eq!(version, 8)` tests to 9.
+- `src-tauri/src/commands/{books,bookmarks,collections,vocab,chats,translation}.rs` — every `created_at: String` / `updated_at: String` / `next_review_at: Option<String>` struct field became `i64` / `Option<i64>`. Every `chrono::Utc::now().to_rfc3339()` became `chrono::Utc::now().timestamp_millis()`. Every row mapper reads `INTEGER` instead of `TEXT`. Commands on tables that previously lacked `updated_at` (bookmarks add, highlights add/color/note, collections rename/reorder, collection_books add, chat_messages add, translations add) now set it. Writing `updated_by_device` is deferred to Chunk 4/5 when migration 011 adds the column.
+- **Migration tests** (in `db.rs::tests`): seed a v8 DB with realistic RFC-3339 TEXT timestamps across every affected table → run migration → assert (a) each INTEGER equals `DateTime::parse_from_rfc3339(original).timestamp_millis()`; (b) `collection_books` backfilled with migration time; (c) row counts unchanged; (d) malformed-timestamp injection rolls back the whole transaction leaving the DB at v8.
 
 **Frontend:**
 - TypeScript types: every timestamp field becomes `number` (likely in `src/types/` or inline interfaces — grep to find them all).
@@ -635,7 +672,7 @@ Shape + type normalization as a single commit. Lands separately from the sync wo
 ### Chunk 2 — Crates + sync module skeleton + `_replay_state`
 
 - `src-tauri/Cargo.toml` — add `ulid = "1"` (feature `serde`), `notify = "6"`. `cargo check` to sync `Cargo.lock`.
-- `src-tauri/migrations/010_replay_state.sql` — `_replay_state` and `_tombstones` tables.
+- `src-tauri/migrations/010_replay_state.sql` — `_replay_state` and `_tombstones` tables. `_pending_publish` lands in migration 011 with Chunk 4.
 - `src-tauri/src/db.rs` — register migration 10.
 - `src-tauri/src/sync/mod.rs` — declare submodules as empty stubs so `cargo check` compiles.
 - `src-tauri/src/lib.rs` — `mod sync;`.
@@ -652,27 +689,29 @@ Shape + type normalization as a single commit. Lands separately from the sync wo
 
 **Verification:** `cargo test --lib sync::` green. Not wired to the rest of the app yet.
 
-### Chunk 4 — Merge + replay + snapshot (pure)
+### Chunk 4 — Merge + replay + snapshot (pure) + migration 011
 
-- `src-tauri/src/sync/merge.rs` — `apply_event` match per `EventBody` variant (Step 4). Helpers: `lww_update_if_newer`, `is_tombstoned`, `insert_tombstone`. Every INSERT uses `OR IGNORE`; every LWW update compares `existing.updated_at < event.ts`; tombstone check precedes every add.
-- `src-tauri/src/sync/replay.rs` — `ReplayEngine::tick()` per Step 5. Lists peer logs + snapshots, skips own files, merges events sorted by `(ts, device)`, applies in one SQL tx. Process-wide `Mutex` serializes concurrent ticks.
+- `src-tauri/migrations/011_lww_tiebreak_and_outbox.sql` — `ALTER TABLE ... ADD COLUMN updated_by_device TEXT NOT NULL DEFAULT 'migration'` on `books`, `highlights`, `collections`, `collection_books`, `vocab_words`, `chats`. Plus `CREATE TABLE _pending_publish (...)`. Bundled because both additions are prerequisites for the merge engine (`updated_by_device` for LWW tiebreak) and `SyncWriter` (`_pending_publish` for the outbox); landing them together avoids a no-op migration number between them.
+- `src-tauri/src/db.rs` — register migration 11; bump test asserts from 10 to 11.
+- `src-tauri/src/sync/merge.rs` — `apply_event` match per `EventBody` variant (Step 4). Helpers: `lww_update_if_newer`, `is_tombstoned`, `insert_tombstone`. Every INSERT uses `OR IGNORE`; every LWW update compares `(existing.updated_at, existing.updated_by_device) < (event.ts, event.device)` in Rust (tuple compare); tombstone check precedes every add.
+- `src-tauri/src/sync/replay.rs` — `ReplayEngine::tick()` per Step 5. Drains `_pending_publish`, then lists peer logs + snapshots **including own** (local device treated as a peer for migration apply-back and idempotent own-log replay), merges events sorted by `(ts, device)`, applies in one SQL tx. Process-wide `Mutex` serializes concurrent ticks.
 - `src-tauri/src/sync/snapshot.rs` — `Snapshot::{from_log, write_atomic, apply_peer}` per Step 6. Apply follows the 6-step procedure exactly (stat → header parse → watermark compare → full parse → apply under tombstone guard → monotonic watermark update).
 
-**Tests:** merge determinism property test (shuffled apply → byte-identical `SELECT *`); tombstone wins; LWW correctness; snapshot equivalence (events vs snapshot+tail yield identical state).
+**Tests:** migration 011 seeds a v10 DB with LWW rows → applies migration → asserts `updated_by_device = 'migration'` on every row, `_pending_publish` exists and is empty; merge determinism property test (shuffled apply → byte-identical `SELECT *`); same-ms cross-device LWW tie resolves deterministically by device UUID; tombstone wins; LWW correctness; snapshot equivalence (events vs snapshot+tail yield identical state).
 
 **Verification:** `cargo test` green. Still not wired to any command.
 
 ### Chunk 5 — SyncWriter + command instrumentation
 
-- `src-tauri/src/sync/writer.rs` — `SyncWriter::with_tx<F>(f: F)` per Step 3. Opens SQL tx, passes `(tx, events: &mut Vec<EventBody>)` to closure, on success appends events to log (single fsync) and commits the tx. Disabled case: events vec dropped, tx commits normally. Progress-event debounce ring: per-book trailing 2-second window via `HashMap<book_id, Instant>`.
-- `src-tauri/src/commands/books.rs` — route `import_book`, `commit_pdf_import`, `delete_book`, `update_reading_progress`, `update_book_status`, `mark_finished`, `update_book_metadata` through `SyncWriter`.
-- `src-tauri/src/commands/bookmarks.rs` — all 6 commands; highlight writes also set `updated_at`.
-- `src-tauri/src/commands/collections.rs` — all 6 commands; `rename_collection` and `reorder_collections` also set `updated_at`.
-- `src-tauri/src/commands/vocab.rs`, `chats.rs`, `translation.rs` — remaining events per the Step 3 table.
+- `src-tauri/src/sync/writer.rs` — `SyncWriter::with_tx<F>(f: F)` per Step 3. Opens SQL tx, passes `(tx, events: &mut Vec<EventBody>)` to closure, writes the events into `_pending_publish`, commits the tx, then flushes `_pending_publish` into the log (single fsync). Order is deliberate — see Step 3 for the failure-mode rationale. Disabled case: events vec dropped, tx commits normally. Progress-event debounce ring: per-book trailing 2-second window via `HashMap<book_id, Instant>`.
+- `src-tauri/src/commands/books.rs` — route `import_book`, `commit_pdf_import`, `delete_book`, `update_reading_progress`, `update_book_status`, `mark_finished`, `update_book_metadata` through `SyncWriter`. Every LWW-table INSERT/UPDATE now also writes `updated_by_device = self_device_uuid` (migration 011 added the column; SyncWriter exposes the local device UUID to the closure).
+- `src-tauri/src/commands/bookmarks.rs` — all 6 commands; highlight writes also set `updated_at` and `updated_by_device` (highlights is LWW-backed).
+- `src-tauri/src/commands/collections.rs` — all 6 commands; `rename_collection`, `reorder_collections`, and `add_book_to_collection` write `updated_at` and `updated_by_device`.
+- `src-tauri/src/commands/vocab.rs`, `chats.rs`, `translation.rs` — remaining events per the Step 3 table. vocab_words and chats are LWW-backed → set `updated_by_device`; chat_messages and translations are append-only → no tiebreak column.
 - `src-tauri/src/commands/settings.rs` + `book_settings` path — explicitly no-op (local-only).
 - `src-tauri/src/lib.rs` — construct `SyncWriter::new(db, Option<Arc<EventLog>>)` once in `setup`, store in Tauri state. Commands now take `State<SyncWriter>` instead of `State<Db>`.
 
-**Tests:** for each command — sync off → no events; sync on → event content matches SQL write. Progress debounce: 10 rapid calls within 2s → exactly 1 event appended.
+**Tests:** for each command — sync off → no events; sync on → event content matches SQL write. Outbox retry: simulate `commit ok, append fails` and verify `_pending_publish` drains on the next flush. Progress debounce: 10 rapid calls within 2s → exactly 1 event appended.
 
 **Verification:** existing frontend works unchanged with sync off. `cargo test` green. Manual: import a book with sync off, confirm no log file.
 
@@ -688,7 +727,12 @@ Shape + type normalization as a single commit. Lands separately from the sync wo
   else if migration.complete:
       retire_ubiquity_db(...)   # self-healing
   open <local>/quill.db          # always local post-migration
-  replay_engine.tick()           # catch up from peer logs
+  replay_engine.tick()           # first drains _pending_publish, then
+                                 # catches up from peer logs AND own log
+                                 # (self-replay handles:
+                                 #   (a) conflict-copy snapshot → local DB
+                                 #   (b) idempotent apply of already-published
+                                 #       own-log events)
   spawn watcher if sync enabled
   ```
 - `src-tauri/src/commands/sync.rs` — `sync_now` command (manual tick).
