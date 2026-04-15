@@ -456,4 +456,28 @@ mod tests {
             );
         }
     }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "manual smoke test against the real iCloud ubiquity container"]
+    fn coordinated_append_smoke_on_real_icloud_path() {
+        let shared_dir = crate::icloud::icloud_data_dir_fast()
+            .or_else(crate::icloud::icloud_data_dir)
+            .expect("expected a local iCloud Documents container");
+        let logs_dir = shared_dir.join("logs");
+        std::fs::create_dir_all(&logs_dir).unwrap();
+
+        let file = logs_dir.join(format!(
+            "_codex-sync-smoke-{}.jsonl",
+            uuid::Uuid::new_v4()
+        ));
+        let log = EventLog::open(&file, "dev-smoke", true).unwrap();
+
+        let ev = log.append(sample_body(1), 1_714_770_000_000).unwrap();
+        let events = log.read_all().unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0], ev);
+
+        std::fs::remove_file(file).unwrap();
+    }
 }

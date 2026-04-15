@@ -2,6 +2,7 @@
 
 **Issue:** [#185](https://github.com/yicheng47/quill/issues/185)
 **Spec:** [31 — Sync](../features/31-sync.md)
+**Known Problems:** [31 — Sync Known Problems](31-sync-known-problems.md)
 **Scope:** desktop only. iOS mirrors the same design and ships from `yicheng47/quill-ios` with its own impls doc once this one is proven. Event schema and merge rules below are the cross-platform contract.
 
 ## Context
