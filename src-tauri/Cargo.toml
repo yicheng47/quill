@@ -42,7 +42,8 @@ notify = "6"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
-objc2-foundation = { version = "0.3", features = ["NSFileManager", "NSString", "NSURL", "NSError"] }
+objc2-foundation = { version = "0.3", features = ["NSFileManager", "NSFileCoordinator", "NSString", "NSURL", "NSError", "block2"] }
+block2 = "0.6"
 
 [dev-dependencies]
 tempfile = "3"
