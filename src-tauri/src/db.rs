@@ -15,6 +15,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (7, include_str!("../migrations/007_book_settings.sql")),
     (8, include_str!("../migrations/008_drop_book_settings.sql")),
     (9, include_str!("../migrations/009_normalize_timestamps.sql")),
+    (10, include_str!("../migrations/010_replay_state.sql")),
 ];
 
 pub struct Db {
@@ -181,7 +182,7 @@ mod tests {
         let conn = db.conn.lock().unwrap();
         let version: i64 =
             conn.query_row("SELECT version FROM schema_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 9);
+        assert_eq!(version, 10);
     }
 
     #[test]
@@ -204,6 +205,8 @@ mod tests {
         assert!(tables.contains(&"translations".to_string()));
         assert!(tables.contains(&"book_settings".to_string()));
         assert!(tables.contains(&"schema_version".to_string()));
+        assert!(tables.contains(&"_replay_state".to_string()));
+        assert!(tables.contains(&"_tombstones".to_string()));
     }
 
     #[test]
@@ -214,7 +217,7 @@ mod tests {
         Db::run_migrations_on(&conn).unwrap();
         let version: i64 =
             conn.query_row("SELECT version FROM schema_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 9);
+        assert_eq!(version, 10);
     }
 
     #[test]
