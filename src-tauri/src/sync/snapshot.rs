@@ -315,12 +315,15 @@ impl Snapshot {
             return Ok(ApplyOutcome::HeaderOnly);
         }
 
-        // Spec step 5: tombstones first.
+        // Spec step 5: tombstones first. Route every entry through
+        // `merge::cascade_delete` so a snapshot ingest scrubs the same
+        // child rows that the corresponding event-path delete would have
+        // — otherwise applying a peer snapshot leaves orphan highlights
+        // for a deleted book, stranded `collection_books` joins for a
+        // removed pair, etc.
         for (entity, list) in &self.state.tombstones {
             for t in list {
-                if let Some(table) = entity_to_table(entity) {
-                    delete_by_id(tx, table, &t.id)?;
-                }
+                merge::cascade_delete(tx, entity, &t.id)?;
                 merge::insert_tombstone(tx, entity, &t.id, t.ts)?;
             }
         }
@@ -560,33 +563,6 @@ fn insert_chat_message(tx: &Transaction, id: &str, r: &ChatMessageRow) -> AppRes
         params![id, r.chat_id, r.role, r.content, r.context, r.metadata, r.created_at, r.updated_at],
     )?;
     Ok(())
-}
-
-fn delete_by_id(tx: &Transaction, table: &str, id: &str) -> AppResult<()> {
-    let sql = format!("DELETE FROM {table} WHERE id = ?1");
-    tx.execute(&sql, params![id])?;
-    Ok(())
-}
-
-fn entity_to_table(entity: &str) -> Option<&'static str> {
-    match entity {
-        merge::entity::BOOK => Some("books"),
-        merge::entity::HIGHLIGHT => Some("highlights"),
-        merge::entity::BOOKMARK => Some("bookmarks"),
-        merge::entity::VOCAB => Some("vocab_words"),
-        merge::entity::TRANSLATION => Some("translations"),
-        merge::entity::COLLECTION => Some("collections"),
-        merge::entity::CHAT => Some("chats"),
-        merge::entity::CHAT_MESSAGE => Some("chat_messages"),
-        // collection_books has a composite primary key; tombstones for it
-        // carry the synthetic `"<col>:<book>"` id which doesn't map cleanly
-        // to a single-column WHERE clause. We don't try to delete the row
-        // here — the merge::apply_collection_book_remove path handles row
-        // deletion before tombstoning, and `apply_peer`'s tombstone-first
-        // pass only needs to ensure the tombstone exists locally.
-        merge::entity::COLLECTION_BOOK => None,
-        _ => None,
-    }
 }
 
 fn upsert_replay_state(
@@ -1169,6 +1145,158 @@ mod tests {
             .query_row("SELECT progress FROM books WHERE id = 'b1'", [], |r| r.get(0))
             .unwrap();
         assert_eq!(progress, 80, "newer local value survives older snapshot");
+    }
+
+    // -----------------------------------------------------------------------
+    // Regression for PR #189 finding #1: snapshot tombstones must scrub the
+    // same child rows the event-path delete would have. Two scenarios:
+    //
+    //   a. `book.delete` from a peer leaves no orphan highlights/bookmarks/
+    //      vocab/etc. when ingested via snapshot.
+    //   b. `collection.book.remove` from a peer drops the join row, even
+    //      though the composite-key tombstone has no single-column id.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn snapshot_tombstone_for_book_removes_local_children() {
+        // Local-A imported b1 and added a highlight + bookmark + vocab.
+        // Peer-B's snapshot says b1 was deleted. Apply must scrub the
+        // children, not just leave them dangling.
+        let mut local = open_db();
+        apply_to(
+            &mut local,
+            &[
+                ev(1000, "dev-A", import("b1")),
+                ev(
+                    1100,
+                    "dev-A",
+                    EventBody::HighlightAdd(HighlightPayload {
+                        id: "h1".into(),
+                        book_id: "b1".into(),
+                        cfi_range: "cfi".into(),
+                        color: "yellow".into(),
+                        note: None,
+                        text_content: None,
+                    }),
+                ),
+                ev(
+                    1200,
+                    "dev-A",
+                    EventBody::BookmarkAdd(BookmarkPayload {
+                        id: "bm1".into(),
+                        book_id: "b1".into(),
+                        cfi: "cfi".into(),
+                        label: None,
+                    }),
+                ),
+            ],
+        );
+
+        // Peer-B's snapshot reflects: imported b1, then deleted it.
+        let peer_events = vec![
+            ev(900, "dev-B", import("b1")),
+            ev(2000, "dev-B", EventBody::BookDelete { id: "b1".into() }),
+        ];
+        let snap = Snapshot::from_events("dev-B", &peer_events).unwrap();
+
+        {
+            let tx = local.transaction().unwrap();
+            snap.apply_peer(&tx, "dev-B").unwrap();
+            tx.commit().unwrap();
+        }
+
+        for table in ["books", "highlights", "bookmarks"] {
+            let n: i64 = local
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(
+                n, 0,
+                "snapshot tombstone for book must cascade to {table}"
+            );
+        }
+        let tomb: i64 = local
+            .query_row(
+                "SELECT COUNT(*) FROM _tombstones WHERE entity = 'book' AND id = 'b1'",
+                [], |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(tomb, 1);
+    }
+
+    #[test]
+    fn snapshot_tombstone_for_collection_book_removes_join_row() {
+        // Local-A has the join row (c1, b1). Peer-B's snapshot includes a
+        // composite-key tombstone for the same pair. The join row must be
+        // gone after apply.
+        let mut local = open_db();
+        apply_to(
+            &mut local,
+            &[
+                ev(1000, "dev-A", import("b1")),
+                ev(
+                    1100,
+                    "dev-A",
+                    EventBody::CollectionCreate {
+                        id: "c1".into(),
+                        name: "Top".into(),
+                        sort_order: 0,
+                    },
+                ),
+                ev(
+                    1200,
+                    "dev-A",
+                    EventBody::CollectionBookAdd {
+                        collection: "c1".into(),
+                        book: "b1".into(),
+                    },
+                ),
+            ],
+        );
+
+        let peer_events = vec![
+            ev(900, "dev-B", import("b1")),
+            ev(
+                950,
+                "dev-B",
+                EventBody::CollectionCreate {
+                    id: "c1".into(),
+                    name: "Top".into(),
+                    sort_order: 0,
+                },
+            ),
+            ev(
+                1000,
+                "dev-B",
+                EventBody::CollectionBookAdd {
+                    collection: "c1".into(),
+                    book: "b1".into(),
+                },
+            ),
+            ev(
+                2000,
+                "dev-B",
+                EventBody::CollectionBookRemove {
+                    collection: "c1".into(),
+                    book: "b1".into(),
+                },
+            ),
+        ];
+        let snap = Snapshot::from_events("dev-B", &peer_events).unwrap();
+        {
+            let tx = local.transaction().unwrap();
+            snap.apply_peer(&tx, "dev-B").unwrap();
+            tx.commit().unwrap();
+        }
+        let n: i64 = local
+            .query_row(
+                "SELECT COUNT(*) FROM collection_books WHERE collection_id = 'c1' AND book_id = 'b1'",
+                [], |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            n, 0,
+            "composite-key snapshot tombstone must drop the join row"
+        );
     }
 
     #[test]

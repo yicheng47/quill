@@ -134,6 +134,107 @@ pub fn insert_tombstone(tx: &Transaction, entity: &str, id: &str, ts: i64) -> Ap
     Ok(())
 }
 
+/// Drop the row identified by `(entity, id)` plus every FK-child the event
+/// path would cascade to. Does NOT write the tombstone — callers that want
+/// the suppress-future-adds behavior must call `insert_tombstone`
+/// separately. Idempotent: if the row is already gone, every DELETE is a
+/// no-op.
+///
+/// Used by both the event-path delete arms and `Snapshot::apply_peer`'s
+/// tombstone pass so the two paths stay byte-equivalent. For the composite
+/// `collection_book` entity, `id` must be `"<col>:<book>"` — the same
+/// format the merge engine uses when writing those tombstones.
+pub fn cascade_delete(tx: &Transaction, entity: &str, id: &str) -> AppResult<()> {
+    match entity {
+        entity::BOOK => cascade_delete_book(tx, id),
+        entity::COLLECTION => cascade_delete_collection(tx, id),
+        entity::CHAT => cascade_delete_chat(tx, id),
+        entity::COLLECTION_BOOK => cascade_delete_collection_book(tx, id),
+        entity::HIGHLIGHT => {
+            tx.execute("DELETE FROM highlights WHERE id = ?1", params![id])?;
+            Ok(())
+        }
+        entity::BOOKMARK => {
+            tx.execute("DELETE FROM bookmarks WHERE id = ?1", params![id])?;
+            Ok(())
+        }
+        entity::VOCAB => {
+            tx.execute("DELETE FROM vocab_words WHERE id = ?1", params![id])?;
+            Ok(())
+        }
+        entity::TRANSLATION => {
+            tx.execute("DELETE FROM translations WHERE id = ?1", params![id])?;
+            Ok(())
+        }
+        entity::CHAT_MESSAGE => {
+            tx.execute("DELETE FROM chat_messages WHERE id = ?1", params![id])?;
+            Ok(())
+        }
+        other => {
+            eprintln!("sync: cascade_delete called with unknown entity {other:?}");
+            Ok(())
+        }
+    }
+}
+
+fn cascade_delete_book(tx: &Transaction, id: &str) -> AppResult<()> {
+    // Mirror the `apply_book_delete` cascade exactly. Replay runs with FK
+    // off, so we can't rely on ON DELETE CASCADE.
+    tx.execute("DELETE FROM bookmarks WHERE book_id = ?1", params![id])?;
+    tx.execute("DELETE FROM highlights WHERE book_id = ?1", params![id])?;
+    tx.execute("DELETE FROM vocab_words WHERE book_id = ?1", params![id])?;
+    tx.execute(
+        "DELETE FROM collection_books WHERE book_id = ?1",
+        params![id],
+    )?;
+    tx.execute("DELETE FROM translations WHERE book_id = ?1", params![id])?;
+    let chat_ids: Vec<String> = {
+        let mut stmt = tx.prepare("SELECT id FROM chats WHERE book_id = ?1")?;
+        let collected: Vec<String> = stmt
+            .query_map(params![id], |r| r.get::<_, String>(0))?
+            .collect::<Result<_, _>>()?;
+        collected
+    };
+    for chat_id in &chat_ids {
+        tx.execute(
+            "DELETE FROM chat_messages WHERE chat_id = ?1",
+            params![chat_id],
+        )?;
+    }
+    tx.execute("DELETE FROM chats WHERE book_id = ?1", params![id])?;
+    tx.execute("DELETE FROM books WHERE id = ?1", params![id])?;
+    Ok(())
+}
+
+fn cascade_delete_collection(tx: &Transaction, id: &str) -> AppResult<()> {
+    tx.execute(
+        "DELETE FROM collection_books WHERE collection_id = ?1",
+        params![id],
+    )?;
+    tx.execute("DELETE FROM collections WHERE id = ?1", params![id])?;
+    Ok(())
+}
+
+fn cascade_delete_chat(tx: &Transaction, id: &str) -> AppResult<()> {
+    tx.execute("DELETE FROM chat_messages WHERE chat_id = ?1", params![id])?;
+    tx.execute("DELETE FROM chats WHERE id = ?1", params![id])?;
+    Ok(())
+}
+
+fn cascade_delete_collection_book(tx: &Transaction, key: &str) -> AppResult<()> {
+    let Some((col, book)) = key.split_once(':') else {
+        eprintln!(
+            "sync: cascade_delete_collection_book got malformed key {key:?}, expected '<col>:<book>'"
+        );
+        return Ok(());
+    };
+    tx.execute(
+        "DELETE FROM collection_books WHERE collection_id = ?1 AND book_id = ?2",
+        params![col, book],
+    )?;
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // books
 // ---------------------------------------------------------------------------
@@ -165,35 +266,7 @@ fn apply_book_import(tx: &Transaction, event: &Event, p: &BookImportPayload) -> 
 }
 
 fn apply_book_delete(tx: &Transaction, event: &Event, id: &str) -> AppResult<()> {
-    // Manual cascade — replay runs with FK off; we walk every child table
-    // explicitly so the UI doesn't see orphan rows hanging off a deleted book.
-    tx.execute("DELETE FROM bookmarks WHERE book_id = ?1", params![id])?;
-    tx.execute("DELETE FROM highlights WHERE book_id = ?1", params![id])?;
-    tx.execute("DELETE FROM vocab_words WHERE book_id = ?1", params![id])?;
-    tx.execute(
-        "DELETE FROM collection_books WHERE book_id = ?1",
-        params![id],
-    )?;
-    tx.execute("DELETE FROM translations WHERE book_id = ?1", params![id])?;
-    // Chat messages reference chats, not books — but chats reference books, so
-    // wipe both in order. No FK declared between chats↔chat_messages, so we
-    // collect chat ids first and delete messages per chat.
-    let chat_ids: Vec<String> = {
-        let mut stmt = tx.prepare("SELECT id FROM chats WHERE book_id = ?1")?;
-        let collected: Vec<String> = stmt
-            .query_map(params![id], |r| r.get::<_, String>(0))?
-            .collect::<Result<_, _>>()?;
-        collected
-    };
-    for chat_id in &chat_ids {
-        tx.execute(
-            "DELETE FROM chat_messages WHERE chat_id = ?1",
-            params![chat_id],
-        )?;
-    }
-    tx.execute("DELETE FROM chats WHERE book_id = ?1", params![id])?;
-    tx.execute("DELETE FROM books WHERE id = ?1", params![id])?;
-
+    cascade_delete(tx, entity::BOOK, id)?;
     insert_tombstone(tx, entity::BOOK, id, event.ts)?;
     Ok(())
 }
@@ -245,11 +318,18 @@ fn apply_book_metadata(
         }
     };
 
+    // Use `<=` rather than `<`: the live `update_book_metadata` command
+    // emits one event per field changed (see Step 3 of the spec), so a
+    // multi-field edit like "rename + author" produces two events with
+    // identical `(ts, device)`. With strict `<` the second would lose the
+    // tuple compare and be silently skipped. `<=` lets every event in the
+    // group land while staying idempotent on re-apply (the column already
+    // holds `value`, so the UPDATE is a no-op write).
     let sql = format!(
         "UPDATE books
          SET {column} = ?1, updated_at = ?2, updated_by_device = ?3
          WHERE id = ?4
-           AND (updated_at < ?2 OR (updated_at = ?2 AND updated_by_device < ?3))"
+           AND (updated_at < ?2 OR (updated_at = ?2 AND updated_by_device <= ?3))"
     );
 
     if column == "pages" {
@@ -508,9 +588,8 @@ fn apply_collection_reorder(
 }
 
 fn apply_collection_delete(tx: &Transaction, event: &Event, id: &str) -> AppResult<()> {
-    // Manual cascade: drop the join rows, then the collection itself. Tombstone
-    // each join under the composite-key entity so a delayed `collection.book.add`
-    // for the same pair stays suppressed.
+    // Tombstone each join row first so a delayed `collection.book.add` for
+    // the same pair stays suppressed. cascade_delete then drops the rows.
     let pairs: Vec<String> = {
         let mut stmt =
             tx.prepare("SELECT book_id FROM collection_books WHERE collection_id = ?1")?;
@@ -523,11 +602,7 @@ fn apply_collection_delete(tx: &Transaction, event: &Event, id: &str) -> AppResu
         let key = format!("{id}:{book_id}");
         insert_tombstone(tx, entity::COLLECTION_BOOK, &key, event.ts)?;
     }
-    tx.execute(
-        "DELETE FROM collection_books WHERE collection_id = ?1",
-        params![id],
-    )?;
-    tx.execute("DELETE FROM collections WHERE id = ?1", params![id])?;
+    cascade_delete(tx, entity::COLLECTION, id)?;
     insert_tombstone(tx, entity::COLLECTION, id, event.ts)?;
     Ok(())
 }
@@ -557,11 +632,8 @@ fn apply_collection_book_remove(
     collection: &str,
     book: &str,
 ) -> AppResult<()> {
-    tx.execute(
-        "DELETE FROM collection_books WHERE collection_id = ?1 AND book_id = ?2",
-        params![collection, book],
-    )?;
     let key = format!("{collection}:{book}");
+    cascade_delete(tx, entity::COLLECTION_BOOK, &key)?;
     insert_tombstone(tx, entity::COLLECTION_BOOK, &key, event.ts)?;
     Ok(())
 }
@@ -602,8 +674,7 @@ fn apply_chat_rename(tx: &Transaction, event: &Event, id: &str, title: &str) -> 
 }
 
 fn apply_chat_delete(tx: &Transaction, event: &Event, id: &str) -> AppResult<()> {
-    tx.execute("DELETE FROM chat_messages WHERE chat_id = ?1", params![id])?;
-    tx.execute("DELETE FROM chats WHERE id = ?1", params![id])?;
+    cascade_delete(tx, entity::CHAT, id)?;
     insert_tombstone(tx, entity::CHAT, id, event.ts)?;
     Ok(())
 }
@@ -629,6 +700,17 @@ fn apply_chat_message_add(
             p.metadata,
             event.ts,
         ],
+    )?;
+    // Mirror the live `add_chat_message` command's side effect — the parent
+    // chat's recency drives chat-list ordering, so peers must see the bump
+    // too. LWW guard prevents an older message event from dragging
+    // `updated_at` backwards if the chat has been renamed since.
+    tx.execute(
+        "UPDATE chats
+         SET updated_at = ?1, updated_by_device = ?2
+         WHERE id = ?3
+           AND (updated_at < ?1 OR (updated_at = ?1 AND updated_by_device < ?2))",
+        params![event.ts, event.device, p.chat_id],
     )?;
     Ok(())
 }
@@ -1293,6 +1375,146 @@ mod tests {
     // -----------------------------------------------------------------------
     // Idempotency under repeated apply
     // -----------------------------------------------------------------------
+
+    // -----------------------------------------------------------------------
+    // Regression tests for PR #189 review findings.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn chat_message_add_bumps_parent_chat_updated_at() {
+        // Mirrors the live `add_chat_message` command's two-table write —
+        // the chat's recency drives chat-list ordering on every device, so
+        // peers must see the bump.
+        let mut db = open_db();
+        apply_all(
+            &mut db,
+            &[
+                ev(1000, "dev-A", import_book("b1")),
+                ev(
+                    1100,
+                    "dev-A",
+                    EventBody::ChatCreate {
+                        id: "ch1".into(),
+                        book: "b1".into(),
+                        title: "New chat".into(),
+                        model: None,
+                    },
+                ),
+                ev(
+                    5000,
+                    "dev-A",
+                    EventBody::ChatMessageAdd(ChatMessagePayload {
+                        id: "m1".into(),
+                        chat_id: "ch1".into(),
+                        role: "user".into(),
+                        content: "hi".into(),
+                        context: None,
+                        metadata: None,
+                    }),
+                ),
+            ],
+        );
+        let (chat_ts, by): (i64, String) = db
+            .query_row(
+                "SELECT updated_at, updated_by_device FROM chats WHERE id = 'ch1'",
+                [], |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(chat_ts, 5000, "message ts should bump parent chat");
+        assert_eq!(by, "dev-A");
+    }
+
+    #[test]
+    fn chat_message_add_does_not_drag_chat_updated_at_backward() {
+        // Rename happens at T=10_000 on dev-A; older message arrives at
+        // T=5_000 from dev-B. Chat updated_at must stay at the rename ts.
+        let mut db = open_db();
+        apply_all(
+            &mut db,
+            &[
+                ev(1000, "dev-A", import_book("b1")),
+                ev(
+                    1100,
+                    "dev-A",
+                    EventBody::ChatCreate {
+                        id: "ch1".into(),
+                        book: "b1".into(),
+                        title: "Old".into(),
+                        model: None,
+                    },
+                ),
+                ev(
+                    10_000,
+                    "dev-A",
+                    EventBody::ChatRename {
+                        id: "ch1".into(),
+                        title: "New".into(),
+                    },
+                ),
+                ev(
+                    5_000,
+                    "dev-B",
+                    EventBody::ChatMessageAdd(ChatMessagePayload {
+                        id: "m1".into(),
+                        chat_id: "ch1".into(),
+                        role: "user".into(),
+                        content: "hi".into(),
+                        context: None,
+                        metadata: None,
+                    }),
+                ),
+            ],
+        );
+        let chat_ts: i64 = db
+            .query_row(
+                "SELECT updated_at FROM chats WHERE id = 'ch1'",
+                [], |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(chat_ts, 10_000, "older message must not drag chat backward");
+    }
+
+    #[test]
+    fn book_metadata_multi_field_same_tx_both_apply() {
+        // The live `update_book_metadata` command can rewrite title and
+        // author in one transaction, producing two `book.metadata.set`
+        // events with identical (ts, device). With strict `<` LWW the
+        // second event's field would silently fail to land. This test
+        // pins the `<=` relaxation.
+        let mut db = open_db();
+        apply_all(
+            &mut db,
+            &[
+                ev(1000, "dev-A", import_book("b1")),
+                ev(
+                    2000,
+                    "dev-A",
+                    EventBody::BookMetadataSet {
+                        book: "b1".into(),
+                        field: "title".into(),
+                        value: json!("New Title"),
+                    },
+                ),
+                ev(
+                    2000,
+                    "dev-A",
+                    EventBody::BookMetadataSet {
+                        book: "b1".into(),
+                        field: "author".into(),
+                        value: json!("New Author"),
+                    },
+                ),
+            ],
+        );
+        let (title, author): (String, String) = db
+            .query_row(
+                "SELECT title, author FROM books WHERE id = 'b1'",
+                [], |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(title, "New Title", "first metadata.set must land");
+        assert_eq!(author, "New Author", "second metadata.set must also land");
+    }
 
     #[test]
     fn double_apply_is_a_noop() {

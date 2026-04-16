@@ -85,80 +85,20 @@ impl ReplayEngine {
         // Phase 2/3/4 — read peer files, apply in one tx, advance watermarks.
         // FK off mirrors the merge engine's contract; orphan rows from
         // out-of-order delivery are tolerated until parents arrive.
+        //
+        // The pragma must be restored even if the merge work errors mid-way,
+        // otherwise the shared connection silently loses FK enforcement for
+        // every subsequent command. We capture the inner result and run the
+        // restore unconditionally before returning.
         conn.execute_batch("PRAGMA foreign_keys = OFF;")?;
+        let inner = self.apply_in_tx(conn, &peers);
+        let restore = conn.execute_batch("PRAGMA foreign_keys = ON;");
 
-        let mut snapshots_applied = 0usize;
-        let mut events_applied = 0usize;
-        let mut peer_max_event: BTreeMap<String, String> = BTreeMap::new();
-
-        {
-            let tx = conn.transaction()?;
-
-            // 3a. Apply snapshots first. Each snapshot apply updates its own
-            //     `_replay_state.last_snapshot_id` (and `last_event_id` if
-            //     the snapshot moves the watermark forward). Doing them
-            //     before reading the log tails means the per-peer
-            //     `last_event_id` we read in 3b reflects any snapshot bump.
-            for (device, files) in &peers {
-                let Some(snap_path) = &files.snap_path else {
-                    continue;
-                };
-                let snap = match Snapshot::read_from(snap_path) {
-                    Ok(s) => s,
-                    Err(e) => {
-                        eprintln!(
-                            "sync: skipping malformed snapshot {}: {e}",
-                            snap_path.display()
-                        );
-                        continue;
-                    }
-                };
-                let outcome = snap.apply_peer(&tx, device)?;
-                if matches!(
-                    outcome,
-                    super::snapshot::ApplyOutcome::Applied
-                        | super::snapshot::ApplyOutcome::HeaderOnly
-                ) {
-                    snapshots_applied += 1;
-                }
-            }
-
-            // 3b. Read each peer's log tail past its (possibly just-bumped)
-            //     watermark. Collect all events into one vec, sort globally
-            //     by `(ts, device)`, apply in order.
-            let mut all_events: Vec<Event> = Vec::new();
-            for (device, files) in &peers {
-                let Some(log_path) = &files.log_path else {
-                    continue;
-                };
-                let last_id = read_last_event_id(&tx, device)?;
-                let events = log::read_log_file_after(log_path, last_id.as_deref())?;
-                for ev in events {
-                    all_events.push(ev);
-                }
-            }
-
-            all_events.sort_by(|a, b| (a.ts, &a.device).cmp(&(b.ts, &b.device)));
-
-            for ev in &all_events {
-                merge::apply_event(&tx, ev)?;
-                let entry = peer_max_event.entry(ev.device.clone()).or_default();
-                if ev.id > *entry {
-                    *entry = ev.id.clone();
-                }
-                events_applied += 1;
-            }
-
-            // 4. Advance each peer's last_event_id watermark to the highest
-            //    id we just consumed. Monotonic: never go backward.
-            for (device, max_id) in &peer_max_event {
-                bump_event_watermark(&tx, device, max_id)?;
-            }
-
-            tx.commit()?;
-        }
-
-        conn.execute_batch("PRAGMA foreign_keys = ON;")?;
+        let (snapshots_applied, events_applied) = match (inner, restore) {
+            (Ok(counts), Ok(())) => counts,
+            (Err(e), _) => return Err(e),
+            (Ok(_), Err(e)) => return Err(AppError::Db(e)),
+        };
 
         Ok(ReplayReport {
             outbox_flushed,
@@ -166,6 +106,84 @@ impl ReplayEngine {
             events_applied,
             peers_seen,
         })
+    }
+
+    /// Inner helper for `tick`: snapshot apply + log-tail merge inside a
+    /// single SQL transaction. Returns `(snapshots_applied, events_applied)`
+    /// counts. Caller is responsible for toggling `PRAGMA foreign_keys`
+    /// around the call so any error here doesn't leak FK = OFF.
+    fn apply_in_tx(
+        &self,
+        conn: &mut Connection,
+        peers: &BTreeMap<String, PeerFiles>,
+    ) -> AppResult<(usize, usize)> {
+        let mut snapshots_applied = 0usize;
+        let mut events_applied = 0usize;
+        let mut peer_max_event: BTreeMap<String, String> = BTreeMap::new();
+
+        let tx = conn.transaction()?;
+
+        // 3a. Apply snapshots first. Each snapshot apply updates its own
+        //     `_replay_state.last_snapshot_id` (and `last_event_id` if the
+        //     snapshot moves the watermark forward). Doing them before the
+        //     log tails means the per-peer `last_event_id` we read in 3b
+        //     reflects any snapshot bump.
+        for (device, files) in peers {
+            let Some(snap_path) = &files.snap_path else {
+                continue;
+            };
+            let snap = match Snapshot::read_from(snap_path) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!(
+                        "sync: skipping malformed snapshot {}: {e}",
+                        snap_path.display()
+                    );
+                    continue;
+                }
+            };
+            let outcome = snap.apply_peer(&tx, device)?;
+            if matches!(
+                outcome,
+                super::snapshot::ApplyOutcome::Applied
+                    | super::snapshot::ApplyOutcome::HeaderOnly
+            ) {
+                snapshots_applied += 1;
+            }
+        }
+
+        // 3b. Read each peer's log tail past its (possibly just-bumped)
+        //     watermark. Collect, sort by `(ts, device)`, apply.
+        let mut all_events: Vec<Event> = Vec::new();
+        for (device, files) in peers {
+            let Some(log_path) = &files.log_path else {
+                continue;
+            };
+            let last_id = read_last_event_id(&tx, device)?;
+            let events = log::read_log_file_after(log_path, last_id.as_deref())?;
+            for ev in events {
+                all_events.push(ev);
+            }
+        }
+        all_events.sort_by(|a, b| (a.ts, &a.device).cmp(&(b.ts, &b.device)));
+
+        for ev in &all_events {
+            merge::apply_event(&tx, ev)?;
+            let entry = peer_max_event.entry(ev.device.clone()).or_default();
+            if ev.id > *entry {
+                *entry = ev.id.clone();
+            }
+            events_applied += 1;
+        }
+
+        // 4. Advance each peer's last_event_id watermark to the highest id
+        //    we just consumed. Monotonic: never go backward.
+        for (device, max_id) in &peer_max_event {
+            bump_event_watermark(&tx, device, max_id)?;
+        }
+
+        tx.commit()?;
+        Ok((snapshots_applied, events_applied))
     }
 
     /// Drain `_pending_publish` into the own device log. Each row is
@@ -610,6 +628,41 @@ mod tests {
         let report = env.engine.tick(&mut env.conn).unwrap();
         assert_eq!(report.snapshots_applied, 0);
         assert_eq!(report.events_applied, 0);
+    }
+
+    #[test]
+    fn fk_pragma_restored_even_when_merge_errors() {
+        // Regression for PR #189 finding #4: a malformed event inside the
+        // log triggers an error inside `apply_in_tx`, which used to skip
+        // the `PRAGMA foreign_keys = ON` restore. Inject one (a
+        // book.metadata.set with a number where a string is expected) and
+        // assert the connection's FK pragma is back to ON after tick
+        // returns Err.
+        let mut env = setup("self");
+        let bad = vec![
+            ev(1000, "peer-A", import("b1")),
+            ev(
+                2000,
+                "peer-A",
+                EventBody::BookMetadataSet {
+                    book: "b1".into(),
+                    field: "title".into(),
+                    value: serde_json::json!(42), // wrong type — apply_book_metadata returns Err
+                },
+            ),
+        ];
+        write_peer_log(&env.shared, "peer-A", &bad);
+
+        // Pre-set FK ON so the restore is observable.
+        env.conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        let result = env.engine.tick(&mut env.conn);
+        assert!(result.is_err(), "malformed metadata event should propagate");
+
+        let fk: i64 = env
+            .conn
+            .query_row("PRAGMA foreign_keys", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(fk, 1, "FK must be restored to ON even after a tick error");
     }
 
     #[test]
