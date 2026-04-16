@@ -124,28 +124,7 @@ impl EventLog {
     /// skipped with a `eprintln!` warning so a partial tail (from a crash
     /// mid-write) doesn't poison the whole read.
     pub fn read_all(&self) -> AppResult<Vec<Event>> {
-        let bytes = match fs::read(&self.path) {
-            Ok(b) => b,
-            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
-            Err(e) => return Err(AppError::Io(e)),
-        };
-        let mut out = Vec::new();
-        for (idx, line) in bytes.split(|&b| b == b'\n').enumerate() {
-            if line.is_empty() {
-                continue;
-            }
-            match serde_json::from_slice::<Event>(line) {
-                Ok(ev) => out.push(ev),
-                Err(e) => {
-                    eprintln!(
-                        "sync: skipping malformed log line {} in {}: {e}",
-                        idx + 1,
-                        self.path.display()
-                    );
-                }
-            }
-        }
-        Ok(out)
+        read_log_file(&self.path)
     }
 
     /// Stream events with `id > last_id`. Passing `None` returns every event.
@@ -155,11 +134,46 @@ impl EventLog {
     /// a single monotonic generator. Across peers we tiebreak in the replay
     /// engine by `(ts, device)`.
     pub fn read_after(&self, last_id: Option<&str>) -> AppResult<Vec<Event>> {
-        let all = self.read_all()?;
-        match last_id {
-            None => Ok(all),
-            Some(lid) => Ok(all.into_iter().filter(|e| e.id.as_str() > lid).collect()),
+        read_log_file_after(&self.path, last_id)
+    }
+}
+
+/// Read every event from a log file at `path` without opening an `EventLog`
+/// (no writer, no generator). Used by `ReplayEngine` to ingest peer logs
+/// without touching them. Missing files return an empty vec — a peer that
+/// hasn't published a log yet is the same as a peer with zero events.
+pub fn read_log_file(path: &Path) -> AppResult<Vec<Event>> {
+    let bytes = match fs::read(path) {
+        Ok(b) => b,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(AppError::Io(e)),
+    };
+    let mut out = Vec::new();
+    for (idx, line) in bytes.split(|&b| b == b'\n').enumerate() {
+        if line.is_empty() {
+            continue;
         }
+        match serde_json::from_slice::<Event>(line) {
+            Ok(ev) => out.push(ev),
+            Err(e) => {
+                eprintln!(
+                    "sync: skipping malformed log line {} in {}: {e}",
+                    idx + 1,
+                    path.display()
+                );
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Like `read_log_file` but skips events with `id <= last_id`. ULIDs sort
+/// lexicographically, so a string compare is equivalent to "later than".
+pub fn read_log_file_after(path: &Path, last_id: Option<&str>) -> AppResult<Vec<Event>> {
+    let all = read_log_file(path)?;
+    match last_id {
+        None => Ok(all),
+        Some(lid) => Ok(all.into_iter().filter(|e| e.id.as_str() > lid).collect()),
     }
 }
 
