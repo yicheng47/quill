@@ -323,7 +323,7 @@ impl Snapshot {
         // removed pair, etc.
         for (entity, list) in &self.state.tombstones {
             for t in list {
-                merge::cascade_delete(tx, entity, &t.id)?;
+                merge::cascade_delete(tx, entity, &t.id, t.ts)?;
                 merge::insert_tombstone(tx, entity, &t.id, t.ts)?;
             }
         }

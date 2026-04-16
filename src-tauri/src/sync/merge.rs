@@ -151,18 +151,24 @@ fn parent_tombstoned(tx: &Transaction, parents: &[(&str, &str)]) -> AppResult<bo
 }
 
 /// Drop the row identified by `(entity, id)` plus every FK-child the event
-/// path would cascade to. Does NOT write the tombstone — callers that want
-/// the suppress-future-adds behavior must call `insert_tombstone`
-/// separately. Idempotent: if the row is already gone, every DELETE is a
-/// no-op.
+/// path would cascade to. Does NOT write the tombstone for `(entity, id)`
+/// itself — callers must call `insert_tombstone` separately for that.
+/// Idempotent: if the row is already gone, every DELETE is a no-op.
+///
+/// `ts` is the deletion timestamp threaded through to any per-child
+/// tombstones we have to write inline (e.g. cascaded chats — see
+/// `cascade_delete_book`). Using the event's ts (and snapshot tombstones'
+/// stored ts) instead of wall-clock keeps `_tombstones` rows
+/// byte-identical across replay runs, which the design doc calls out as
+/// a Chunk 4 invariant for snapshot equivalence.
 ///
 /// Used by both the event-path delete arms and `Snapshot::apply_peer`'s
 /// tombstone pass so the two paths stay byte-equivalent. For the composite
 /// `collection_book` entity, `id` must be `"<col>:<book>"` — the same
 /// format the merge engine uses when writing those tombstones.
-pub fn cascade_delete(tx: &Transaction, entity: &str, id: &str) -> AppResult<()> {
+pub fn cascade_delete(tx: &Transaction, entity: &str, id: &str, ts: i64) -> AppResult<()> {
     match entity {
-        entity::BOOK => cascade_delete_book(tx, id),
+        entity::BOOK => cascade_delete_book(tx, id, ts),
         entity::COLLECTION => cascade_delete_collection(tx, id),
         entity::CHAT => cascade_delete_chat(tx, id),
         entity::COLLECTION_BOOK => cascade_delete_collection_book(tx, id),
@@ -193,7 +199,7 @@ pub fn cascade_delete(tx: &Transaction, entity: &str, id: &str) -> AppResult<()>
     }
 }
 
-fn cascade_delete_book(tx: &Transaction, id: &str) -> AppResult<()> {
+fn cascade_delete_book(tx: &Transaction, id: &str, ts: i64) -> AppResult<()> {
     // Mirror the `apply_book_delete` cascade exactly. Replay runs with FK
     // off, so we can't rely on ON DELETE CASCADE.
     //
@@ -205,7 +211,9 @@ fn cascade_delete_book(tx: &Transaction, id: &str) -> AppResult<()> {
     // For chats we DO tombstone each cascaded chat, because the chat-
     // message merge arm checks `('chat', chat_id)`, not `('book', book_id)`,
     // so without this an orphan chat.message.add could resurrect after the
-    // book is gone.
+    // book is gone. The tombstone ts must be the parent-delete event ts
+    // (not wall-clock) — `_tombstones` rows ride along in snapshots and
+    // need to be byte-identical across replay runs.
     tx.execute("DELETE FROM bookmarks WHERE book_id = ?1", params![id])?;
     tx.execute("DELETE FROM highlights WHERE book_id = ?1", params![id])?;
     tx.execute("DELETE FROM vocab_words WHERE book_id = ?1", params![id])?;
@@ -221,18 +229,12 @@ fn cascade_delete_book(tx: &Transaction, id: &str) -> AppResult<()> {
             .collect::<Result<_, _>>()?;
         collected
     };
-    // Use the cascaded chat's own ts isn't known here — the caller supplies
-    // the parent-delete event ts. We pass it through the surrounding
-    // transaction context implicitly by writing tombstones with `now` as a
-    // monotonic-enough value. (The exact ts on the tombstone is informational
-    // only; what matters is that the row exists — see `is_tombstoned`.)
-    let now_ts = chrono::Utc::now().timestamp_millis();
     for chat_id in &chat_ids {
         tx.execute(
             "DELETE FROM chat_messages WHERE chat_id = ?1",
             params![chat_id],
         )?;
-        insert_tombstone(tx, entity::CHAT, chat_id, now_ts)?;
+        insert_tombstone(tx, entity::CHAT, chat_id, ts)?;
     }
     tx.execute("DELETE FROM chats WHERE book_id = ?1", params![id])?;
     tx.execute("DELETE FROM books WHERE id = ?1", params![id])?;
@@ -299,7 +301,7 @@ fn apply_book_import(tx: &Transaction, event: &Event, p: &BookImportPayload) -> 
 }
 
 fn apply_book_delete(tx: &Transaction, event: &Event, id: &str) -> AppResult<()> {
-    cascade_delete(tx, entity::BOOK, id)?;
+    cascade_delete(tx, entity::BOOK, id, event.ts)?;
     insert_tombstone(tx, entity::BOOK, id, event.ts)?;
     Ok(())
 }
@@ -643,7 +645,7 @@ fn apply_collection_delete(tx: &Transaction, event: &Event, id: &str) -> AppResu
         let key = format!("{id}:{book_id}");
         insert_tombstone(tx, entity::COLLECTION_BOOK, &key, event.ts)?;
     }
-    cascade_delete(tx, entity::COLLECTION, id)?;
+    cascade_delete(tx, entity::COLLECTION, id, event.ts)?;
     insert_tombstone(tx, entity::COLLECTION, id, event.ts)?;
     Ok(())
 }
@@ -679,7 +681,7 @@ fn apply_collection_book_remove(
     book: &str,
 ) -> AppResult<()> {
     let key = format!("{collection}:{book}");
-    cascade_delete(tx, entity::COLLECTION_BOOK, &key)?;
+    cascade_delete(tx, entity::COLLECTION_BOOK, &key, event.ts)?;
     insert_tombstone(tx, entity::COLLECTION_BOOK, &key, event.ts)?;
     Ok(())
 }
@@ -730,7 +732,7 @@ fn apply_chat_rename(tx: &Transaction, event: &Event, id: &str, title: &str) -> 
 }
 
 fn apply_chat_delete(tx: &Transaction, event: &Event, id: &str) -> AppResult<()> {
-    cascade_delete(tx, entity::CHAT, id)?;
+    cascade_delete(tx, entity::CHAT, id, event.ts)?;
     insert_tombstone(tx, entity::CHAT, id, event.ts)?;
     Ok(())
 }
@@ -1809,6 +1811,61 @@ mod tests {
         assert_eq!(
             n_msgs, 0,
             "message for suppressed chat must not slip in as an orphan"
+        );
+    }
+
+    #[test]
+    fn cascaded_chat_tombstones_carry_event_ts_not_wall_clock() {
+        // Regression for the determinism finding. cascade_delete_book
+        // previously stamped per-chat tombstones with `Utc::now()`, which
+        // diverges across replay runs and corrupts snapshot equivalence.
+        // Pin: the cascaded chat's `_tombstones.ts` must equal the
+        // book.delete event's ts.
+        let mut db = open_db();
+        const DELETE_TS: i64 = 5_000;
+        apply_all(
+            &mut db,
+            &[
+                ev(1000, "dev-A", import_book("b1")),
+                ev(
+                    1100,
+                    "dev-A",
+                    EventBody::ChatCreate {
+                        id: "ch1".into(),
+                        book: "b1".into(),
+                        title: "T".into(),
+                        model: None,
+                    },
+                ),
+                ev(
+                    1200,
+                    "dev-A",
+                    EventBody::ChatCreate {
+                        id: "ch2".into(),
+                        book: "b1".into(),
+                        title: "T2".into(),
+                        model: None,
+                    },
+                ),
+                ev(DELETE_TS, "dev-B", EventBody::BookDelete { id: "b1".into() }),
+            ],
+        );
+
+        let rows: Vec<(String, i64)> = {
+            let mut stmt = db
+                .prepare(
+                    "SELECT id, ts FROM _tombstones WHERE entity = 'chat' ORDER BY id",
+                )
+                .unwrap();
+            stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))
+                .unwrap()
+                .map(|r| r.unwrap())
+                .collect()
+        };
+        assert_eq!(
+            rows,
+            vec![("ch1".to_string(), DELETE_TS), ("ch2".to_string(), DELETE_TS)],
+            "cascaded chat tombstones must use the book.delete event ts"
         );
     }
 
