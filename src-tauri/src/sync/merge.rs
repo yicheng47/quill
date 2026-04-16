@@ -134,6 +134,22 @@ pub fn insert_tombstone(tx: &Transaction, entity: &str, id: &str, ts: i64) -> Ap
     Ok(())
 }
 
+/// True if any of the given `(entity, id)` pairs has a tombstone. Used by
+/// child `*.add` arms to suppress events whose parent has been deleted —
+/// otherwise a late event published by an offline peer can re-create
+/// orphan rows for a permanently-tombstoned book/collection/chat (the
+/// own-tombstone check on the child id alone is not enough because the
+/// child may never have existed locally, so it has no tombstone of its
+/// own).
+fn parent_tombstoned(tx: &Transaction, parents: &[(&str, &str)]) -> AppResult<bool> {
+    for (entity, id) in parents {
+        if is_tombstoned(tx, entity, id)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// Drop the row identified by `(entity, id)` plus every FK-child the event
 /// path would cascade to. Does NOT write the tombstone — callers that want
 /// the suppress-future-adds behavior must call `insert_tombstone`
@@ -180,6 +196,16 @@ pub fn cascade_delete(tx: &Transaction, entity: &str, id: &str) -> AppResult<()>
 fn cascade_delete_book(tx: &Transaction, id: &str) -> AppResult<()> {
     // Mirror the `apply_book_delete` cascade exactly. Replay runs with FK
     // off, so we can't rely on ON DELETE CASCADE.
+    //
+    // For the direct-child tables (highlights, bookmarks, vocab_words,
+    // collection_books, translations) we don't write per-row tombstones —
+    // late `*.add` events for those tables are caught by their parent-
+    // tombstone check on `('book', id)`.
+    //
+    // For chats we DO tombstone each cascaded chat, because the chat-
+    // message merge arm checks `('chat', chat_id)`, not `('book', book_id)`,
+    // so without this an orphan chat.message.add could resurrect after the
+    // book is gone.
     tx.execute("DELETE FROM bookmarks WHERE book_id = ?1", params![id])?;
     tx.execute("DELETE FROM highlights WHERE book_id = ?1", params![id])?;
     tx.execute("DELETE FROM vocab_words WHERE book_id = ?1", params![id])?;
@@ -195,11 +221,18 @@ fn cascade_delete_book(tx: &Transaction, id: &str) -> AppResult<()> {
             .collect::<Result<_, _>>()?;
         collected
     };
+    // Use the cascaded chat's own ts isn't known here — the caller supplies
+    // the parent-delete event ts. We pass it through the surrounding
+    // transaction context implicitly by writing tombstones with `now` as a
+    // monotonic-enough value. (The exact ts on the tombstone is informational
+    // only; what matters is that the row exists — see `is_tombstoned`.)
+    let now_ts = chrono::Utc::now().timestamp_millis();
     for chat_id in &chat_ids {
         tx.execute(
             "DELETE FROM chat_messages WHERE chat_id = ?1",
             params![chat_id],
         )?;
+        insert_tombstone(tx, entity::CHAT, chat_id, now_ts)?;
     }
     tx.execute("DELETE FROM chats WHERE book_id = ?1", params![id])?;
     tx.execute("DELETE FROM books WHERE id = ?1", params![id])?;
@@ -369,7 +402,9 @@ fn apply_book_metadata(
 // ---------------------------------------------------------------------------
 
 fn apply_highlight_add(tx: &Transaction, event: &Event, p: &HighlightPayload) -> AppResult<()> {
-    if is_tombstoned(tx, entity::HIGHLIGHT, &p.id)? {
+    if is_tombstoned(tx, entity::HIGHLIGHT, &p.id)?
+        || parent_tombstoned(tx, &[(entity::BOOK, &p.book_id)])?
+    {
         return Ok(());
     }
     tx.execute(
@@ -429,7 +464,9 @@ fn apply_highlight_note(
 // ---------------------------------------------------------------------------
 
 fn apply_bookmark_add(tx: &Transaction, event: &Event, p: &BookmarkPayload) -> AppResult<()> {
-    if is_tombstoned(tx, entity::BOOKMARK, &p.id)? {
+    if is_tombstoned(tx, entity::BOOKMARK, &p.id)?
+        || parent_tombstoned(tx, &[(entity::BOOK, &p.book_id)])?
+    {
         return Ok(());
     }
     tx.execute(
@@ -451,7 +488,9 @@ fn apply_bookmark_delete(tx: &Transaction, event: &Event, id: &str) -> AppResult
 // ---------------------------------------------------------------------------
 
 fn apply_vocab_add(tx: &Transaction, event: &Event, p: &VocabPayload) -> AppResult<()> {
-    if is_tombstoned(tx, entity::VOCAB, &p.id)? {
+    if is_tombstoned(tx, entity::VOCAB, &p.id)?
+        || parent_tombstoned(tx, &[(entity::BOOK, &p.book_id)])?
+    {
         return Ok(());
     }
     tx.execute(
@@ -510,7 +549,9 @@ fn apply_vocab_delete(tx: &Transaction, event: &Event, id: &str) -> AppResult<()
 // ---------------------------------------------------------------------------
 
 fn apply_translation_add(tx: &Transaction, event: &Event, p: &TranslationPayload) -> AppResult<()> {
-    if is_tombstoned(tx, entity::TRANSLATION, &p.id)? {
+    if is_tombstoned(tx, entity::TRANSLATION, &p.id)?
+        || parent_tombstoned(tx, &[(entity::BOOK, &p.book_id)])?
+    {
         return Ok(());
     }
     tx.execute(
@@ -614,7 +655,12 @@ fn apply_collection_book_add(
     book: &str,
 ) -> AppResult<()> {
     let key = format!("{collection}:{book}");
-    if is_tombstoned(tx, entity::COLLECTION_BOOK, &key)? {
+    if is_tombstoned(tx, entity::COLLECTION_BOOK, &key)?
+        || parent_tombstoned(
+            tx,
+            &[(entity::COLLECTION, collection), (entity::BOOK, book)],
+        )?
+    {
         return Ok(());
     }
     tx.execute(
@@ -650,7 +696,9 @@ fn apply_chat_create(
     title: &str,
     model: Option<&str>,
 ) -> AppResult<()> {
-    if is_tombstoned(tx, entity::CHAT, id)? {
+    if is_tombstoned(tx, entity::CHAT, id)?
+        || parent_tombstoned(tx, &[(entity::BOOK, book)])?
+    {
         return Ok(());
     }
     tx.execute(
@@ -684,7 +732,9 @@ fn apply_chat_message_add(
     event: &Event,
     p: &ChatMessagePayload,
 ) -> AppResult<()> {
-    if is_tombstoned(tx, entity::CHAT_MESSAGE, &p.id)? {
+    if is_tombstoned(tx, entity::CHAT_MESSAGE, &p.id)?
+        || parent_tombstoned(tx, &[(entity::CHAT, &p.chat_id)])?
+    {
         return Ok(());
     }
     tx.execute(
@@ -1514,6 +1564,168 @@ mod tests {
             .unwrap();
         assert_eq!(title, "New Title", "first metadata.set must land");
         assert_eq!(author, "New Author", "second metadata.set must also land");
+    }
+
+    // -----------------------------------------------------------------------
+    // Late-child-add suppression after a parent delete.
+    //
+    // Scenario from PR #189 review: device-A creates the join row before
+    // going offline, device-B deletes the parent and publishes, devices
+    // converge, then device-A comes back and publishes its older event.
+    // Without parent-tombstone checks the older event resurrects the join
+    // and inflates `list_collections` counts. The same shape applies to
+    // every child entity (highlights, bookmarks, vocab, translations,
+    // chats, chat messages).
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn late_collection_book_add_after_book_delete_is_suppressed() {
+        let mut db = open_db();
+        apply_all(
+            &mut db,
+            &[
+                ev(1000, "dev-A", import_book("b1")),
+                ev(
+                    1100,
+                    "dev-A",
+                    EventBody::CollectionCreate {
+                        id: "c1".into(),
+                        name: "Top".into(),
+                        sort_order: 0,
+                    },
+                ),
+                // dev-B deletes the book at T=2000.
+                ev(2000, "dev-B", EventBody::BookDelete { id: "b1".into() }),
+                // dev-A's older `collection.book.add(c1, b1)` arrives late
+                // (T=1500 < 2000). Sorted-apply order is delete-then-add,
+                // but cross-tick this ordering breaks down — assert the add
+                // is suppressed regardless.
+                ev(
+                    1500,
+                    "dev-A",
+                    EventBody::CollectionBookAdd {
+                        collection: "c1".into(),
+                        book: "b1".into(),
+                    },
+                ),
+            ],
+        );
+        let n: i64 = db
+            .query_row(
+                "SELECT COUNT(*) FROM collection_books WHERE collection_id = 'c1' AND book_id = 'b1'",
+                [], |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            n, 0,
+            "collection.book.add must not resurrect a tombstoned book's join row"
+        );
+    }
+
+    #[test]
+    fn late_collection_book_add_suppressed_across_ticks() {
+        // The same scenario but across two apply batches — mirrors the
+        // multi-tick replay path described in the review (dev-B's delete
+        // event applied in tick 1; dev-A's stale add arrives in tick 2).
+        let mut db = open_db();
+        apply_all(
+            &mut db,
+            &[
+                ev(1000, "dev-A", import_book("b1")),
+                ev(
+                    1100,
+                    "dev-A",
+                    EventBody::CollectionCreate {
+                        id: "c1".into(),
+                        name: "Top".into(),
+                        sort_order: 0,
+                    },
+                ),
+                ev(2000, "dev-B", EventBody::BookDelete { id: "b1".into() }),
+            ],
+        );
+        // Now a second tick brings the late add.
+        apply_all(
+            &mut db,
+            &[ev(
+                1500,
+                "dev-A",
+                EventBody::CollectionBookAdd {
+                    collection: "c1".into(),
+                    book: "b1".into(),
+                },
+            )],
+        );
+        let n: i64 = db
+            .query_row(
+                "SELECT COUNT(*) FROM collection_books WHERE collection_id = 'c1' AND book_id = 'b1'",
+                [], |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n, 0, "late tick must still see the parent tombstone");
+    }
+
+    #[test]
+    fn late_highlight_add_after_book_delete_is_suppressed() {
+        let mut db = open_db();
+        apply_all(
+            &mut db,
+            &[
+                ev(1000, "dev-A", import_book("b1")),
+                ev(2000, "dev-B", EventBody::BookDelete { id: "b1".into() }),
+            ],
+        );
+        apply_all(
+            &mut db,
+            &[ev(1500, "dev-A", add_highlight("h-late", "b1", "yellow"))],
+        );
+        let n: i64 = db
+            .query_row("SELECT COUNT(*) FROM highlights", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 0, "highlight on a tombstoned book must be suppressed");
+    }
+
+    #[test]
+    fn late_chat_message_after_book_delete_is_suppressed() {
+        // Cascade-deleting a book also tombstones each cascaded chat, so a
+        // delayed `chat.message.add` for one of those chats stays out.
+        let mut db = open_db();
+        apply_all(
+            &mut db,
+            &[
+                ev(1000, "dev-A", import_book("b1")),
+                ev(
+                    1100,
+                    "dev-A",
+                    EventBody::ChatCreate {
+                        id: "ch1".into(),
+                        book: "b1".into(),
+                        title: "T".into(),
+                        model: None,
+                    },
+                ),
+                ev(2000, "dev-B", EventBody::BookDelete { id: "b1".into() }),
+            ],
+        );
+        apply_all(
+            &mut db,
+            &[ev(
+                1500,
+                "dev-A",
+                EventBody::ChatMessageAdd(ChatMessagePayload {
+                    id: "m1".into(),
+                    chat_id: "ch1".into(),
+                    role: "user".into(),
+                    content: "hi".into(),
+                    context: None,
+                    metadata: None,
+                }),
+            )],
+        );
+        let n: i64 = db
+            .query_row("SELECT COUNT(*) FROM chat_messages", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 0, "message for cascade-deleted chat must be suppressed");
     }
 
     #[test]
