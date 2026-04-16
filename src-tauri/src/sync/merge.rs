@@ -696,9 +696,17 @@ fn apply_chat_create(
     title: &str,
     model: Option<&str>,
 ) -> AppResult<()> {
-    if is_tombstoned(tx, entity::CHAT, id)?
-        || parent_tombstoned(tx, &[(entity::BOOK, book)])?
-    {
+    if is_tombstoned(tx, entity::CHAT, id)? {
+        return Ok(());
+    }
+    if parent_tombstoned(tx, &[(entity::BOOK, book)])? {
+        // Parent book is tombstoned — suppress the chat AND leave a chat
+        // tombstone so any delayed `chat.message.add` for this id is also
+        // dropped. The message arm only consults `('chat', chat_id)`
+        // tombstones; without this, a stale (chat.create + chat.message.add)
+        // pair from an offline peer would slip the message in as an
+        // orphan after the create was silently discarded.
+        insert_tombstone(tx, entity::CHAT, id, event.ts)?;
         return Ok(());
     }
     tx.execute(
@@ -1726,6 +1734,82 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM chat_messages", [], |r| r.get(0))
             .unwrap();
         assert_eq!(n, 0, "message for cascade-deleted chat must be suppressed");
+    }
+
+    #[test]
+    fn suppressed_chat_create_writes_tombstone_blocking_late_message() {
+        // Exact scenario from the second review pass:
+        //   tick 1: book.delete(b1) applied — book is tombstoned, no
+        //     chat existed locally so cascade_delete_book wrote nothing.
+        //   tick 2: stale chat.create(ch1, b1) arrives. Parent book is
+        //     tombstoned → suppressed. Without this fix, no chat tombstone
+        //     gets written.
+        //   tick 3: stale chat.message.add(m1, chat_id=ch1) arrives. The
+        //     message arm checks (chat, ch1) tombstone, sees nothing, and
+        //     would insert an orphan.
+        let mut db = open_db();
+        // Tick 1: book imported, then deleted.
+        apply_all(
+            &mut db,
+            &[
+                ev(1000, "dev-A", import_book("b1")),
+                ev(2000, "dev-B", EventBody::BookDelete { id: "b1".into() }),
+            ],
+        );
+        // Tick 2: late chat.create arrives.
+        apply_all(
+            &mut db,
+            &[ev(
+                1500,
+                "dev-A",
+                EventBody::ChatCreate {
+                    id: "ch1".into(),
+                    book: "b1".into(),
+                    title: "T".into(),
+                    model: None,
+                },
+            )],
+        );
+        let n_chats: i64 = db
+            .query_row("SELECT COUNT(*) FROM chats WHERE id = 'ch1'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n_chats, 0, "chat.create must be suppressed by book tombstone");
+
+        let chat_tomb: i64 = db
+            .query_row(
+                "SELECT COUNT(*) FROM _tombstones WHERE entity = 'chat' AND id = 'ch1'",
+                [], |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            chat_tomb, 1,
+            "suppressed chat.create must leave a chat tombstone"
+        );
+
+        // Tick 3: late chat.message.add arrives. The chat tombstone from
+        // tick 2 must block the orphan insert.
+        apply_all(
+            &mut db,
+            &[ev(
+                1600,
+                "dev-A",
+                EventBody::ChatMessageAdd(ChatMessagePayload {
+                    id: "m1".into(),
+                    chat_id: "ch1".into(),
+                    role: "user".into(),
+                    content: "hi".into(),
+                    context: None,
+                    metadata: None,
+                }),
+            )],
+        );
+        let n_msgs: i64 = db
+            .query_row("SELECT COUNT(*) FROM chat_messages", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(
+            n_msgs, 0,
+            "message for suppressed chat must not slip in as an orphan"
+        );
     }
 
     #[test]
