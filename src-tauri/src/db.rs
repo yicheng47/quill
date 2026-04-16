@@ -16,6 +16,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (8, include_str!("../migrations/008_drop_book_settings.sql")),
     (9, include_str!("../migrations/009_normalize_timestamps.sql")),
     (10, include_str!("../migrations/010_replay_state.sql")),
+    (11, include_str!("../migrations/011_lww_tiebreak_and_outbox.sql")),
 ];
 
 pub struct Db {
@@ -89,8 +90,10 @@ impl Db {
         }
     }
 
-    /// Run migrations on an already-open connection (for testing).
-    #[cfg(test)]
+    /// Run migrations on an already-open connection. Public so the sync
+    /// snapshot module can spin up an in-memory DB to materialize state
+    /// without going through `Db::init` (which assumes a real on-disk
+    /// data dir layout).
     pub fn run_migrations_on(conn: &Connection) -> AppResult<()> {
         Self::run_migrations(conn)
     }
@@ -182,7 +185,7 @@ mod tests {
         let conn = db.conn.lock().unwrap();
         let version: i64 =
             conn.query_row("SELECT version FROM schema_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 10);
+        assert_eq!(version, 11);
     }
 
     #[test]
@@ -207,6 +210,7 @@ mod tests {
         assert!(tables.contains(&"schema_version".to_string()));
         assert!(tables.contains(&"_replay_state".to_string()));
         assert!(tables.contains(&"_tombstones".to_string()));
+        assert!(tables.contains(&"_pending_publish".to_string()));
     }
 
     #[test]
@@ -217,7 +221,7 @@ mod tests {
         Db::run_migrations_on(&conn).unwrap();
         let version: i64 =
             conn.query_row("SELECT version FROM schema_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 10);
+        assert_eq!(version, 11);
     }
 
     #[test]
@@ -523,6 +527,86 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |r| r.get(0))
             .unwrap();
         assert_eq!(violations, 0, "foreign key violations after migration");
+    }
+
+    // -----------------------------------------------------------------------
+    // Migration 011 integrity — `updated_by_device` backfill + `_pending_publish`
+    // creation. Seeds a v10 DB with rows on every LWW-backed table, runs 011,
+    // verifies the new column defaults to 'migration' on every legacy row and
+    // the outbox is empty.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_migration_011_backfills_updated_by_device_and_creates_outbox() {
+        let dir = TempDir::new().unwrap();
+        let conn = Connection::open(dir.path().join("quill.db")).unwrap();
+        conn.execute_batch("PRAGMA journal_mode=DELETE; PRAGMA foreign_keys=ON;").unwrap();
+        Db::run_migrations_up_to(&conn, 10).unwrap();
+
+        let ts = chrono::Utc::now().timestamp_millis();
+
+        // Seed one row on every LWW-backed table (parents first).
+        conn.execute(
+            "INSERT INTO books (id, title, author, file_path, status, progress, created_at, updated_at)
+             VALUES ('b1', 'T', 'A', 'books/x.epub', 'reading', 0, ?1, ?1)",
+            params![ts],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO collections (id, name, sort_order, created_at, updated_at) VALUES ('c1', 'Top', 0, ?1, ?1)",
+            params![ts],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO collection_books (collection_id, book_id, created_at, updated_at) VALUES ('c1', 'b1', ?1, ?1)",
+            params![ts],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO highlights (id, book_id, cfi_range, color, created_at, updated_at)
+             VALUES ('h1', 'b1', 'epubcfi(/6/4!/2)', 'yellow', ?1, ?1)",
+            params![ts],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO vocab_words (id, book_id, word, definition, mastery, review_count, created_at, updated_at)
+             VALUES ('v1', 'b1', 'serendipity', 'fortunate accident', 'new', 0, ?1, ?1)",
+            params![ts],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO chats (id, book_id, title, pinned, created_at, updated_at)
+             VALUES ('ch1', 'b1', 'New chat', 0, ?1, ?1)",
+            params![ts],
+        ).unwrap();
+
+        // Apply migration 011.
+        Db::run_migrations_up_to(&conn, 11).unwrap();
+
+        // Every legacy row got the sentinel.
+        for (sql, expected) in [
+            ("SELECT updated_by_device FROM books WHERE id = 'b1'", "migration"),
+            ("SELECT updated_by_device FROM collections WHERE id = 'c1'", "migration"),
+            ("SELECT updated_by_device FROM collection_books WHERE collection_id = 'c1' AND book_id = 'b1'", "migration"),
+            ("SELECT updated_by_device FROM highlights WHERE id = 'h1'", "migration"),
+            ("SELECT updated_by_device FROM vocab_words WHERE id = 'v1'", "migration"),
+            ("SELECT updated_by_device FROM chats WHERE id = 'ch1'", "migration"),
+        ] {
+            let got: String = conn.query_row(sql, [], |r| r.get(0)).unwrap();
+            assert_eq!(got, expected, "{sql}");
+        }
+
+        // Column declared NOT NULL — INSERT without it should fail.
+        let err = conn.execute(
+            "INSERT INTO highlights (id, book_id, cfi_range, color, created_at, updated_at, updated_by_device)
+             VALUES ('h2', 'b1', 'epubcfi(/6/4!/4)', 'pink', ?1, ?1, NULL)",
+            params![ts],
+        );
+        assert!(err.is_err(), "NULL into NOT NULL column should fail");
+
+        // _pending_publish exists and is empty.
+        let outbox_count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM _pending_publish", [], |r| r.get(0)).unwrap();
+        assert_eq!(outbox_count, 0);
+
+        // schema_version advanced.
+        let v: i64 = conn.query_row("SELECT version FROM schema_version", [], |r| r.get(0)).unwrap();
+        assert_eq!(v, 11);
     }
 
     #[test]
