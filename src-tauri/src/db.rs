@@ -1,7 +1,7 @@
 use rusqlite::{params, Connection};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use crate::error::AppResult;
 
@@ -19,18 +19,54 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (11, include_str!("../migrations/011_lww_tiebreak_and_outbox.sql")),
 ];
 
+/// SQLite handle for the local materialized view.
+///
+/// `conn` and `data_dir` live behind `Arc<Mutex<…>>` so `Db` is cheaply
+/// `Clone`-able. Cloning shares the underlying mutex; the sync watcher
+/// holds one clone in its dedicated thread while Tauri's command
+/// dispatcher holds another in app state. Without the `Arc` we would
+/// either force every command signature to switch to `State<Arc<Db>>`
+/// or push `app_handle.state::<Db>()` indirection into the watcher
+/// loop — both worse than this two-line shape change.
 pub struct Db {
-    pub conn: Mutex<Connection>,
-    pub data_dir: Mutex<PathBuf>,
+    pub conn: Arc<Mutex<Connection>>,
+    pub data_dir: Arc<Mutex<PathBuf>>,
+}
+
+impl Clone for Db {
+    fn clone(&self) -> Self {
+        Self {
+            conn: Arc::clone(&self.conn),
+            data_dir: Arc::clone(&self.data_dir),
+        }
+    }
 }
 
 impl Db {
-    pub fn init(app_data_dir: &PathBuf) -> AppResult<Self> {
-        fs::create_dir_all(app_data_dir)?;
-        fs::create_dir_all(app_data_dir.join("books"))?;
-        fs::create_dir_all(app_data_dir.join("covers"))?;
+    /// Open the DB with both the SQLite file and the binaries dir at
+    /// `app_data_dir`. Used by tests, fresh installs, and any caller
+    /// where the materialized view and the binary blobs live together.
+    pub fn init(app_data_dir: &Path) -> AppResult<Self> {
+        Self::init_split(app_data_dir, app_data_dir)
+    }
 
-        let db_path = app_data_dir.join("quill.db");
+    /// Open the DB with the SQLite file at `db_dir/quill.db` and binary
+    /// blobs (`books/`, `covers/`) under `data_dir`.
+    ///
+    /// Sync-migrated callers pass `db_dir = local_app_data` and
+    /// `data_dir = ubiquity_dir` — the materialized view is local-only
+    /// (per spec, never synced as a file) but the actual book and cover
+    /// files stay in iCloud where the file-sync user originally put them.
+    /// Resolving `books/<id>.epub` then walks into the iCloud folder
+    /// instead of an empty local one. Without this split, the reader
+    /// silently breaks for every existing iCloud user post-migration.
+    pub fn init_split(db_dir: &Path, data_dir: &Path) -> AppResult<Self> {
+        fs::create_dir_all(db_dir)?;
+        fs::create_dir_all(data_dir)?;
+        fs::create_dir_all(data_dir.join("books"))?;
+        fs::create_dir_all(data_dir.join("covers"))?;
+
+        let db_path = db_dir.join("quill.db");
         let conn = Connection::open(&db_path)?;
 
         conn.execute_batch("PRAGMA journal_mode=DELETE; PRAGMA foreign_keys=ON;")?;
@@ -38,11 +74,11 @@ impl Db {
         Self::run_migrations(&conn)?;
 
         // One-time migration: convert absolute paths to relative
-        Self::migrate_to_relative_paths(&conn, app_data_dir)?;
+        Self::migrate_to_relative_paths(&conn, data_dir)?;
 
         Ok(Self {
-            conn: Mutex::new(conn),
-            data_dir: Mutex::new(app_data_dir.clone()),
+            conn: Arc::new(Mutex::new(conn)),
+            data_dir: Arc::new(Mutex::new(data_dir.to_path_buf())),
         })
     }
 
@@ -173,9 +209,35 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
+    /// Regression for PR #192 review finding #1: `init_split` opens the
+    /// SQLite file at `db_dir` but resolves binary blobs against
+    /// `data_dir`. Migrated iCloud users have `db_dir = local` and
+    /// `data_dir = ubiquity`, so a relative `books/foo.epub` walks into
+    /// the iCloud folder where the file actually lives — not into an
+    /// empty local mirror.
+    #[test]
+    fn init_split_opens_db_in_db_dir_resolves_blobs_in_data_dir() {
+        let db_dir = TempDir::new().unwrap();
+        let data_dir = TempDir::new().unwrap();
+        let db = Db::init_split(db_dir.path(), data_dir.path()).unwrap();
+
+        // SQLite file landed in db_dir (NOT data_dir).
+        assert!(db_dir.path().join("quill.db").exists());
+        assert!(!data_dir.path().join("quill.db").exists());
+
+        // books/ + covers/ subdirs were created in data_dir (NOT db_dir).
+        assert!(data_dir.path().join("books").exists());
+        assert!(data_dir.path().join("covers").exists());
+        assert!(!db_dir.path().join("books").exists());
+
+        // resolve_path uses data_dir as the base.
+        let resolved = db.resolve_path("books/foo.epub");
+        assert_eq!(resolved, data_dir.path().join("books/foo.epub"));
+    }
+
     fn setup() -> (TempDir, Db) {
         let dir = TempDir::new().unwrap();
-        let db = Db::init(&dir.path().to_path_buf()).unwrap();
+        let db = Db::init(dir.path()).unwrap();
         (dir, db)
     }
 

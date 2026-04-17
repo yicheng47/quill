@@ -289,7 +289,7 @@ mod tests {
 
     fn setup() -> (TempDir, Db) {
         let dir = TempDir::new().unwrap();
-        let db = Db::init(&dir.path().to_path_buf()).unwrap();
+        let db = Db::init(dir.path()).unwrap();
         // Insert a test book for foreign key references
         let conn = db.conn.lock().unwrap();
         let t0: i64 = 1704067200000; // 2024-01-01T00:00:00Z
