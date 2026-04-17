@@ -11,6 +11,8 @@ use std::path::PathBuf;
 
 use db::Db;
 use secrets::Secrets;
+use sync::device::DeviceIdentity;
+use sync::writer::SyncWriter;
 #[cfg(target_os = "macos")]
 use tauri::Emitter;
 use tauri::Manager;
@@ -87,9 +89,22 @@ pub fn run() {
                 .migrate_from_settings(&db)
                 .expect("failed to migrate secrets");
 
+            // Per-install device UUID — stamped into every LWW write so
+            // peer reconciliation stays deterministic on equal-millisecond
+            // ties. Lives in `<local>/device.json`; never synced.
+            let device =
+                DeviceIdentity::load_or_create(&local_dir).expect("failed to load device id");
+            // SyncWriter starts with `log = None` (sync disabled). Chunk 7's
+            // `sync_enable` command will flip the log on. Until then the
+            // writer is a pass-through: SQL commits as before, events are
+            // dropped after commit.
+            let sync_writer = SyncWriter::new(device.device_uuid.clone());
+
             app.manage(LocalDir(local_dir));
             app.manage(db);
             app.manage(secrets);
+            app.manage(device);
+            app.manage(sync_writer);
 
             Ok(())
         })
