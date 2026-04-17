@@ -30,10 +30,16 @@
 //! 6. Retire the ubiquity DB (rename to `quill.db.migrated-<iso>`).
 //!    Idempotent — if a previous run already retired it, this is a no-op.
 //!
-//! Conflict-copy merge (`quill (1).db`, `quill (2).db`) is **not yet
-//! implemented** in v1 — see TODO inline. v1 only handles the single-DB
-//! case. Conflict copies become a Chunk 6.5 follow-up if real users hit
-//! the divergence.
+//! Conflict-copy merge (`quill (1).db`, `quill (2).db`) is
+//! **deliberately not implemented** in v1. Those files are artifacts of
+//! the old whole-DB iCloud file-sync design and belong with it; the
+//! event-log design has no equivalent representation. Detected conflict
+//! copies are retired alongside the primary DB and a warning is logged
+//! so a user with divergent libraries sees something concrete in the
+//! console / report. Given the early-release scope and small user count
+//! we accept the data-loss risk on this rare path; if a real user hits
+//! it we'll write a one-off recovery tool. Tracked as the v1 trade-off
+//! in PR #192's review.
 //!
 //! See `docs/impls/sync/31-sync.md` Step 7 for the spec.
 
@@ -57,6 +63,16 @@ pub struct MigrationOutcome {
     pub wrote_snapshot: bool,
     pub created_log: bool,
     pub retired_files: usize,
+    /// True when ubiquity/quill.db is currently an iCloud-evicted
+    /// placeholder (`.quill.db.icloud`). The migration deferred and
+    /// will retry next launch — the marker is intentionally NOT
+    /// written. Surfaced separately from `copied_db = false` so callers
+    /// can distinguish "nothing to migrate" from "wait for download".
+    pub deferred_for_download: bool,
+    /// Number of `quill (N).db*` conflict copies retired without merge.
+    /// Counted separately so the log line at the call site can flag
+    /// the data-loss risk to the user.
+    pub conflict_copies_discarded: usize,
 }
 
 pub fn migration_complete_path(local_dir: &Path) -> PathBuf {
@@ -106,11 +122,39 @@ pub fn run_migration(
     let ubiquity_db = ubiquity_dir.join("quill.db");
     let local_db = local_dir.join("quill.db");
 
-    // 1. Copy ubiquity → local. If local already exists from a partial
-    //    previous attempt we leave it (Db::init below validates schema).
-    //    If ubiquity doesn't exist there's nothing to migrate — write
-    //    the marker so we don't try again every launch.
+    // 1. Resolve the source DB. Three cases:
+    //
+    //    a. `quill.db` is on disk → copy → migrate.
+    //    b. `quill.db` is missing AND `.quill.db.icloud` placeholder is
+    //       present → file is iCloud-evicted. Trigger a download and
+    //       BAIL WITHOUT WRITING THE MARKER so the next launch retries.
+    //       Users who haven't opened the app in months commonly land
+    //       here — the iCloud daemon evicts cold files. Without this
+    //       arm we'd silently skip migration forever (the next launch
+    //       would see the marker and never retry), and the
+    //       self-healing retire path in lib.rs would later rename the
+    //       freshly-downloaded `quill.db` away as a "stray".
+    //    c. Neither file present → no legacy data exists. Mark complete.
     if !ubiquity_db.exists() {
+        let placeholder = match crate::icloud::icloud_placeholder_path(&ubiquity_db) {
+            Some(p) => p,
+            None => {
+                // Pathological case (root path with no parent). Treat
+                // as "nothing to migrate".
+                fs::create_dir_all(local_dir)?;
+                fs::write(migration_complete_path(local_dir), b"")?;
+                return Ok(outcome);
+            }
+        };
+        if placeholder.exists() {
+            // Ask the iCloud daemon to download. No-op on non-macOS;
+            // best-effort on macOS (failures are logged in
+            // `trigger_download_file`). Either way we return without a
+            // marker so next launch tries again.
+            crate::icloud::trigger_download_file(&ubiquity_db);
+            outcome.deferred_for_download = true;
+            return Ok(outcome);
+        }
         fs::create_dir_all(local_dir)?;
         fs::write(migration_complete_path(local_dir), b"")?;
         return Ok(outcome);
@@ -124,7 +168,7 @@ pub fn run_migration(
     // 2. Open the local DB — Db::init applies migrations 1-11, so a
     //    legacy v8 / v9 / v10 file is brought to the current schema
     //    before we read it.
-    let db = Db::init(&local_dir.to_path_buf())?;
+    let db = Db::init(local_dir)?;
 
     // 3. Build the snapshot from the now-migrated local DB.
     let snap = {
@@ -157,9 +201,20 @@ pub fn run_migration(
     fs::write(migration_complete_path(local_dir), b"")?;
 
     // 6. Retire ubiquity quill.db*.
-    outcome.retired_files = retire_ubiquity_db(ubiquity_dir)?;
+    let report = retire_ubiquity_db_with_report(ubiquity_dir)?;
+    outcome.retired_files = report.renamed;
+    outcome.conflict_copies_discarded = report.conflict_copies_discarded;
 
     Ok(outcome)
+}
+
+/// What `retire_ubiquity_db` did. Pulled out as a struct so the
+/// migration outcome can flag conflict-copy discards without changing
+/// the simpler `retire_ubiquity_db` callers.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct RetireReport {
+    pub renamed: usize,
+    pub conflict_copies_discarded: usize,
 }
 
 /// Rename `<ubiquity>/quill.db*` → `quill.db.migrated-<iso>`. Globs over
@@ -170,11 +225,19 @@ pub fn run_migration(
 /// Called from `run_migration` step 6 and from the launch self-healing
 /// arm. Safe to call on every launch.
 pub fn retire_ubiquity_db(ubiquity_dir: &Path) -> AppResult<usize> {
+    Ok(retire_ubiquity_db_with_report(ubiquity_dir)?.renamed)
+}
+
+/// Same as `retire_ubiquity_db` but surfaces the conflict-copy count
+/// separately so `run_migration` can flag the data-loss risk. See the
+/// module docstring for why we deliberately discard conflict copies in
+/// v1 instead of merging them.
+pub fn retire_ubiquity_db_with_report(ubiquity_dir: &Path) -> AppResult<RetireReport> {
     let ts = chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
-    let mut renamed = 0usize;
+    let mut report = RetireReport::default();
     let entries = match fs::read_dir(ubiquity_dir) {
         Ok(e) => e,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(report),
         Err(e) => return Err(AppError::Io(e)),
     };
     for entry in entries {
@@ -187,19 +250,42 @@ pub fn retire_ubiquity_db(ubiquity_dir: &Path) -> AppResult<usize> {
         if !is_legacy_db_file(&name) {
             continue;
         }
+        let is_conflict = is_conflict_copy(&name);
         let new_name = format!("{name}.migrated-{ts}");
         let new_path = ubiquity_dir.join(&new_name);
         // Best-effort rename; iCloud can transiently fail with EXDEV /
         // permission errors. Log and move on rather than fail the whole
         // migration.
         match fs::rename(&path, &new_path) {
-            Ok(()) => renamed += 1,
+            Ok(()) => {
+                report.renamed += 1;
+                if is_conflict {
+                    report.conflict_copies_discarded += 1;
+                    // Loud warning so a migrating user sees something
+                    // concrete in the console — conflict copies are
+                    // deliberately discarded in v1 (see module doc).
+                    eprintln!(
+                        "sync: WARNING — discarding legacy conflict copy {name:?} \
+                         without merging. Any rows unique to this file are lost. \
+                         The retired file remains at {new_name:?} for manual recovery."
+                    );
+                }
+            }
             Err(e) => eprintln!(
                 "sync: failed to retire ubiquity file {name:?}: {e}; will retry next launch"
             ),
         }
     }
-    Ok(renamed)
+    Ok(report)
+}
+
+/// Subset of `is_legacy_db_file` — true only for `quill (N).db*`.
+/// `quill.db` / `quill.db-wal` / `quill.db-shm` are NOT conflict copies.
+fn is_conflict_copy(name: &str) -> bool {
+    if !name.starts_with("quill (") {
+        return false;
+    }
+    is_legacy_db_file(name)
 }
 
 /// True if `name` looks like a legacy file-sync DB artifact that should
@@ -345,7 +431,59 @@ mod tests {
 
         let outcome = run_migration(local.path(), ubiquity.path(), "dev-X").unwrap();
         assert!(!outcome.copied_db);
+        assert!(!outcome.deferred_for_download);
         assert!(is_migration_complete(local.path()));
+    }
+
+    /// Regression for review finding #2: a `.quill.db.icloud` placeholder
+    /// (file is iCloud-evicted, not yet downloaded) must NOT cause the
+    /// migration to short-circuit with the marker. We bail without the
+    /// marker so the next launch retries after iCloud finishes pulling
+    /// the real file down.
+    #[test]
+    fn run_migration_with_icloud_placeholder_defers_and_skips_marker() {
+        let local = TempDir::new().unwrap();
+        let ubiquity = TempDir::new().unwrap();
+        // No quill.db, but a placeholder marking it as evicted.
+        fs::write(ubiquity.path().join(".quill.db.icloud"), b"placeholder").unwrap();
+
+        let outcome = run_migration(local.path(), ubiquity.path(), "dev-X").unwrap();
+        assert!(outcome.deferred_for_download);
+        assert!(!outcome.copied_db);
+        assert!(!outcome.wrote_snapshot);
+        assert!(
+            !is_migration_complete(local.path()),
+            "marker must NOT be written when the source is evicted — \
+             we need next launch to retry"
+        );
+    }
+
+    /// Regression for review finding #3: conflict copies are
+    /// deliberately retired without merging in v1. The migration
+    /// outcome surfaces the count so the launch-flow log can flag it.
+    /// This test pins both sides of the contract: detection and
+    /// counting.
+    #[test]
+    fn run_migration_counts_discarded_conflict_copies() {
+        let local = TempDir::new().unwrap();
+        let ubiquity = TempDir::new().unwrap();
+        let dev = "dev-MIGRATING";
+
+        seed_legacy_db(&ubiquity.path().join("quill.db"));
+        // Two conflict copies with their own seeded DBs (data we
+        // intentionally drop on the floor).
+        seed_legacy_db(&ubiquity.path().join("quill (1).db"));
+        seed_legacy_db(&ubiquity.path().join("quill (2).db"));
+
+        let outcome = run_migration(local.path(), ubiquity.path(), dev).unwrap();
+        assert_eq!(
+            outcome.conflict_copies_discarded, 2,
+            "both quill (N).db files should be counted as discarded"
+        );
+        // Both files should have been retired (renamed) — none left in
+        // place.
+        assert!(!ubiquity.path().join("quill (1).db").exists());
+        assert!(!ubiquity.path().join("quill (2).db").exists());
     }
 
     #[test]

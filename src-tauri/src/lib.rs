@@ -136,9 +136,16 @@ pub fn run() {
             if icloud_was_enabled && !sync::migration::is_migration_complete(&local_dir) {
                 if let Some(ub) = &ubiquity_dir {
                     match sync::migration::run_migration(&local_dir, ub, &device.device_uuid) {
+                        Ok(outcome) if outcome.deferred_for_download => eprintln!(
+                            "sync: migration deferred — ubiquity quill.db is iCloud-evicted. \
+                             Download triggered; will retry on next launch."
+                        ),
                         Ok(outcome) => eprintln!(
-                            "sync: migration complete: copied_db={} wrote_snapshot={} retired={}",
-                            outcome.copied_db, outcome.wrote_snapshot, outcome.retired_files
+                            "sync: migration complete: copied_db={} wrote_snapshot={} retired={} conflict_copies_discarded={}",
+                            outcome.copied_db,
+                            outcome.wrote_snapshot,
+                            outcome.retired_files,
+                            outcome.conflict_copies_discarded,
                         ),
                         Err(e) => eprintln!(
                             "sync: migration failed (will retry next launch): {e}"
@@ -147,9 +154,19 @@ pub fn run() {
                 }
             }
 
-            // Always open the local DB after Chunk 6. The legacy
-            // ubiquity DB path is no longer used for live reads/writes.
-            let db = Db::init(&local_dir).expect("failed to initialize database");
+            // Open the DB. Post-migration the SQLite file lives at
+            // local_dir/quill.db, but books/ and covers/ stay in the
+            // iCloud Documents container per spec — we keep `data_dir`
+            // pointing at the ubiquity dir so `Db::resolve_path`
+            // resolves binaries against the right place. Pre-migration
+            // and non-iCloud users both have data_dir == local_dir.
+            let data_dir = if sync::migration::is_migration_complete(&local_dir) {
+                ubiquity_dir.clone().unwrap_or_else(|| local_dir.clone())
+            } else {
+                local_dir.clone()
+            };
+            let db = Db::init_split(&local_dir, &data_dir)
+                .expect("failed to initialize database");
 
             // Self-healing: if migration is complete, retire any ubiquity
             // DB files that crept back (a legacy build temporarily

@@ -274,7 +274,7 @@ mod tests {
 
     fn make_db() -> (TempDir, Db) {
         let tmp = TempDir::new().unwrap();
-        let db = Db::init(&tmp.path().to_path_buf()).unwrap();
+        let db = Db::init(tmp.path()).unwrap();
         (tmp, db)
     }
 

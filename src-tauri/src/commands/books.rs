@@ -659,7 +659,7 @@ mod tests {
 
     fn setup() -> (TempDir, Db) {
         let dir = TempDir::new().unwrap();
-        let db = Db::init(&dir.path().to_path_buf()).unwrap();
+        let db = Db::init(dir.path()).unwrap();
         (dir, db)
     }
 

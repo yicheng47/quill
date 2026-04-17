@@ -253,7 +253,7 @@ mod tests {
 
     /// Create a Db backed by a real SQLite file in the given directory.
     fn create_test_db(dir: &Path) -> Db {
-        Db::init(&dir.to_path_buf()).unwrap()
+        Db::init(dir).unwrap()
     }
 
     // --- is_file_downloaded ---

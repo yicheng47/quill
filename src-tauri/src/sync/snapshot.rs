@@ -948,7 +948,7 @@ mod tests {
     #[test]
     fn from_legacy_db_dumps_existing_rows() {
         let tmp = TempDir::new().unwrap();
-        let db = crate::db::Db::init(&tmp.path().to_path_buf()).unwrap();
+        let db = crate::db::Db::init(tmp.path()).unwrap();
         // Seed a few rows directly via SQL — same shape the legacy file
         // sync would have left behind after migration 011 backfilled
         // updated_by_device='migration'.
@@ -992,7 +992,7 @@ mod tests {
     #[test]
     fn from_legacy_db_then_apply_peer_round_trips() {
         let src = TempDir::new().unwrap();
-        let src_db = crate::db::Db::init(&src.path().to_path_buf()).unwrap();
+        let src_db = crate::db::Db::init(src.path()).unwrap();
         {
             let conn = src_db.conn.lock().unwrap();
             conn.execute(
@@ -1009,7 +1009,7 @@ mod tests {
 
         // Fresh local DB on a different device.
         let dst = TempDir::new().unwrap();
-        let dst_db = crate::db::Db::init(&dst.path().to_path_buf()).unwrap();
+        let dst_db = crate::db::Db::init(dst.path()).unwrap();
         {
             let mut conn = dst_db.conn.lock().unwrap();
             let tx = conn.transaction().unwrap();
