@@ -154,7 +154,21 @@ pub fn run_migration(
     let ubiquity_db = ubiquity_dir.join("quill.db");
     let local_db = local_dir.join("quill.db");
 
-    // 1. Resolve the source DB. Three cases:
+    // 1a. ubiquity_dir itself is missing → iCloud container hasn't
+    //     materialized yet (cold boot, signed-out account, daemon
+    //     race). Defer without writing the marker. Critical: we MUST
+    //     NOT mark complete here — if we did, the launch flow would
+    //     create a fresh empty local DB on this launch, and the next
+    //     launch (iCloud back) would see `local/quill.db` exists,
+    //     skip the copy step, snapshot the empty file, and retire
+    //     the real legacy DB. The user's library would be gone.
+    //     (Reviewed in PR #192.)
+    if !ubiquity_dir.exists() {
+        outcome.deferred_for_download = true;
+        return Ok(outcome);
+    }
+
+    // 1b. Resolve the source DB. Three cases:
     //
     //    a. `quill.db` is on disk → copy → migrate.
     //    b. `quill.db` is missing AND `.quill.db.icloud` placeholder is
@@ -174,7 +188,7 @@ pub fn run_migration(
                 // Pathological case (root path with no parent). Treat
                 // as "nothing to migrate".
                 fs::create_dir_all(local_dir)?;
-                fs::write(migration_complete_path(local_dir), b"")?;
+                write_marker(local_dir, None)?;
                 return Ok(outcome);
             }
         };
@@ -194,11 +208,24 @@ pub fn run_migration(
         write_marker(local_dir, None)?;
         return Ok(outcome);
     }
-    if !local_db.exists() {
-        fs::create_dir_all(local_dir)?;
-        fs::copy(&ubiquity_db, &local_db)?;
-        outcome.copied_db = true;
-    }
+
+    // ALWAYS copy ubiquity → local — never skip just because local_db
+    // already exists. A leftover local DB might be:
+    //   - A partially-migrated file from a crashed prior run.
+    //   - A "tentative" DB created by a prior launch that opened
+    //     local while migration was deferred (iCloud unreachable at
+    //     boot). Any session writes against that DB are sacrificed
+    //     to preserve the legacy library — the alternative would be
+    //     snapshotting the empty/tentative local file and retiring
+    //     the real legacy DB, which is unrecoverable data loss.
+    //   - A stale file from a past failed migration where the marker
+    //     was never written.
+    // In all three cases, copying ubiquity → local is the right move:
+    // ubiquity holds the source-of-truth library, and we're about to
+    // retire it anyway.
+    fs::create_dir_all(local_dir)?;
+    fs::copy(&ubiquity_db, &local_db)?;
+    outcome.copied_db = true;
 
     // 2. Open the local DB — Db::init applies migrations 1-11, so a
     //    legacy v8 / v9 / v10 file is brought to the current schema
@@ -473,14 +500,96 @@ mod tests {
     }
 
     #[test]
-    fn run_migration_with_no_ubiquity_db_writes_marker_and_skips() {
+    fn run_migration_with_empty_ubiquity_dir_writes_marker_and_skips() {
         let local = TempDir::new().unwrap();
         let ubiquity = TempDir::new().unwrap();
-
+        // ubiquity dir EXISTS (TempDir created it) but contains no
+        // legacy DB and no placeholder → genuinely no data to migrate.
         let outcome = run_migration(local.path(), ubiquity.path(), "dev-X").unwrap();
         assert!(!outcome.copied_db);
         assert!(!outcome.deferred_for_download);
         assert!(is_migration_complete(local.path()));
+    }
+
+    /// Regression for the first-launch-without-iCloud finding (PR #192
+    /// 4th-round review): if `ubiquity_dir` itself doesn't exist
+    /// (iCloud container hasn't materialized yet — cold boot, signed-
+    /// out account, daemon race), `run_migration` MUST defer without
+    /// writing the marker. Writing the marker would let the next
+    /// launch open a fresh empty local DB which the *next* migration
+    /// would then snapshot and use to retire the real legacy DB —
+    /// permanent data loss.
+    #[test]
+    fn run_migration_defers_when_ubiquity_dir_missing() {
+        let local = TempDir::new().unwrap();
+        let tmp = TempDir::new().unwrap();
+        let ubiquity = tmp.path().join("not-yet-materialized");
+        // Don't create the directory.
+        assert!(!ubiquity.exists());
+
+        let outcome = run_migration(local.path(), &ubiquity, "dev-X").unwrap();
+        assert!(outcome.deferred_for_download);
+        assert!(!outcome.copied_db);
+        assert!(
+            !is_migration_complete(local.path()),
+            "marker MUST NOT be written when ubiquity is unreachable — \
+             otherwise next launch would open a fresh local DB and the \
+             migration after that would retire the real legacy DB"
+        );
+    }
+
+    /// Regression for the same finding's second arm: if a tentative
+    /// local DB exists from a prior deferred-migration launch (or a
+    /// crashed previous attempt), `run_migration` must clobber it
+    /// with the real ubiquity DB — never snapshot the local file and
+    /// retire ubiquity. The legacy library is the source of truth.
+    #[test]
+    fn run_migration_clobbers_tentative_local_db_with_ubiquity() {
+        let local = TempDir::new().unwrap();
+        let ubiquity = TempDir::new().unwrap();
+        let dev = "dev-MIGRATING";
+
+        // Seed legacy ubiquity DB with one book.
+        seed_legacy_db(&ubiquity.path().join("quill.db"));
+
+        // Simulate a tentative local DB created during a previous
+        // launch where iCloud was unreachable. Different content from
+        // the legacy DB so the test can tell which one survived.
+        let conn = Connection::open(local.path().join("quill.db")).unwrap();
+        Db::run_migrations_on(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO books
+             (id, title, author, file_path, format, status, progress, created_at, updated_at, updated_by_device)
+             VALUES ('tentative', 'Imported during wedge', 'X', 'books/x.epub', 'epub', 'reading', 0, 1, 1, 'wedge')",
+            [],
+        ).unwrap();
+        drop(conn);
+
+        run_migration(local.path(), ubiquity.path(), dev).unwrap();
+
+        // Local now mirrors the legacy library — the tentative row is
+        // gone, the legacy `b1` row is present.
+        let local_conn = Connection::open(local.path().join("quill.db")).unwrap();
+        let has_legacy: bool = local_conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM books WHERE id = 'b1')",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let has_tentative: bool = local_conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM books WHERE id = 'tentative')",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(has_legacy, "real legacy book must survive the migration");
+        assert!(
+            !has_tentative,
+            "tentative wedge-session writes are deliberately sacrificed \
+             so the legacy library wins the conflict"
+        );
     }
 
     /// Regression for the data_dir-stability follow-up on PR #192.

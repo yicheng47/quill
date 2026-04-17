@@ -111,12 +111,22 @@ pub fn run() {
             std::fs::create_dir_all(&local_dir).expect("failed to create app data dir");
 
             // Resolve the iCloud Documents path from the deterministic
-            // hardcoded location whenever the legacy marker is on. Avoids
-            // `URLForUbiquityContainerIdentifier` on the main thread (slow
-            // cold-start IPC to the iCloud daemon).
+            // hardcoded location whenever the legacy marker is on.
+            // Avoids `URLForUbiquityContainerIdentifier` on the main
+            // thread (slow cold-start IPC to the iCloud daemon).
+            //
+            // We use the `_deterministic` variant — not `_fast` — so
+            // migration is always at least *attempted* with a concrete
+            // path, even when the iCloud container hasn't materialized
+            // yet. `run_migration` itself detects the missing dir and
+            // defers (without writing the marker) so the next launch
+            // retries. Using `_fast` here would short-circuit migration
+            // entirely on a cold-iCloud first launch, leaving the user
+            // open to the data-loss path documented in PR #192's
+            // first-launch-without-iCloud finding.
             let icloud_was_enabled = icloud::is_icloud_enabled(&local_dir);
             let ubiquity_dir = if icloud_was_enabled {
-                icloud::icloud_data_dir_fast()
+                icloud::icloud_data_dir_deterministic()
             } else {
                 None
             };

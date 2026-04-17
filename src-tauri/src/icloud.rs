@@ -44,7 +44,14 @@ pub fn icloud_data_dir() -> Option<PathBuf> {
 /// Returns `None` if `$HOME` is unset or the directory doesn't exist on disk
 /// (e.g. user signed out of iCloud since enabling sync). Callers should fall
 /// back to the local directory in that case.
+///
+/// Sync engine callers prefer `icloud_data_dir_deterministic` so blob path
+/// resolution stays stable across launches even when the container hasn't
+/// materialized yet — `_fast` is kept for the legacy `icloud::*` flows that
+/// genuinely need the existence check (Chunk 9 cleanup will delete both
+/// once the file-sync code is gone).
 #[cfg(target_os = "macos")]
+#[allow(dead_code)] // used by tests + legacy flows; cleanup tracked in Chunk 9
 pub fn icloud_data_dir_fast() -> Option<PathBuf> {
     let home = std::env::var_os("HOME")?;
     let folder_name = ICLOUD_CONTAINER_ID.replace('.', "~");
