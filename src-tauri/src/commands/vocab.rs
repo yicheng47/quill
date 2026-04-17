@@ -4,6 +4,8 @@ use tauri::State;
 
 use crate::db::Db;
 use crate::error::{AppError, AppResult};
+use crate::sync::events::{EventBody, VocabPayload};
+use crate::sync::writer::SyncWriter;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct VocabWord {
@@ -75,54 +77,83 @@ pub fn add_vocab_word(
     context_sentence: Option<String>,
     cfi: Option<String>,
     db: State<'_, Db>,
+    sync: State<'_, SyncWriter>,
 ) -> AppResult<VocabWord> {
-    let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
-
-    // Dedup: check if same word+book_id exists
-    let existing: Option<VocabWord> = {
-        let mut stmt = conn.prepare(&format!(
-            "SELECT {} FROM vocab_words WHERE book_id = ?1 AND word = ?2 COLLATE NOCASE LIMIT 1",
-            SELECT_COLS
-        ))?;
-        let result = stmt.query_map(params![book_id, word], row_to_vocab)?
-            .next()
-            .transpose()?;
-        result
-    };
-
-    if let Some(existing) = existing {
-        return Ok(existing);
-    }
-
     let id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().timestamp_millis();
+    let device = sync.self_device().to_string();
 
-    conn.execute(
-        "INSERT INTO vocab_words (id, book_id, word, definition, context_sentence, cfi, mastery, review_count, next_review_at, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'new', 0, NULL, ?7, ?7)",
-        params![id, book_id, word, definition, context_sentence, cfi, now],
-    )?;
+    // Dedup happens inside the sync transaction so two concurrent adds
+    // can't both observe "missing" and insert duplicates. There's no
+    // unique index on (book_id, word) — the conn mutex serializes the
+    // whole tx, so the second writer's check sees the first writer's
+    // committed row.
+    let vocab = sync.with_tx(&db, now, |tx, events| {
+        let existing: Option<VocabWord> = {
+            let mut stmt = tx.prepare(&format!(
+                "SELECT {} FROM vocab_words WHERE book_id = ?1 AND word = ?2 COLLATE NOCASE LIMIT 1",
+                SELECT_COLS
+            ))?;
+            let row = stmt
+                .query_map(params![book_id, word], row_to_vocab)?
+                .next()
+                .transpose()?;
+            row
+        };
+        if let Some(existing) = existing {
+            // Existing match → no SQL write, no event published. The
+            // closure still returns the row so the frontend gets the
+            // canonical record.
+            return Ok(existing);
+        }
 
-    Ok(VocabWord {
-        id,
-        book_id,
-        word,
-        definition,
-        context_sentence,
-        cfi,
-        mastery: "new".to_string(),
-        review_count: 0,
-        next_review_at: None,
-        created_at: now,
-        updated_at: now,
-        book_title: None,
-    })
+        tx.execute(
+            "INSERT INTO vocab_words (id, book_id, word, definition, context_sentence, cfi, mastery, review_count, next_review_at, created_at, updated_at, updated_by_device)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'new', 0, NULL, ?7, ?7, ?8)",
+            params![id, book_id, word, definition, context_sentence, cfi, now, device],
+        )?;
+        events.push(EventBody::VocabAdd(VocabPayload {
+            id: id.clone(),
+            book_id: book_id.clone(),
+            word: word.clone(),
+            definition: definition.clone(),
+            context_sentence: context_sentence.clone(),
+            cfi: cfi.clone(),
+            mastery: "new".to_string(),
+            review_count: 0,
+            next_review_at: None,
+        }));
+        Ok(VocabWord {
+            id: id.clone(),
+            book_id: book_id.clone(),
+            word: word.clone(),
+            definition: definition.clone(),
+            context_sentence: context_sentence.clone(),
+            cfi: cfi.clone(),
+            mastery: "new".to_string(),
+            review_count: 0,
+            next_review_at: None,
+            created_at: now,
+            updated_at: now,
+            book_title: None,
+        })
+    })?;
+
+    Ok(vocab)
 }
 
 #[tauri::command]
-pub fn remove_vocab_word(id: String, db: State<'_, Db>) -> AppResult<()> {
-    let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
-    conn.execute("DELETE FROM vocab_words WHERE id = ?1", params![id])?;
-    Ok(())
+pub fn remove_vocab_word(
+    id: String,
+    db: State<'_, Db>,
+    sync: State<'_, SyncWriter>,
+) -> AppResult<()> {
+    let now = chrono::Utc::now().timestamp_millis();
+    sync.with_tx(&db, now, |tx, events| {
+        tx.execute("DELETE FROM vocab_words WHERE id = ?1", params![id])?;
+        events.push(EventBody::VocabDelete { id: id.clone() });
+        Ok(())
+    })
 }
 
 #[tauri::command]
@@ -173,14 +204,33 @@ pub fn update_vocab_mastery(
     mastery: String,
     next_review_at: Option<i64>,
     db: State<'_, Db>,
+    sync: State<'_, SyncWriter>,
 ) -> AppResult<()> {
-    let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
     let now = chrono::Utc::now().timestamp_millis();
-    conn.execute(
-        "UPDATE vocab_words SET mastery = ?1, next_review_at = ?2, review_count = review_count + 1, updated_at = ?3 WHERE id = ?4",
-        params![mastery, next_review_at, now, id],
-    )?;
-    Ok(())
+    let device = sync.self_device().to_string();
+    sync.with_tx(&db, now, |tx, events| {
+        tx.execute(
+            "UPDATE vocab_words SET mastery = ?1, next_review_at = ?2, review_count = review_count + 1, updated_at = ?3, updated_by_device = ?4 WHERE id = ?5",
+            params![mastery, next_review_at, now, device, id],
+        )?;
+        // Read the post-increment review_count so the event carries an
+        // absolute value (replay needs that to stay idempotent — see the
+        // VocabMasterySet docstring in events.rs).
+        let review_count: i64 = tx
+            .query_row(
+                "SELECT review_count FROM vocab_words WHERE id = ?1",
+                params![id],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        events.push(EventBody::VocabMasterySet {
+            id: id.clone(),
+            mastery: mastery.clone(),
+            next_review_at,
+            review_count,
+        });
+        Ok(())
+    })
 }
 
 #[tauri::command]

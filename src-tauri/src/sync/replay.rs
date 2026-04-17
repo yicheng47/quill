@@ -186,35 +186,48 @@ impl ReplayEngine {
         Ok((snapshots_applied, events_applied))
     }
 
-    /// Drain `_pending_publish` into the own device log. Each row is
-    /// re-serialized into an `EventBody`, appended (which mints a fresh
-    /// ULID), and on success deleted from the outbox. If the append fails,
-    /// the row stays put for the next tick.
+    /// Drain `_pending_publish` into the own device log. Thin wrapper over
+    /// the free function `flush_outbox` so `SyncWriter` (Chunk 5) can call
+    /// the same drain path right after a successful commit without going
+    /// through a `ReplayEngine`.
     fn flush_outbox(&self, conn: &mut Connection) -> AppResult<usize> {
-        let pending = read_outbox(conn)?;
-        if pending.is_empty() {
-            return Ok(0);
-        }
-
-        let mut flushed = 0usize;
-        for row in &pending {
-            let body: EventBody = serde_json::from_str(&row.body_json).map_err(|e| {
-                AppError::Other(format!(
-                    "outbox row {}: malformed body_json: {e}",
-                    row.id
-                ))
-            })?;
-            self.own_log.append(body, row.ts)?;
-            // Per-row delete: if a later append in this batch fails, the
-            // earlier rows are already published and can be removed cleanly.
-            conn.execute(
-                "DELETE FROM _pending_publish WHERE id = ?1",
-                params![row.id],
-            )?;
-            flushed += 1;
-        }
-        Ok(flushed)
+        flush_outbox(conn, &self.own_log)
     }
+}
+
+/// Drain `_pending_publish` into `log`. Each row is re-serialized into an
+/// `EventBody`, appended (which mints a fresh ULID), and on success deleted
+/// from the outbox. If the append fails, the row stays put for the next
+/// caller to retry.
+///
+/// Shared between `ReplayEngine::tick` (Phase 0) and `SyncWriter::with_tx`
+/// (post-commit step) so the publish-retry guarantee holds end-to-end:
+/// every committed-but-not-yet-published event lands in the device log on
+/// the next successful flush from either path.
+pub fn flush_outbox(conn: &mut Connection, log: &EventLog) -> AppResult<usize> {
+    let pending = read_outbox(conn)?;
+    if pending.is_empty() {
+        return Ok(0);
+    }
+
+    let mut flushed = 0usize;
+    for row in &pending {
+        let body: EventBody = serde_json::from_str(&row.body_json).map_err(|e| {
+            AppError::Other(format!(
+                "outbox row {}: malformed body_json: {e}",
+                row.id
+            ))
+        })?;
+        log.append(body, row.ts)?;
+        // Per-row delete: if a later append in this batch fails, the
+        // earlier rows are already published and can be removed cleanly.
+        conn.execute(
+            "DELETE FROM _pending_publish WHERE id = ?1",
+            params![row.id],
+        )?;
+        flushed += 1;
+    }
+    Ok(flushed)
 }
 
 // ---------------------------------------------------------------------------
@@ -299,8 +312,14 @@ struct OutboxRow {
 }
 
 fn read_outbox(conn: &Connection) -> AppResult<Vec<OutboxRow>> {
+    // ORDER BY rowid preserves insertion order; the `id` column is a random
+    // UUID and would shuffle related events that share a `created_at` (e.g.
+    // a multi-event command emitting `book.import` + `highlight.add` in one
+    // tx). The merge engine already converges on (ts, device) order across
+    // peers, but cross-event causality inside a single device still needs
+    // append-order preserved when we drain the outbox into the log.
     let mut stmt = conn
-        .prepare("SELECT id, ts, body_json FROM _pending_publish ORDER BY id")?;
+        .prepare("SELECT id, ts, body_json FROM _pending_publish ORDER BY rowid")?;
     let collected: Vec<OutboxRow> = stmt
         .query_map([], |r| {
             Ok(OutboxRow {
