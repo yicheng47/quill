@@ -226,25 +226,46 @@ pub fn run() {
             // migrated iCloud), spin up the engine. Chunk 7's
             // `sync_enable` will replace this trigger with an explicit
             // user toggle.
-            let (replay_engine, watcher_handle) =
-                if sync::migration::is_migration_complete(&local_dir) {
-                    if let Some(ub) = &ubiquity_dir {
-                        match boot_sync_engine(ub.clone(), &device.device_uuid, &db, &sync_writer) {
-                            Ok(pair) => pair,
-                            Err(e) => {
-                                eprintln!("sync: failed to boot sync engine: {e}");
-                                (None, None)
-                            }
-                        }
-                    } else {
-                        // Marker exists but iCloud isn't reachable right
-                        // now. Skip silently; reads of local quill.db
-                        // continue to work, replay catches up next launch.
+            //
+            // Important: deterministic vs existence-checked path. The
+            // deterministic path is correct for blob resolution (so
+            // `books/foo.epub` always resolves to the same place across
+            // launches) and for migration source selection (so we can
+            // defer a missing source instead of falling through). But
+            // it's WRONG for booting EventLog + ReplayEngine: if the
+            // iCloud container hasn't materialized yet (signed-out
+            // account, daemon race), `EventLog::open` would create a
+            // file at the deterministic path — physically located
+            // outside any real ubiquity container — and the post-commit
+            // outbox flush would drain `_pending_publish` rows into it.
+            // Peers would never see those events but the rows would be
+            // gone, breaking the publish-retry guarantee. So we re-gate
+            // on `.exists()` here. If iCloud isn't actually present
+            // this launch, sync stays inert and the outbox preserves
+            // pending events for the next successful boot.
+            let (replay_engine, watcher_handle) = match sync::migration::is_migration_complete(
+                &local_dir,
+            )
+            .then(|| ubiquity_dir.clone().filter(|p| p.exists()))
+            .flatten()
+            {
+                Some(ub) => match boot_sync_engine(ub, &device.device_uuid, &db, &sync_writer) {
+                    Ok(pair) => pair,
+                    Err(e) => {
+                        eprintln!("sync: failed to boot sync engine: {e}");
                         (None, None)
                     }
-                } else {
+                },
+                None => {
+                    if sync::migration::is_migration_complete(&local_dir) {
+                        eprintln!(
+                            "sync: skipping engine boot — iCloud container not reachable \
+                             this launch; outbox preserved for the next launch"
+                        );
+                    }
                     (None, None)
-                };
+                }
+            };
 
             app.manage(LocalDir(local_dir));
             app.manage(db);
