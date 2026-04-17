@@ -136,7 +136,7 @@ pub async fn import_book(
     };
 
     let device = sync.self_device().to_string();
-    sync.with_tx(&db, |tx, events| {
+    sync.with_tx(&db, now, |tx, events| {
         tx.execute(
             "INSERT INTO books (id, title, author, description, cover_path, file_path, format, genre, pages, status, progress, current_cfi, created_at, updated_at, updated_by_device)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
@@ -321,7 +321,8 @@ pub fn delete_book(
         )?
     };
 
-    sync.with_tx(&db, |tx, events| {
+    let now = chrono::Utc::now().timestamp_millis();
+    sync.with_tx(&db, now, |tx, events| {
         // Mirror the merge engine's `cascade_delete_book`: replay runs with
         // FK off so the same cascade has to be expressed in SQL here.
         tx.execute(
@@ -355,16 +356,24 @@ pub fn update_reading_progress(
 ) -> AppResult<()> {
     let now = chrono::Utc::now().timestamp_millis();
     let device = sync.self_device().to_string();
-    sync.with_tx(&db, |tx, events| {
+    // Page-turn rate is dominated by this command; gate the event push on
+    // the per-book throttle so a reading session doesn't balloon the log.
+    // The SQL write always lands so the local UI stays current — only the
+    // event publication is coalesced. Semantic transitions like
+    // `mark_finished` deliberately do NOT consult the throttle.
+    let emit = sync.should_emit_progress(&id);
+    sync.with_tx(&db, now, |tx, events| {
         tx.execute(
             "UPDATE books SET progress = ?1, current_cfi = ?2, updated_at = ?3, updated_by_device = ?4 WHERE id = ?5",
             params![progress, cfi, now, device, id],
         )?;
-        events.push(EventBody::BookProgressSet {
-            book: id.clone(),
-            progress,
-            cfi: cfi.clone(),
-        });
+        if emit {
+            events.push(EventBody::BookProgressSet {
+                book: id.clone(),
+                progress,
+                cfi: cfi.clone(),
+            });
+        }
         Ok(())
     })
 }
@@ -389,14 +398,29 @@ pub fn mark_finished(
 ) -> AppResult<()> {
     let now = chrono::Utc::now().timestamp_millis();
     let device = sync.self_device().to_string();
-    sync.with_tx(&db, |tx, events| {
+    sync.with_tx(&db, now, |tx, events| {
+        // Read the current cfi BEFORE the UPDATE so the synthesized
+        // `book.progress.set` carries the resume position the local row
+        // keeps. Local SQL doesn't touch `current_cfi` here, so emitting
+        // `cfi: None` would silently null the column on every peer while
+        // this device still has it — a snapshot-equivalence violation.
+        let current_cfi: Option<String> = tx
+            .query_row(
+                "SELECT current_cfi FROM books WHERE id = ?1",
+                params![id],
+                |r| r.get(0),
+            )
+            .ok()
+            .flatten();
         tx.execute(
             "UPDATE books SET status = 'finished', progress = 100, updated_at = ?1, updated_by_device = ?2 WHERE id = ?3",
             params![now, device, id],
         )?;
         // Mark-finished is two LWW columns moving in lockstep; the merge
         // engine has no `book.finished` event, so we publish the same pair
-        // of events the user could have produced manually.
+        // of events the user could have produced manually. The progress
+        // event is published unconditionally — the throttle is for noisy
+        // page-turn updates only, never for semantic transitions.
         events.push(EventBody::BookStatusSet {
             book: id.clone(),
             status: "finished".into(),
@@ -404,7 +428,7 @@ pub fn mark_finished(
         events.push(EventBody::BookProgressSet {
             book: id.clone(),
             progress: 100,
-            cfi: None,
+            cfi: current_cfi,
         });
         Ok(())
     })
@@ -419,7 +443,7 @@ pub fn update_book_status(
 ) -> AppResult<()> {
     let now = chrono::Utc::now().timestamp_millis();
     let device = sync.self_device().to_string();
-    sync.with_tx(&db, |tx, events| {
+    sync.with_tx(&db, now, |tx, events| {
         tx.execute(
             "UPDATE books SET status = ?1, updated_at = ?2, updated_by_device = ?3 WHERE id = ?4",
             params![status, now, device, id],
@@ -442,7 +466,7 @@ pub fn update_book_metadata(
 ) -> AppResult<()> {
     let now = chrono::Utc::now().timestamp_millis();
     let device = sync.self_device().to_string();
-    sync.with_tx(&db, |tx, events| {
+    sync.with_tx(&db, now, |tx, events| {
         tx.execute(
             "UPDATE books SET title = ?1, author = ?2, updated_at = ?3, updated_by_device = ?4 WHERE id = ?5",
             params![title, author, now, device, id],
@@ -571,7 +595,7 @@ pub async fn commit_pdf_import(
     };
 
     let device = sync.self_device().to_string();
-    sync.with_tx(&db, |tx, events| {
+    sync.with_tx(&db, now, |tx, events| {
         tx.execute(
             "INSERT INTO books (id, title, author, description, cover_path, file_path, format, genre, pages, status, progress, current_cfi, created_at, updated_at, updated_by_device)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",

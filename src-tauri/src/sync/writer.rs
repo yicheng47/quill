@@ -12,19 +12,28 @@
 //!    next successful flush (own outbox or `ReplayEngine::tick`); the
 //!    inverted order would leak events to peers without a local row.
 //!
-//! 2. **Per-book progress throttle.** `book.progress.set` fires on every
-//!    page turn — without coalescing the log would balloon during a single
-//!    reading session. We apply a leading-edge throttle keyed on `book_id`:
-//!    the first event in any 2-second window emits, subsequent ones in the
-//!    same window are dropped. SQL is always written, so the local view
-//!    stays current; peers see updates roughly every 2 s. The spec calls
-//!    for trailing-edge debounce ("only the last call in the window
-//!    appends"), but trailing-edge needs a background timer to flush the
-//!    final pending event. Leading-edge is functionally equivalent for the
-//!    "10 calls → 1 event" contract and avoids the timer; the worst-case
-//!    drift is one window's worth of staleness from peers' perspective. If
-//!    we ever need the trailing semantics, swap the throttle map for a
-//!    `HashMap<String, JoinHandle<()>>` and re-publish on each call.
+//!    The caller passes `ts: i64` so the outbox row, the published event,
+//!    and the SQL `updated_at` all share one logical timestamp. Letting
+//!    the writer mint its own `now_ms` (as a previous revision did) caused
+//!    snapshot-equivalence drift: any command that crosses a millisecond
+//!    boundary between picking its `now` and entering `with_tx` would
+//!    write SQL with one ts and emit an event with another, leaving local
+//!    state ≠ replayed state on peers.
+//!
+//! 2. **Per-book progress throttle (opt-in).** `book.progress.set` fires
+//!    on every page turn — without coalescing the log would balloon during
+//!    a single reading session. `should_emit_progress(book_id)` returns
+//!    `true` at most once per 2-second window per book; callers (only
+//!    `update_reading_progress` today) gate the event push on it. SQL is
+//!    always written, so the local view stays current; peers see updates
+//!    roughly every 2 s.
+//!
+//!    The throttle is **deliberately not applied inside `with_tx`**.
+//!    Doing so would silently drop progress events synthesized by
+//!    semantic transitions like `mark_finished` if the user clicked
+//!    Finish within 2 s of the last page turn — peers would end up with
+//!    `status = finished` and stale progress. Keeping the throttle on
+//!    the noisy call site only is what makes that distinction safe.
 //!
 //! When sync is **disabled** (`set_log(None)`), the events vec is filled
 //! by the closure but discarded after the SQL commit — zero outbox writes,
@@ -95,8 +104,15 @@ impl SyncWriter {
     }
 
     /// Run `f` inside a SQL transaction; queue any events the closure
-    /// pushes into `_pending_publish`; commit; then flush the outbox to
-    /// the device log if sync is enabled.
+    /// pushes into `_pending_publish` at timestamp `ts`; commit; then
+    /// flush the outbox to the device log if sync is enabled.
+    ///
+    /// `ts` is the command's own logical timestamp (typically the same
+    /// `chrono::Utc::now().timestamp_millis()` it stamps onto SQL
+    /// `updated_at`). Reusing one ts across SQL writes, the outbox row,
+    /// and the published event preserves the snapshot-equivalence
+    /// invariant: replaying our own log on a peer must produce the same
+    /// row state we have locally.
     ///
     /// Returns whatever the closure returns. Errors from `f`, the SQL
     /// commit, or the outbox insert all roll the transaction back — both
@@ -106,7 +122,7 @@ impl SyncWriter {
     /// command, the next command, or `ReplayEngine::tick`) republishes it.
     /// Surfacing those errors to the caller would force every UI write to
     /// handle an iCloud transient as a hard failure.
-    pub fn with_tx<F, R>(&self, db: &Db, f: F) -> AppResult<R>
+    pub fn with_tx<F, R>(&self, db: &Db, ts: i64, f: F) -> AppResult<R>
     where
         F: FnOnce(&Transaction, &mut Vec<EventBody>) -> AppResult<R>,
     {
@@ -120,8 +136,6 @@ impl SyncWriter {
             .clone();
         let sync_enabled = log_snapshot.is_some();
 
-        let now_ms = chrono::Utc::now().timestamp_millis();
-
         // Phase 1 — closure + outbox enqueue + commit, all under one
         // db.conn lock.
         let result = {
@@ -134,8 +148,11 @@ impl SyncWriter {
             let result = f(&tx, &mut events)?;
 
             if sync_enabled && !events.is_empty() {
-                let filtered = self.apply_throttle(events, now_ms);
-                for body in &filtered {
+                // `created_at` is just bookkeeping for the outbox row's
+                // own lifecycle; we use the same `ts` so a single command
+                // produces a single bookkeeping timestamp. The publish ts
+                // (`ts` column) is what flows out to peers.
+                for body in &events {
                     let id = uuid::Uuid::new_v4().to_string();
                     let body_json = serde_json::to_string(body).map_err(|e| {
                         AppError::Other(format!("event serialize: {e}"))
@@ -143,7 +160,7 @@ impl SyncWriter {
                     tx.execute(
                         "INSERT INTO _pending_publish (id, ts, body_json, created_at)
                          VALUES (?1, ?2, ?3, ?2)",
-                        params![id, now_ms, body_json],
+                        params![id, ts, body_json],
                     )?;
                 }
             }
@@ -168,26 +185,29 @@ impl SyncWriter {
         Ok(result)
     }
 
-    /// Drop `book.progress.set` events that fall inside an active
-    /// throttle window, leave everything else untouched.
-    fn apply_throttle(&self, events: Vec<EventBody>, now_ms: i64) -> Vec<EventBody> {
+    /// Per-book leading-edge throttle for `book.progress.set`. Returns
+    /// `true` if the caller should emit a progress event for `book_id`
+    /// now (and records the emission); `false` if we're inside the 2 s
+    /// window since the last allowed emit.
+    ///
+    /// Live in the call site, not inside `with_tx`, so semantic-
+    /// transition commands like `mark_finished` are never accidentally
+    /// throttled — see the throttle discussion in the module docstring.
+    pub fn should_emit_progress(&self, book_id: &str) -> bool {
+        let now_ms = chrono::Utc::now().timestamp_millis();
         let mut throttle = match self.progress_throttle.lock() {
+            // Poisoned mutex → fail open; never silently lose progress
+            // emits because of an unrelated panic in another command.
+            Err(_) => return true,
             Ok(g) => g,
-            Err(_) => return events, // poisoned mutex → fail open, never lose events
         };
-        let mut out = Vec::with_capacity(events.len());
-        for ev in events {
-            if let EventBody::BookProgressSet { book, .. } = &ev {
-                if let Some(last) = throttle.get(book).copied() {
-                    if now_ms - last < PROGRESS_THROTTLE_MS {
-                        continue;
-                    }
-                }
-                throttle.insert(book.clone(), now_ms);
+        if let Some(last) = throttle.get(book_id).copied() {
+            if now_ms - last < PROGRESS_THROTTLE_MS {
+                return false;
             }
-            out.push(ev);
         }
-        out
+        throttle.insert(book_id.to_string(), now_ms);
+        true
     }
 }
 
@@ -253,7 +273,7 @@ mod tests {
 
         let body = import_body("b1");
         writer
-            .with_tx(&db, |tx, events| {
+            .with_tx(&db, 1_000, |tx, events| {
                 insert_book_row(tx, "b1", 1_000, "dev-A")?;
                 events.push(body);
                 Ok(())
@@ -270,7 +290,7 @@ mod tests {
         let (_dir, db) = setup_db();
         let writer = SyncWriter::new("dev-A".into());
 
-        let result: AppResult<()> = writer.with_tx(&db, |tx, _events| {
+        let result: AppResult<()> = writer.with_tx(&db, 1_000, |tx, _events| {
             insert_book_row(tx, "b1", 1_000, "dev-A")?;
             Err(AppError::Other("boom".into()))
         });
@@ -289,7 +309,7 @@ mod tests {
         let log = enable_sync(&writer, dir.path());
 
         writer
-            .with_tx(&db, |tx, events| {
+            .with_tx(&db, 1_000, |tx, events| {
                 insert_book_row(tx, "b1", 1_000, "dev-A")?;
                 events.push(import_body("b1"));
                 Ok(())
@@ -309,6 +329,50 @@ mod tests {
         assert_eq!(events[0].device, "dev-A");
     }
 
+    /// Regression for finding #5 in PR #191 review: the timestamp the
+    /// caller passes into `with_tx` must match the `ts` field stamped onto
+    /// every emitted event. A previous revision minted its own `now_ms`
+    /// inside `with_tx`, so any command that crossed a millisecond
+    /// boundary between picking its `now` and entering `with_tx` would
+    /// write SQL `updated_at = T0` and emit an event with `ts = T1`,
+    /// breaking snapshot equivalence on replayed peers.
+    #[test]
+    fn published_event_ts_equals_caller_ts() {
+        let (dir, db) = setup_db();
+        let writer = SyncWriter::new("dev-A".into());
+        let log = enable_sync(&writer, dir.path());
+
+        // Sleep before calling `with_tx` so the wall clock is guaranteed
+        // to be past `caller_ts` by the time the writer runs — if the
+        // writer minted its own ts the test would catch it.
+        let caller_ts = chrono::Utc::now().timestamp_millis();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+
+        writer
+            .with_tx(&db, caller_ts, |tx, events| {
+                insert_book_row(tx, "b1", caller_ts, "dev-A")?;
+                events.push(import_body("b1"));
+                Ok(())
+            })
+            .unwrap();
+
+        let events = log.read_all().unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(
+            events[0].ts, caller_ts,
+            "event ts must equal the caller's ts (snapshot-equivalence invariant)"
+        );
+
+        let conn = db.conn.lock().unwrap();
+        let updated_at: i64 = conn
+            .query_row("SELECT updated_at FROM books WHERE id = 'b1'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(
+            updated_at, caller_ts,
+            "SQL updated_at and event ts must match — they're the same logical value",
+        );
+    }
+
     #[test]
     fn sync_enabled_multi_event_batch_appends_in_order() {
         let (dir, db) = setup_db();
@@ -316,7 +380,7 @@ mod tests {
         let log = enable_sync(&writer, dir.path());
 
         writer
-            .with_tx(&db, |tx, events| {
+            .with_tx(&db, 1_000, |tx, events| {
                 insert_book_row(tx, "b1", 1_000, "dev-A")?;
                 tx.execute(
                     "INSERT INTO highlights
@@ -371,7 +435,7 @@ mod tests {
         // A subsequent unrelated write triggers the post-commit flush even
         // though it pushes no events itself.
         writer
-            .with_tx(&db, |tx, _events| {
+            .with_tx(&db, 1_000, |tx, _events| {
                 insert_book_row(tx, "b1", 1_000, "dev-A")?;
                 Ok(())
             })
@@ -387,147 +451,107 @@ mod tests {
         }
     }
 
-    // -------- per-book progress throttle --------
+    // -------- progress throttle (now opt-in via should_emit_progress) --------
 
     #[test]
-    fn progress_throttle_collapses_rapid_calls_into_one_event() {
+    fn should_emit_progress_first_call_returns_true() {
+        let writer = SyncWriter::new("dev-A".into());
+        assert!(writer.should_emit_progress("b1"));
+    }
+
+    #[test]
+    fn should_emit_progress_collapses_rapid_calls_to_one_per_window() {
+        let writer = SyncWriter::new("dev-A".into());
+        // 10 rapid checks within the same window — first is true, rest false.
+        let allowed: usize = (0..10)
+            .filter(|_| writer.should_emit_progress("b1"))
+            .count();
+        assert_eq!(allowed, 1, "rapid checks should coalesce to one per book");
+    }
+
+    #[test]
+    fn should_emit_progress_is_per_book() {
+        let writer = SyncWriter::new("dev-A".into());
+        // Each book carries its own deadline.
+        assert!(writer.should_emit_progress("b1"));
+        assert!(writer.should_emit_progress("b2"));
+        assert!(!writer.should_emit_progress("b1"));
+        assert!(!writer.should_emit_progress("b2"));
+    }
+
+    /// Regression for finding #1 in PR #191 review: an event the closure
+    /// pushes is published verbatim — `with_tx` does not silently filter
+    /// `BookProgressSet` events. The throttle is now opt-in via
+    /// `should_emit_progress`, so semantic transitions like
+    /// `mark_finished` (which synthesize a progress event after the user
+    /// just turned a page) cannot be silently swallowed.
+    #[test]
+    fn with_tx_does_not_drop_progress_events_inside_throttle_window() {
         let (dir, db) = setup_db();
         let writer = SyncWriter::new("dev-A".into());
         let log = enable_sync(&writer, dir.path());
 
-        // Seed the book.
+        // Seed.
         writer
-            .with_tx(&db, |tx, events| {
+            .with_tx(&db, 1_000, |tx, events| {
                 insert_book_row(tx, "b1", 1_000, "dev-A")?;
                 events.push(import_body("b1"));
                 Ok(())
             })
             .unwrap();
-        assert_eq!(log.read_all().unwrap().len(), 1);
 
-        // 10 rapid progress updates — only the first is allowed through;
-        // the next nine fall inside the 2 s throttle window.
-        for i in 0..10 {
-            writer
-                .with_tx(&db, |tx, events| {
-                    tx.execute(
-                        "UPDATE books SET progress = ?1, updated_at = ?2, updated_by_device = ?3 WHERE id = ?4",
-                        params![i, 2_000 + i as i64, "dev-A", "b1"],
-                    )?;
-                    events.push(EventBody::BookProgressSet {
-                        book: "b1".into(),
-                        progress: i,
-                        cfi: Some(format!("c{i}")),
-                    });
-                    Ok(())
-                })
-                .unwrap();
-        }
-
-        // SQL has the latest progress (9) — throttle never blocks SQL writes.
-        let conn = db.conn.lock().unwrap();
-        let progress: i32 = conn
-            .query_row("SELECT progress FROM books WHERE id = 'b1'", [], |r| r.get(0))
+        // First simulated page-turn: caller asks the throttle whether to
+        // emit (true), pushes the event.
+        assert!(writer.should_emit_progress("b1"));
+        writer
+            .with_tx(&db, 2_000, |tx, events| {
+                tx.execute(
+                    "UPDATE books SET progress = 50, updated_at = ?1, updated_by_device = ?2 WHERE id = 'b1'",
+                    params![2_000_i64, "dev-A"],
+                )?;
+                events.push(EventBody::BookProgressSet {
+                    book: "b1".into(),
+                    progress: 50,
+                    cfi: Some("c50".into()),
+                });
+                Ok(())
+            })
             .unwrap();
-        assert_eq!(progress, 9);
-        drop(conn);
 
-        // Log: import + exactly one progress event = 2.
+        // A semantic transition like mark_finished arrives inside the
+        // throttle window. It deliberately does not consult the throttle
+        // — and `with_tx` must publish the event regardless.
+        writer
+            .with_tx(&db, 2_100, |tx, events| {
+                tx.execute(
+                    "UPDATE books SET status='finished', progress=100, updated_at=?1, updated_by_device=?2 WHERE id='b1'",
+                    params![2_100_i64, "dev-A"],
+                )?;
+                events.push(EventBody::BookStatusSet {
+                    book: "b1".into(),
+                    status: "finished".into(),
+                });
+                events.push(EventBody::BookProgressSet {
+                    book: "b1".into(),
+                    progress: 100,
+                    cfi: Some("c50".into()),
+                });
+                Ok(())
+            })
+            .unwrap();
+
+        // Log: import + first progress + status + finished progress = 4.
         let events = log.read_all().unwrap();
-        assert_eq!(events.len(), 2, "rapid progress writes should coalesce to 1");
-        assert!(matches!(events[0].body, EventBody::BookImport(_)));
-        assert!(matches!(events[1].body, EventBody::BookProgressSet { .. }));
-    }
-
-    #[test]
-    fn progress_throttle_is_per_book() {
-        let (dir, db) = setup_db();
-        let writer = SyncWriter::new("dev-A".into());
-        let log = enable_sync(&writer, dir.path());
-
-        // Two books, two progress updates each — every event passes
-        // because the throttle key is per-book.
-        for id in ["b1", "b2"] {
-            writer
-                .with_tx(&db, |tx, events| {
-                    insert_book_row(tx, id, 1_000, "dev-A")?;
-                    events.push(import_body(id));
-                    Ok(())
-                })
-                .unwrap();
-        }
-        for id in ["b1", "b2"] {
-            writer
-                .with_tx(&db, |tx, events| {
-                    tx.execute(
-                        "UPDATE books SET progress = 50, updated_at = ?1, updated_by_device = ?2 WHERE id = ?3",
-                        params![2_000_i64, "dev-A", id],
-                    )?;
-                    events.push(EventBody::BookProgressSet {
-                        book: id.into(),
-                        progress: 50,
-                        cfi: None,
-                    });
-                    Ok(())
-                })
-                .unwrap();
-        }
-
-        let n_progress = log
-            .read_all()
-            .unwrap()
-            .into_iter()
-            .filter(|e| matches!(e.body, EventBody::BookProgressSet { .. }))
-            .count();
-        assert_eq!(n_progress, 2, "throttle is per-book — both should pass");
-    }
-
-    /// Non-progress events bypass the throttle entirely. A burst of rapid
-    /// highlight writes must produce one event per call.
-    #[test]
-    fn throttle_does_not_apply_to_other_event_types() {
-        let (dir, db) = setup_db();
-        let writer = SyncWriter::new("dev-A".into());
-        let log = enable_sync(&writer, dir.path());
-
-        writer
-            .with_tx(&db, |tx, events| {
-                insert_book_row(tx, "b1", 1_000, "dev-A")?;
-                events.push(import_body("b1"));
-                Ok(())
-            })
-            .unwrap();
-
-        for i in 0..5 {
-            let id = format!("h{i}");
-            let id_clone = id.clone();
-            writer
-                .with_tx(&db, |tx, events| {
-                    tx.execute(
-                        "INSERT INTO highlights
-                         (id, book_id, cfi_range, color, created_at, updated_at, updated_by_device)
-                         VALUES (?1, 'b1', 'cfi', 'yellow', ?2, ?2, ?3)",
-                        params![id_clone, 2_000_i64 + i, "dev-A"],
-                    )?;
-                    events.push(EventBody::HighlightAdd(HighlightPayload {
-                        id,
-                        book_id: "b1".into(),
-                        cfi_range: "cfi".into(),
-                        color: "yellow".into(),
-                        note: None,
-                        text_content: None,
-                    }));
-                    Ok(())
-                })
-                .unwrap();
-        }
-
-        let n_highlights = log
-            .read_all()
-            .unwrap()
-            .into_iter()
-            .filter(|e| matches!(e.body, EventBody::HighlightAdd(_)))
-            .count();
-        assert_eq!(n_highlights, 5);
+        assert_eq!(events.len(), 4, "all four events must publish");
+        let progress_events: Vec<&EventBody> = events
+            .iter()
+            .map(|e| &e.body)
+            .filter(|b| matches!(b, EventBody::BookProgressSet { .. }))
+            .collect();
+        assert_eq!(
+            progress_events.len(),
+            2,
+            "both the page-turn and the mark-finished progress events must reach peers"
+        );
     }
 }

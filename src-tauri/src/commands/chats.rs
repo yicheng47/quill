@@ -110,7 +110,7 @@ pub fn create_chat(
         last_message: None,
     };
 
-    sync.with_tx(&db, |tx, events| {
+    sync.with_tx(&db, now, |tx, events| {
         tx.execute(
             "INSERT INTO chats (id, book_id, title, model, pinned, metadata, created_at, updated_at, updated_by_device)
              VALUES (?1, ?2, ?3, ?4, 0, NULL, ?5, ?5, ?6)",
@@ -177,7 +177,8 @@ pub fn delete_chat(
     db: State<'_, Db>,
     sync: State<'_, SyncWriter>,
 ) -> AppResult<()> {
-    sync.with_tx(&db, |tx, events| {
+    let now = chrono::Utc::now().timestamp_millis();
+    sync.with_tx(&db, now, |tx, events| {
         tx.execute(
             "DELETE FROM chat_messages WHERE chat_id = ?1",
             params![chat_id],
@@ -199,7 +200,7 @@ pub fn rename_chat(
 ) -> AppResult<()> {
     let now = chrono::Utc::now().timestamp_millis();
     let device = sync.self_device().to_string();
-    sync.with_tx(&db, |tx, events| {
+    sync.with_tx(&db, now, |tx, events| {
         tx.execute(
             "UPDATE chats SET title = ?1, updated_at = ?2, updated_by_device = ?3 WHERE id = ?4",
             params![title, now, device, chat_id],
@@ -251,7 +252,7 @@ pub fn save_chat_message(
         updated_at: now,
     };
 
-    sync.with_tx(&db, |tx, events| {
+    sync.with_tx(&db, now, |tx, events| {
         tx.execute(
             "INSERT INTO chat_messages (id, chat_id, role, content, context, metadata, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",

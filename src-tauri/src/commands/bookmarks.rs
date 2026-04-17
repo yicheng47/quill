@@ -49,7 +49,7 @@ pub fn add_bookmark(
         updated_at: now,
     };
 
-    sync.with_tx(&db, |tx, events| {
+    sync.with_tx(&db, now, |tx, events| {
         tx.execute(
             "INSERT INTO bookmarks (id, book_id, cfi, label, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
             params![id, book_id, cfi, label, now],
@@ -72,7 +72,8 @@ pub fn remove_bookmark(
     db: State<'_, Db>,
     sync: State<'_, SyncWriter>,
 ) -> AppResult<()> {
-    sync.with_tx(&db, |tx, events| {
+    let now = chrono::Utc::now().timestamp_millis();
+    sync.with_tx(&db, now, |tx, events| {
         tx.execute("DELETE FROM bookmarks WHERE id = ?1", params![id])?;
         events.push(EventBody::BookmarkDelete { id: id.clone() });
         Ok(())
@@ -126,7 +127,7 @@ pub fn add_highlight(
     };
 
     let device = sync.self_device().to_string();
-    sync.with_tx(&db, |tx, events| {
+    sync.with_tx(&db, now, |tx, events| {
         tx.execute(
             "INSERT INTO highlights (id, book_id, cfi_range, color, note, text_content, created_at, updated_at, updated_by_device)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7, ?8)",
@@ -152,7 +153,8 @@ pub fn remove_highlight(
     db: State<'_, Db>,
     sync: State<'_, SyncWriter>,
 ) -> AppResult<()> {
-    sync.with_tx(&db, |tx, events| {
+    let now = chrono::Utc::now().timestamp_millis();
+    sync.with_tx(&db, now, |tx, events| {
         tx.execute("DELETE FROM highlights WHERE id = ?1", params![id])?;
         events.push(EventBody::HighlightDelete { id: id.clone() });
         Ok(())
@@ -191,7 +193,7 @@ pub fn update_highlight_note(
 ) -> AppResult<()> {
     let now = chrono::Utc::now().timestamp_millis();
     let device = sync.self_device().to_string();
-    sync.with_tx(&db, |tx, events| {
+    sync.with_tx(&db, now, |tx, events| {
         tx.execute(
             "UPDATE highlights SET note = ?1, updated_at = ?2, updated_by_device = ?3 WHERE id = ?4",
             params![note, now, device, id],
@@ -213,7 +215,7 @@ pub fn update_highlight_color(
 ) -> AppResult<()> {
     let now = chrono::Utc::now().timestamp_millis();
     let device = sync.self_device().to_string();
-    sync.with_tx(&db, |tx, events| {
+    sync.with_tx(&db, now, |tx, events| {
         tx.execute(
             "UPDATE highlights SET color = ?1, updated_at = ?2, updated_by_device = ?3 WHERE id = ?4",
             params![color, now, device, id],

@@ -52,27 +52,19 @@ pub fn create_collection(
     let now = chrono::Utc::now().timestamp_millis();
     let device = sync.self_device().to_string();
 
-    // Compute sort_order outside the closure so the value is available for
-    // both the SQL INSERT and the event payload — and so the closure stays
-    // small.
-    let sort_order: i32 = {
-        let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
-        let max_order: i32 = conn
-            .query_row("SELECT COALESCE(MAX(sort_order), -1) FROM collections", [], |r| r.get(0))
+    // MAX(sort_order) lives inside the same transaction as the INSERT so
+    // two concurrent creates can't both observe the same max and mint
+    // duplicate sort_orders. The Db conn mutex serializes the entire tx,
+    // so the second writer reads the post-first-INSERT value.
+    let collection = sync.with_tx(&db, now, |tx, events| {
+        let max_order: i32 = tx
+            .query_row(
+                "SELECT COALESCE(MAX(sort_order), -1) FROM collections",
+                [],
+                |r| r.get(0),
+            )
             .unwrap_or(-1);
-        max_order + 1
-    };
-
-    let collection = Collection {
-        id: id.clone(),
-        name: name.clone(),
-        book_count: 0,
-        sort_order,
-        created_at: now,
-        updated_at: now,
-    };
-
-    sync.with_tx(&db, |tx, events| {
+        let sort_order = max_order + 1;
         tx.execute(
             "INSERT INTO collections (id, name, sort_order, created_at, updated_at, updated_by_device) VALUES (?1, ?2, ?3, ?4, ?4, ?5)",
             params![id, name, sort_order, now, device],
@@ -82,7 +74,14 @@ pub fn create_collection(
             name: name.clone(),
             sort_order,
         });
-        Ok(())
+        Ok(Collection {
+            id: id.clone(),
+            name: name.clone(),
+            book_count: 0,
+            sort_order,
+            created_at: now,
+            updated_at: now,
+        })
     })?;
 
     Ok(collection)
@@ -97,7 +96,7 @@ pub fn rename_collection(
 ) -> AppResult<()> {
     let now = chrono::Utc::now().timestamp_millis();
     let device = sync.self_device().to_string();
-    sync.with_tx(&db, |tx, events| {
+    sync.with_tx(&db, now, |tx, events| {
         tx.execute(
             "UPDATE collections SET name = ?1, updated_at = ?2, updated_by_device = ?3 WHERE id = ?4",
             params![name, now, device, id],
@@ -116,7 +115,8 @@ pub fn delete_collection(
     db: State<'_, Db>,
     sync: State<'_, SyncWriter>,
 ) -> AppResult<()> {
-    sync.with_tx(&db, |tx, events| {
+    let now = chrono::Utc::now().timestamp_millis();
+    sync.with_tx(&db, now, |tx, events| {
         // Mirror `cascade_delete_collection` — replay runs FK off, so the
         // join rows have to be wiped manually here too.
         tx.execute(
@@ -137,7 +137,7 @@ pub fn reorder_collections(
 ) -> AppResult<()> {
     let now = chrono::Utc::now().timestamp_millis();
     let device = sync.self_device().to_string();
-    sync.with_tx(&db, |tx, events| {
+    sync.with_tx(&db, now, |tx, events| {
         for (i, id) in ids.iter().enumerate() {
             let sort_order = i as i32;
             tx.execute(
@@ -162,7 +162,7 @@ pub fn add_book_to_collection(
 ) -> AppResult<()> {
     let now = chrono::Utc::now().timestamp_millis();
     let device = sync.self_device().to_string();
-    sync.with_tx(&db, |tx, events| {
+    sync.with_tx(&db, now, |tx, events| {
         tx.execute(
             "INSERT OR IGNORE INTO collection_books (collection_id, book_id, created_at, updated_at, updated_by_device) VALUES (?1, ?2, ?3, ?3, ?4)",
             params![collection_id, book_id, now, device],
@@ -182,7 +182,8 @@ pub fn remove_book_from_collection(
     db: State<'_, Db>,
     sync: State<'_, SyncWriter>,
 ) -> AppResult<()> {
-    sync.with_tx(&db, |tx, events| {
+    let now = chrono::Utc::now().timestamp_millis();
+    sync.with_tx(&db, now, |tx, events| {
         tx.execute(
             "DELETE FROM collection_books WHERE collection_id = ?1 AND book_id = ?2",
             params![collection_id, book_id],

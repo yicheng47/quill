@@ -171,7 +171,7 @@ pub fn save_translation(
     let id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().timestamp_millis();
     let id_for_return = id.clone();
-    sync.with_tx(&db, |tx, events| {
+    sync.with_tx(&db, now, |tx, events| {
         tx.execute(
             "INSERT INTO translations (id, book_id, source_text, translated_text, target_language, cfi, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
             rusqlite::params![id, book_id, source_text, translated_text, target_language, cfi, now],
@@ -195,7 +195,8 @@ pub fn remove_saved_translation(
     db: State<'_, Db>,
     sync: State<'_, SyncWriter>,
 ) -> AppResult<()> {
-    sync.with_tx(&db, |tx, events| {
+    let now = chrono::Utc::now().timestamp_millis();
+    sync.with_tx(&db, now, |tx, events| {
         tx.execute(
             "DELETE FROM translations WHERE id = ?1",
             rusqlite::params![id],
