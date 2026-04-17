@@ -220,6 +220,19 @@ pub fn run() {
 
             let sync_writer = SyncWriter::new(device.device_uuid.clone());
 
+            // If migration is complete, every write must persist into
+            // `_pending_publish` regardless of whether the engine boots
+            // this session. The post-commit flush only runs when the log
+            // is open (set inside boot_sync_engine), so a queue-only
+            // session accumulates events for the next launch's replay
+            // tick to drain. Without this flag set, writes made while
+            // iCloud is unreachable are silently dropped — peers never
+            // see them. See `SyncWriter`'s module docstring for the
+            // three-mode model.
+            if sync::migration::is_migration_complete(&local_dir) {
+                sync_writer.set_should_queue(true);
+            }
+
             // Wire the replay engine + watcher when sync is on. "Sync on"
             // for Chunk 6 is detected via the migration-complete marker:
             // if we migrated (or a future install joined an already-
