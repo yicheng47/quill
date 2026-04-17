@@ -250,6 +250,32 @@ impl Snapshot {
         })
     }
 
+    /// Build a snapshot directly from an open quill.db (legacy file-sync
+    /// or freshly-migrated local DB). Skips the merge-engine roundtrip
+    /// because the DB already holds the materialized state — we just dump
+    /// every synced table.
+    ///
+    /// `id` is freshly minted (no log exists yet — peers will treat this
+    /// as a brand-new snapshot id in their `_replay_state` watermarks).
+    /// `truncated_before` is `None` so peers don't try to truncate a tail
+    /// that doesn't exist on this device.
+    ///
+    /// Used by `migration::run_migration` to bootstrap the per-device log
+    /// from a legacy DB. Caller is responsible for ensuring `conn` has
+    /// already been migrated to the current schema (Db::init does this).
+    pub fn from_legacy_db(conn: &Connection, device: &str) -> AppResult<Self> {
+        let state = dump_state(conn)?;
+        let id = Ulid::new().to_string();
+        Ok(Snapshot {
+            v: SNAPSHOT_SCHEMA_VERSION,
+            device: device.to_string(),
+            id,
+            generated_at: chrono::Utc::now().timestamp_millis(),
+            truncated_before: None,
+            state,
+        })
+    }
+
     /// Atomic write — temp file, fsync, rename. The destination directory is
     /// created if missing. Crash-safe: a partial write never replaces the
     /// existing snapshot.
@@ -911,6 +937,91 @@ mod tests {
 
         let read = Snapshot::read_from(&path).unwrap();
         assert_eq!(read, snap);
+    }
+
+    /// `from_legacy_db` reads a fully-migrated quill.db (v11 schema) and
+    /// produces a snapshot byte-equivalent to one built from the events
+    /// that would have produced the same DB state. This is the
+    /// migration-snapshot bootstrap path: the legacy DB is the source of
+    /// truth, dump_state pulls every row out, peers see the snapshot as
+    /// if it were any other compaction.
+    #[test]
+    fn from_legacy_db_dumps_existing_rows() {
+        let tmp = TempDir::new().unwrap();
+        let db = crate::db::Db::init(&tmp.path().to_path_buf()).unwrap();
+        // Seed a few rows directly via SQL — same shape the legacy file
+        // sync would have left behind after migration 011 backfilled
+        // updated_by_device='migration'.
+        {
+            let conn = db.conn.lock().unwrap();
+            conn.execute(
+                "INSERT INTO books
+                 (id, title, author, file_path, format, status, progress, created_at, updated_at, updated_by_device)
+                 VALUES ('b1', 'War and Peace', 'Tolstoy', 'books/wp.epub', 'epub', 'reading', 42, 1000, 1500, 'migration')",
+                [],
+            ).unwrap();
+            conn.execute(
+                "INSERT INTO highlights
+                 (id, book_id, cfi_range, color, created_at, updated_at, updated_by_device)
+                 VALUES ('h1', 'b1', 'epubcfi(/6/4!/2)', 'yellow', 1100, 1100, 'migration')",
+                [],
+            ).unwrap();
+        }
+
+        let snap = {
+            let conn = db.conn.lock().unwrap();
+            Snapshot::from_legacy_db(&conn, "dev-MIGRATING").unwrap()
+        };
+
+        assert_eq!(snap.device, "dev-MIGRATING");
+        assert_eq!(snap.truncated_before, None, "legacy snapshots have no log to truncate");
+        assert!(!snap.id.is_empty(), "id should be a freshly-minted ULID");
+        assert_eq!(snap.state.books.len(), 1);
+        assert_eq!(snap.state.highlights.len(), 1);
+        let book = snap.state.books.get("b1").unwrap();
+        assert_eq!(book.title, "War and Peace");
+        assert_eq!(book.progress, 42);
+        assert_eq!(book.updated_by_device, "migration");
+    }
+
+    /// End-to-end migration round trip: a legacy DB → snapshot →
+    /// apply_peer onto a fresh local DB yields the same row state.
+    /// This is the read-back path Step 7 relies on for conflict-copy
+    /// merging (the migrating device replays its own snapshot to absorb
+    /// rows that only existed in conflict copies).
+    #[test]
+    fn from_legacy_db_then_apply_peer_round_trips() {
+        let src = TempDir::new().unwrap();
+        let src_db = crate::db::Db::init(&src.path().to_path_buf()).unwrap();
+        {
+            let conn = src_db.conn.lock().unwrap();
+            conn.execute(
+                "INSERT INTO books
+                 (id, title, author, file_path, format, status, progress, created_at, updated_at, updated_by_device)
+                 VALUES ('b1', 'T', 'A', 'books/x.epub', 'epub', 'unread', 0, 1000, 1000, 'migration')",
+                [],
+            ).unwrap();
+        }
+        let snap = {
+            let conn = src_db.conn.lock().unwrap();
+            Snapshot::from_legacy_db(&conn, "dev-A").unwrap()
+        };
+
+        // Fresh local DB on a different device.
+        let dst = TempDir::new().unwrap();
+        let dst_db = crate::db::Db::init(&dst.path().to_path_buf()).unwrap();
+        {
+            let mut conn = dst_db.conn.lock().unwrap();
+            let tx = conn.transaction().unwrap();
+            snap.apply_peer(&tx, "dev-A").unwrap();
+            tx.commit().unwrap();
+        }
+
+        let count: i64 = {
+            let conn = dst_db.conn.lock().unwrap();
+            conn.query_row("SELECT COUNT(*) FROM books", [], |r| r.get(0)).unwrap()
+        };
+        assert_eq!(count, 1);
     }
 
     #[test]

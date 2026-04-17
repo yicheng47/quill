@@ -1,7 +1,7 @@
 use rusqlite::{params, Connection};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use crate::error::AppResult;
 
@@ -19,9 +19,27 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (11, include_str!("../migrations/011_lww_tiebreak_and_outbox.sql")),
 ];
 
+/// SQLite handle for the local materialized view.
+///
+/// `conn` and `data_dir` live behind `Arc<Mutex<…>>` so `Db` is cheaply
+/// `Clone`-able. Cloning shares the underlying mutex; the sync watcher
+/// holds one clone in its dedicated thread while Tauri's command
+/// dispatcher holds another in app state. Without the `Arc` we would
+/// either force every command signature to switch to `State<Arc<Db>>`
+/// or push `app_handle.state::<Db>()` indirection into the watcher
+/// loop — both worse than this two-line shape change.
 pub struct Db {
-    pub conn: Mutex<Connection>,
-    pub data_dir: Mutex<PathBuf>,
+    pub conn: Arc<Mutex<Connection>>,
+    pub data_dir: Arc<Mutex<PathBuf>>,
+}
+
+impl Clone for Db {
+    fn clone(&self) -> Self {
+        Self {
+            conn: Arc::clone(&self.conn),
+            data_dir: Arc::clone(&self.data_dir),
+        }
+    }
 }
 
 impl Db {
@@ -41,8 +59,8 @@ impl Db {
         Self::migrate_to_relative_paths(&conn, app_data_dir)?;
 
         Ok(Self {
-            conn: Mutex::new(conn),
-            data_dir: Mutex::new(app_data_dir.clone()),
+            conn: Arc::new(Mutex::new(conn)),
+            data_dir: Arc::new(Mutex::new(app_data_dir.clone())),
         })
     }
 
