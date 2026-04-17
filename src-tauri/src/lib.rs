@@ -8,10 +8,14 @@ mod secrets;
 mod sync;
 
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 use db::Db;
 use secrets::Secrets;
 use sync::device::DeviceIdentity;
+use sync::log::EventLog;
+use sync::replay::ReplayEngine;
+use sync::watcher::WatcherHandle;
 use sync::writer::SyncWriter;
 #[cfg(target_os = "macos")]
 use tauri::Emitter;
@@ -19,6 +23,50 @@ use tauri::Manager;
 
 /// The resolved local app data directory, accounting for dev-mode isolation.
 pub struct LocalDir(pub PathBuf);
+
+/// Construct the per-device EventLog, wire it into `sync_writer`, build a
+/// `ReplayEngine`, run one initial tick to converge with peer logs, and
+/// spawn the fs watcher. Returns the engine + watcher handle so the
+/// caller can store them in app state for the lifetime of the process.
+///
+/// Pulled out of `setup` so the launch flow stays readable. Errors
+/// short-circuit and the caller falls back to "sync inactive this
+/// session" (the local DB is still functional).
+fn boot_sync_engine(
+    shared_dir: PathBuf,
+    device_uuid: &str,
+    db: &Db,
+    sync_writer: &SyncWriter,
+) -> error::AppResult<(Option<Arc<ReplayEngine>>, Option<WatcherHandle>)> {
+    let log_path = shared_dir
+        .join("logs")
+        .join(format!("{device_uuid}.jsonl"));
+    // Coordinator on iCloud paths only — see `EventLog::open` doc.
+    let log = Arc::new(EventLog::open(&log_path, device_uuid, true)?);
+    sync_writer.set_log(Some(Arc::clone(&log)));
+
+    let engine = Arc::new(ReplayEngine::new(
+        shared_dir.clone(),
+        device_uuid.to_string(),
+        log,
+    ));
+
+    // Initial tick — drains any leftover outbox, applies peer snapshots
+    // and log tails since last launch. Failure here is non-fatal; the
+    // watcher's first event will retry.
+    {
+        let mut conn = db
+            .conn
+            .lock()
+            .map_err(|e| error::AppError::Other(format!("db conn mutex: {e}")))?;
+        if let Err(e) = engine.tick(&mut conn) {
+            eprintln!("sync: initial replay tick failed: {e}");
+        }
+    }
+
+    let watcher = sync::watcher::spawn(shared_dir, db.clone(), Arc::clone(&engine))?;
+    Ok((Some(engine), Some(watcher)))
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -62,23 +110,104 @@ pub fn run() {
             };
             std::fs::create_dir_all(&local_dir).expect("failed to create app data dir");
 
-            // If iCloud sync is enabled, resolve the iCloud Documents path from
-            // the deterministic hardcoded location. This avoids calling
-            // `URLForUbiquityContainerIdentifier` on the main thread, which
-            // queries the iCloud daemon and is the slowest call on cold start
-            // (often >1s, sometimes several seconds after sleep/reboot).
+            // Resolve the iCloud Documents path from the deterministic
+            // hardcoded location whenever the legacy marker is on.
+            // Avoids `URLForUbiquityContainerIdentifier` on the main
+            // thread (slow cold-start IPC to the iCloud daemon).
             //
-            // The actual `URLForUbiquityContainerIdentifier` call still has to
-            // happen at some point to register the container with the iCloud
-            // daemon and trigger sync — we do that in a background thread
-            // below, after setup has unblocked.
-            let data_dir = if icloud::is_icloud_enabled(&local_dir) {
-                icloud::icloud_data_dir_fast().unwrap_or_else(|| local_dir.clone())
+            // We use the `_deterministic` variant — not `_fast` — so
+            // migration is always at least *attempted* with a concrete
+            // path, even when the iCloud container hasn't materialized
+            // yet. `run_migration` itself detects the missing dir and
+            // defers (without writing the marker) so the next launch
+            // retries. Using `_fast` here would short-circuit migration
+            // entirely on a cold-iCloud first launch, leaving the user
+            // open to the data-loss path documented in PR #192's
+            // first-launch-without-iCloud finding.
+            let icloud_was_enabled = icloud::is_icloud_enabled(&local_dir);
+            let ubiquity_dir = if icloud_was_enabled {
+                icloud::icloud_data_dir_deterministic()
+            } else {
+                None
+            };
+
+            // Per-install device UUID — stamped into every LWW write so
+            // peer reconciliation stays deterministic on equal-millisecond
+            // ties. Lives in `<local>/device.json`; never synced. Loaded
+            // here because the migration routine below needs it.
+            let device =
+                DeviceIdentity::load_or_create(&local_dir).expect("failed to load device id");
+
+            // Chunk 6 — one-shot migration from legacy file-sync to the
+            // per-device event log. Runs only when the legacy marker is
+            // present and the new `.migration_complete` marker isn't.
+            // Failures are logged and retried on the next launch (the
+            // marker is only written on success).
+            if icloud_was_enabled && !sync::migration::is_migration_complete(&local_dir) {
+                if let Some(ub) = &ubiquity_dir {
+                    match sync::migration::run_migration(&local_dir, ub, &device.device_uuid) {
+                        Ok(outcome) if outcome.deferred_for_download => eprintln!(
+                            "sync: migration deferred — ubiquity quill.db is iCloud-evicted. \
+                             Download triggered; will retry on next launch."
+                        ),
+                        Ok(outcome) => eprintln!(
+                            "sync: migration complete: copied_db={} wrote_snapshot={} retired={} conflict_copies_discarded={}",
+                            outcome.copied_db,
+                            outcome.wrote_snapshot,
+                            outcome.retired_files,
+                            outcome.conflict_copies_discarded,
+                        ),
+                        Err(e) => eprintln!(
+                            "sync: migration failed (will retry next launch): {e}"
+                        ),
+                    }
+                }
+            }
+
+            // Open the DB. Post-migration the SQLite file lives at
+            // local_dir/quill.db, but books/ and covers/ stay in the
+            // iCloud Documents container per spec — we keep `data_dir`
+            // pointing at the ubiquity dir so `Db::resolve_path`
+            // resolves binaries against the right place.
+            //
+            // Resolution chain (post-migration, in order):
+            //   1. Path recorded in the marker at migration time. This
+            //      is the source of truth — guarantees stability across
+            //      launches, even if iCloud is signed out right now.
+            //   2. Deterministic iCloud Documents path (no `is_dir`
+            //      check). Backstop for legacy markers from the first
+            //      Chunk 6 build that wrote an empty marker.
+            //   3. Local dir as a last resort, with a loud log line.
+            //      The user is offline AND on a non-macOS platform
+            //      AND has a legacy empty marker — vanishingly rare,
+            //      but we don't want to crash the app.
+            //
+            // Pre-migration and non-iCloud users get data_dir = local.
+            let data_dir = if sync::migration::is_migration_complete(&local_dir) {
+                sync::migration::recorded_data_dir(&local_dir)
+                    .or_else(icloud::icloud_data_dir_deterministic)
+                    .unwrap_or_else(|| {
+                        eprintln!(
+                            "sync: migration is complete but no stable data_dir is \
+                             available; falling back to local. Newly-imported binaries \
+                             may not be visible to peers."
+                        );
+                        local_dir.clone()
+                    })
             } else {
                 local_dir.clone()
             };
+            let db = Db::init_split(&local_dir, &data_dir)
+                .expect("failed to initialize database");
 
-            let db = Db::init(&data_dir).expect("failed to initialize database");
+            // Self-healing: if migration is complete, retire any ubiquity
+            // DB files that crept back (a legacy build temporarily
+            // running on this iCloud account, file restore, etc.).
+            if sync::migration::is_migration_complete(&local_dir) {
+                if let Some(ub) = &ubiquity_dir {
+                    let _ = sync::migration::retire_ubiquity_db(ub);
+                }
+            }
 
             // Secrets DB always lives at the local app_data_dir (never syncs to iCloud)
             let secrets =
@@ -89,22 +218,79 @@ pub fn run() {
                 .migrate_from_settings(&db)
                 .expect("failed to migrate secrets");
 
-            // Per-install device UUID — stamped into every LWW write so
-            // peer reconciliation stays deterministic on equal-millisecond
-            // ties. Lives in `<local>/device.json`; never synced.
-            let device =
-                DeviceIdentity::load_or_create(&local_dir).expect("failed to load device id");
-            // SyncWriter starts with `log = None` (sync disabled). Chunk 7's
-            // `sync_enable` command will flip the log on. Until then the
-            // writer is a pass-through: SQL commits as before, events are
-            // dropped after commit.
             let sync_writer = SyncWriter::new(device.device_uuid.clone());
+
+            // If migration is complete, every write must persist into
+            // `_pending_publish` regardless of whether the engine boots
+            // this session. The post-commit flush only runs when the log
+            // is open (set inside boot_sync_engine), so a queue-only
+            // session accumulates events for the next launch's replay
+            // tick to drain. Without this flag set, writes made while
+            // iCloud is unreachable are silently dropped — peers never
+            // see them. See `SyncWriter`'s module docstring for the
+            // three-mode model.
+            if sync::migration::is_migration_complete(&local_dir) {
+                sync_writer.set_should_queue(true);
+            }
+
+            // Wire the replay engine + watcher when sync is on. "Sync on"
+            // for Chunk 6 is detected via the migration-complete marker:
+            // if we migrated (or a future install joined an already-
+            // migrated iCloud), spin up the engine. Chunk 7's
+            // `sync_enable` will replace this trigger with an explicit
+            // user toggle.
+            //
+            // Important: deterministic vs existence-checked path. The
+            // deterministic path is correct for blob resolution (so
+            // `books/foo.epub` always resolves to the same place across
+            // launches) and for migration source selection (so we can
+            // defer a missing source instead of falling through). But
+            // it's WRONG for booting EventLog + ReplayEngine: if the
+            // iCloud container hasn't materialized yet (signed-out
+            // account, daemon race), `EventLog::open` would create a
+            // file at the deterministic path — physically located
+            // outside any real ubiquity container — and the post-commit
+            // outbox flush would drain `_pending_publish` rows into it.
+            // Peers would never see those events but the rows would be
+            // gone, breaking the publish-retry guarantee. So we re-gate
+            // on `.exists()` here. If iCloud isn't actually present
+            // this launch, sync stays inert and the outbox preserves
+            // pending events for the next successful boot.
+            let (replay_engine, watcher_handle) = match sync::migration::is_migration_complete(
+                &local_dir,
+            )
+            .then(|| ubiquity_dir.clone().filter(|p| p.exists()))
+            .flatten()
+            {
+                Some(ub) => match boot_sync_engine(ub, &device.device_uuid, &db, &sync_writer) {
+                    Ok(pair) => pair,
+                    Err(e) => {
+                        eprintln!("sync: failed to boot sync engine: {e}");
+                        (None, None)
+                    }
+                },
+                None => {
+                    if sync::migration::is_migration_complete(&local_dir) {
+                        eprintln!(
+                            "sync: skipping engine boot — iCloud container not reachable \
+                             this launch; outbox preserved for the next launch"
+                        );
+                    }
+                    (None, None)
+                }
+            };
 
             app.manage(LocalDir(local_dir));
             app.manage(db);
             app.manage(secrets);
             app.manage(device);
             app.manage(sync_writer);
+            app.manage(replay_engine);
+            // Held for the lifetime of the app — drop joins the watcher
+            // thread on shutdown. Stored as `Mutex<Option<…>>` so the
+            // wrapper is `Sync` (the inner `notify::RecommendedWatcher`
+            // doesn't claim `Sync` so we can't store it bare).
+            app.manage(Mutex::new(watcher_handle));
 
             Ok(())
         })
@@ -186,6 +372,9 @@ pub fn run() {
             commands::icloud::icloud_status,
             commands::icloud::icloud_enable,
             commands::icloud::icloud_disable,
+            // Sync (Chunk 6 ships sync_now; Chunk 7 swaps icloud_* for
+            // sync_status/sync_enable/sync_disable).
+            commands::sync::sync_now,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

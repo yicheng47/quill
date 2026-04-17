@@ -102,7 +102,7 @@ mod tests {
 
     fn setup() -> (TempDir, Db) {
         let dir = TempDir::new().unwrap();
-        let db = Db::init(&dir.path().to_path_buf()).unwrap();
+        let db = Db::init(dir.path()).unwrap();
         let conn = db.conn.lock().unwrap();
         conn.execute(
             "INSERT INTO books (id, title, author, file_path, status, progress, created_at, updated_at)

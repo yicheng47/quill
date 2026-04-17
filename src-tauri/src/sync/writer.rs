@@ -35,13 +35,34 @@
 //!    `status = finished` and stale progress. Keeping the throttle on
 //!    the noisy call site only is what makes that distinction safe.
 //!
-//! When sync is **disabled** (`set_log(None)`), the events vec is filled
-//! by the closure but discarded after the SQL commit — zero outbox writes,
-//! zero log writes. The exact same closure works in both modes; commands
-//! don't branch on sync state.
+//! Three modes:
+//!
+//! - **Disabled** (`should_queue = false`, `log = None`): non-iCloud
+//!   user. The events vec is filled by the closure and discarded after
+//!   the SQL commit. Zero outbox writes, zero log writes.
+//!
+//! - **Queue-only** (`should_queue = true`, `log = None`): migrated
+//!   user whose iCloud container isn't reachable this session. Events
+//!   land in `_pending_publish` for durability but the post-commit
+//!   log flush is skipped — the next launch with iCloud back drains
+//!   the outbox via the replay tick. Without this mode, every write
+//!   made during an unreachable-iCloud session would be silently
+//!   dropped (no outbox row, no log entry, no peer ever sees it).
+//!
+//! - **Enabled** (`should_queue = true`, `log = Some(_)`): migrated
+//!   user, iCloud reachable, sync engine booted. Events queue and
+//!   immediately drain to the device log post-commit.
+//!
+//! The two flags are deliberately independent: lib.rs sets
+//! `should_queue = true` whenever migration is complete, then sets
+//! `log` separately based on whether the sync engine actually booted.
+//! Commands don't branch on either — the closure is identical.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex,
+};
 
 use rusqlite::{params, Transaction};
 
@@ -63,11 +84,16 @@ pub struct SyncWriter {
     /// Sync writers don't drive the column on their own — every command
     /// already builds its own SQL, so the writer just exposes the value.
     self_device: String,
-    /// `Some(log)` when sync is enabled, `None` otherwise. Flipped by
-    /// `set_log` from the sync_enable / sync_disable command handlers
-    /// (Chunk 7) — until then it stays `None` and `with_tx` is a pure
-    /// SQL pass-through.
+    /// `Some(log)` when the per-device log is open AND we should drain
+    /// the outbox to it post-commit. Flipped by `set_log`. Independent
+    /// from `should_queue` — see `set_should_queue` for why.
     log: Mutex<Option<Arc<EventLog>>>,
+    /// True when migration is complete and writes must persist into the
+    /// `_pending_publish` outbox even if the log isn't open this
+    /// session. Without this, writes made while iCloud is unreachable
+    /// would be dropped after the SQL commit and peers would never see
+    /// them. See module docstring for the three-mode model.
+    should_queue: AtomicBool,
     /// Per-book leading-edge throttle for `book.progress.set`. Key: book
     /// id. Value: unix millis of the most recent event we let through.
     progress_throttle: Mutex<HashMap<String, i64>>,
@@ -78,6 +104,7 @@ impl SyncWriter {
         Self {
             self_device,
             log: Mutex::new(None),
+            should_queue: AtomicBool::new(false),
             progress_throttle: Mutex::new(HashMap::new()),
         }
     }
@@ -86,16 +113,29 @@ impl SyncWriter {
         &self.self_device
     }
 
-    /// Toggle sync on/off. `Some(log)` means "events get queued and
-    /// flushed"; `None` means "events are collected by closures and then
-    /// discarded after commit". Called from `sync_enable` /
-    /// `sync_disable` in Chunk 7.
+    /// Toggle the device log. `Some(log)` means "drain `_pending_publish`
+    /// to this log after every commit"; `None` means "leave outbox rows
+    /// alone for a future tick to drain". Independent from
+    /// `set_should_queue`: a queue-only session has `should_queue = true`
+    /// but `log = None`.
     pub fn set_log(&self, log: Option<Arc<EventLog>>) {
         let mut guard = self.log.lock().expect("SyncWriter log mutex poisoned");
         *guard = log;
     }
 
-    /// Test/probe accessor — `true` when an `EventLog` is wired up.
+    /// Toggle whether `with_tx` writes its events vec into
+    /// `_pending_publish`. `true` is set by lib.rs whenever
+    /// `.migration_complete` exists, regardless of whether the iCloud
+    /// container is reachable this launch. The decoupling from `log` is
+    /// what enables the queue-only mode: events accumulate durably in
+    /// SQL even when the engine can't boot, and the next reachable
+    /// launch flushes them via `ReplayEngine::tick`.
+    pub fn set_should_queue(&self, queue: bool) {
+        self.should_queue.store(queue, Ordering::SeqCst);
+    }
+
+    /// Test/probe accessor — `true` when an `EventLog` is wired up
+    /// (i.e. the post-commit flush will run, not just the queue write).
     pub fn is_sync_enabled(&self) -> bool {
         self.log
             .lock()
@@ -134,7 +174,7 @@ impl SyncWriter {
             .lock()
             .map_err(|e| AppError::Other(format!("SyncWriter log mutex: {e}")))?
             .clone();
-        let sync_enabled = log_snapshot.is_some();
+        let should_queue = self.should_queue.load(Ordering::SeqCst);
 
         // Phase 1 — closure + outbox enqueue + commit, all under one
         // db.conn lock.
@@ -147,11 +187,18 @@ impl SyncWriter {
             let mut events: Vec<EventBody> = Vec::new();
             let result = f(&tx, &mut events)?;
 
-            if sync_enabled && !events.is_empty() {
+            if should_queue && !events.is_empty() {
                 // `created_at` is just bookkeeping for the outbox row's
                 // own lifecycle; we use the same `ts` so a single command
                 // produces a single bookkeeping timestamp. The publish ts
                 // (`ts` column) is what flows out to peers.
+                //
+                // Important: this branch fires whenever migration is
+                // complete, even when `log` is None. That's the
+                // queue-only mode — events persist in `_pending_publish`
+                // for the next launch's replay tick to drain. Without
+                // queueing here, writes made while iCloud is unreachable
+                // would be silently lost.
                 for body in &events {
                     let id = uuid::Uuid::new_v4().to_string();
                     let body_json = serde_json::to_string(body).map_err(|e| {
@@ -164,14 +211,17 @@ impl SyncWriter {
                     )?;
                 }
             }
-            // events is dropped here when sync is disabled — no disk cost.
+            // events is dropped here when sync is fully disabled — no
+            // disk cost for non-iCloud users.
 
             tx.commit()?;
             result
         }; // db.conn lock released.
 
-        // Phase 2 — post-commit flush. Best effort; failures just leave
-        // rows in the outbox for the next caller to retry.
+        // Phase 2 — post-commit flush. Only runs when the log is open
+        // (i.e. the engine booted this session). Failures just leave
+        // rows in the outbox for the next caller / replay tick to
+        // retry.
         if let Some(log) = log_snapshot {
             let mut conn = db
                 .conn
@@ -220,13 +270,14 @@ mod tests {
 
     fn setup_db() -> (TempDir, Db) {
         let dir = TempDir::new().unwrap();
-        let db = Db::init(&dir.path().to_path_buf()).unwrap();
+        let db = Db::init(dir.path()).unwrap();
         (dir, db)
     }
 
     fn enable_sync(writer: &SyncWriter, dir: &std::path::Path) -> Arc<EventLog> {
         let log_path = dir.join("logs").join(format!("{}.jsonl", writer.self_device()));
         let log = Arc::new(EventLog::open(&log_path, writer.self_device(), false).unwrap());
+        writer.set_should_queue(true);
         writer.set_log(Some(log.clone()));
         log
     }
@@ -449,6 +500,85 @@ mod tests {
             EventBody::BookImport(p) => assert_eq!(p.id, "b-orphan"),
             other => panic!("expected the orphan event to flush, got {other:?}"),
         }
+    }
+
+    /// Regression for the sixth-round review on PR #192: when migration
+    /// is complete but the engine can't boot this session (iCloud
+    /// unreachable), `set_should_queue(true)` is called but `set_log`
+    /// stays at None. Writes during this session must STILL persist
+    /// into `_pending_publish` so a future replay tick can drain them
+    /// to peers — otherwise every write made during an unreachable
+    /// session is silently lost.
+    #[test]
+    fn queue_only_mode_writes_outbox_without_a_log() {
+        let (_dir, db) = setup_db();
+        let writer = SyncWriter::new("dev-A".into());
+        // Migration is complete (queue) but engine couldn't boot (no log).
+        writer.set_should_queue(true);
+        assert!(!writer.is_sync_enabled(), "is_sync_enabled tracks the log, not should_queue");
+
+        writer
+            .with_tx(&db, 1_000, |tx, events| {
+                insert_book_row(tx, "b1", 1_000, "dev-A")?;
+                events.push(import_body("b1"));
+                Ok(())
+            })
+            .unwrap();
+
+        let conn = db.conn.lock().unwrap();
+        assert_eq!(book_count(&conn), 1);
+        assert_eq!(
+            outbox_count(&conn),
+            1,
+            "queue-only session must persist events into _pending_publish \
+             so the next launch's replay tick can drain them",
+        );
+    }
+
+    /// Companion to `queue_only_mode_writes_outbox_without_a_log`: when
+    /// the log later becomes available (next launch's
+    /// `boot_sync_engine`), the accumulated outbox must drain on the
+    /// first `with_tx` call. This is the publish-retry guarantee end
+    /// to end.
+    #[test]
+    fn queue_only_outbox_drains_when_log_becomes_available() {
+        let (dir, db) = setup_db();
+        let writer = SyncWriter::new("dev-A".into());
+
+        // Phase 1 — queue-only session writes an event.
+        writer.set_should_queue(true);
+        writer
+            .with_tx(&db, 1_000, |tx, events| {
+                insert_book_row(tx, "b1", 1_000, "dev-A")?;
+                events.push(import_body("b1"));
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(outbox_count(&db.conn.lock().unwrap()), 1);
+
+        // Phase 2 — next launch boots the engine. set_log enables the
+        // post-commit drain. A subsequent with_tx (here, an unrelated
+        // status update) flushes everything in the outbox.
+        let log = enable_sync(&writer, dir.path());
+        writer
+            .with_tx(&db, 2_000, |tx, _events| {
+                tx.execute(
+                    "UPDATE books SET status = ?1, updated_at = ?2, updated_by_device = ?3 WHERE id = ?4",
+                    params!["finished", 2_000_i64, "dev-A", "b1"],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+
+        let conn = db.conn.lock().unwrap();
+        assert_eq!(outbox_count(&conn), 0, "post-commit flush should drain everything");
+        let log_events = log.read_all().unwrap();
+        // The queue-only event from phase 1 reaches peers via this
+        // launch's drain.
+        assert!(
+            log_events.iter().any(|e| matches!(e.body, EventBody::BookImport(_))),
+            "phase 1's BookImport must reach the log on phase 2's boot drain"
+        );
     }
 
     // -------- progress throttle (now opt-in via should_emit_progress) --------
