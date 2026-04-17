@@ -158,10 +158,32 @@ pub fn run() {
             // local_dir/quill.db, but books/ and covers/ stay in the
             // iCloud Documents container per spec — we keep `data_dir`
             // pointing at the ubiquity dir so `Db::resolve_path`
-            // resolves binaries against the right place. Pre-migration
-            // and non-iCloud users both have data_dir == local_dir.
+            // resolves binaries against the right place.
+            //
+            // Resolution chain (post-migration, in order):
+            //   1. Path recorded in the marker at migration time. This
+            //      is the source of truth — guarantees stability across
+            //      launches, even if iCloud is signed out right now.
+            //   2. Deterministic iCloud Documents path (no `is_dir`
+            //      check). Backstop for legacy markers from the first
+            //      Chunk 6 build that wrote an empty marker.
+            //   3. Local dir as a last resort, with a loud log line.
+            //      The user is offline AND on a non-macOS platform
+            //      AND has a legacy empty marker — vanishingly rare,
+            //      but we don't want to crash the app.
+            //
+            // Pre-migration and non-iCloud users get data_dir = local.
             let data_dir = if sync::migration::is_migration_complete(&local_dir) {
-                ubiquity_dir.clone().unwrap_or_else(|| local_dir.clone())
+                sync::migration::recorded_data_dir(&local_dir)
+                    .or_else(icloud::icloud_data_dir_deterministic)
+                    .unwrap_or_else(|| {
+                        eprintln!(
+                            "sync: migration is complete but no stable data_dir is \
+                             available; falling back to local. Newly-imported binaries \
+                             may not be visible to peers."
+                        );
+                        local_dir.clone()
+                    })
             } else {
                 local_dir.clone()
             };

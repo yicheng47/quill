@@ -83,6 +83,38 @@ pub fn is_migration_complete(local_dir: &Path) -> bool {
     migration_complete_path(local_dir).exists()
 }
 
+/// Read the data_dir path that was active at migration time. Returns
+/// `Some(path)` when the marker file holds a non-empty path string,
+/// `None` for legacy markers (empty file from earlier Chunk 6 builds)
+/// or when the marker is missing. Callers that need a stable
+/// post-migration path must combine this with a deterministic
+/// fallback (`icloud::icloud_data_dir_deterministic`) so the result
+/// doesn't flip launch-to-launch when iCloud is temporarily down.
+pub fn recorded_data_dir(local_dir: &Path) -> Option<PathBuf> {
+    let bytes = fs::read(migration_complete_path(local_dir)).ok()?;
+    let s = String::from_utf8(bytes).ok()?;
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(PathBuf::from(trimmed))
+}
+
+/// Persist the marker with the absolute path of the binaries directory
+/// so future launches resolve `books/`, `covers/` against the same
+/// location regardless of whether iCloud is currently reachable. Empty
+/// `data_dir` (passed when there was no legacy DB to migrate) writes
+/// an empty marker — the launch-flow chain will fall back to the
+/// deterministic iCloud path for that case.
+fn write_marker(local_dir: &Path, data_dir: Option<&Path>) -> AppResult<()> {
+    let bytes: Vec<u8> = match data_dir {
+        Some(p) => p.to_string_lossy().into_owned().into_bytes(),
+        None => Vec::new(),
+    };
+    fs::write(migration_complete_path(local_dir), bytes)?;
+    Ok(())
+}
+
 /// Migrate from legacy file-sync to per-device event log.
 ///
 /// `local_dir` is the always-local app data directory (`<app_data>` in
@@ -155,8 +187,11 @@ pub fn run_migration(
             outcome.deferred_for_download = true;
             return Ok(outcome);
         }
+        // No legacy data to migrate. Mark complete with no recorded
+        // path so the launch flow falls back to the deterministic
+        // iCloud path (or local on non-macOS).
         fs::create_dir_all(local_dir)?;
-        fs::write(migration_complete_path(local_dir), b"")?;
+        write_marker(local_dir, None)?;
         return Ok(outcome);
     }
     if !local_db.exists() {
@@ -198,7 +233,13 @@ pub fn run_migration(
     // 5. Mark complete BEFORE retiring the ubiquity DB. If retire fails
     //    we still want the next launch to skip the migration body and
     //    just retry retire (the self-healing arm above).
-    fs::write(migration_complete_path(local_dir), b"")?;
+    //
+    //    The marker stores the absolute ubiquity path so the launch
+    //    flow always resolves blob paths against the same dir, even if
+    //    iCloud is offline at next launch (path resolution is decoupled
+    //    from path availability — IO will fail visibly instead of
+    //    silently flipping data_dir).
+    write_marker(local_dir, Some(ubiquity_dir))?;
 
     // 6. Retire ubiquity quill.db*.
     let report = retire_ubiquity_db_with_report(ubiquity_dir)?;
@@ -385,8 +426,15 @@ mod tests {
             .join(format!("{dev}.jsonl"))
             .exists());
 
-        // Marker.
+        // Marker present AND records the ubiquity path so the next
+        // launch resolves binaries against the same directory even if
+        // iCloud is offline at boot.
         assert!(is_migration_complete(local.path()));
+        assert_eq!(
+            recorded_data_dir(local.path()).as_deref(),
+            Some(ubiquity.path()),
+            "marker must record the absolute ubiquity path for stable resolution"
+        );
 
         // Ubiquity DB retired (renamed, not in place).
         assert!(!ubiquity.path().join("quill.db").exists());
@@ -433,6 +481,34 @@ mod tests {
         assert!(!outcome.copied_db);
         assert!(!outcome.deferred_for_download);
         assert!(is_migration_complete(local.path()));
+    }
+
+    /// Regression for the data_dir-stability follow-up on PR #192.
+    /// Markers from the first Chunk 6 build are empty files; loading
+    /// them must NOT spuriously return `Some(<empty path>)`. Returning
+    /// `None` lets the launch flow fall back to the deterministic
+    /// iCloud path instead of resolving against `""`.
+    #[test]
+    fn recorded_data_dir_is_none_for_legacy_empty_marker() {
+        let local = TempDir::new().unwrap();
+        // Simulate the legacy marker: empty file at .migration_complete.
+        fs::write(migration_complete_path(local.path()), b"").unwrap();
+        assert!(is_migration_complete(local.path()));
+        assert_eq!(recorded_data_dir(local.path()), None);
+    }
+
+    /// Round-trip: the path written by `write_marker` is what
+    /// `recorded_data_dir` reads back. This is the contract the launch
+    /// flow relies on for stable post-migration data_dir resolution.
+    #[test]
+    fn recorded_data_dir_round_trips_through_marker() {
+        let local = TempDir::new().unwrap();
+        let data_dir = std::path::Path::new("/tmp/some/icloud/path");
+        write_marker(local.path(), Some(data_dir)).unwrap();
+        assert_eq!(
+            recorded_data_dir(local.path()).as_deref(),
+            Some(data_dir),
+        );
     }
 
     /// Regression for review finding #2: a `.quill.db.icloud` placeholder
