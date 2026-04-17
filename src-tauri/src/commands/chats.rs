@@ -5,6 +5,8 @@ use uuid::Uuid;
 
 use crate::db::Db;
 use crate::error::{AppError, AppResult};
+use crate::sync::events::{ChatMessagePayload, EventBody};
+use crate::sync::writer::SyncWriter;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Chat {
@@ -87,23 +89,18 @@ pub fn create_chat(
     title: Option<String>,
     model: Option<String>,
     db: State<'_, Db>,
+    sync: State<'_, SyncWriter>,
 ) -> AppResult<Chat> {
-    let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
     let id = Uuid::new_v4().to_string();
     let now = chrono::Utc::now().timestamp_millis();
     let title = title.unwrap_or_else(|| "New chat".to_string());
+    let device = sync.self_device().to_string();
 
-    conn.execute(
-        "INSERT INTO chats (id, book_id, title, model, pinned, metadata, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, 0, NULL, ?5, ?5)",
-        params![id, book_id, title, model, now],
-    )?;
-
-    Ok(Chat {
-        id,
-        book_id,
-        title,
-        model,
+    let chat = Chat {
+        id: id.clone(),
+        book_id: book_id.clone(),
+        title: title.clone(),
+        model: model.clone(),
         pinned: false,
         metadata: None,
         created_at: now,
@@ -111,7 +108,24 @@ pub fn create_chat(
         book_title: None,
         message_count: None,
         last_message: None,
-    })
+    };
+
+    sync.with_tx(&db, |tx, events| {
+        tx.execute(
+            "INSERT INTO chats (id, book_id, title, model, pinned, metadata, created_at, updated_at, updated_by_device)
+             VALUES (?1, ?2, ?3, ?4, 0, NULL, ?5, ?5, ?6)",
+            params![id, book_id, title, model, now, device],
+        )?;
+        events.push(EventBody::ChatCreate {
+            id: id.clone(),
+            book: book_id.clone(),
+            title: title.clone(),
+            model: model.clone(),
+        });
+        Ok(())
+    })?;
+
+    Ok(chat)
 }
 
 #[tauri::command]
@@ -158,27 +172,44 @@ pub fn get_chat(chat_id: String, db: State<'_, Db>) -> AppResult<Chat> {
 }
 
 #[tauri::command]
-pub fn delete_chat(chat_id: String, db: State<'_, Db>) -> AppResult<()> {
-    let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
-    let tx = conn.unchecked_transaction()?;
-    tx.execute(
-        "DELETE FROM chat_messages WHERE chat_id = ?1",
-        params![chat_id],
-    )?;
-    tx.execute("DELETE FROM chats WHERE id = ?1", params![chat_id])?;
-    tx.commit()?;
-    Ok(())
+pub fn delete_chat(
+    chat_id: String,
+    db: State<'_, Db>,
+    sync: State<'_, SyncWriter>,
+) -> AppResult<()> {
+    sync.with_tx(&db, |tx, events| {
+        tx.execute(
+            "DELETE FROM chat_messages WHERE chat_id = ?1",
+            params![chat_id],
+        )?;
+        tx.execute("DELETE FROM chats WHERE id = ?1", params![chat_id])?;
+        events.push(EventBody::ChatDelete {
+            id: chat_id.clone(),
+        });
+        Ok(())
+    })
 }
 
 #[tauri::command]
-pub fn rename_chat(chat_id: String, title: String, db: State<'_, Db>) -> AppResult<()> {
-    let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
+pub fn rename_chat(
+    chat_id: String,
+    title: String,
+    db: State<'_, Db>,
+    sync: State<'_, SyncWriter>,
+) -> AppResult<()> {
     let now = chrono::Utc::now().timestamp_millis();
-    conn.execute(
-        "UPDATE chats SET title = ?1, updated_at = ?2 WHERE id = ?3",
-        params![title, now, chat_id],
-    )?;
-    Ok(())
+    let device = sync.self_device().to_string();
+    sync.with_tx(&db, |tx, events| {
+        tx.execute(
+            "UPDATE chats SET title = ?1, updated_at = ?2, updated_by_device = ?3 WHERE id = ?4",
+            params![title, now, device, chat_id],
+        )?;
+        events.push(EventBody::ChatRename {
+            id: chat_id.clone(),
+            title: title.clone(),
+        });
+        Ok(())
+    })
 }
 
 #[tauri::command]
@@ -203,33 +234,50 @@ pub fn save_chat_message(
     context: Option<String>,
     metadata: Option<String>,
     db: State<'_, Db>,
+    sync: State<'_, SyncWriter>,
 ) -> AppResult<ChatMsg> {
-    let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
     let id = Uuid::new_v4().to_string();
     let now = chrono::Utc::now().timestamp_millis();
+    let device = sync.self_device().to_string();
 
-    let tx = conn.unchecked_transaction()?;
-    tx.execute(
-        "INSERT INTO chat_messages (id, chat_id, role, content, context, metadata, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
-        params![id, chat_id, role, content, context, metadata, now],
-    )?;
-    tx.execute(
-        "UPDATE chats SET updated_at = ?1 WHERE id = ?2",
-        params![now, chat_id],
-    )?;
-    tx.commit()?;
-
-    Ok(ChatMsg {
-        id,
-        chat_id,
-        role,
-        content,
-        context,
-        metadata,
+    let msg = ChatMsg {
+        id: id.clone(),
+        chat_id: chat_id.clone(),
+        role: role.clone(),
+        content: content.clone(),
+        context: context.clone(),
+        metadata: metadata.clone(),
         created_at: now,
         updated_at: now,
-    })
+    };
+
+    sync.with_tx(&db, |tx, events| {
+        tx.execute(
+            "INSERT INTO chat_messages (id, chat_id, role, content, context, metadata, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
+            params![id, chat_id, role, content, context, metadata, now],
+        )?;
+        // Bump the parent chat's updated_at — same pattern the merge engine
+        // uses on `chat.message.add` (LWW guard avoids dragging chats
+        // backward when older peer messages replay).
+        tx.execute(
+            "UPDATE chats SET updated_at = ?1, updated_by_device = ?2
+             WHERE id = ?3
+               AND (updated_at < ?1 OR (updated_at = ?1 AND updated_by_device < ?2))",
+            params![now, device, chat_id],
+        )?;
+        events.push(EventBody::ChatMessageAdd(ChatMessagePayload {
+            id: id.clone(),
+            chat_id: chat_id.clone(),
+            role: role.clone(),
+            content: content.clone(),
+            context: context.clone(),
+            metadata: metadata.clone(),
+        }));
+        Ok(())
+    })?;
+
+    Ok(msg)
 }
 
 #[cfg(test)]

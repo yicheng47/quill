@@ -7,6 +7,8 @@ use crate::db::Db;
 use crate::epub;
 use crate::error::{AppError, AppResult};
 use crate::icloud;
+use crate::sync::events::{BookImportPayload, EventBody};
+use crate::sync::writer::SyncWriter;
 
 /// Sanitize a book title into a safe filename slug.
 /// Keeps alphanumeric, spaces (→ hyphens), and common punctuation, then truncates.
@@ -85,7 +87,11 @@ fn resolve_book_paths(book: &mut Book, db: &Db) {
 }
 
 #[tauri::command]
-pub async fn import_book(file_path: String, db: State<'_, Db>) -> AppResult<Book> {
+pub async fn import_book(
+    file_path: String,
+    db: State<'_, Db>,
+    sync: State<'_, SyncWriter>,
+) -> AppResult<Book> {
     let data_dir = db
         .data_dir
         .lock()
@@ -129,27 +135,42 @@ pub async fn import_book(file_path: String, db: State<'_, Db>) -> AppResult<Book
         available: true,
     };
 
-    let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
-    conn.execute(
-        "INSERT INTO books (id, title, author, description, cover_path, file_path, format, genre, pages, status, progress, current_cfi, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
-        params![
-            book.id,
-            book.title,
-            book.author,
-            book.description,
-            book.cover_path,
-            book.file_path,
-            book.format,
-            book.genre,
-            book.pages,
-            book.status,
-            book.progress,
-            book.current_cfi,
-            book.created_at,
-            book.updated_at,
-        ],
-    )?;
+    let device = sync.self_device().to_string();
+    sync.with_tx(&db, |tx, events| {
+        tx.execute(
+            "INSERT INTO books (id, title, author, description, cover_path, file_path, format, genre, pages, status, progress, current_cfi, created_at, updated_at, updated_by_device)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+            params![
+                book.id,
+                book.title,
+                book.author,
+                book.description,
+                book.cover_path,
+                book.file_path,
+                book.format,
+                book.genre,
+                book.pages,
+                book.status,
+                book.progress,
+                book.current_cfi,
+                book.created_at,
+                book.updated_at,
+                device,
+            ],
+        )?;
+        events.push(EventBody::BookImport(BookImportPayload {
+            id: book.id.clone(),
+            title: book.title.clone(),
+            author: book.author.clone(),
+            description: book.description.clone(),
+            cover_path: book.cover_path.clone(),
+            file_path: book.file_path.clone(),
+            format: book.format.clone(),
+            genre: book.genre.clone(),
+            pages: book.pages,
+        }));
+        Ok(())
+    })?;
 
     // Return book with absolute paths for the frontend
     let mut result = book;
@@ -284,25 +305,34 @@ pub fn check_book_available(id: String, db: State<'_, Db>) -> AppResult<bool> {
 }
 
 #[tauri::command]
-pub fn delete_book(id: String, db: State<'_, Db>) -> AppResult<()> {
-    let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
+pub fn delete_book(
+    id: String,
+    db: State<'_, Db>,
+    sync: State<'_, SyncWriter>,
+) -> AppResult<()> {
+    // Get file paths before deleting (stored as relative). Read outside the
+    // sync transaction so we hold the conn lock for the shortest time.
+    let (file_path, cover_path): (String, Option<String>) = {
+        let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
+        conn.query_row(
+            "SELECT file_path, cover_path FROM books WHERE id = ?1",
+            params![id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?
+    };
 
-    // Get file paths before deleting (stored as relative)
-    let (file_path, cover_path): (String, Option<String>) = conn.query_row(
-        "SELECT file_path, cover_path FROM books WHERE id = ?1",
-        params![id],
-        |row| Ok((row.get(0)?, row.get(1)?)),
-    )?;
-
-    // Clean up chats, messages, and the book in a transaction
-    let tx = conn.unchecked_transaction()?;
-    tx.execute(
-        "DELETE FROM chat_messages WHERE chat_id IN (SELECT id FROM chats WHERE book_id = ?1)",
-        params![id],
-    )?;
-    tx.execute("DELETE FROM chats WHERE book_id = ?1", params![id])?;
-    tx.execute("DELETE FROM books WHERE id = ?1", params![id])?;
-    tx.commit()?;
+    sync.with_tx(&db, |tx, events| {
+        // Mirror the merge engine's `cascade_delete_book`: replay runs with
+        // FK off so the same cascade has to be expressed in SQL here.
+        tx.execute(
+            "DELETE FROM chat_messages WHERE chat_id IN (SELECT id FROM chats WHERE book_id = ?1)",
+            params![id],
+        )?;
+        tx.execute("DELETE FROM chats WHERE book_id = ?1", params![id])?;
+        tx.execute("DELETE FROM books WHERE id = ?1", params![id])?;
+        events.push(EventBody::BookDelete { id: id.clone() });
+        Ok(())
+    })?;
 
     // Resolve to absolute for file deletion
     let abs_file = db.resolve_path(&file_path);
@@ -321,20 +351,28 @@ pub fn update_reading_progress(
     progress: i32,
     cfi: Option<String>,
     db: State<'_, Db>,
+    sync: State<'_, SyncWriter>,
 ) -> AppResult<()> {
-    let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
     let now = chrono::Utc::now().timestamp_millis();
-
-    conn.execute(
-        "UPDATE books SET progress = ?1, current_cfi = ?2, updated_at = ?3 WHERE id = ?4",
-        params![progress, cfi, now, id],
-    )?;
-
-    Ok(())
+    let device = sync.self_device().to_string();
+    sync.with_tx(&db, |tx, events| {
+        tx.execute(
+            "UPDATE books SET progress = ?1, current_cfi = ?2, updated_at = ?3, updated_by_device = ?4 WHERE id = ?5",
+            params![progress, cfi, now, device, id],
+        )?;
+        events.push(EventBody::BookProgressSet {
+            book: id.clone(),
+            progress,
+            cfi: cfi.clone(),
+        });
+        Ok(())
+    })
 }
 
 #[tauri::command]
 pub fn update_book_pages(id: String, pages: i32, db: State<'_, Db>) -> AppResult<()> {
+    // Local-only — `pages` is derived from the book file on this device and
+    // not part of the sync contract. Plain DB write, no SyncWriter.
     let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
     conn.execute(
         "UPDATE books SET pages = ?1 WHERE id = ?2",
@@ -344,29 +382,54 @@ pub fn update_book_pages(id: String, pages: i32, db: State<'_, Db>) -> AppResult
 }
 
 #[tauri::command]
-pub fn mark_finished(id: String, db: State<'_, Db>) -> AppResult<()> {
-    let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
+pub fn mark_finished(
+    id: String,
+    db: State<'_, Db>,
+    sync: State<'_, SyncWriter>,
+) -> AppResult<()> {
     let now = chrono::Utc::now().timestamp_millis();
-
-    conn.execute(
-        "UPDATE books SET status = 'finished', progress = 100, updated_at = ?1 WHERE id = ?2",
-        params![now, id],
-    )?;
-
-    Ok(())
+    let device = sync.self_device().to_string();
+    sync.with_tx(&db, |tx, events| {
+        tx.execute(
+            "UPDATE books SET status = 'finished', progress = 100, updated_at = ?1, updated_by_device = ?2 WHERE id = ?3",
+            params![now, device, id],
+        )?;
+        // Mark-finished is two LWW columns moving in lockstep; the merge
+        // engine has no `book.finished` event, so we publish the same pair
+        // of events the user could have produced manually.
+        events.push(EventBody::BookStatusSet {
+            book: id.clone(),
+            status: "finished".into(),
+        });
+        events.push(EventBody::BookProgressSet {
+            book: id.clone(),
+            progress: 100,
+            cfi: None,
+        });
+        Ok(())
+    })
 }
 
 #[tauri::command]
-pub fn update_book_status(id: String, status: String, db: State<'_, Db>) -> AppResult<()> {
-    let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
+pub fn update_book_status(
+    id: String,
+    status: String,
+    db: State<'_, Db>,
+    sync: State<'_, SyncWriter>,
+) -> AppResult<()> {
     let now = chrono::Utc::now().timestamp_millis();
-
-    conn.execute(
-        "UPDATE books SET status = ?1, updated_at = ?2 WHERE id = ?3",
-        params![status, now, id],
-    )?;
-
-    Ok(())
+    let device = sync.self_device().to_string();
+    sync.with_tx(&db, |tx, events| {
+        tx.execute(
+            "UPDATE books SET status = ?1, updated_at = ?2, updated_by_device = ?3 WHERE id = ?4",
+            params![status, now, device, id],
+        )?;
+        events.push(EventBody::BookStatusSet {
+            book: id.clone(),
+            status: status.clone(),
+        });
+        Ok(())
+    })
 }
 
 #[tauri::command]
@@ -375,16 +438,30 @@ pub fn update_book_metadata(
     title: String,
     author: String,
     db: State<'_, Db>,
+    sync: State<'_, SyncWriter>,
 ) -> AppResult<()> {
-    let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
     let now = chrono::Utc::now().timestamp_millis();
-
-    conn.execute(
-        "UPDATE books SET title = ?1, author = ?2, updated_at = ?3 WHERE id = ?4",
-        params![title, author, now, id],
-    )?;
-
-    Ok(())
+    let device = sync.self_device().to_string();
+    sync.with_tx(&db, |tx, events| {
+        tx.execute(
+            "UPDATE books SET title = ?1, author = ?2, updated_at = ?3, updated_by_device = ?4 WHERE id = ?5",
+            params![title, author, now, device, id],
+        )?;
+        // Spec: one event per field changed. The merge engine's
+        // `apply_book_metadata` uses `<=` rather than `<` on the device
+        // tuple so two events sharing this `(now, device)` both apply.
+        events.push(EventBody::BookMetadataSet {
+            book: id.clone(),
+            field: "title".into(),
+            value: serde_json::Value::String(title.clone()),
+        });
+        events.push(EventBody::BookMetadataSet {
+            book: id.clone(),
+            field: "author".into(),
+            value: serde_json::Value::String(author.clone()),
+        });
+        Ok(())
+    })
 }
 
 #[derive(Debug, Serialize)]
@@ -422,6 +499,12 @@ pub async fn stage_pdf_import(source_path: String, db: State<'_, Db>) -> AppResu
 /// Step 2 of PDF import: rename the staged file to a slugged name, write the
 /// cover, and insert the DB row. Caller must have first called
 /// `stage_pdf_import` to obtain `book_id`.
+//
+// Tauri commands need an argument per UI-supplied field plus state handles,
+// so the count creeps over clippy's seven-arg threshold. Bundling into a
+// struct would force the frontend to wrap every call site for no
+// readability gain — the field names are already explicit at the call.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn commit_pdf_import(
     book_id: String,
@@ -431,6 +514,7 @@ pub async fn commit_pdf_import(
     pages: i32,
     cover_data: Option<Vec<u8>>,
     db: State<'_, Db>,
+    sync: State<'_, SyncWriter>,
 ) -> AppResult<Book> {
     let data_dir = db
         .data_dir
@@ -486,27 +570,42 @@ pub async fn commit_pdf_import(
         available: true,
     };
 
-    let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
-    conn.execute(
-        "INSERT INTO books (id, title, author, description, cover_path, file_path, format, genre, pages, status, progress, current_cfi, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
-        params![
-            book.id,
-            book.title,
-            book.author,
-            book.description,
-            book.cover_path,
-            book.file_path,
-            book.format,
-            book.genre,
-            book.pages,
-            book.status,
-            book.progress,
-            book.current_cfi,
-            book.created_at,
-            book.updated_at,
-        ],
-    )?;
+    let device = sync.self_device().to_string();
+    sync.with_tx(&db, |tx, events| {
+        tx.execute(
+            "INSERT INTO books (id, title, author, description, cover_path, file_path, format, genre, pages, status, progress, current_cfi, created_at, updated_at, updated_by_device)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+            params![
+                book.id,
+                book.title,
+                book.author,
+                book.description,
+                book.cover_path,
+                book.file_path,
+                book.format,
+                book.genre,
+                book.pages,
+                book.status,
+                book.progress,
+                book.current_cfi,
+                book.created_at,
+                book.updated_at,
+                device,
+            ],
+        )?;
+        events.push(EventBody::BookImport(BookImportPayload {
+            id: book.id.clone(),
+            title: book.title.clone(),
+            author: book.author.clone(),
+            description: book.description.clone(),
+            cover_path: book.cover_path.clone(),
+            file_path: book.file_path.clone(),
+            format: book.format.clone(),
+            genre: book.genre.clone(),
+            pages: book.pages,
+        }));
+        Ok(())
+    })?;
 
     let mut result = book;
     resolve_book_paths(&mut result, &db);
@@ -682,9 +781,13 @@ mod tests {
         let conn = db.conn.lock().unwrap();
         let now = chrono::Utc::now().timestamp_millis();
 
-        // Simulate import_pdf with author = None
-        let author: Option<String> = None;
-        let resolved_author = author.unwrap_or_else(|| "Unknown Author".to_string());
+        // Simulate import_pdf with author = None — exercise the same fallback
+        // expression the command uses without literally writing
+        // `None.unwrap_or_else(...)`, which clippy now flags.
+        fn resolve(author: Option<String>) -> String {
+            author.unwrap_or_else(|| "Unknown Author".to_string())
+        }
+        let resolved_author = resolve(None);
 
         conn.execute(
             "INSERT INTO books (id, title, author, file_path, format, status, progress, created_at, updated_at)

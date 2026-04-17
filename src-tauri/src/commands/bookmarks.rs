@@ -4,6 +4,8 @@ use tauri::State;
 
 use crate::db::Db;
 use crate::error::{AppError, AppResult};
+use crate::sync::events::{BookmarkPayload, EventBody, HighlightPayload};
+use crate::sync::writer::SyncWriter;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Bookmark {
@@ -33,31 +35,48 @@ pub fn add_bookmark(
     cfi: String,
     label: Option<String>,
     db: State<'_, Db>,
+    sync: State<'_, SyncWriter>,
 ) -> AppResult<Bookmark> {
-    let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
     let id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().timestamp_millis();
 
-    conn.execute(
-        "INSERT INTO bookmarks (id, book_id, cfi, label, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
-        params![id, book_id, cfi, label, now],
-    )?;
-
-    Ok(Bookmark {
-        id,
-        book_id,
-        cfi,
-        label,
+    let bookmark = Bookmark {
+        id: id.clone(),
+        book_id: book_id.clone(),
+        cfi: cfi.clone(),
+        label: label.clone(),
         created_at: now,
         updated_at: now,
-    })
+    };
+
+    sync.with_tx(&db, |tx, events| {
+        tx.execute(
+            "INSERT INTO bookmarks (id, book_id, cfi, label, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
+            params![id, book_id, cfi, label, now],
+        )?;
+        events.push(EventBody::BookmarkAdd(BookmarkPayload {
+            id: id.clone(),
+            book_id: book_id.clone(),
+            cfi: cfi.clone(),
+            label: label.clone(),
+        }));
+        Ok(())
+    })?;
+
+    Ok(bookmark)
 }
 
 #[tauri::command]
-pub fn remove_bookmark(id: String, db: State<'_, Db>) -> AppResult<()> {
-    let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
-    conn.execute("DELETE FROM bookmarks WHERE id = ?1", params![id])?;
-    Ok(())
+pub fn remove_bookmark(
+    id: String,
+    db: State<'_, Db>,
+    sync: State<'_, SyncWriter>,
+) -> AppResult<()> {
+    sync.with_tx(&db, |tx, events| {
+        tx.execute("DELETE FROM bookmarks WHERE id = ?1", params![id])?;
+        events.push(EventBody::BookmarkDelete { id: id.clone() });
+        Ok(())
+    })
 }
 
 #[tauri::command]
@@ -89,34 +108,55 @@ pub fn add_highlight(
     note: Option<String>,
     text_content: Option<String>,
     db: State<'_, Db>,
+    sync: State<'_, SyncWriter>,
 ) -> AppResult<Highlight> {
-    let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
     let id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().timestamp_millis();
     let color = color.unwrap_or_else(|| "yellow".to_string());
 
-    conn.execute(
-        "INSERT INTO highlights (id, book_id, cfi_range, color, note, text_content, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
-        params![id, book_id, cfi_range, color, note, text_content, now],
-    )?;
-
-    Ok(Highlight {
-        id,
-        book_id,
-        cfi_range,
-        color,
-        note,
-        text_content,
+    let highlight = Highlight {
+        id: id.clone(),
+        book_id: book_id.clone(),
+        cfi_range: cfi_range.clone(),
+        color: color.clone(),
+        note: note.clone(),
+        text_content: text_content.clone(),
         created_at: now,
         updated_at: now,
-    })
+    };
+
+    let device = sync.self_device().to_string();
+    sync.with_tx(&db, |tx, events| {
+        tx.execute(
+            "INSERT INTO highlights (id, book_id, cfi_range, color, note, text_content, created_at, updated_at, updated_by_device)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7, ?8)",
+            params![id, book_id, cfi_range, color, note, text_content, now, device],
+        )?;
+        events.push(EventBody::HighlightAdd(HighlightPayload {
+            id: id.clone(),
+            book_id: book_id.clone(),
+            cfi_range: cfi_range.clone(),
+            color: color.clone(),
+            note: note.clone(),
+            text_content: text_content.clone(),
+        }));
+        Ok(())
+    })?;
+
+    Ok(highlight)
 }
 
 #[tauri::command]
-pub fn remove_highlight(id: String, db: State<'_, Db>) -> AppResult<()> {
-    let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
-    conn.execute("DELETE FROM highlights WHERE id = ?1", params![id])?;
-    Ok(())
+pub fn remove_highlight(
+    id: String,
+    db: State<'_, Db>,
+    sync: State<'_, SyncWriter>,
+) -> AppResult<()> {
+    sync.with_tx(&db, |tx, events| {
+        tx.execute("DELETE FROM highlights WHERE id = ?1", params![id])?;
+        events.push(EventBody::HighlightDelete { id: id.clone() });
+        Ok(())
+    })
 }
 
 #[tauri::command]
@@ -143,23 +183,45 @@ pub fn list_highlights(book_id: String, db: State<'_, Db>) -> AppResult<Vec<High
 }
 
 #[tauri::command]
-pub fn update_highlight_note(id: String, note: String, db: State<'_, Db>) -> AppResult<()> {
-    let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
+pub fn update_highlight_note(
+    id: String,
+    note: String,
+    db: State<'_, Db>,
+    sync: State<'_, SyncWriter>,
+) -> AppResult<()> {
     let now = chrono::Utc::now().timestamp_millis();
-    conn.execute(
-        "UPDATE highlights SET note = ?1, updated_at = ?2 WHERE id = ?3",
-        params![note, now, id],
-    )?;
-    Ok(())
+    let device = sync.self_device().to_string();
+    sync.with_tx(&db, |tx, events| {
+        tx.execute(
+            "UPDATE highlights SET note = ?1, updated_at = ?2, updated_by_device = ?3 WHERE id = ?4",
+            params![note, now, device, id],
+        )?;
+        events.push(EventBody::HighlightNoteSet {
+            id: id.clone(),
+            note: Some(note.clone()),
+        });
+        Ok(())
+    })
 }
 
 #[tauri::command]
-pub fn update_highlight_color(id: String, color: String, db: State<'_, Db>) -> AppResult<()> {
-    let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
+pub fn update_highlight_color(
+    id: String,
+    color: String,
+    db: State<'_, Db>,
+    sync: State<'_, SyncWriter>,
+) -> AppResult<()> {
     let now = chrono::Utc::now().timestamp_millis();
-    conn.execute(
-        "UPDATE highlights SET color = ?1, updated_at = ?2 WHERE id = ?3",
-        params![color, now, id],
-    )?;
-    Ok(())
+    let device = sync.self_device().to_string();
+    sync.with_tx(&db, |tx, events| {
+        tx.execute(
+            "UPDATE highlights SET color = ?1, updated_at = ?2, updated_by_device = ?3 WHERE id = ?4",
+            params![color, now, device, id],
+        )?;
+        events.push(EventBody::HighlightColorSet {
+            id: id.clone(),
+            color: color.clone(),
+        });
+        Ok(())
+    })
 }

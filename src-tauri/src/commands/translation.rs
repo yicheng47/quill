@@ -5,6 +5,8 @@ use crate::commands::ai::{AiStreamChunk, ChatMessage};
 use crate::db::Db;
 use crate::error::{AppError, AppResult};
 use crate::secrets::Secrets;
+use crate::sync::events::{EventBody, TranslationPayload};
+use crate::sync::writer::SyncWriter;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Translation {
@@ -164,25 +166,43 @@ pub fn save_translation(
     target_language: String,
     cfi: Option<String>,
     db: State<'_, Db>,
+    sync: State<'_, SyncWriter>,
 ) -> AppResult<String> {
-    let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
     let id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().timestamp_millis();
-    conn.execute(
-        "INSERT INTO translations (id, book_id, source_text, translated_text, target_language, cfi, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
-        rusqlite::params![id, book_id, source_text, translated_text, target_language, cfi, now],
-    )?;
-    Ok(id)
+    let id_for_return = id.clone();
+    sync.with_tx(&db, |tx, events| {
+        tx.execute(
+            "INSERT INTO translations (id, book_id, source_text, translated_text, target_language, cfi, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
+            rusqlite::params![id, book_id, source_text, translated_text, target_language, cfi, now],
+        )?;
+        events.push(EventBody::TranslationAdd(TranslationPayload {
+            id: id.clone(),
+            book_id: book_id.clone(),
+            source_text: source_text.clone(),
+            translated_text: translated_text.clone(),
+            target_language: target_language.clone(),
+            cfi: cfi.clone(),
+        }));
+        Ok(())
+    })?;
+    Ok(id_for_return)
 }
 
 #[tauri::command]
-pub fn remove_saved_translation(id: String, db: State<'_, Db>) -> AppResult<()> {
-    let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
-    conn.execute(
-        "DELETE FROM translations WHERE id = ?1",
-        rusqlite::params![id],
-    )?;
-    Ok(())
+pub fn remove_saved_translation(
+    id: String,
+    db: State<'_, Db>,
+    sync: State<'_, SyncWriter>,
+) -> AppResult<()> {
+    sync.with_tx(&db, |tx, events| {
+        tx.execute(
+            "DELETE FROM translations WHERE id = ?1",
+            rusqlite::params![id],
+        )?;
+        events.push(EventBody::TranslationDelete { id: id.clone() });
+        Ok(())
+    })
 }
 
 #[tauri::command]
