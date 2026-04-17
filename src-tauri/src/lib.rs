@@ -213,11 +213,9 @@ pub fn run() {
             label,
             event: tauri::WindowEvent::Destroyed,
             ..
-        } => {
-            if label == "main" {
-                for (_, window) in app_handle.webview_windows() {
-                    let _ = window.close();
-                }
+        } if label == "main" => {
+            for (_, window) in app_handle.webview_windows() {
+                let _ = window.close();
             }
         }
         _ => {}
