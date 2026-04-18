@@ -65,6 +65,12 @@ export default function LibrarySyncSettings(_props: SettingsProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<"enable" | "disable" | null>(null);
+  // Tracks the toggle action that returned an error so the Retry
+  // button can re-invoke it. Without this, after a failed enable
+  // that committed the marker, the next toggle click would open the
+  // Disable flow (because `migration_complete` is now true), leaving
+  // the user with no UI path to finish the half-completed enable.
+  const [lastFailedAction, setLastFailedAction] = useState<"enable" | "disable" | null>(null);
   // Tick once a minute so "Last seen 2m ago" stays fresh while the modal
   // is open. Cheap; the component re-renders are bounded.
   const [now, setNow] = useState(Date.now());
@@ -93,10 +99,7 @@ export default function LibrarySyncSettings(_props: SettingsProps) {
     setConfirm(status.migration_complete ? "disable" : "enable");
   };
 
-  const onConfirmToggle = async () => {
-    const action = confirm;
-    setConfirm(null);
-    if (!action) return;
+  const runToggle = async (action: "enable" | "disable") => {
     setBusy(true);
     setError(null);
     try {
@@ -106,8 +109,10 @@ export default function LibrarySyncSettings(_props: SettingsProps) {
       } else {
         await Promise.all([invoke("sync_enable"), minDelay]);
       }
+      setLastFailedAction(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+      setLastFailedAction(action);
     } finally {
       // Always refresh — sync_enable's Phase 2 may have committed
       // the marker before erroring on the binary move, so a failed
@@ -116,6 +121,30 @@ export default function LibrarySyncSettings(_props: SettingsProps) {
       // user wouldn't see they can retry to finish the move.
       await refresh();
       setBusy(false);
+    }
+  };
+
+  const onConfirmToggle = async () => {
+    const action = confirm;
+    setConfirm(null);
+    if (!action) return;
+    await runToggle(action);
+  };
+
+  const onRetry = async () => {
+    if (lastFailedAction) {
+      // Re-invoke the operation that errored. `sync_enable` is
+      // idempotent — the early `engine_snapshot()` guard returns
+      // None after a failed move (engine wasn't stored), so we
+      // re-enter Phase 1, then Phase 2 skips the already-done
+      // small-file writes (idempotent) and retries the move.
+      // Same shape for `sync_disable`.
+      await runToggle(lastFailedAction);
+    } else {
+      // No tracked action — just clear the error and pull fresh
+      // status so the user can decide what to do next.
+      setError(null);
+      await refresh();
     }
   };
 
@@ -300,11 +329,9 @@ export default function LibrarySyncSettings(_props: SettingsProps) {
             </span>
             <button
               type="button"
-              className="text-[12px] font-medium text-[#e7000b] dark:text-red-400 underline cursor-pointer ml-2 shrink-0"
-              onClick={() => {
-                setError(null);
-                refresh();
-              }}
+              disabled={busy}
+              className="text-[12px] font-medium text-[#e7000b] dark:text-red-400 underline cursor-pointer ml-2 shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
+              onClick={onRetry}
             >
               {t("settings.ai.retry")}
             </button>
