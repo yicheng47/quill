@@ -222,10 +222,21 @@ pub fn run() {
 
             // Self-healing: if migration is complete, retire any ubiquity
             // DB files that crept back (a legacy build temporarily
-            // running on this iCloud account, file restore, etc.).
+            // running on this iCloud account, file restore, etc.) and
+            // reconcile any local binaries left over from a partial
+            // `sync_enable` move. The reconcile is a no-op for the
+            // common case (local/books empty post-enable); when a
+            // previous enable wrote the marker but failed mid-move,
+            // it drains the leftover files into iCloud so they're
+            // resolvable through the now-active data_dir.
             if sync::migration::is_migration_complete(&local_dir) {
                 if let Some(ub) = &ubiquity_dir {
                     let _ = sync::migration::retire_ubiquity_db(ub);
+                    if let Err(e) =
+                        sync::migration::reconcile_local_blobs_to_ubiquity(&local_dir, ub)
+                    {
+                        eprintln!("sync: blob reconcile failed (continuing): {e}");
+                    }
                 }
             }
 

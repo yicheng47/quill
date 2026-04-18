@@ -127,6 +127,69 @@ pub fn remove_marker(local_dir: &Path) -> AppResult<()> {
     }
 }
 
+/// Self-heal launch step: if a previous `sync_enable` left binaries
+/// stranded in `<local>/books` or `<local>/covers` (move failed
+/// mid-flight, marker + data_dir already committed), move them into
+/// the matching `<ubiquity>` subdir now so the app stops resolving
+/// blobs against an iCloud directory that doesn't have them.
+///
+/// Idempotent — empty source dirs (the common case post-enable) make
+/// the call a no-op. Placeholder-aware: a `<dst>/.<name>.icloud`
+/// stub means iCloud already has the file (just evicted), so we skip
+/// rather than move on top of the placeholder and lose the local
+/// real copy. Failures per-file are logged but don't abort the whole
+/// launch — the next reconcile pass picks up what's left.
+///
+/// Triggered from `lib.rs::setup` whenever `is_migration_complete &&
+/// ubiquity_dir.exists()`. Without it, a failed `sync_enable` whose
+/// marker write succeeded but whose binary move failed would strand
+/// books permanently — PR #190's sixth review pass caught the path.
+pub fn reconcile_local_blobs_to_ubiquity(
+    local_dir: &Path,
+    ubiquity_dir: &Path,
+) -> AppResult<()> {
+    for sub in ["books", "covers"] {
+        let src = local_dir.join(sub);
+        if !src.exists() {
+            continue;
+        }
+        let dst = ubiquity_dir.join(sub);
+        fs::create_dir_all(&dst)?;
+        for entry in fs::read_dir(&src)? {
+            let entry = entry?;
+            let target = dst.join(entry.file_name());
+            // Real file already at dst → skip.
+            if target.exists() {
+                continue;
+            }
+            // iCloud-evicted placeholder for the same logical file →
+            // skip (file logically present, just not downloaded).
+            // Same trick as `commands::sync::move_dir_contents`.
+            if let Some(name) = target.file_name().and_then(|n| n.to_str()) {
+                let placeholder = dst.join(format!(".{name}.icloud"));
+                if placeholder.exists() {
+                    continue;
+                }
+            }
+            // Try a same-fs rename first; fall back to copy + remove
+            // for cross-volume paths. Per-entry failures are logged
+            // and skipped so one bad file doesn't strand the rest.
+            if let Err(rename_err) = fs::rename(entry.path(), &target) {
+                match fs::copy(entry.path(), &target).and_then(|_| fs::remove_file(entry.path())) {
+                    Ok(()) => {}
+                    Err(copy_err) => {
+                        eprintln!(
+                            "sync: failed to reconcile {} to ubiquity: rename={rename_err}, copy={copy_err}",
+                            entry.path().display()
+                        );
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Resolve the iCloud Documents directory at launch time. `Some(path)`
 /// when the launch flow should treat this install as having iCloud
 /// sync "on" in some form (either legacy file-sync pending migration,
@@ -504,6 +567,90 @@ mod tests {
         // path, not the deterministic iCloud fallback.
         let resolved = resolve_ubiquity_dir(local.path(), true).unwrap();
         assert_eq!(resolved, recorded.path());
+    }
+
+    // -----------------------------------------------------------------
+    // reconcile_local_blobs_to_ubiquity — launch self-heal for failed
+    // `sync_enable` moves. Regression for PR #190's sixth review pass.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn reconcile_no_local_subdir_is_noop() {
+        let local = TempDir::new().unwrap();
+        let ub = TempDir::new().unwrap();
+        // Neither books/ nor covers/ exists in local.
+        reconcile_local_blobs_to_ubiquity(local.path(), ub.path()).unwrap();
+        // No iCloud writes either.
+        assert!(!ub.path().join("books").exists() || ub.path().join("books").read_dir().unwrap().next().is_none());
+    }
+
+    #[test]
+    fn reconcile_moves_leftover_local_books_into_ubiquity() {
+        let local = TempDir::new().unwrap();
+        let ub = TempDir::new().unwrap();
+        fs::create_dir_all(local.path().join("books")).unwrap();
+        fs::create_dir_all(ub.path().join("books")).unwrap();
+        fs::write(local.path().join("books/orphan.epub"), b"content").unwrap();
+
+        reconcile_local_blobs_to_ubiquity(local.path(), ub.path()).unwrap();
+
+        assert!(ub.path().join("books/orphan.epub").exists(), "moved to ubiquity");
+        assert!(!local.path().join("books/orphan.epub").exists(), "removed from local");
+    }
+
+    #[test]
+    fn reconcile_skips_when_target_already_present_in_ubiquity() {
+        let local = TempDir::new().unwrap();
+        let ub = TempDir::new().unwrap();
+        fs::create_dir_all(local.path().join("books")).unwrap();
+        fs::create_dir_all(ub.path().join("books")).unwrap();
+        fs::write(local.path().join("books/dup.epub"), b"local-version").unwrap();
+        fs::write(ub.path().join("books/dup.epub"), b"ubiquity-version").unwrap();
+
+        reconcile_local_blobs_to_ubiquity(local.path(), ub.path()).unwrap();
+
+        // ubiquity copy is the authoritative one; local is preserved
+        // (we don't delete what we didn't move).
+        assert_eq!(fs::read(ub.path().join("books/dup.epub")).unwrap(), b"ubiquity-version");
+        assert!(local.path().join("books/dup.epub").exists(), "untouched local stays");
+    }
+
+    #[test]
+    fn reconcile_skips_when_only_icloud_placeholder_at_target() {
+        let local = TempDir::new().unwrap();
+        let ub = TempDir::new().unwrap();
+        fs::create_dir_all(local.path().join("books")).unwrap();
+        fs::create_dir_all(ub.path().join("books")).unwrap();
+        fs::write(local.path().join("books/foo.epub"), b"local-real").unwrap();
+        // iCloud has only an evicted-placeholder stub for foo.epub.
+        fs::write(ub.path().join("books/.foo.epub.icloud"), b"stub").unwrap();
+
+        reconcile_local_blobs_to_ubiquity(local.path(), ub.path()).unwrap();
+
+        assert!(local.path().join("books/foo.epub").exists(),
+            "must NOT move on top of an iCloud placeholder — local keeps the real file");
+        assert!(!ub.path().join("books/foo.epub").exists(),
+            "ubiquity stays placeholder-only; iCloud daemon will materialise on demand");
+        assert!(ub.path().join("books/.foo.epub.icloud").exists(), "placeholder preserved");
+    }
+
+    #[test]
+    fn reconcile_handles_books_and_covers_independently() {
+        let local = TempDir::new().unwrap();
+        let ub = TempDir::new().unwrap();
+        fs::create_dir_all(local.path().join("books")).unwrap();
+        fs::create_dir_all(local.path().join("covers")).unwrap();
+        fs::create_dir_all(ub.path().join("books")).unwrap();
+        fs::create_dir_all(ub.path().join("covers")).unwrap();
+        fs::write(local.path().join("books/b.epub"), b"b").unwrap();
+        fs::write(local.path().join("covers/c.jpg"), b"c").unwrap();
+
+        reconcile_local_blobs_to_ubiquity(local.path(), ub.path()).unwrap();
+
+        assert!(ub.path().join("books/b.epub").exists());
+        assert!(ub.path().join("covers/c.jpg").exists());
+        assert!(!local.path().join("books/b.epub").exists());
+        assert!(!local.path().join("covers/c.jpg").exists());
     }
 
     #[test]
