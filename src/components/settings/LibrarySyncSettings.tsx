@@ -86,7 +86,11 @@ export default function LibrarySyncSettings(_props: SettingsProps) {
 
   const onToggleClick = () => {
     if (!status) return;
-    setConfirm(status.enabled ? "disable" : "enable");
+    // Action mirrors the rendered toggle, which reflects persisted
+    // intent (`migration_complete`) not runtime state (`enabled`).
+    // Using `enabled` here meant a queue-only/offline session showed
+    // the toggle as on but opened the Enable flow on click.
+    setConfirm(status.migration_complete ? "disable" : "enable");
   };
 
   const onConfirmToggle = async () => {

@@ -82,6 +82,7 @@ pub fn icloud_data_dir_fast() -> Option<PathBuf> {
 }
 
 #[cfg(not(target_os = "macos"))]
+#[allow(dead_code)] // parallels the macOS variant; only the macOS build actually calls it
 pub fn icloud_data_dir_fast() -> Option<PathBuf> {
     None
 }

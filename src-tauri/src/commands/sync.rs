@@ -34,6 +34,7 @@ use crate::sync::log::EventLog;
 use crate::sync::peers;
 use crate::sync::replay::{ReplayEngine, ReplayReport};
 use crate::sync::snapshot::{self, CompactReport, Snapshot};
+// `Snapshot` is referenced from the `publish_bootstrap_snapshot` helper.
 use crate::sync::watcher::{self, WatcherHandle};
 use crate::sync::writer::SyncWriter;
 use crate::{sync, LocalDir};
@@ -229,6 +230,13 @@ pub fn sync_enable(
         return Ok(());
     }
 
+    // ---- Phase 1: fallible preparation with no durable state writes ----
+    // Everything that can fail (iCloud discovery, snapshot generation,
+    // log open, watcher spawn) happens here FIRST so we never return an
+    // error after the user's disk has been told "sync is on". If any
+    // step below this line fails, the durable state is still "sync
+    // off" and the user can retry with a clean slate.
+
     let icloud_dir = icloud::icloud_data_dir()
         .ok_or_else(|| AppError::Other("iCloud is not available".into()))?;
     icloud::ensure_downloaded(&icloud_dir)?;
@@ -238,29 +246,43 @@ pub fn sync_enable(
     fs::create_dir_all(icloud_dir.join("books"))?;
     fs::create_dir_all(icloud_dir.join("covers"))?;
 
+    // Open the EventLog. `EventLog::open` touches the log file with
+    // `create(true).append(true)` — technically a mutation, but an
+    // empty log file is recoverable: nothing references it until we
+    // write the manifest, so an orphan empty jsonl is indistinguishable
+    // from "sync was never enabled." Still rolled back on failure below.
+    let log_path = icloud_dir
+        .join("logs")
+        .join(format!("{}.jsonl", device.device_uuid));
+    let log = Arc::new(EventLog::open(&log_path, &device.device_uuid, true)?);
+
+    let engine = Arc::new(ReplayEngine::new(
+        icloud_dir.clone(),
+        device.device_uuid.clone(),
+        Arc::clone(&log),
+    ));
+
+    // Watcher spawn is the most likely failure point — do it before
+    // any durable write. If it fails, we abort cleanly; the log file
+    // creation above is orphaned but harmless.
+    let watcher_handle =
+        watcher::spawn(icloud_dir.clone(), db.inner().clone(), Arc::clone(&engine))?;
+
+    // ---- Phase 2: durable-state commit ----
+    // From here on we're writing durable "sync is on" artifacts.
+    // Each step is idempotent; all failures past this point leave
+    // partially-consistent state that the next launch's boot path
+    // reconciles. We still surface errors so the user sees what went
+    // wrong.
+
     // First-time enable: move local binaries into the ubiquity container
     // so peers can read them. Re-enable after a disable just shuffles
     // whatever the user has imported in the meantime.
     move_dir_contents(&local.0.join("books"), &icloud_dir.join("books"))?;
     move_dir_contents(&local.0.join("covers"), &icloud_dir.join("covers"))?;
 
-    // Update db.data_dir so `Db::resolve_path` resolves new imports
-    // against the iCloud folder. The SQLite file itself stays local.
-    {
-        let mut data_dir = db
-            .data_dir
-            .lock()
-            .map_err(|e| AppError::Other(format!("data_dir mutex: {e}")))?;
-        *data_dir = icloud_dir.clone();
-    }
+    publish_bootstrap_snapshot(&db, &icloud_dir, &device.device_uuid)?;
 
-    // Stamp the migration-complete marker with the iCloud path so
-    // future launches resolve `data_dir` deterministically — same
-    // contract as the post-migration launch flow in lib.rs.
-    sync::migration::write_marker(&local.0, Some(&icloud_dir))?;
-
-    // Publish own peer manifest immediately so a second device looking
-    // at "Other devices" sees us before any tick has run.
     peers::write_own_manifest(
         &icloud_dir,
         &device.device_uuid,
@@ -270,27 +292,40 @@ pub fn sync_enable(
         chrono::Utc::now().timestamp_millis(),
     )?;
 
-    // Bootstrap-snapshot the existing local DB into peer-visible
-    // history. See `publish_bootstrap_snapshot` for the why; without
-    // it, a user enabling sync on a non-empty library gets their
-    // binaries copied to iCloud but no local rows reach peers.
-    publish_bootstrap_snapshot(&db, &icloud_dir, &device.device_uuid)?;
+    {
+        let mut data_dir = db
+            .data_dir
+            .lock()
+            .map_err(|e| AppError::Other(format!("data_dir mutex: {e}")))?;
+        *data_dir = icloud_dir.clone();
+    }
 
-    // Open the EventLog and wire it into the writer. Coordinator on
-    // (true) — this path lives inside the ubiquity container.
-    let log_path = icloud_dir
-        .join("logs")
-        .join(format!("{}.jsonl", device.device_uuid));
-    let log = Arc::new(EventLog::open(&log_path, &device.device_uuid, true)?);
+    sync::migration::write_marker(&local.0, Some(&icloud_dir))?;
+
+    // Wire the writer + store engine/watcher in state. These are
+    // in-memory only; infallible past the mutex-poisoning edge.
     sync_writer.set_should_queue(true);
     sync_writer.set_log(Some(Arc::clone(&log)));
 
-    // Boot the replay engine + an initial tick. Watcher follows.
-    let engine = Arc::new(ReplayEngine::new(
-        icloud_dir.clone(),
-        device.device_uuid.clone(),
-        log,
-    ));
+    {
+        let mut g = sync_state
+            .engine
+            .lock()
+            .map_err(|e| AppError::Other(format!("engine mutex: {e}")))?;
+        *g = Some(Arc::clone(&engine));
+    }
+    {
+        let mut g = sync_state
+            .watcher
+            .lock()
+            .map_err(|e| AppError::Other(format!("watcher mutex: {e}")))?;
+        *g = Some(watcher_handle);
+    }
+
+    // Fire an initial tick now that the engine is fully wired. Failure
+    // is non-fatal — the watcher will retry on the next event, and a
+    // fresh-enable session doesn't have leftover outbox rows or peer
+    // tails that would get stuck pending.
     {
         let mut conn = db
             .conn
@@ -299,35 +334,6 @@ pub fn sync_enable(
         if let Err(e) = engine.tick(&mut conn) {
             eprintln!("sync_enable: initial tick failed: {e}");
         }
-    }
-
-    // If watcher spawn fails, roll back the writer's log handle so
-    // this session falls into queue-only mode instead of publishing
-    // to a log with no engine or watcher behind it. The durable
-    // artifacts written above (marker, manifest, snapshot, moved
-    // binaries) stay — they're correct for "sync is on" and the next
-    // launch's `boot_sync_engine` will pick up where we left off.
-    let watcher_handle = match watcher::spawn(icloud_dir.clone(), db.inner().clone(), Arc::clone(&engine)) {
-        Ok(w) => w,
-        Err(e) => {
-            sync_writer.set_log(None);
-            return Err(e);
-        }
-    };
-
-    {
-        let mut g = sync_state
-            .engine
-            .lock()
-            .map_err(|e| AppError::Other(format!("engine mutex: {e}")))?;
-        *g = Some(engine);
-    }
-    {
-        let mut g = sync_state
-            .watcher
-            .lock()
-            .map_err(|e| AppError::Other(format!("watcher mutex: {e}")))?;
-        *g = Some(watcher_handle);
     }
 
     Ok(())
@@ -341,6 +347,27 @@ pub fn sync_disable(
     sync_writer: State<'_, SyncWriter>,
     sync_state: State<'_, SyncState>,
 ) -> AppResult<()> {
+    // ---- Phase 1: fallible binary copy-back with no state change ----
+    // If this fails (e.g. iCloud-evicted files, disk full), return an
+    // error without touching any session or marker state. The user
+    // sees "disable failed, please retry" and the system is still in
+    // the "sync on" state — matching reality. The previous shape tore
+    // down engine + writer first, so a mid-copy failure produced a
+    // session that thought sync was off while the marker stayed on,
+    // which then silently re-enabled on the next launch.
+
+    let ubiquity_dir = sync::migration::recorded_data_dir(&local.0)
+        .or_else(icloud::icloud_data_dir_deterministic);
+    if let Some(ub) = ubiquity_dir.as_ref() {
+        copy_dir_contents(&ub.join("books"), &local.0.join("books"))?;
+        copy_dir_contents(&ub.join("covers"), &local.0.join("covers"))?;
+    }
+
+    // ---- Phase 2: teardown + marker removal ----
+    // Every step from here is non-fatal or explicitly logged. The
+    // fallible copy-back above succeeded, so we're committed to
+    // turning sync off.
+
     // Drop the watcher first. Drop signals stop + joins the thread —
     // no further fs events will trigger ticks while we mutate state.
     {
@@ -367,19 +394,9 @@ pub fn sync_disable(
     sync_writer.set_log(None);
     sync_writer.set_should_queue(false);
 
-    // Copy binaries back to local so reads + future imports land in
-    // the right place. Skipped silently if iCloud isn't reachable —
-    // the user can manually move them later via Finder.
-    let ubiquity_dir = sync::migration::recorded_data_dir(&local.0)
-        .or_else(icloud::icloud_data_dir_deterministic);
-    if let Some(ub) = ubiquity_dir.as_ref() {
-        copy_dir_contents(&ub.join("books"), &local.0.join("books"))?;
-        copy_dir_contents(&ub.join("covers"), &local.0.join("covers"))?;
-    }
-
-    // Repoint data_dir at local. Has to happen after the binary copy,
-    // otherwise mid-flight reads would briefly resolve against an
-    // empty local dir.
+    // Repoint data_dir at local now that the binary copy-back has
+    // finished. Mid-flight reads during phase 1 still resolved
+    // against iCloud, which is correct (the files haven't moved yet).
     {
         let mut data_dir = db
             .data_dir

@@ -172,7 +172,7 @@ pub fn list_peers(shared_dir: &Path, own_uuid: &str) -> AppResult<Vec<Peer>> {
         out.push(peer);
     }
     // Stable ordering for the UI: most-recently-seen first.
-    out.sort_by(|a, b| b.last_seen.cmp(&a.last_seen));
+    out.sort_by_key(|p| std::cmp::Reverse(p.last_seen));
     Ok(out)
 }
 
