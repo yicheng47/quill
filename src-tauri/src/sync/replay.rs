@@ -35,6 +35,7 @@ use crate::error::{AppError, AppResult};
 use super::events::{Event, EventBody};
 use super::log::{self, EventLog};
 use super::merge;
+use super::peers;
 use super::snapshot::Snapshot;
 
 /// Process-wide lock so two callers don't run `tick` concurrently. The lock
@@ -99,6 +100,20 @@ impl ReplayEngine {
             (Err(e), _) => return Err(e),
             (Ok(_), Err(e)) => return Err(AppError::Db(e)),
         };
+
+        // Refresh own peer manifest's `last_seen` so other devices see
+        // us as currently active. A failed heartbeat is non-fatal — peers
+        // just see a stale `last_seen` until the next tick rewrites it.
+        if let Err(e) = peers::write_own_manifest(
+            &self.shared_dir,
+            &self.self_device,
+            &peers::device_name(),
+            peers::current_platform(),
+            env!("CARGO_PKG_VERSION"),
+            chrono::Utc::now().timestamp_millis(),
+        ) {
+            eprintln!("sync: peer manifest refresh failed: {e}");
+        }
 
         Ok(ReplayReport {
             outbox_flushed,
@@ -682,6 +697,24 @@ mod tests {
             .query_row("PRAGMA foreign_keys", [], |r| r.get(0))
             .unwrap();
         assert_eq!(fk, 1, "FK must be restored to ON even after a tick error");
+    }
+
+    #[test]
+    fn tick_refreshes_own_peer_manifest() {
+        let mut env = setup("self");
+        let before = chrono::Utc::now().timestamp_millis();
+        env.engine.tick(&mut env.conn).unwrap();
+
+        let manifest = peers::manifest_path(&env.shared, "self");
+        assert!(manifest.exists(), "tick should publish own peer manifest");
+        let bytes = fs::read(&manifest).unwrap();
+        let parsed: peers::Peer = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(parsed.device_uuid, "self");
+        assert!(
+            parsed.last_seen >= before,
+            "last_seen ({}) should be >= pre-tick ts ({before})",
+            parsed.last_seen
+        );
     }
 
     #[test]

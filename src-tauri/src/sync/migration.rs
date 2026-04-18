@@ -106,13 +106,25 @@ pub fn recorded_data_dir(local_dir: &Path) -> Option<PathBuf> {
 /// `data_dir` (passed when there was no legacy DB to migrate) writes
 /// an empty marker — the launch-flow chain will fall back to the
 /// deterministic iCloud path for that case.
-fn write_marker(local_dir: &Path, data_dir: Option<&Path>) -> AppResult<()> {
+pub fn write_marker(local_dir: &Path, data_dir: Option<&Path>) -> AppResult<()> {
     let bytes: Vec<u8> = match data_dir {
         Some(p) => p.to_string_lossy().into_owned().into_bytes(),
         None => Vec::new(),
     };
     fs::write(migration_complete_path(local_dir), bytes)?;
     Ok(())
+}
+
+/// Remove the `.migration_complete` marker. Used by `sync_disable` so
+/// the next launch treats this device as un-synced and skips engine
+/// boot. Idempotent — missing marker is fine.
+pub fn remove_marker(local_dir: &Path) -> AppResult<()> {
+    let path = migration_complete_path(local_dir);
+    match fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(AppError::Io(e)),
+    }
 }
 
 /// Migrate from legacy file-sync to per-device event log.

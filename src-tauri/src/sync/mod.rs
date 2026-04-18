@@ -24,6 +24,7 @@ pub mod events;
 pub mod log;
 pub mod merge;
 pub mod migration;
+pub mod peers;
 pub mod replay;
 pub mod snapshot;
 pub mod watcher;
