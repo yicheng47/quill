@@ -33,6 +33,7 @@ use crate::sync::device::DeviceIdentity;
 use crate::sync::log::EventLog;
 use crate::sync::peers;
 use crate::sync::replay::{ReplayEngine, ReplayReport};
+use crate::sync::snapshot::Snapshot;
 use crate::sync::watcher::{self, WatcherHandle};
 use crate::sync::writer::SyncWriter;
 use crate::{sync, LocalDir};
@@ -250,6 +251,12 @@ pub fn sync_enable(
         chrono::Utc::now().timestamp_millis(),
     )?;
 
+    // Bootstrap-snapshot the existing local DB into peer-visible
+    // history. See `publish_bootstrap_snapshot` for the why; without
+    // it, a user enabling sync on a non-empty library gets their
+    // binaries copied to iCloud but no local rows reach peers.
+    publish_bootstrap_snapshot(&db, &icloud_dir, &device.device_uuid)?;
+
     // Open the EventLog and wire it into the writer. Coordinator on
     // (true) — this path lives inside the ubiquity container.
     let log_path = icloud_dir
@@ -400,6 +407,41 @@ pub fn sync_revert_to_legacy() -> AppResult<()> {
 // ---------------------------------------------------------------------------
 // Helpers — kept private to this module since they're only used here.
 // ---------------------------------------------------------------------------
+
+/// Snapshot the current local DB into `<shared>/logs/<uuid>.snapshot.json`
+/// so peers can bootstrap from it. Called by `sync_enable` for both
+/// first-time enable and re-enable after disable.
+///
+/// Why on every enable, not just first-time:
+/// - **First-time enable.** The local DB has every book/highlight/chat
+///   the user ever created locally; sync was off when they were
+///   written, so no `book.import` / `highlight.add` events exist for
+///   those rows. Without a snapshot, peers see an empty library.
+/// - **Re-enable after disable.** During disable, `should_queue` is
+///   off in `SyncWriter`, so any rows the user added or edited while
+///   sync was off never made it into the outbox. A fresh snapshot
+///   captures that delta and republishes it.
+///
+/// The snapshot replaces the previous one. Peers detect a new
+/// `snapshot.id` and apply it via `apply_peer` — idempotent under the
+/// LWW + tombstone rules in `merge.rs`, so this is safe even when
+/// peers have already seen most of the entities individually.
+fn publish_bootstrap_snapshot(
+    db: &Db,
+    shared_dir: &Path,
+    device_uuid: &str,
+) -> AppResult<()> {
+    let path = shared_dir
+        .join("logs")
+        .join(format!("{device_uuid}.snapshot.json"));
+    let conn = db
+        .conn
+        .lock()
+        .map_err(|e| AppError::Other(format!("db conn mutex: {e}")))?;
+    let snap = Snapshot::from_legacy_db(&conn, device_uuid)?;
+    snap.write_atomic(&path)?;
+    Ok(())
+}
 
 fn read_watermarks(db: &Db) -> AppResult<Vec<(String, Option<String>)>> {
     let conn = db
@@ -633,5 +675,152 @@ mod tests {
     fn sync_revert_to_legacy_returns_error_in_v1() {
         let result = sync_revert_to_legacy();
         assert!(result.is_err());
+    }
+
+    /// Regression for PR #193's review finding: enabling sync on a
+    /// non-empty local library must publish a snapshot so peers can
+    /// see the existing rows. Without this, the user toggles sync on
+    /// and other devices see an empty library — every book they ever
+    /// imported locally stays invisible to peers.
+    ///
+    /// We test the snapshot helper directly (bypassing the Tauri
+    /// State plumbing) since the snapshot publish is the only
+    /// behavior the regression covers; the rest of `sync_enable`
+    /// (binary move, marker write, engine boot) is exercised by
+    /// integration testing on a real iCloud account.
+    #[test]
+    fn publish_bootstrap_snapshot_publishes_existing_local_rows() {
+        use crate::sync::snapshot::Snapshot;
+
+        let tmp = TempDir::new().unwrap();
+        let local = tmp.path().join("local");
+        let shared = tmp.path().join("shared");
+        fs::create_dir_all(&local).unwrap();
+        fs::create_dir_all(shared.join("logs")).unwrap();
+
+        // Seed a non-empty local library.
+        let db = crate::db::Db::init(&local).unwrap();
+        {
+            let conn = db.conn.lock().unwrap();
+            conn.execute(
+                "INSERT INTO books
+                 (id, title, author, file_path, format, status, progress,
+                  created_at, updated_at, updated_by_device)
+                 VALUES ('b1', 'Existing Book', 'Author', 'books/b1.epub',
+                         'epub', 'unread', 0, 1000, 1000, 'self')",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO highlights
+                 (id, book_id, cfi_range, color, created_at, updated_at, updated_by_device)
+                 VALUES ('h1', 'b1', 'cfi', 'yellow', 1000, 1000, 'self')",
+                [],
+            )
+            .unwrap();
+        }
+
+        // Snapshot bootstrap.
+        publish_bootstrap_snapshot(&db, &shared, "self").unwrap();
+
+        // The snapshot must exist and round-trip onto a fresh peer DB
+        // with the seeded rows visible — same path peer devices use
+        // when they pick up the snapshot via `apply_peer`.
+        let snap_path = shared.join("logs").join("self.snapshot.json");
+        assert!(snap_path.exists());
+        let snap = Snapshot::read_from(&snap_path).unwrap();
+
+        let peer_dir = tmp.path().join("peer");
+        fs::create_dir_all(&peer_dir).unwrap();
+        let peer_db = crate::db::Db::init(&peer_dir).unwrap();
+        {
+            let mut conn = peer_db.conn.lock().unwrap();
+            let tx = conn.transaction().unwrap();
+            snap.apply_peer(&tx, "self").unwrap();
+            tx.commit().unwrap();
+        }
+        let conn = peer_db.conn.lock().unwrap();
+        let title: String = conn
+            .query_row(
+                "SELECT title FROM books WHERE id = 'b1'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("peer should see the bootstrapped book");
+        assert_eq!(title, "Existing Book");
+        let n_hl: i64 = conn
+            .query_row("SELECT COUNT(*) FROM highlights", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n_hl, 1, "peer should see the bootstrapped highlight");
+    }
+
+    /// Companion regression: re-enable after disable picks up edits
+    /// the user made while sync was off. Sync_disable turns
+    /// `should_queue` off, so events made while disabled don't
+    /// accumulate in `_pending_publish` — without a fresh snapshot
+    /// on re-enable they'd never reach peers.
+    #[test]
+    fn publish_bootstrap_snapshot_picks_up_edits_made_while_disabled() {
+        use crate::sync::snapshot::Snapshot;
+
+        let tmp = TempDir::new().unwrap();
+        let local = tmp.path().join("local");
+        let shared = tmp.path().join("shared");
+        fs::create_dir_all(&local).unwrap();
+        fs::create_dir_all(shared.join("logs")).unwrap();
+
+        let db = crate::db::Db::init(&local).unwrap();
+        {
+            let conn = db.conn.lock().unwrap();
+            conn.execute(
+                "INSERT INTO books
+                 (id, title, author, file_path, format, status, progress,
+                  created_at, updated_at, updated_by_device)
+                 VALUES ('b1', 'Pre-disable', 'Author', 'books/b1.epub',
+                         'epub', 'unread', 0, 1000, 1000, 'self')",
+                [],
+            )
+            .unwrap();
+        }
+        publish_bootstrap_snapshot(&db, &shared, "self").unwrap();
+        let first_id = Snapshot::read_from(&shared.join("logs/self.snapshot.json"))
+            .unwrap()
+            .id;
+
+        // Simulate edits made while sync was disabled — direct SQL,
+        // no events emitted.
+        {
+            let conn = db.conn.lock().unwrap();
+            conn.execute(
+                "INSERT INTO books
+                 (id, title, author, file_path, format, status, progress,
+                  created_at, updated_at, updated_by_device)
+                 VALUES ('b2', 'Added while disabled', 'Author',
+                         'books/b2.epub', 'epub', 'unread', 0, 2000, 2000, 'self')",
+                [],
+            )
+            .unwrap();
+        }
+
+        // Re-enable.
+        publish_bootstrap_snapshot(&db, &shared, "self").unwrap();
+        let second = Snapshot::read_from(&shared.join("logs/self.snapshot.json")).unwrap();
+        assert_ne!(second.id, first_id, "re-enable must mint a new snapshot id");
+
+        // Apply on a peer; it should see both books.
+        let peer_dir = tmp.path().join("peer");
+        fs::create_dir_all(&peer_dir).unwrap();
+        let peer_db = crate::db::Db::init(&peer_dir).unwrap();
+        {
+            let mut conn = peer_db.conn.lock().unwrap();
+            let tx = conn.transaction().unwrap();
+            second.apply_peer(&tx, "self").unwrap();
+            tx.commit().unwrap();
+        }
+        let conn = peer_db.conn.lock().unwrap();
+        let n: i64 = conn
+            .query_row("SELECT COUNT(*) FROM books", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 2, "peer should see both pre- and post-disable books");
     }
 }
