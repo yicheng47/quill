@@ -8,8 +8,9 @@ mod secrets;
 mod sync;
 
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
+use commands::sync::SyncState;
 use db::Db;
 use secrets::Secrets;
 use sync::device::DeviceIdentity;
@@ -285,12 +286,13 @@ pub fn run() {
             app.manage(secrets);
             app.manage(device);
             app.manage(sync_writer);
-            app.manage(replay_engine);
-            // Held for the lifetime of the app — drop joins the watcher
-            // thread on shutdown. Stored as `Mutex<Option<…>>` so the
-            // wrapper is `Sync` (the inner `notify::RecommendedWatcher`
-            // doesn't claim `Sync` so we can't store it bare).
-            app.manage(Mutex::new(watcher_handle));
+            // Engine + watcher live behind a single `SyncState` so the
+            // `sync_enable` / `sync_disable` commands can swap them at
+            // runtime. Watcher is held inside the same struct via a
+            // `Mutex<Option<WatcherHandle>>` — its `Drop` impl signals
+            // the watcher thread to stop and joins it on disable /
+            // shutdown.
+            app.manage(SyncState::new(replay_engine, watcher_handle));
 
             Ok(())
         })
@@ -368,13 +370,12 @@ pub fn run() {
             commands::translation::save_translation,
             commands::translation::remove_saved_translation,
             commands::translation::list_translations,
-            // iCloud
-            commands::icloud::icloud_status,
-            commands::icloud::icloud_enable,
-            commands::icloud::icloud_disable,
-            // Sync (Chunk 6 ships sync_now; Chunk 7 swaps icloud_* for
-            // sync_status/sync_enable/sync_disable).
+            // Sync (Chunk 7 — replaces the legacy icloud_* commands).
+            commands::sync::sync_status,
+            commands::sync::sync_enable,
+            commands::sync::sync_disable,
             commands::sync::sync_now,
+            commands::sync::sync_revert_to_legacy,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

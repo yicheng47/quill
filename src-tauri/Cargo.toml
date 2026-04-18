@@ -39,6 +39,7 @@ base64 = "0.22"
 rand = "0.8"
 ulid = { version = "1", features = ["serde"] }
 notify = "6"
+gethostname = "0.5"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"

@@ -27,6 +27,8 @@ This rewrites the write path. Every mutation becomes `SQL write + event append` 
   logs/
     <device-uuid>.jsonl                # append-only; this device writes only here
     <device-uuid>.snapshot.json        # latest compaction/migration snapshot
+  devices/
+    <device-uuid>.json                 # this device's peer manifest (name, platform, last_seen)
   books/<book-id>.{epub,pdf}           # unchanged
   covers/<book-id>.jpg                 # unchanged
   quill.db.migrated-<iso-ts>           # old DB, retired (post-migration only)
@@ -88,6 +90,38 @@ let id = generator.generate()?;    // use MonotonicGenerator owned by EventLog
 - Keep ULIDs as strings everywhere — in JSONL, in `_replay_state.last_event_id`, in logs. Never encode the 128-bit raw form; it breaks grep and kills interop with iOS (which decodes via `Codable` string).
 - Don't parse the timestamp out of an ID as a second source of truth — use the `ts` field. The embedded timestamp is a sort key, not data.
 - Clock-skew resilience: if the system clock jumps backward, the monotonic generator keeps returning IDs strictly greater than the last emitted one (by incrementing randomness) until wall time catches up. No clamping needed.
+
+### Peer manifest (shared)
+
+Each device publishes a tiny self-describing file at `<shared>/devices/<device-uuid>.json`:
+
+```jsonc
+{
+  "device_uuid": "7b6f4c3a-1e2d-4f5b-8a9c-0d1e2f3a4b5c",
+  "name": "Jason's MacBook Pro",
+  "platform": "macos",          // "macos" | "ios" | "windows" | "linux"
+  "app_version": "0.10.0",
+  "last_seen": 1776429296789    // unix millis, UTC
+}
+```
+
+**Why a separate file rather than an event or snapshot field:**
+- Peer discovery shouldn't depend on having any event traffic. A second device that has only just joined the iCloud account should appear in the settings UI immediately, before it generates its first event.
+- `last_seen` updates frequently (every replay tick); a sync event for it would be noise. A manifest file is rewritten in place atomically, costs ~200 bytes, and is independent of the event log lifecycle.
+- Decoupling from the snapshot avoids a chicken-and-egg dependency between compaction and the peers UI.
+
+**Write triggers (own manifest):**
+- On `sync_enable` — initial publication.
+- At the end of every successful `replay_engine.tick()` — refresh `last_seen`.
+- On any change to the device name (rare; future feature).
+
+**Write mechanics:** atomic temp + rename inside `<shared>/devices/`. macOS: wrap in `NSFileCoordinator` (same helper used by `EventLog`). No fsync required — the manifest is recoverable from any device, and a torn write loses at most one heartbeat.
+
+**Read flow (peer discovery):** `peers::list_peers(shared, own_uuid) -> Vec<Peer>` lists `<shared>/devices/*.json`, filters out own UUID, parses each. Bad/torn manifests are logged and skipped — discovery degrades gracefully. Result feeds `sync_status().peers`.
+
+**Device name source:** `gethostname` crate on every platform (returns the OS hostname, e.g. `"Jasons-MacBook-Pro.local"`). Stripped of trailing `.local`/`.lan` for display. User-overridable in a future release; not v1.
+
+**Never written to or read from `_replay_state` or any synced event** — manifests live entirely outside the merge engine.
 
 ### Replay state (local-only table)
 
@@ -167,6 +201,7 @@ Chunk 1 below handles the 009 portion (already shipped via PR #186); 011 is scop
 - `src-tauri/src/sync/snapshot.rs` — snapshot read/write/compaction
 - `src-tauri/src/sync/migration.rs` — one-shot migration from legacy file-sync
 - `src-tauri/src/sync/watcher.rs` — fs-notify wrapper (macOS FSEvents, Linux inotify)
+- `src-tauri/src/sync/peers.rs` — peer manifest read/write (`<shared>/devices/<uuid>.json`)
 - `src-tauri/src/commands/sync.rs` — Tauri commands for settings UI
 - `src-tauri/migrations/009_normalize_timestamps.sql` — pure-SQL migration 009 (schema normalization + TEXT→INTEGER millis conversion; see "Schema normalization" above). Shipped via PR #186.
 - `src-tauri/migrations/010_replay_state.sql` — creates `_replay_state` and `_tombstones`. On the umbrella branch via Chunk 2.
@@ -181,9 +216,11 @@ Chunk 1 below handles the 009 portion (already shipped via PR #186); 011 is scop
 - `src/components/settings/ICloudSettings.tsx` → replaced by `LibrarySyncSettings.tsx`
 - `src/i18n/en.json`, `src/i18n/zh.json` — new keys under `settings.librarySync`
 
-**Removed (Phase D, not v1):**
+**Removed (in Chunk 7):**
 - `src-tauri/src/icloud.rs` (legacy migrate/disable paths)
-- old `ICloudSettings.tsx`
+- `src-tauri/src/commands/icloud.rs`
+- `src/components/settings/ICloudSettings.tsx`
+- `settings.icloud.*` i18n keys
 
 ---
 
@@ -610,20 +647,40 @@ Lifetime: spawned from `lib.rs::setup` if sync is enabled; cancelled on disable.
 **Component:** `src/components/settings/LibrarySyncSettings.tsx` (replaces `ICloudSettings.tsx`).
 
 **Tauri commands** (`src-tauri/src/commands/sync.rs`):
-- `sync_status() -> SyncStatus { enabled, shared_dir, device_uuid, peers: Vec<Peer>, last_replay_at, pending_events, last_error }`
-- `sync_enable() -> AppResult<()>` — no args; always iCloud in v1. Same semantics as today's `icloud_enable`.
-- `sync_disable() -> AppResult<()>` — keeps logs on disk, stops appending. Same semantics as today's `icloud_disable`.
-- `sync_now() -> AppResult<ReplayReport>`
-- `sync_revert_to_legacy() -> AppResult<()>` — grace-period rollback (30 days).
+- `sync_status() -> SyncStatus`:
+  ```jsonc
+  {
+    "enabled": true,
+    "shared_dir": "/Users/.../iCloud~com~wycstudios~quill/Documents",
+    "device_uuid": "7b6f...",
+    "device_name": "Jason's MacBook Pro",
+    "migration_complete": true,
+    "peers": [
+      { "device_uuid": "...", "name": "MacBook Pro", "platform": "macos", "last_seen": 1776429296789, "pending_events": 0 }
+    ],
+    "last_replay_at": 1776429300000,
+    "pending_events": 0,
+    "last_error": null
+  }
+  ```
+  `peers` is built from `<shared>/devices/*.json` (excluding own UUID). `pending_events` per peer = (peer log line count) − (`_replay_state[peer].last_event_id` lookup). `last_error` is the most recent watcher / tick failure, cleared on next success.
+- `sync_enable() -> AppResult<()>` — no args; always iCloud in v1. Same semantics as today's `icloud_enable`. Also writes own peer manifest.
+- `sync_disable() -> AppResult<()>` — keeps logs on disk, stops appending. Same semantics as today's `icloud_disable`. Own manifest is left in place (other peers shouldn't see us vanish; they'll see `last_seen` go stale).
+- `sync_now() -> AppResult<ReplayReport>` — also rewrites own manifest's `last_seen` on success.
+- `sync_revert_to_legacy() -> AppResult<()>` — grace-period rollback (30 days). Removes own manifest from `<shared>/devices/`.
 
-Keep `icloud_status`/`icloud_enable`/`icloud_disable` aliased to these during the transition so in-flight builds don't break; remove in cleanup.
+The whole umbrella branch (Chunks 1–8) merges to `main` as a single sequence of PRs landing in one release. The legacy `commands::icloud` module + the `ICloudSettings.tsx` component are removed in this chunk — no aliasing needed because there's no in-flight build straddling the rename.
 
-**Sections:**
-1. **Sync toggle** — a single 73px row with a Toggle labelled "Sync with iCloud" / subtitle "Store your library in iCloud Drive". Identical copy and layout to today's `ICloudSettings.tsx`. Loading/error/confirmation states mirror the existing component exactly — users shouldn't notice a UI change at this level.
-2. **Migration banner** — conditional amber card when `migration.complete == false`, with title "Migration pending", body "Your library is still using the legacy iCloud file sync. Migrate now for record-level sync across devices.", and a "Migrate now" button. Hidden once complete; never appears on fresh installs.
-3. **Peers** — expandable "Other devices" row. Each peer row: device icon, device name, last-seen timestamp (relative, e.g. "2 min ago"), pending-events count as a subtle pill. Read-only in v1.
-4. **Actions** — compact cluster of secondary buttons: "Sync now" (icon + label) and "Compact log" (icon + label). Right-aligned destructive-style link "Revert to legacy sync" visible only during the 30-day grace window. Export backup deferred.
-5. **Notes** — "API keys and tokens are stored locally and never synced." / "Avoid editing on multiple devices simultaneously for best results."
+**Sections** (mirrors the design in `quill-design/quill-desktop.pen` node `vEswX`):
+
+1. **Title block** — "iCloud Sync" h2 + "Store your library in iCloud" muted subtitle. Sits directly above the first divider — no preceding row.
+2. **Sync toggle** — 73px row. Title "Sync with iCloud" + subtitle "Keep your library and reading progress in iCloud Drive". Toggle on the right. Loading/error/confirmation states mirror today's `ICloudSettings.tsx` (no UX regression on the primary action).
+3. **Migration banner** — conditional amber card between the toggle row and the divider, when `migration_complete == false`. Title "Migration pending", body "Your library is still using the legacy iCloud file sync. Migrate now for record-level sync across devices.", "Migrate now" button. Hidden once complete; never appears on fresh installs.
+4. **Other devices** — small caps section header "OTHER DEVICES" (`text-xs text-neutral-500 tracking-wide`). Below it, one card per peer (background `#FAFAFA`, rounded, padded): device-type icon (Monitor / Smartphone / Laptop based on `platform`), name, subtitle `Last seen <relative time>`. Empty state ("No other devices yet — open Quill on another Mac signed into the same iCloud account.") shown when `peers.is_empty() && enabled`. Hidden entirely when sync disabled.
+5. **Actions** — `flex justify-between` row. Left: text-link buttons "Sync now" + "Compact log" in `#7C3AED` (purple-600), spaced. Right: muted "Last sync <relative time>" status (or nothing if `last_replay_at == null`). Destructive-style link "Revert to legacy sync" only renders during the 30-day grace window — push it to a fourth row below the actions row when present, in `text-red-600`.
+6. **Notes** — small muted paragraph(s): "API keys and tokens are stored locally and never synced." / "Avoid editing on multiple devices simultaneously for best results."
+
+**Visual style:** follows the established settings layout — 1px `bg-black/10` dividers between sections, 14px gap inside the inner content stack, modal width 520×420 (matches Lookup / Translation / Language panels). Reference pencil node: `vEswX` in `quill-design/quill-desktop.pen`.
 
 **Deferred to a future release** (alongside the next cloud provider):
 - Segmented control (This device / iCloud Drive / Custom folder).
@@ -741,14 +798,22 @@ Shape + type normalization as a single commit. Landed separately from the sync w
 
 **Verification:** manual E2E on a dev iCloud account — copy a v0.9.x DB to ubiquity, launch v1 build, confirm migration completes, retired file appears, local DB row counts match source.
 
-### Chunk 7 — Settings UI (swap `ICloudSettings` → `LibrarySyncSettings`)
+### Chunk 7 — Settings UI + peer manifest + legacy removal
 
-- `src/components/settings/LibrarySyncSettings.tsx` — new, single Toggle + migration banner + peers + actions (see §Step 9 above).
+**Backend:**
+- `src-tauri/Cargo.toml` — add `gethostname = "0.5"` for the device name.
+- `src-tauri/src/sync/peers.rs` — new module per the "Peer manifest" section above. `write_own_manifest(shared, identity, name, platform, version)`, `list_peers(shared, own_uuid) -> Vec<Peer>`, `Peer { device_uuid, name, platform, last_seen, app_version }`. macOS write goes through the existing `NSFileCoordinator` helper.
+- `src-tauri/src/commands/sync.rs` — `sync_status`, `sync_enable`, `sync_disable`, `sync_revert_to_legacy`. Register in `generate_handler!`. `sync_status` composes peer entries from `peers::list_peers` joined with per-peer `pending_events` derived from `_replay_state`. `sync_enable` and `sync_now` write the own manifest; `sync_revert_to_legacy` removes it.
+- `src-tauri/src/sync/replay.rs` — at the end of every successful `tick()`, refresh own manifest's `last_seen` (cheap atomic rewrite).
+- `src-tauri/src/lib.rs` — register the new commands; **delete** `commands::icloud` registration and the `mod icloud;` import. Delete `src-tauri/src/commands/icloud.rs` and `src-tauri/src/icloud.rs` legacy paths in this same PR — the umbrella branch ships as one release, so no transition aliasing is required.
+
+**Frontend:**
+- `src/components/settings/LibrarySyncSettings.tsx` — new, mirrors pencil node `vEswX` in `quill-design/quill-desktop.pen`. Sections per Step 9.
 - `src/components/SettingsModal.tsx` — swap import and section id (`icloud` → `librarySync`).
-- `src/i18n/{en,zh}.json` — add `settings.librarySync.*` namespace mirroring existing `settings.icloud.*` copy. Keep old keys during the transition.
-- `src-tauri/src/commands/sync.rs` — `sync_status`, `sync_enable`, `sync_disable`, `sync_revert_to_legacy`. Register in `generate_handler!`.
+- `src/i18n/{en,zh}.json` — add `settings.librarySync.*` namespace; remove `settings.icloud.*` keys in the same PR.
+- **Delete** `src/components/settings/ICloudSettings.tsx`.
 
-**Verification:** Tauri dev server, open Settings → Library & Sync, toggle iCloud off → on → verify `<icloud-container>/logs/<device-uuid>.jsonl` appears and grows with usage.
+**Verification:** Tauri dev server, open Settings → Library & Sync, toggle iCloud off → on → verify (a) `<icloud-container>/logs/<device-uuid>.jsonl` appears and grows with usage, (b) `<icloud-container>/devices/<device-uuid>.json` is created with the device's hostname, (c) `Other devices` populates from a second Mac signed into the same iCloud account within one tick of it being enabled there, (d) `Last sync` updates after pressing "Sync now".
 
 ### Chunk 8 — Compaction
 
@@ -756,15 +821,9 @@ Shape + type normalization as a single commit. Landed separately from the sync w
 
 **Verification:** compact round-trip on real usage data produces a snapshot + truncated log that replays to the same state.
 
-### Chunk 9 — Cleanup (Phase D, post-ship, separate follow-up issue)
+### Chunk 9 — Cleanup (folded into Chunk 7)
 
-After v1 ships and stabilizes over 2 releases:
-- Delete `src-tauri/src/icloud.rs` legacy paths.
-- Delete `src-tauri/src/commands/icloud.rs`.
-- Delete old `settings.icloud.*` i18n keys.
-- Delete `src/components/settings/ICloudSettings.tsx` (unreferenced after Chunk 7).
-
-Tracked separately; not part of #185.
+The umbrella branch ships as one release, so the legacy `icloud` Rust modules + `ICloudSettings.tsx` + `settings.icloud.*` i18n keys are removed in Chunk 7's PR rather than in a separate follow-up. No outward-facing aliasing is needed because no released build straddles the rename.
 
 ---
 
