@@ -101,6 +101,20 @@ impl ReplayEngine {
             (Ok(_), Err(e)) => return Err(AppError::Db(e)),
         };
 
+        // Stamp self's `_replay_state.updated_at` so the settings UI's
+        // "Last sync" reflects every successful tick — not only the
+        // ones that happened to move a peer watermark. A no-op
+        // `sync_now` click (no peer changes, no outbox drain) still
+        // proves the engine is healthy, and the UI deserves to show
+        // that. Upserts a NULL-watermark self row on first call.
+        let now = chrono::Utc::now().timestamp_millis();
+        conn.execute(
+            "INSERT INTO _replay_state (peer_device, last_snapshot_id, last_event_id, updated_at)
+             VALUES (?1, NULL, NULL, ?2)
+             ON CONFLICT(peer_device) DO UPDATE SET updated_at = excluded.updated_at",
+            params![self.self_device, now],
+        )?;
+
         // Refresh own peer manifest's `last_seen` so other devices see
         // us as currently active. A failed heartbeat is non-fatal — peers
         // just see a stale `last_seen` until the next tick rewrites it.
@@ -712,6 +726,51 @@ mod tests {
             .query_row("PRAGMA foreign_keys", [], |r| r.get(0))
             .unwrap();
         assert_eq!(fk, 1, "FK must be restored to ON even after a tick error");
+    }
+
+    /// Regression for umbrella-PR review finding #3: every successful
+    /// `tick()` must bump self's `_replay_state.updated_at` so the
+    /// settings UI's "Last sync" reflects the most recent tick — not
+    /// only the ones that happened to move a peer watermark. A no-op
+    /// tick is still a successful tick from the user's perspective.
+    #[test]
+    fn tick_bumps_self_updated_at_even_on_noop() {
+        let mut env = setup("self");
+
+        // First tick — empty shared dir, nothing to apply. Self row
+        // doesn't exist yet.
+        let before = chrono::Utc::now().timestamp_millis();
+        env.engine.tick(&mut env.conn).unwrap();
+
+        let row1: Option<i64> = env
+            .conn
+            .query_row(
+                "SELECT updated_at FROM _replay_state WHERE peer_device = 'self'",
+                [],
+                |r| r.get(0),
+            )
+            .ok();
+        assert!(row1.is_some(), "first tick must upsert self into _replay_state");
+        assert!(row1.unwrap() >= before);
+
+        // Sleep a few millis so the second tick's timestamp is
+        // visibly newer.
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        env.engine.tick(&mut env.conn).unwrap();
+
+        let row2: i64 = env
+            .conn
+            .query_row(
+                "SELECT updated_at FROM _replay_state WHERE peer_device = 'self'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(
+            row2 > row1.unwrap(),
+            "second no-op tick must still bump self.updated_at ({row2} <= {})",
+            row1.unwrap()
+        );
     }
 
     #[test]
