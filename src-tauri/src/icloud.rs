@@ -243,6 +243,12 @@ mod tests {
         assert_eq!(deterministic, Some(expected));
     }
 
+    /// macOS-only — the non-macOS variant of `icloud_data_dir_fast`
+    /// returns `None` unconditionally, so this `$HOME`-rewrite test
+    /// only applies where the macOS body actually parses `$HOME`.
+    /// Without the cfg gate this test fails on Linux CI even though
+    /// the runtime behaviour is correct.
+    #[cfg(target_os = "macos")]
     #[test]
     fn test_icloud_data_dir_fast_path_format() {
         // The fast path should be derived from $HOME + the container ID with
