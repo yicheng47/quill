@@ -20,7 +20,7 @@
 //!   user actually needs it.
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
@@ -269,17 +269,23 @@ pub fn sync_enable(
         watcher::spawn(icloud_dir.clone(), db.inner().clone(), Arc::clone(&engine))?;
 
     // ---- Phase 2: durable-state commit ----
-    // From here on we're writing durable "sync is on" artifacts.
-    // Each step is idempotent; all failures past this point leave
-    // partially-consistent state that the next launch's boot path
-    // reconciles. We still surface errors so the user sees what went
-    // wrong.
-
-    // First-time enable: move local binaries into the ubiquity container
-    // so peers can read them. Re-enable after a disable just shuffles
-    // whatever the user has imported in the meantime.
-    move_dir_contents(&local.0.join("books"), &icloud_dir.join("books"))?;
-    move_dir_contents(&local.0.join("covers"), &icloud_dir.join("covers"))?;
+    // Order is load-bearing: small idempotent files first, then the
+    // marker (the "we are on" commit), then `data_dir` repoint
+    // (in-memory but the source of truth for blob path resolution),
+    // then the binary move LAST.
+    //
+    // `move_dir_contents` is a real move, not a copy — it `fs::rename`s
+    // within a filesystem and falls back to `copy + remove` cross-
+    // device. If we moved first and then a later step failed, the
+    // books would already be in iCloud while `data_dir` still
+    // resolved against local — the library would appear empty until
+    // the next launch booted the engine. Doing the move after
+    // `data_dir` repoint means a partial-move failure still leaves
+    // the app correctly resolving the moved entries out of iCloud;
+    // only the un-moved tail in local is invisible until a retry.
+    // PR #190's fourth-pass review caught the pre-fix order, where
+    // every iCloud-side write between the move and the data_dir
+    // update was a potential data-loss path.
 
     publish_bootstrap_snapshot(&db, &icloud_dir, &device.device_uuid)?;
 
@@ -292,6 +298,8 @@ pub fn sync_enable(
         chrono::Utc::now().timestamp_millis(),
     )?;
 
+    sync::migration::write_marker(&local.0, Some(&icloud_dir))?;
+
     {
         let mut data_dir = db
             .data_dir
@@ -299,8 +307,6 @@ pub fn sync_enable(
             .map_err(|e| AppError::Other(format!("data_dir mutex: {e}")))?;
         *data_dir = icloud_dir.clone();
     }
-
-    sync::migration::write_marker(&local.0, Some(&icloud_dir))?;
 
     // Wire the writer + store engine/watcher in state. These are
     // in-memory only; infallible past the mutex-poisoning edge.
@@ -321,6 +327,13 @@ pub fn sync_enable(
             .map_err(|e| AppError::Other(format!("watcher mutex: {e}")))?;
         *g = Some(watcher_handle);
     }
+
+    // First-time enable: move local binaries into the ubiquity container
+    // so peers can read them. Re-enable after a disable just shuffles
+    // whatever the user has imported in the meantime — usually a no-op
+    // since the binaries are already in iCloud.
+    move_dir_contents(&local.0.join("books"), &icloud_dir.join("books"))?;
+    move_dir_contents(&local.0.join("covers"), &icloud_dir.join("covers"))?;
 
     // Fire an initial tick now that the engine is fully wired. Failure
     // is non-fatal — the watcher will retry on the next event, and a
@@ -592,9 +605,32 @@ fn count_pending_for_peer(shared_dir: &Path, peer: &str, watermark: Option<&str>
     count
 }
 
+/// True when `name` matches the iCloud-evicted-placeholder pattern
+/// `.<realname>.icloud`. macOS replaces the contents of an evicted
+/// file with a tiny stub at this name; the real file disappears from
+/// `read_dir` until a download is triggered. Treating placeholders as
+/// "the file is here, just not downloaded" is what keeps the sync
+/// disable/re-enable cycle from clobbering local copies.
+fn is_icloud_placeholder(name: &std::ffi::OsStr) -> bool {
+    match name.to_str() {
+        Some(s) => s.starts_with('.') && s.ends_with(".icloud"),
+        None => false,
+    }
+}
+
 /// Move every entry under `src` into `dst`, creating `dst` if needed.
 /// Renames within the same filesystem, falls back to copy + remove
 /// across filesystems. Skipped when `src` doesn't exist.
+///
+/// **iCloud placeholder handling:** for every source entry we also
+/// check whether `dst` holds either the real file OR an evicted
+/// placeholder (`<dst>/.foo.epub.icloud` for `<src>/foo.epub`). If
+/// either is present we skip the move. Without this check, an evicted
+/// peer file at `dst/.foo.epub.icloud` made `dst/foo.epub` look
+/// missing, so `move_dir_contents` clobbered our real local copy on
+/// top of the placeholder — local lost the file, iCloud kept the
+/// placeholder + the now-moved real file. The smoke test caught
+/// exactly this against a 1.1G iCloud library with evicted contents.
 fn move_dir_contents(src: &Path, dst: &Path) -> AppResult<()> {
     if !src.exists() {
         return Ok(());
@@ -608,6 +644,16 @@ fn move_dir_contents(src: &Path, dst: &Path) -> AppResult<()> {
             // filename with ours (rare; UUID-suffixed filenames make
             // this unlikely).
             continue;
+        }
+        if let Some(p) = icloud_placeholder_for(&target) {
+            if p.exists() {
+                // Evicted iCloud placeholder lives at `.<name>.icloud`;
+                // the real entry isn't present at the destination but
+                // logically the file IS there from iCloud's view. Skip
+                // so we don't move our real local copy on top of the
+                // placeholder and lose it from local.
+                continue;
+            }
         }
         if let Err(rename_err) = fs::rename(entry.path(), &target) {
             // Cross-device rename → copy then remove.
@@ -623,20 +669,74 @@ fn move_dir_contents(src: &Path, dst: &Path) -> AppResult<()> {
     Ok(())
 }
 
+/// Copy every entry from `src` to `dst`, skipping clashes. Skipped
+/// when `src` doesn't exist.
+///
+/// **iCloud placeholder handling:** evicted iCloud entries appear in
+/// `read_dir` as tiny stub files named `.<realname>.icloud`. Copying
+/// the stub to local would silently corrupt the local copy — the user
+/// then opens what looks like a book and gets unreadable bytes. We
+/// detect placeholders, skip them, and trigger a background iCloud
+/// download so the next disable retry succeeds. The skipped count is
+/// surfaced via `eprintln` for the launch log; the user-visible
+/// effect is "some books still in iCloud, re-enable to access them."
 fn copy_dir_contents(src: &Path, dst: &Path) -> AppResult<()> {
     if !src.exists() {
         return Ok(());
     }
     fs::create_dir_all(dst)?;
+    let mut skipped = Vec::new();
     for entry in fs::read_dir(src)? {
         let entry = entry?;
-        let target = dst.join(entry.file_name());
+        let name = entry.file_name();
+        if is_icloud_placeholder(&name) {
+            skipped.push(name);
+            // Fire-and-forget download for the real file. macOS:
+            // `startDownloadingUbiquitousItemAtURL`. The next disable
+            // attempt (or the watcher's eviction retry) picks up the
+            // now-materialized file.
+            #[cfg(target_os = "macos")]
+            if let Some(real) = icloud_real_from_placeholder(src, entry.file_name()) {
+                crate::icloud::trigger_download_file(&real);
+            }
+            continue;
+        }
+        let target = dst.join(&name);
         if target.exists() {
             continue;
         }
         fs::copy(entry.path(), &target)?;
     }
+    if !skipped.is_empty() {
+        eprintln!(
+            "sync_disable: {} iCloud-evicted file(s) under {} were skipped \
+             (downloads triggered in the background). Re-enable iCloud or \
+             retry disable to fetch them.",
+            skipped.len(),
+            src.display(),
+        );
+    }
     Ok(())
+}
+
+/// `<dir>/foo.epub` → `<dir>/.foo.epub.icloud`. None when the path
+/// has no parent or the filename isn't valid UTF-8.
+fn icloud_placeholder_for(real: &Path) -> Option<PathBuf> {
+    let parent = real.parent()?;
+    let name = real.file_name()?.to_str()?;
+    Some(parent.join(format!(".{name}.icloud")))
+}
+
+/// `<dir>/.foo.epub.icloud` → `<dir>/foo.epub`. None when the
+/// filename doesn't match the placeholder pattern.
+#[cfg(target_os = "macos")]
+fn icloud_real_from_placeholder(parent: &Path, placeholder_name: std::ffi::OsString) -> Option<PathBuf> {
+    let s = placeholder_name.to_str()?;
+    if !s.starts_with('.') || !s.ends_with(".icloud") {
+        return None;
+    }
+    let real = &s[1..s.len() - ".icloud".len()];
+    Some(parent.join(real))
 }
 
 #[cfg(test)]
@@ -684,6 +784,77 @@ mod tests {
         // because we don't overwrite peers' files.
         assert_eq!(fs::read(dst.join("a.epub")).unwrap(), b"peer");
         assert!(src.join("a.epub").exists());
+    }
+
+    /// Regression for the smoke-test finding: a file present at `dst`
+    /// only as an iCloud-evicted placeholder (`<dst>/.foo.epub.icloud`)
+    /// should make `move_dir_contents` skip the matching `src` entry,
+    /// not move it on top of the placeholder. Before this fix, the
+    /// re-enable cycle on a real iCloud library moved 5 local files
+    /// into iCloud (which still had them as placeholders), leaving
+    /// local without those files and iCloud holding both the
+    /// placeholder and the moved real copy.
+    #[test]
+    fn move_dir_contents_skips_when_icloud_placeholder_at_dst() {
+        let tmp = TempDir::new().unwrap();
+        let src = tmp.path().join("local");
+        let dst = tmp.path().join("icloud");
+        fs::create_dir_all(&src).unwrap();
+        fs::create_dir_all(&dst).unwrap();
+        fs::write(src.join("real.epub"), b"local-real-content").unwrap();
+        fs::write(dst.join(".real.epub.icloud"), b"icloud-stub").unwrap();
+
+        move_dir_contents(&src, &dst).unwrap();
+
+        assert!(
+            src.join("real.epub").exists(),
+            "src must keep the real file when dst has only an iCloud placeholder",
+        );
+        assert!(
+            dst.join(".real.epub.icloud").exists(),
+            "the iCloud placeholder must remain at dst",
+        );
+        assert!(
+            !dst.join("real.epub").exists(),
+            "we must not have moved the real file on top of the placeholder",
+        );
+    }
+
+    /// Regression for the same smoke-test finding, copy direction:
+    /// an iCloud-evicted entry in `src` (`.foo.epub.icloud`) is a
+    /// stub, not real content. Copying it as if it were the real file
+    /// would silently corrupt the local library. We skip it instead
+    /// and trigger a background download.
+    #[test]
+    fn copy_dir_contents_skips_icloud_placeholder_entries() {
+        let tmp = TempDir::new().unwrap();
+        let src = tmp.path().join("icloud");
+        let dst = tmp.path().join("local");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(src.join("good.epub"), b"good").unwrap();
+        fs::write(src.join(".evicted.epub.icloud"), b"stub").unwrap();
+
+        copy_dir_contents(&src, &dst).unwrap();
+
+        assert!(dst.join("good.epub").exists(), "real file must copy");
+        assert!(
+            !dst.join(".evicted.epub.icloud").exists(),
+            "placeholder stub must not be copied to local — that'd masquerade as the real file",
+        );
+        assert!(
+            !dst.join("evicted.epub").exists(),
+            "no fake real file should land at the translated name either",
+        );
+    }
+
+    #[test]
+    fn is_icloud_placeholder_pattern_matching() {
+        use std::ffi::OsStr;
+        assert!(is_icloud_placeholder(OsStr::new(".foo.epub.icloud")));
+        assert!(is_icloud_placeholder(OsStr::new(".x.icloud")));
+        assert!(!is_icloud_placeholder(OsStr::new("foo.epub")));
+        assert!(!is_icloud_placeholder(OsStr::new(".dotfile")));
+        assert!(!is_icloud_placeholder(OsStr::new(".icloud.txt")));
     }
 
     #[test]
