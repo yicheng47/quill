@@ -37,7 +37,7 @@ export default function Home() {
   const [importWarning, setImportWarning] = useState<string | null>(null);
   const [icloudSyncing, setIcloudSyncing] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsSection, setSettingsSection] = useState<"general" | "reading" | "ai" | "lookup" | "icloud" | "about">("general");
+  const [settingsSection, setSettingsSection] = useState<"general" | "reading" | "ai" | "lookup" | "librarySync" | "about">("general");
   const [userName, setUserName] = useState("");
   const collections = useCollections();
 

@@ -25,20 +25,30 @@ pub fn app_ready(app: AppHandle, _local_dir: tauri::State<'_, LocalDir>) -> AppR
         .set_focus()
         .map_err(|e| AppError::Other(e.to_string()))?;
 
+    // Trigger iCloud downloads for the binaries directory whenever
+    // sync is on — either via the new event-log sync (marker present)
+    // or the legacy file-sync (`is_icloud_enabled`). Without this,
+    // evicted books / covers stay as `.icloud` placeholders until the
+    // user opens them individually. The browser-style sync indicator
+    // in the sidebar is driven off this same emit pair.
     #[cfg(target_os = "macos")]
-    if crate::icloud::is_icloud_enabled(&_local_dir.0) {
-        let handle = app.clone();
-        tauri::async_runtime::spawn_blocking(move || {
-            let _ = handle.emit("icloud-sync-start", ());
-            if let Some(icloud_dir) = crate::icloud::icloud_data_dir() {
-                let _ = crate::icloud::ensure_downloaded(&icloud_dir);
-            } else {
-                eprintln!(
-                    "iCloud: daemon unreachable; running against the cached path. Sync will resume on next launch."
-                );
-            }
-            let _ = handle.emit("icloud-sync-done", ());
-        });
+    {
+        let new_sync = crate::sync::migration::is_migration_complete(&_local_dir.0);
+        let legacy = crate::icloud::is_icloud_enabled(&_local_dir.0);
+        if new_sync || legacy {
+            let handle = app.clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                let _ = handle.emit("icloud-sync-start", ());
+                if let Some(icloud_dir) = crate::icloud::icloud_data_dir() {
+                    let _ = crate::icloud::ensure_downloaded(&icloud_dir);
+                } else {
+                    eprintln!(
+                        "iCloud: daemon unreachable; running against the cached path. Sync will resume on next launch."
+                    );
+                }
+                let _ = handle.emit("icloud-sync-done", ());
+            });
+        }
     }
 
     Ok(())
