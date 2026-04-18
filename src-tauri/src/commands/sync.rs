@@ -675,11 +675,18 @@ fn move_dir_contents(src: &Path, dst: &Path) -> AppResult<()> {
 /// **iCloud placeholder handling:** evicted iCloud entries appear in
 /// `read_dir` as tiny stub files named `.<realname>.icloud`. Copying
 /// the stub to local would silently corrupt the local copy — the user
-/// then opens what looks like a book and gets unreadable bytes. We
-/// detect placeholders, skip them, and trigger a background iCloud
-/// download so the next disable retry succeeds. The skipped count is
-/// surfaced via `eprintln` for the launch log; the user-visible
-/// effect is "some books still in iCloud, re-enable to access them."
+/// would then open what looks like a book and get unreadable bytes.
+/// We detect placeholders, trigger a background iCloud download for
+/// each, copy every non-placeholder entry, and finally **return an
+/// error** if any placeholders were encountered.
+///
+/// Returning Err is load-bearing for `sync_disable`: the caller's `?`
+/// aborts before the marker removal / `data_dir` repoint, so sync
+/// stays on and the user can retry after iCloud has finished
+/// materialising the files. Without this, disable would silently
+/// finish with `data_dir` pointing at local while some books were
+/// only in iCloud — making them unreachable until re-enable. PR
+/// #190's fifth review pass caught the silent-skip path.
 fn copy_dir_contents(src: &Path, dst: &Path) -> AppResult<()> {
     if !src.exists() {
         return Ok(());
@@ -690,15 +697,14 @@ fn copy_dir_contents(src: &Path, dst: &Path) -> AppResult<()> {
         let entry = entry?;
         let name = entry.file_name();
         if is_icloud_placeholder(&name) {
-            skipped.push(name);
-            // Fire-and-forget download for the real file. macOS:
-            // `startDownloadingUbiquitousItemAtURL`. The next disable
-            // attempt (or the watcher's eviction retry) picks up the
-            // now-materialized file.
+            // Trigger background download for the real file even on
+            // the failing path: by the time the user retries disable,
+            // iCloud may have materialised some/all of them.
             #[cfg(target_os = "macos")]
             if let Some(real) = icloud_real_from_placeholder(src, entry.file_name()) {
                 crate::icloud::trigger_download_file(&real);
             }
+            skipped.push(name);
             continue;
         }
         let target = dst.join(&name);
@@ -708,13 +714,13 @@ fn copy_dir_contents(src: &Path, dst: &Path) -> AppResult<()> {
         fs::copy(entry.path(), &target)?;
     }
     if !skipped.is_empty() {
-        eprintln!(
-            "sync_disable: {} iCloud-evicted file(s) under {} were skipped \
-             (downloads triggered in the background). Re-enable iCloud or \
-             retry disable to fetch them.",
+        return Err(AppError::Other(format!(
+            "Cannot disable sync: {} iCloud-evicted file(s) under {} \
+             aren't downloaded yet. iCloud downloads have been triggered; \
+             please retry disable in a moment.",
             skipped.len(),
             src.display(),
-        );
+        )));
     }
     Ok(())
 }
@@ -823,10 +829,12 @@ mod tests {
     /// Regression for the same smoke-test finding, copy direction:
     /// an iCloud-evicted entry in `src` (`.foo.epub.icloud`) is a
     /// stub, not real content. Copying it as if it were the real file
-    /// would silently corrupt the local library. We skip it instead
-    /// and trigger a background download.
+    /// would silently corrupt the local library. We skip it AND
+    /// return Err, so `sync_disable` aborts Phase 1 (markers stay,
+    /// `data_dir` stays at iCloud) instead of finishing with books
+    /// only in iCloud and the app resolving against local.
     #[test]
-    fn copy_dir_contents_skips_icloud_placeholder_entries() {
+    fn copy_dir_contents_returns_err_on_icloud_placeholder_entries() {
         let tmp = TempDir::new().unwrap();
         let src = tmp.path().join("icloud");
         let dst = tmp.path().join("local");
@@ -834,8 +842,14 @@ mod tests {
         fs::write(src.join("good.epub"), b"good").unwrap();
         fs::write(src.join(".evicted.epub.icloud"), b"stub").unwrap();
 
-        copy_dir_contents(&src, &dst).unwrap();
+        let result = copy_dir_contents(&src, &dst);
+        assert!(
+            result.is_err(),
+            "must Err when placeholders are present so disable aborts cleanly",
+        );
 
+        // The good file is still copied (we did the work), but the
+        // stub is NOT copied under either name.
         assert!(dst.join("good.epub").exists(), "real file must copy");
         assert!(
             !dst.join(".evicted.epub.icloud").exists(),
