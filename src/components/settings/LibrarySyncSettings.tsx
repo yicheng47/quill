@@ -106,10 +106,15 @@ export default function LibrarySyncSettings(_props: SettingsProps) {
       } else {
         await Promise.all([invoke("sync_enable"), minDelay]);
       }
-      await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
+      // Always refresh — sync_enable's Phase 2 may have committed
+      // the marker before erroring on the binary move, so a failed
+      // call can still flip the durable "sync on" state. Without
+      // refreshing here the toggle would lie about reality and the
+      // user wouldn't see they can retry to finish the move.
+      await refresh();
       setBusy(false);
     }
   };
