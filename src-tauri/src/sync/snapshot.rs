@@ -301,9 +301,14 @@ impl Snapshot {
         })
     }
 
-    /// Atomic write — temp file, fsync, rename. The destination directory is
-    /// created if missing. Crash-safe: a partial write never replaces the
-    /// existing snapshot.
+    /// Atomic write — temp file, fsync, rename, parent-dir fsync.
+    /// Crash-safe: when this returns, the snapshot's contents AND its
+    /// new directory entry are both on disk. Without the parent-dir
+    /// fsync, a power loss between `rename` and the next implicit
+    /// directory flush can resurrect the previous snapshot at the
+    /// path — which would silently corrupt compaction (the caller
+    /// would proceed to truncate the source log against a snapshot
+    /// that's no longer on disk).
     pub fn write_atomic(&self, path: &Path) -> AppResult<()> {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
@@ -320,6 +325,7 @@ impl Snapshot {
         f.sync_all()?;
         drop(f);
         fs::rename(&tmp, path)?;
+        fsync_parent_dir(path)?;
         Ok(())
     }
 
@@ -443,6 +449,32 @@ impl Snapshot {
         upsert_replay_state(tx, peer_device, Some(&self.id), new_event_id.as_deref())?;
         Ok(ApplyOutcome::Applied)
     }
+}
+
+/// Open the parent directory of `path` and `fsync` it. POSIX requires
+/// this for a preceding `rename` to actually survive a power cut: the
+/// data write + `fsync` makes the temp file durable, the rename
+/// updates the in-memory directory, but the directory entry only
+/// hits the disk when the directory itself is fsynced. Without it,
+/// `compact_own_log` could leave the empty log entry durable while
+/// the snapshot's new directory entry is still in cache, dropping
+/// every event the log held.
+///
+/// Best-effort no-op on Windows — we don't ship sync there in v1, and
+/// `File::open(parent)` on a directory has different semantics that
+/// would need a separate `CreateFileW` path.
+#[cfg(unix)]
+fn fsync_parent_dir(path: &Path) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        let dir = fs::File::open(parent)?;
+        dir.sync_all()?;
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn fsync_parent_dir(_path: &Path) -> std::io::Result<()> {
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -572,15 +604,31 @@ pub fn compact_own_log(
             truncated_before: new_truncated,
             state,
         };
+        // Step 1: durably commit the new snapshot. `write_atomic`
+        // includes a parent-dir fsync — when it returns, the snapshot's
+        // directory entry survives a power cut. THIS MUST HAPPEN
+        // BEFORE the log is truncated; otherwise a crash window where
+        // the empty-log rename is durable but the snapshot rename is
+        // not loses every event the log held.
         new_snap.write_atomic(&snap_path)?;
 
-        // Truncate the log. Atomic temp + rename so a crash mid-write
-        // doesn't leave a half-truncated file (the snapshot already
-        // landed; worst case the log has the old contents and the
-        // next compaction folds them again — idempotent).
+        // Step 2: truncate the log. Atomic temp + rename + fsync of
+        // the empty file AND the parent dir so the truncation itself
+        // is durable. Without these fsyncs, a crash here can come
+        // back with the old log contents — fine for correctness
+        // (next compaction folds them again, idempotent) but breaks
+        // the storage-reclamation contract this function is here to
+        // provide.
         let tmp = log_path.with_extension("jsonl.tmp");
-        fs::write(&tmp, b"")?;
+        let f = fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&tmp)?;
+        f.sync_all()?;
+        drop(f);
         fs::rename(&tmp, log_path)?;
+        fsync_parent_dir(log_path)?;
 
         Ok(CompactReport {
             events_folded: events.len(),
@@ -1902,6 +1950,56 @@ mod tests {
                 "{table} state differs after compaction roundtrip",
             );
         }
+    }
+
+    /// Regression for PR #194's review finding: compaction must NOT
+    /// truncate the source log if the snapshot write fails. The
+    /// fold-and-truncate sequence has to commit the new snapshot
+    /// durably before the log loses its events — otherwise a crash
+    /// window between snapshot rename and log truncate can lose
+    /// already-published events.
+    ///
+    /// Direct simulation of a power loss is hard from a unit test,
+    /// but the proxy-bug we can reliably exercise is "snapshot
+    /// write fails." If the code truncates the log anyway, that's
+    /// the same data-loss path; fixing it (committing snapshot
+    /// durably first, propagating any error) closes the crash
+    /// window too.
+    #[test]
+    fn compact_keeps_log_when_snapshot_write_fails() {
+        let tmp = TempDir::new().unwrap();
+        let shared = tmp.path();
+        std::fs::create_dir_all(shared.join("logs")).unwrap();
+        let log = seed_log(
+            shared,
+            "dev-A",
+            vec![import("b1"), import("b2"), import("b3")],
+        );
+        let original_log_bytes = std::fs::read(log.path()).unwrap();
+        assert!(!original_log_bytes.is_empty());
+
+        // Make the snapshot write fail by occupying the destination
+        // path with a directory: the temp write succeeds, but the
+        // final `fs::rename(tmp, dst)` returns EISDIR. This short-
+        // circuits `write_atomic` with an error before the log
+        // truncate runs — exactly the failure mode we need to prove
+        // doesn't take the log down with it.
+        let snap_dst = shared.join("logs/dev-A.snapshot.json");
+        std::fs::create_dir_all(&snap_dst).unwrap();
+
+        let result = compact_own_log(shared, &log);
+        assert!(
+            result.is_err(),
+            "compaction must propagate snapshot write failure"
+        );
+
+        // Source log must still have every event we seeded — losing
+        // them here would mean peers never see them.
+        let preserved = std::fs::read(log.path()).unwrap();
+        assert_eq!(
+            preserved, original_log_bytes,
+            "log must be untouched when snapshot write fails"
+        );
     }
 
     #[test]
