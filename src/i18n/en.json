@@ -290,7 +290,6 @@
   "settings.librarySync.lastSyncAt": "Last sync {{time}}",
   "settings.librarySync.syncNow": "Sync now",
   "settings.librarySync.compact": "Compact log",
-  "settings.librarySync.compactSoon": "Coming in a future update",
   "settings.librarySync.keysNote": "API keys and tokens are stored locally and never synced.",
   "settings.librarySync.simultaneityNote": "Avoid editing on multiple devices simultaneously for best results.",
   "settings.librarySync.confirmEnable": "Sync with iCloud?",

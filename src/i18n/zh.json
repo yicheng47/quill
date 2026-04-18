@@ -292,7 +292,6 @@
   "settings.librarySync.lastSyncAt": "上次同步 {{time}}",
   "settings.librarySync.syncNow": "立即同步",
   "settings.librarySync.compact": "压缩日志",
-  "settings.librarySync.compactSoon": "即将在后续版本提供",
   "settings.librarySync.keysNote": "API 密钥和登录令牌仅存储在本地，不会同步。",
   "settings.librarySync.simultaneityNote": "为获得最佳效果，请避免同时在多台设备上编辑。",
   "settings.librarySync.confirmEnable": "与 iCloud 同步？",

@@ -36,7 +36,7 @@ use super::events::{Event, EventBody};
 use super::log::{self, EventLog};
 use super::merge;
 use super::peers;
-use super::snapshot::Snapshot;
+use super::snapshot::{self, Snapshot};
 
 /// Process-wide lock so two callers don't run `tick` concurrently. The lock
 /// is purely for throughput hygiene — concurrent ticks are functionally safe
@@ -113,6 +113,21 @@ impl ReplayEngine {
             chrono::Utc::now().timestamp_millis(),
         ) {
             eprintln!("sync: peer manifest refresh failed: {e}");
+        }
+
+        // Background compaction. Cheap probe; only runs the full
+        // fold-and-truncate when one of the size/age thresholds trips.
+        // Failures are non-fatal — the next tick will retry and the log
+        // simply grows in the meantime.
+        if snapshot::should_compact(&self.shared_dir, &self.self_device) {
+            match snapshot::compact_own_log(&self.shared_dir, &self.own_log) {
+                Ok(report) if report.snapshot_written => eprintln!(
+                    "sync: compacted own log — {} events folded, {} bytes freed",
+                    report.events_folded, report.bytes_freed,
+                ),
+                Ok(_) => {}
+                Err(e) => eprintln!("sync: compaction failed: {e}"),
+            }
         }
 
         Ok(ReplayReport {

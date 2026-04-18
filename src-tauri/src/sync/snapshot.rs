@@ -34,7 +34,17 @@ use crate::db::Db;
 use crate::error::{AppError, AppResult};
 
 use super::events::Event;
+use super::log::EventLog;
 use super::merge;
+
+/// Compaction is triggered when the log crosses any of these
+/// thresholds. The numbers are the spec's defaults — small enough
+/// that a chatty session doesn't bloat the log, large enough that
+/// a casual reader almost never trips compaction inside a single
+/// session.
+pub const COMPACT_LOG_BYTE_THRESHOLD: u64 = 2 * 1024 * 1024; // 2 MB
+pub const COMPACT_LOG_EVENT_THRESHOLD: usize = 5_000;
+pub const COMPACT_AGE_THRESHOLD_MS: i64 = 30 * 24 * 60 * 60 * 1_000; // 30 days
 
 pub const SNAPSHOT_SCHEMA_VERSION: u32 = 1;
 
@@ -191,6 +201,21 @@ pub struct ChatMessageRow {
 pub struct TombstoneRow {
     pub id: String,
     pub ts: i64,
+}
+
+/// What `compact_own_log` did. Surfaced so the replay tick can log
+/// it and the "Compact log" button can show feedback.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct CompactReport {
+    /// Number of log events folded into the new snapshot. Zero when
+    /// the log was already empty (no-op).
+    pub events_folded: usize,
+    /// True when a fresh snapshot file replaced the previous one.
+    pub snapshot_written: bool,
+    /// Bytes the log shrank by minus bytes the snapshot grew by. Can
+    /// be negative on the first compaction (snapshot is brand new and
+    /// larger than the log it replaces).
+    pub bytes_freed: i64,
 }
 
 /// Outcome reported back to the replay engine after a peer snapshot is
@@ -418,6 +443,162 @@ impl Snapshot {
         upsert_replay_state(tx, peer_device, Some(&self.id), new_event_id.as_deref())?;
         Ok(ApplyOutcome::Applied)
     }
+}
+
+// ---------------------------------------------------------------------------
+// Compaction — fold prior snapshot + log into a fresh snapshot, truncate log.
+// ---------------------------------------------------------------------------
+
+/// True when the device's own log meets any compaction threshold:
+/// size > 2 MB, > 5000 events, or last snapshot is older than 30 days
+/// (and the log has at least one event to fold). Cheap — only `stat`s
+/// the log + reads the snapshot header, never the full event stream.
+///
+/// `false` when the log doesn't exist yet (fresh enable, no events
+/// emitted) or every threshold is below the limit.
+pub fn should_compact(shared_dir: &Path, device: &str) -> bool {
+    let log_path = shared_dir
+        .join("logs")
+        .join(format!("{device}.jsonl"));
+    let snap_path = shared_dir
+        .join("logs")
+        .join(format!("{device}.snapshot.json"));
+
+    let Ok(meta) = fs::metadata(&log_path) else {
+        return false;
+    };
+    if meta.len() > COMPACT_LOG_BYTE_THRESHOLD {
+        return true;
+    }
+
+    // Cheap line count via byte scan — avoids deserializing every event
+    // just to decide whether compaction is needed.
+    let log_lines = match fs::read(&log_path) {
+        Ok(b) => b.iter().filter(|&&c| c == b'\n').count(),
+        Err(_) => 0,
+    };
+    if log_lines > COMPACT_LOG_EVENT_THRESHOLD {
+        return true;
+    }
+    if log_lines == 0 {
+        return false;
+    }
+
+    // The age trigger only applies when a snapshot exists. The
+    // first-snapshot case is owned by `sync_enable` /
+    // `migration::run_migration`; if neither has run yet, compaction
+    // staying out of the way is the right move (compacting an empty
+    // pre-bootstrap state would just publish a snapshot of nothing).
+    if let Ok(snap) = Snapshot::read_from(&snap_path) {
+        let now = chrono::Utc::now().timestamp_millis();
+        if now - snap.generated_at > COMPACT_AGE_THRESHOLD_MS {
+            return true;
+        }
+    }
+
+    false
+}
+
+/// Compact the device's own log: fold the existing snapshot + every
+/// event currently in the log into a fresh snapshot, then truncate
+/// the log to events past the new watermark (typically empty).
+///
+/// Concurrency: the entire read-fold-write-truncate sequence runs
+/// inside `EventLog::with_locked_log`, so concurrent `append`s from
+/// `SyncWriter` block until compaction finishes. Compaction is rare
+/// (every few minutes/days at most) so the brief stall is fine.
+///
+/// Idempotent: running compaction twice on an unchanged log is a
+/// no-op the second time (log is already empty after the first run).
+pub fn compact_own_log(
+    shared_dir: &Path,
+    log_handle: &EventLog,
+) -> AppResult<CompactReport> {
+    let device = log_handle.device().to_string();
+    let snap_path = shared_dir
+        .join("logs")
+        .join(format!("{device}.snapshot.json"));
+
+    let pre_log_size = fs::metadata(log_handle.path()).map(|m| m.len() as i64).unwrap_or(0);
+    let pre_snap_size = fs::metadata(&snap_path).map(|m| m.len() as i64).unwrap_or(0);
+
+    let report = log_handle.with_locked_log(|log_path, events| {
+        if events.is_empty() {
+            return Ok(CompactReport::default());
+        }
+
+        // Fold the prior snapshot (if any) + every log event into a
+        // fresh in-memory DB, then dump as the new snapshot. Same
+        // engine merge::apply_event uses for peer events — guarantees
+        // the snapshot reflects the same state a peer would compute.
+        let prior = if snap_path.exists() {
+            Some(Snapshot::read_from(&snap_path)?)
+        } else {
+            None
+        };
+
+        let mut conn = Connection::open_in_memory()?;
+        Db::run_migrations_on(&conn)?;
+        conn.execute_batch("PRAGMA foreign_keys = OFF;")?;
+        {
+            let tx = conn.transaction()?;
+            if let Some(s) = &prior {
+                s.apply_peer(&tx, &device)?;
+            }
+            for ev in events {
+                merge::apply_event(&tx, ev)?;
+            }
+            tx.commit()?;
+        }
+        let state = dump_state(&conn)?;
+
+        // The new snapshot's watermark is the highest event id we
+        // just folded. After truncation the log is empty, so any
+        // peer reading the snapshot has no log tail to consume —
+        // exactly the post-compaction invariant we want.
+        let new_truncated = events
+            .iter()
+            .map(|e| e.id.clone())
+            .max()
+            .or_else(|| prior.as_ref().and_then(|s| s.truncated_before.clone()));
+
+        let new_snap = Snapshot {
+            v: SNAPSHOT_SCHEMA_VERSION,
+            device: device.clone(),
+            id: new_truncated
+                .clone()
+                .unwrap_or_else(|| Ulid::new().to_string()),
+            generated_at: chrono::Utc::now().timestamp_millis(),
+            truncated_before: new_truncated,
+            state,
+        };
+        new_snap.write_atomic(&snap_path)?;
+
+        // Truncate the log. Atomic temp + rename so a crash mid-write
+        // doesn't leave a half-truncated file (the snapshot already
+        // landed; worst case the log has the old contents and the
+        // next compaction folds them again — idempotent).
+        let tmp = log_path.with_extension("jsonl.tmp");
+        fs::write(&tmp, b"")?;
+        fs::rename(&tmp, log_path)?;
+
+        Ok(CompactReport {
+            events_folded: events.len(),
+            snapshot_written: true,
+            bytes_freed: 0, // computed below
+        })
+    })?;
+
+    if !report.snapshot_written {
+        return Ok(report);
+    }
+
+    let post_log_size = fs::metadata(log_handle.path()).map(|m| m.len() as i64).unwrap_or(0);
+    let post_snap_size = fs::metadata(&snap_path).map(|m| m.len() as i64).unwrap_or(0);
+    Ok(CompactReport {
+        bytes_freed: (pre_log_size - post_log_size) - (post_snap_size - pre_snap_size),
+        ..report
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -1500,5 +1681,246 @@ mod tests {
                 "{table} differs between event-direct and snapshot-applied"
             );
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // Compaction
+    // -----------------------------------------------------------------------
+
+    /// Helper: write events to a real on-disk EventLog so compact_own_log
+    /// can be exercised end-to-end.
+    fn seed_log(shared: &Path, device: &str, bodies: Vec<EventBody>) -> EventLog {
+        let log_path = shared.join("logs").join(format!("{device}.jsonl"));
+        let log = EventLog::open(&log_path, device, false).unwrap();
+        for (i, body) in bodies.into_iter().enumerate() {
+            log.append(body, 1_000 + i as i64).unwrap();
+        }
+        log
+    }
+
+    #[test]
+    fn should_compact_returns_false_for_missing_log() {
+        let tmp = TempDir::new().unwrap();
+        assert!(!should_compact(tmp.path(), "nope"));
+    }
+
+    #[test]
+    fn should_compact_returns_false_for_empty_log() {
+        let tmp = TempDir::new().unwrap();
+        let shared = tmp.path();
+        std::fs::create_dir_all(shared.join("logs")).unwrap();
+        let _log = EventLog::open(
+            &shared.join("logs/dev-A.jsonl"),
+            "dev-A",
+            false,
+        )
+        .unwrap();
+        assert!(!should_compact(shared, "dev-A"));
+    }
+
+    #[test]
+    fn should_compact_false_for_small_log_without_snapshot() {
+        // The first-snapshot case is owned by sync_enable /
+        // migration::run_migration. should_compact deliberately stays
+        // out of the way until the size/count/age triggers fire on a
+        // log that's actually become unwieldy.
+        let tmp = TempDir::new().unwrap();
+        let shared = tmp.path();
+        std::fs::create_dir_all(shared.join("logs")).unwrap();
+        let _log = seed_log(shared, "dev-A", vec![import("b1")]);
+        assert!(!should_compact(shared, "dev-A"));
+    }
+
+    #[test]
+    fn should_compact_true_when_event_count_exceeds_threshold() {
+        let tmp = TempDir::new().unwrap();
+        let shared = tmp.path();
+        std::fs::create_dir_all(shared.join("logs")).unwrap();
+
+        // Drop a 5001-line file directly; cheaper than appending 5001
+        // events through EventLog. The byte-scan inside should_compact
+        // doesn't care about content as long as the lines parse-skip
+        // cleanly later (they don't here, but should_compact uses the
+        // raw newline count, not a parse).
+        let log_path = shared.join("logs/dev-A.jsonl");
+        let mut buf = Vec::with_capacity(5001 * 8);
+        for i in 0..5001 {
+            buf.extend_from_slice(format!("{{\"x\":{i}}}\n").as_bytes());
+        }
+        std::fs::write(&log_path, &buf).unwrap();
+
+        // Write a fresh-enough snapshot so the age threshold doesn't
+        // trip first.
+        let snap_path = shared.join("logs/dev-A.snapshot.json");
+        let snap = Snapshot {
+            v: SNAPSHOT_SCHEMA_VERSION,
+            device: "dev-A".into(),
+            id: "01HZA0000000000000000000F0".into(),
+            generated_at: chrono::Utc::now().timestamp_millis(),
+            truncated_before: None,
+            state: SnapshotState::default(),
+        };
+        snap.write_atomic(&snap_path).unwrap();
+
+        assert!(should_compact(shared, "dev-A"));
+    }
+
+    #[test]
+    fn compact_own_log_truncates_log_and_writes_snapshot() {
+        let tmp = TempDir::new().unwrap();
+        let shared = tmp.path();
+        std::fs::create_dir_all(shared.join("logs")).unwrap();
+        let log = seed_log(
+            shared,
+            "dev-A",
+            vec![import("b1"), import("b2"), import("b3")],
+        );
+
+        let report = compact_own_log(shared, &log).unwrap();
+        assert_eq!(report.events_folded, 3);
+        assert!(report.snapshot_written);
+
+        // Log is now empty.
+        let bytes = std::fs::read(log.path()).unwrap();
+        assert_eq!(bytes.len(), 0, "log should be truncated to zero");
+
+        // Snapshot exists with all three books.
+        let snap_path = shared.join("logs/dev-A.snapshot.json");
+        let snap = Snapshot::read_from(&snap_path).unwrap();
+        assert_eq!(snap.state.books.len(), 3);
+        assert!(snap.truncated_before.is_some());
+    }
+
+    #[test]
+    fn compact_own_log_is_noop_on_empty_log() {
+        let tmp = TempDir::new().unwrap();
+        let shared = tmp.path();
+        std::fs::create_dir_all(shared.join("logs")).unwrap();
+        let log_path = shared.join("logs/dev-A.jsonl");
+        let log = EventLog::open(&log_path, "dev-A", false).unwrap();
+
+        let report = compact_own_log(shared, &log).unwrap();
+        assert_eq!(report.events_folded, 0);
+        assert!(!report.snapshot_written);
+        assert!(!shared.join("logs/dev-A.snapshot.json").exists());
+    }
+
+    #[test]
+    fn compact_own_log_idempotent_when_run_twice() {
+        let tmp = TempDir::new().unwrap();
+        let shared = tmp.path();
+        std::fs::create_dir_all(shared.join("logs")).unwrap();
+        let log = seed_log(shared, "dev-A", vec![import("b1"), import("b2")]);
+
+        let r1 = compact_own_log(shared, &log).unwrap();
+        assert_eq!(r1.events_folded, 2);
+
+        // Second run sees an empty log → no snapshot rewrite.
+        let r2 = compact_own_log(shared, &log).unwrap();
+        assert_eq!(r2.events_folded, 0);
+        assert!(!r2.snapshot_written);
+    }
+
+    #[test]
+    fn compact_then_apply_yields_same_state_as_replay() {
+        // Round-trip equivalence: apply N events directly to DB1; on
+        // a separate device, compact (events → snapshot + truncated
+        // log), then `apply_peer` the resulting snapshot to DB2.
+        // Both DBs must end up with byte-identical row state.
+        let tmp = TempDir::new().unwrap();
+        let shared = tmp.path();
+        std::fs::create_dir_all(shared.join("logs")).unwrap();
+
+        let bodies = vec![
+            import("b1"),
+            import("b2"),
+            EventBody::HighlightAdd(HighlightPayload {
+                id: "h1".into(),
+                book_id: "b1".into(),
+                cfi_range: "cfi".into(),
+                color: "yellow".into(),
+                note: None,
+                text_content: None,
+            }),
+            EventBody::CollectionCreate {
+                id: "c1".into(),
+                name: "Top".into(),
+                sort_order: 0,
+            },
+            EventBody::CollectionBookAdd {
+                collection: "c1".into(),
+                book: "b1".into(),
+            },
+        ];
+
+        // Direct-replay path: write events to a log, then read them
+        // out and apply via merge::apply_event.
+        let log = seed_log(shared, "dev-A", bodies);
+        let events = log.read_all().unwrap();
+        let mut db_direct = open_db();
+        apply_to(&mut db_direct, &events);
+
+        // Compaction path: compact the log → snapshot, then apply the
+        // snapshot to a fresh DB.
+        compact_own_log(shared, &log).unwrap();
+        let snap =
+            Snapshot::read_from(&shared.join("logs/dev-A.snapshot.json")).unwrap();
+        let mut db_via_snap = open_db();
+        {
+            let tx = db_via_snap.transaction().unwrap();
+            snap.apply_peer(&tx, "dev-A").unwrap();
+            tx.commit().unwrap();
+        }
+
+        let dump = |db: &Connection, table: &str| -> Vec<String> {
+            let mut stmt = db
+                .prepare(&format!("SELECT * FROM {table} ORDER BY 1, 2"))
+                .unwrap();
+            let cols = stmt.column_count();
+            stmt.query_map([], |r| {
+                let mut s = String::new();
+                for i in 0..cols {
+                    let v: rusqlite::types::Value = r.get(i)?;
+                    s.push_str(&format!("{v:?}|"));
+                }
+                Ok(s)
+            })
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect()
+        };
+
+        for table in [
+            "books",
+            "highlights",
+            "collections",
+            "collection_books",
+        ] {
+            assert_eq!(
+                dump(&db_direct, table),
+                dump(&db_via_snap, table),
+                "{table} state differs after compaction roundtrip",
+            );
+        }
+    }
+
+    #[test]
+    fn second_compaction_picks_up_new_events_via_prior_snapshot() {
+        // After compaction the snapshot holds the old state and the log
+        // is empty. New events arrive → second compaction must fold the
+        // prior snapshot AND the new events into a fresh snapshot.
+        let tmp = TempDir::new().unwrap();
+        let shared = tmp.path();
+        std::fs::create_dir_all(shared.join("logs")).unwrap();
+        let log = seed_log(shared, "dev-A", vec![import("b1")]);
+
+        compact_own_log(shared, &log).unwrap();
+        // New event lands after the first compaction.
+        log.append(import("b2"), 9_999).unwrap();
+        compact_own_log(shared, &log).unwrap();
+
+        let snap =
+            Snapshot::read_from(&shared.join("logs/dev-A.snapshot.json")).unwrap();
+        assert_eq!(snap.state.books.len(), 2, "fresh snapshot must include both books");
     }
 }

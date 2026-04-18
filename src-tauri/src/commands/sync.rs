@@ -33,7 +33,7 @@ use crate::sync::device::DeviceIdentity;
 use crate::sync::log::EventLog;
 use crate::sync::peers;
 use crate::sync::replay::{ReplayEngine, ReplayReport};
-use crate::sync::snapshot::Snapshot;
+use crate::sync::snapshot::{self, CompactReport, Snapshot};
 use crate::sync::watcher::{self, WatcherHandle};
 use crate::sync::writer::SyncWriter;
 use crate::{sync, LocalDir};
@@ -132,6 +132,25 @@ impl From<ReplayReport> for SyncNowResult {
             snapshots_applied: r.snapshots_applied,
             events_applied: r.events_applied,
             peers_seen: r.peers_seen,
+        }
+    }
+}
+
+/// JSON shape for the "Compact log" button feedback. Mirrors
+/// `CompactReport` from `sync::snapshot`.
+#[derive(Debug, Serialize)]
+pub struct SyncCompactResult {
+    pub events_folded: usize,
+    pub snapshot_written: bool,
+    pub bytes_freed: i64,
+}
+
+impl From<CompactReport> for SyncCompactResult {
+    fn from(r: CompactReport) -> Self {
+        Self {
+            events_folded: r.events_folded,
+            snapshot_written: r.snapshot_written,
+            bytes_freed: r.bytes_freed,
         }
     }
 }
@@ -387,6 +406,22 @@ pub fn sync_now(
         .lock()
         .map_err(|e| AppError::Other(format!("db conn mutex: {e}")))?;
     let report = engine.tick(&mut conn)?;
+    Ok(report.into())
+}
+
+/// Manually trigger a compaction of the device's own log. Folds the
+/// existing snapshot + every log event into a fresh snapshot, then
+/// truncates the log. Idempotent — pressing the button on an already-
+/// compacted log returns `events_folded = 0`.
+///
+/// Returns an error when sync isn't enabled in this process — the
+/// settings UI surfaces it as a toast.
+#[tauri::command]
+pub fn sync_compact(sync_state: State<'_, SyncState>) -> AppResult<SyncCompactResult> {
+    let engine = sync_state
+        .engine_snapshot()?
+        .ok_or_else(|| AppError::Other("sync is not enabled on this device".into()))?;
+    let report = snapshot::compact_own_log(&engine.shared_dir, &engine.own_log)?;
     Ok(report.into())
 }
 

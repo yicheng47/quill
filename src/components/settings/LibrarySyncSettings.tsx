@@ -34,6 +34,12 @@ interface SyncNowResult {
   peers_seen: number;
 }
 
+interface SyncCompactResult {
+  events_folded: number;
+  snapshot_written: boolean;
+  bytes_freed: number;
+}
+
 function formatRelative(ts: number | null, now: number): string {
   if (ts == null) return "—";
   const diffSec = Math.max(0, Math.floor((now - ts) / 1000));
@@ -108,14 +114,21 @@ export default function LibrarySyncSettings(_props: SettingsProps) {
     setBusy(true);
     setError(null);
     try {
-      const r = await invoke<SyncNowResult>("sync_now");
-      // After a successful tick, refresh status so peer last-seen +
-      // pending_events update.
+      await invoke<SyncNowResult>("sync_now");
       await refresh();
-      // Surface a tiny in-component note for one second so the user
-      // sees something happened. Reuses the existing busy state with
-      // a synthetic delay so we don't need a separate "synced" toast.
-      void r;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onCompact = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await invoke<SyncCompactResult>("sync_compact");
+      await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -218,14 +231,11 @@ export default function LibrarySyncSettings(_props: SettingsProps) {
                 >
                   {t("settings.librarySync.syncNow")}
                 </button>
-                {/* Compact log is deferred to Chunk 8 — the button is
-                    intentionally disabled in v1 so the row matches the
-                    design without surfacing a half-wired action. */}
                 <button
                   type="button"
-                  disabled
-                  title={t("settings.librarySync.compactSoon")}
-                  className="text-[13px] font-medium text-text-muted/60 cursor-not-allowed"
+                  onClick={onCompact}
+                  disabled={busy}
+                  className="text-[13px] font-medium text-[#7c3aed] hover:underline disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                 >
                   {t("settings.librarySync.compact")}
                 </button>
