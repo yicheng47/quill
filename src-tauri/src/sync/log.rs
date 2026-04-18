@@ -66,6 +66,31 @@ impl EventLog {
         &self.path
     }
 
+    pub fn device(&self) -> &str {
+        &self.device
+    }
+
+    /// Hold the writer mutex while `f` runs, exposing the locked log
+    /// path and the events currently on disk. Used by compaction so a
+    /// concurrent `append`/`append_batch` can't slip an event in
+    /// between the read and the rewrite — the `Inner` mutex serializes
+    /// them. The closure typically returns the events to keep; the
+    /// caller atomically replaces the log file.
+    ///
+    /// Compaction is rare (every few minutes / days), so the brief
+    /// stall on appends during a compaction is acceptable.
+    pub fn with_locked_log<F, R>(&self, f: F) -> AppResult<R>
+    where
+        F: FnOnce(&Path, &[Event]) -> AppResult<R>,
+    {
+        let _guard = self
+            .inner
+            .lock()
+            .map_err(|e| AppError::Other(format!("EventLog inner lock poisoned: {e}")))?;
+        let events = read_log_file(&self.path)?;
+        f(&self.path, &events)
+    }
+
     /// Append one event. `ts` is the caller-chosen logical timestamp
     /// (unix millis) — typically the SQL `updated_at` value so the event
     /// mirrors the row it describes.

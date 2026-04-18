@@ -370,11 +370,13 @@ pub fn run() {
             commands::translation::save_translation,
             commands::translation::remove_saved_translation,
             commands::translation::list_translations,
-            // Sync (Chunk 7 — replaces the legacy icloud_* commands).
+            // Sync (Chunk 7 — replaces the legacy icloud_* commands;
+            // sync_compact added in Chunk 8).
             commands::sync::sync_status,
             commands::sync::sync_enable,
             commands::sync::sync_disable,
             commands::sync::sync_now,
+            commands::sync::sync_compact,
             commands::sync::sync_revert_to_legacy,
         ])
         .build(tauri::generate_context!())

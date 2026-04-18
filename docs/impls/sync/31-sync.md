@@ -817,9 +817,12 @@ Shape + type normalization as a single commit. Landed separately from the sync w
 
 ### Chunk 8 — Compaction
 
-- Wire triggers in `snapshot.rs` per Step 6: own log > 2 MB **OR** > 5000 events **OR** monthly. Invoked at end of migration, from "Compact log" button, and after each launch's `replay_engine.tick()`.
+- `sync::snapshot::should_compact(shared_dir, device)` — cheap probe. Triggers when the log exceeds 2 MB **OR** 5000 events **OR** the existing snapshot is more than 30 days old. The first-snapshot case is owned by `sync_enable` / `migration::run_migration` — the probe deliberately stays out of the way until size/count/age trips on a log that's actually become unwieldy.
+- `sync::snapshot::compact_own_log(shared_dir, &EventLog)` — folds the prior snapshot + every log event into an in-memory DB via `merge::apply_event`, dumps as a fresh snapshot, then atomically rewrites the log to events past the new watermark (typically zero). Holds `EventLog::with_locked_log` so concurrent `SyncWriter` appends serialize behind the rewrite — no torn-write race.
+- Hooked into `ReplayEngine::tick()` at the very end (after manifest refresh) so every tick gets a chance to compact. Failures are non-fatal — a missed compaction just means the log keeps growing until the next tick retries.
+- Manual `sync_compact` Tauri command + the "Compact log" button in `LibrarySyncSettings.tsx` invoke the same code path for on-demand compaction.
 
-**Verification:** compact round-trip on real usage data produces a snapshot + truncated log that replays to the same state.
+**Verification:** seven new tests in `sync::snapshot::tests` cover the trigger thresholds, the noop/idempotent cases, the snapshot+log → fresh-DB equivalence (`compact_then_apply_yields_same_state_as_replay`), and the second-compaction case where new events arrive on top of a prior snapshot.
 
 ### Chunk 9 — Cleanup (folded into Chunk 7)
 
