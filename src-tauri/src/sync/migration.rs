@@ -127,6 +127,28 @@ pub fn remove_marker(local_dir: &Path) -> AppResult<()> {
     }
 }
 
+/// Resolve the iCloud Documents directory at launch time. `Some(path)`
+/// when the launch flow should treat this install as having iCloud
+/// sync "on" in some form (either legacy file-sync pending migration,
+/// or post-migration / new-UI-enabled); `None` when sync is cleanly
+/// off. Prefers the path recorded in the migration marker (stable
+/// across launches) over the deterministic location (fallback for
+/// legacy markers from pre-PR #192 builds or the untouched
+/// `.icloud_enabled`-only case).
+///
+/// Taking the legacy-marker presence as a parameter keeps this helper
+/// testable without pulling in macOS-only `icloud::is_icloud_enabled`.
+pub fn resolve_ubiquity_dir(
+    local_dir: &Path,
+    legacy_marker_present: bool,
+) -> Option<PathBuf> {
+    let migration_done = is_migration_complete(local_dir);
+    if !legacy_marker_present && !migration_done {
+        return None;
+    }
+    recorded_data_dir(local_dir).or_else(crate::icloud::icloud_data_dir_deterministic)
+}
+
 /// Migrate from legacy file-sync to per-device event log.
 ///
 /// `local_dir` is the always-local app data directory (`<app_data>` in
@@ -429,6 +451,59 @@ mod tests {
         let conn = Connection::open(db_path).unwrap();
         conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))
             .unwrap()
+    }
+
+    // -----------------------------------------------------------------
+    // resolve_ubiquity_dir — launch-flow gate. Regression for the
+    // umbrella PR review finding #1: new-UI enablers never get
+    // `.icloud_enabled` written, so the gate must accept
+    // `.migration_complete` on its own or sync dies on restart.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn resolve_ubiquity_dir_none_when_no_markers() {
+        let local = TempDir::new().unwrap();
+        assert_eq!(resolve_ubiquity_dir(local.path(), false), None);
+    }
+
+    #[test]
+    fn resolve_ubiquity_dir_returns_recorded_path_for_new_ui_enabler() {
+        let local = TempDir::new().unwrap();
+        // Simulate `sync_enable` having written the marker with an
+        // explicit ubiquity path. `.icloud_enabled` is deliberately
+        // absent — the bug was that legacy-only gating left these
+        // users with None.
+        let recorded = TempDir::new().unwrap();
+        write_marker(local.path(), Some(recorded.path())).unwrap();
+
+        let resolved = resolve_ubiquity_dir(local.path(), false).expect("must resolve");
+        assert_eq!(resolved, recorded.path());
+    }
+
+    #[test]
+    fn resolve_ubiquity_dir_returns_recorded_path_for_legacy_only_user() {
+        let local = TempDir::new().unwrap();
+        // Legacy user: only `.icloud_enabled` is present (no marker).
+        // On macOS the deterministic fallback resolves to the real
+        // container path; on other platforms it's None — either way
+        // the gate itself opens because the legacy marker is true.
+        let resolved = resolve_ubiquity_dir(local.path(), true);
+        #[cfg(target_os = "macos")]
+        assert!(resolved.is_some(), "legacy marker on macOS should resolve");
+        #[cfg(not(target_os = "macos"))]
+        assert!(resolved.is_none(), "no deterministic fallback off macOS");
+    }
+
+    #[test]
+    fn resolve_ubiquity_dir_prefers_recorded_over_legacy_fallback() {
+        let local = TempDir::new().unwrap();
+        let recorded = TempDir::new().unwrap();
+        write_marker(local.path(), Some(recorded.path())).unwrap();
+
+        // Legacy marker also present — still prefer the recorded
+        // path, not the deterministic iCloud fallback.
+        let resolved = resolve_ubiquity_dir(local.path(), true).unwrap();
+        assert_eq!(resolved, recorded.path());
     }
 
     #[test]

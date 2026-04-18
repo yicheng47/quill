@@ -301,7 +301,19 @@ pub fn sync_enable(
         }
     }
 
-    let watcher_handle = watcher::spawn(icloud_dir.clone(), db.inner().clone(), Arc::clone(&engine))?;
+    // If watcher spawn fails, roll back the writer's log handle so
+    // this session falls into queue-only mode instead of publishing
+    // to a log with no engine or watcher behind it. The durable
+    // artifacts written above (marker, manifest, snapshot, moved
+    // binaries) stay — they're correct for "sync is on" and the next
+    // launch's `boot_sync_engine` will pick up where we left off.
+    let watcher_handle = match watcher::spawn(icloud_dir.clone(), db.inner().clone(), Arc::clone(&engine)) {
+        Ok(w) => w,
+        Err(e) => {
+            sync_writer.set_log(None);
+            return Err(e);
+        }
+    };
 
     {
         let mut g = sync_state

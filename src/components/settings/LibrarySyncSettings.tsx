@@ -136,7 +136,21 @@ export default function LibrarySyncSettings(_props: SettingsProps) {
     }
   };
 
-  const enabled = status?.enabled ?? false;
+  // Two orthogonal states surfaced by the backend:
+  //  - `migration_complete` is the user's durable intent ("sync is on
+  //    for this install"). This drives the Toggle and the visibility
+  //    of the "Other devices" / actions sections — if the user said
+  //    they want sync, those affordances should stay put even when
+  //    the engine happens to be paused this session.
+  //  - `enabled` is the per-session runtime state ("engine + watcher
+  //    booted in this process"). False during a queue-only session
+  //    (iCloud unreachable at launch); new writes still persist into
+  //    `_pending_publish` and drain on the next successful boot.
+  // Splitting the two keeps a user with sync on but iCloud temporarily
+  // offline from seeing the toggle flip itself off — and from being
+  // re-offered `sync_enable` as if they never turned it on.
+  const syncOn = status?.migration_complete ?? false;
+  const engineRunning = status?.enabled ?? false;
   const available = status?.available ?? false;
   const peers = status?.peers ?? [];
 
@@ -161,22 +175,27 @@ export default function LibrarySyncSettings(_props: SettingsProps) {
                 <p className="text-[12px] text-text-muted mt-0.5">
                   {!available
                     ? t("settings.librarySync.signIn")
-                    : t("settings.librarySync.toggleSub")}
+                    : syncOn && !engineRunning
+                      ? t("settings.librarySync.paused")
+                      : t("settings.librarySync.toggleSub")}
                 </p>
               </div>
               <Toggle
-                checked={enabled}
+                checked={syncOn}
                 onChange={onToggleClick}
-                disabled={!available}
+                disabled={!available && !syncOn}
               />
             </>
           )}
         </div>
 
-        {/* Other devices — visible only when sync is on. The empty state
-            still renders so a single-device user understands why the list
-            is empty. */}
-        {enabled && (
+        {/* Other devices — visible whenever the user has sync on,
+            including queue-only sessions where the engine hasn't
+            booted this launch. The peer list reads from manifest
+            files on disk, not from the running engine, so it's still
+            meaningful offline. The empty state still renders so a
+            single-device user understands why the list is empty. */}
+        {syncOn && (
           <>
             <div className="h-px bg-black/10" />
             <div className="pt-4 pb-2">
@@ -220,13 +239,18 @@ export default function LibrarySyncSettings(_props: SettingsProps) {
             </div>
             <div className="h-px bg-black/10 mt-3" />
 
-            {/* Actions row */}
+            {/* Actions row. Sync now / Compact log both require the
+                engine to be running this session — disable them when
+                we're in queue-only mode so the user isn't confused by
+                an error toast. The "Last sync" caption still renders
+                whatever the backend reports. */}
             <div className="flex items-center justify-between pt-4 pb-2">
               <div className="flex items-center gap-4">
                 <button
                   type="button"
                   onClick={onSyncNow}
-                  disabled={busy}
+                  disabled={busy || !engineRunning}
+                  title={!engineRunning ? t("settings.librarySync.paused") : undefined}
                   className="text-[13px] font-medium text-[#7c3aed] hover:underline disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                 >
                   {t("settings.librarySync.syncNow")}
@@ -234,7 +258,8 @@ export default function LibrarySyncSettings(_props: SettingsProps) {
                 <button
                   type="button"
                   onClick={onCompact}
-                  disabled={busy}
+                  disabled={busy || !engineRunning}
+                  title={!engineRunning ? t("settings.librarySync.paused") : undefined}
                   className="text-[13px] font-medium text-[#7c3aed] hover:underline disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                 >
                   {t("settings.librarySync.compact")}

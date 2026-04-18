@@ -282,6 +282,7 @@
 
   "settings.librarySync.toggle": "Sync with iCloud",
   "settings.librarySync.toggleSub": "Keep your library and reading progress in iCloud Drive",
+  "settings.librarySync.paused": "Paused — iCloud unreachable right now, will resume automatically",
   "settings.librarySync.working": "Working…",
   "settings.librarySync.signIn": "Sign in to iCloud on your Mac to enable sync",
   "settings.librarySync.otherDevices": "Other devices",
