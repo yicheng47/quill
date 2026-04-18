@@ -308,11 +308,35 @@ pub fn sync_enable(
         *data_dir = icloud_dir.clone();
     }
 
-    // Wire the writer + store engine/watcher in state. These are
-    // in-memory only; infallible past the mutex-poisoning edge.
+    // Wire the writer's queue immediately so any commands the user
+    // fires off during the binary move below durably persist into
+    // `_pending_publish`. The log handle stays None until move
+    // completes — we don't want to publish to peers before our
+    // binaries are visible to them. If the move fails, this leaves
+    // the writer in queue-only mode (correct for the partial state).
     sync_writer.set_should_queue(true);
-    sync_writer.set_log(Some(Arc::clone(&log)));
 
+    // First-time enable: move local binaries into the ubiquity container
+    // so peers can read them. Re-enable after a disable just shuffles
+    // whatever the user has imported in the meantime — usually a no-op
+    // since the binaries are already in iCloud.
+    //
+    // Move runs BEFORE the SyncState engine/watcher store so that a
+    // move failure leaves `engine_snapshot()` returning None — which
+    // means the early-guard at the top of `sync_enable` re-enters
+    // cleanly on the user's next click. The previous order stored
+    // engine first, so the guard short-circuited every retry to
+    // `Ok(())` and the leftover blobs stayed stranded until restart.
+    // Launch-time `reconcile_local_blobs_to_ubiquity` still backstops
+    // restart recovery; this fix gives the user a working in-session
+    // retry too. PR #190's seventh review pass.
+    move_dir_contents(&local.0.join("books"), &icloud_dir.join("books"))?;
+    move_dir_contents(&local.0.join("covers"), &icloud_dir.join("covers"))?;
+
+    // Move succeeded — wire the log so post-commit flushes drain to
+    // peers, and store the engine + watcher in app state so the rest
+    // of the app sees sync as on.
+    sync_writer.set_log(Some(Arc::clone(&log)));
     {
         let mut g = sync_state
             .engine
@@ -327,13 +351,6 @@ pub fn sync_enable(
             .map_err(|e| AppError::Other(format!("watcher mutex: {e}")))?;
         *g = Some(watcher_handle);
     }
-
-    // First-time enable: move local binaries into the ubiquity container
-    // so peers can read them. Re-enable after a disable just shuffles
-    // whatever the user has imported in the meantime — usually a no-op
-    // since the binaries are already in iCloud.
-    move_dir_contents(&local.0.join("books"), &icloud_dir.join("books"))?;
-    move_dir_contents(&local.0.join("covers"), &icloud_dir.join("covers"))?;
 
     // Fire an initial tick now that the engine is fully wired. Failure
     // is non-fatal — the watcher will retry on the next event, and a
