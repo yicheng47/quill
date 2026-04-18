@@ -284,6 +284,7 @@
 
   "settings.librarySync.toggle": "与 iCloud 同步",
   "settings.librarySync.toggleSub": "将书库与阅读进度保存在 iCloud 云盘",
+  "settings.librarySync.paused": "已暂停 — iCloud 当前不可用，稍后将自动恢复",
   "settings.librarySync.working": "处理中…",
   "settings.librarySync.signIn": "请先在 Mac 上登录 iCloud 以启用同步",
   "settings.librarySync.otherDevices": "其他设备",

@@ -65,8 +65,18 @@ fn boot_sync_engine(
         }
     }
 
-    let watcher = sync::watcher::spawn(shared_dir, db.clone(), Arc::clone(&engine))?;
-    Ok((Some(engine), Some(watcher)))
+    // If watcher spawn fails, roll back the writer so new writes fall
+    // into queue-only mode instead of draining to a log with no engine
+    // or watcher behind it. Without this, the caller drops `engine`
+    // but the writer still has `Some(log)` — writes keep publishing
+    // events that no process is replaying and no one is watching for.
+    match sync::watcher::spawn(shared_dir, db.clone(), Arc::clone(&engine)) {
+        Ok(watcher) => Ok((Some(engine), Some(watcher))),
+        Err(e) => {
+            sync_writer.set_log(None);
+            Err(e)
+        }
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -112,7 +122,12 @@ pub fn run() {
             std::fs::create_dir_all(&local_dir).expect("failed to create app data dir");
 
             // Resolve the iCloud Documents path from the deterministic
-            // hardcoded location whenever the legacy marker is on.
+            // hardcoded location whenever **either** sync marker is on:
+            //   - `.icloud_enabled` (legacy file-sync user, migration
+            //     still pending)
+            //   - `.migration_complete` (new-UI enabler, post-migration
+            //     user, or legacy user who has migrated)
+            //
             // Avoids `URLForUbiquityContainerIdentifier` on the main
             // thread (slow cold-start IPC to the iCloud daemon).
             //
@@ -125,12 +140,16 @@ pub fn run() {
             // entirely on a cold-iCloud first launch, leaving the user
             // open to the data-loss path documented in PR #192's
             // first-launch-without-iCloud finding.
+            //
+            // Gating the legacy-marker path only here (the pre-PR #190
+            // bug) meant new-UI enablers — who never get
+            // `.icloud_enabled` written — came back next launch with
+            // `ubiquity_dir = None` and therefore no engine boot, even
+            // though their durable state said "sync on." Every write
+            // after that stayed in `_pending_publish` indefinitely.
             let icloud_was_enabled = icloud::is_icloud_enabled(&local_dir);
-            let ubiquity_dir = if icloud_was_enabled {
-                icloud::icloud_data_dir_deterministic()
-            } else {
-                None
-            };
+            let ubiquity_dir =
+                sync::migration::resolve_ubiquity_dir(&local_dir, icloud_was_enabled);
 
             // Per-install device UUID — stamped into every LWW write so
             // peer reconciliation stays deterministic on equal-millisecond
