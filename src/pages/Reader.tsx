@@ -298,6 +298,11 @@ export default function Reader() {
         wordSpacing: bookSettings.wordSpacing ?? (g.word_spacing ? parseInt(g.word_spacing) : prev.wordSpacing),
         margins: bookSettings.margins ?? (g.margins ? parseInt(g.margins) : prev.margins),
       }));
+      const savedZoom = localStorage.getItem(`reader-zoom-${bookId}`);
+      const parsedZoom = savedZoom ? parseInt(savedZoom, 10) : NaN;
+      if (Number.isFinite(parsedZoom) && parsedZoom >= 50 && parsedZoom <= 300) {
+        setZoomLevel(parsedZoom);
+      }
       dbSettingsLoaded.current = true;
     }).catch(() => {});
   }, [bookId]);
@@ -309,6 +314,42 @@ export default function Reader() {
     if (!dbSettingsLoaded.current) return;
     localStorage.setItem(`reader-settings-${bookId}`, JSON.stringify(readerSettings));
   }, [readerSettings]);
+
+  // Persist per-book PDF zoom after load. Debounce to avoid thrashing during
+  // rapid zoom-button clicks; only write once the user settles.
+  useEffect(() => {
+    if (!dbSettingsLoaded.current) return;
+    if (book?.format !== "pdf") return;
+    const handle = window.setTimeout(() => {
+      localStorage.setItem(`reader-zoom-${bookId}`, String(zoomLevel));
+    }, 500);
+    return () => window.clearTimeout(handle);
+  }, [zoomLevel, bookId, book?.format]);
+
+  // Persist per-book reader window size. Standalone reader windows are
+  // labelled `reader-${bookId}`; openReaderWindow reads this key back on
+  // next open so the window restores to the size the user left it at.
+  useEffect(() => {
+    if (!isStandaloneWindow || !bookId) return;
+    let timer: number | null = null;
+    const unlistenPromise = appWindow.onResized(({ payload }) => {
+      if (timer !== null) window.clearTimeout(timer);
+      timer = window.setTimeout(async () => {
+        try {
+          const scale = await appWindow.scaleFactor();
+          const logical = payload.toLogical(scale);
+          localStorage.setItem(
+            `reader-window-${bookId}`,
+            JSON.stringify({ width: Math.round(logical.width), height: Math.round(logical.height) }),
+          );
+        } catch { /* window may have closed */ }
+      }, 500);
+    });
+    return () => {
+      if (timer !== null) window.clearTimeout(timer);
+      unlistenPromise.then((fn) => fn()).catch(() => {});
+    };
+  }, [bookId]);
 
   // Wait for iCloud download if book is not locally available
   useEffect(() => {
@@ -715,11 +756,10 @@ export default function Reader() {
   const zoomRef = useRef(zoomLevel);
   zoomRef.current = zoomLevel;
 
-  const handleZoom = (delta: number) => {
+  const applyZoomToRenderer = useCallback((next: number) => {
     const view = viewRef.current;
     const viewer = viewerRef.current;
     if (!view?.renderer || !viewer) return;
-    const next = Math.min(300, Math.max(50, zoomRef.current + delta));
     const renderer = view.renderer;
 
     // Scroll mode (foliate-pdf-scroll): the renderer observes a `zoom`
@@ -727,19 +767,16 @@ export default function Reader() {
     // onZoom hook. CSS transform would break IntersectionObserver math.
     if (book?.format === "pdf" && readerSettings.readingMode === "scrolling") {
       renderer.setAttribute("zoom", String(next / 100));
-      setZoomLevel(next);
       return;
     }
 
     if (next === 100) {
-      // Reset to fit-page: fluid sizing, no transform
       renderer.style.width = "";
       renderer.style.height = "";
       renderer.style.transform = "";
       viewer.style.width = "";
       viewer.style.height = "";
     } else {
-      // Lock renderer at its current (fit-page) size if not already locked
       if (!renderer.style.width) {
         renderer.style.width = `${renderer.clientWidth}px`;
         renderer.style.height = `${renderer.clientHeight}px`;
@@ -747,14 +784,27 @@ export default function Reader() {
       const scale = next / 100;
       renderer.style.transform = `scale(${scale})`;
       renderer.style.transformOrigin = "top left";
-      // Set viewer to zoomed size so parent container can scroll
       const baseW = parseInt(renderer.style.width);
       const baseH = parseInt(renderer.style.height);
       viewer.style.width = `${baseW * scale}px`;
       viewer.style.height = `${baseH * scale}px`;
     }
+  }, [book?.format, readerSettings.readingMode]);
+
+  const handleZoom = (delta: number) => {
+    const next = Math.min(300, Math.max(50, zoomRef.current + delta));
+    applyZoomToRenderer(next);
     setZoomLevel(next);
   };
+
+  // Apply the seeded zoom once the PDF is rendered — state alone doesn't
+  // transform the renderer. Re-apply when readingMode flips (pagination
+  // tears down the view and rebuilds it).
+  useEffect(() => {
+    if (!bookReady || book?.format !== "pdf") return;
+    if (zoomRef.current === 100) return;
+    applyZoomToRenderer(zoomRef.current);
+  }, [bookReady, book?.format, readerSettings.readingMode, applyZoomToRenderer]);
 
   const togglePanel = (panel: "ai" | "bookmarks" | "vocab") => {
     setSidePanel((prev) => (prev === panel ? null : panel));

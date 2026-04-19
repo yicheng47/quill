@@ -7,6 +7,27 @@ interface ReaderWindowOptions {
   cfi?: string | null;
 }
 
+const DEFAULT_WIDTH = 1440;
+const DEFAULT_HEIGHT = 960;
+const MIN_WIDTH = 700;
+const MIN_HEIGHT = 500;
+
+function loadSavedSize(bookId: string): { width: number; height: number } {
+  try {
+    const raw = localStorage.getItem(`reader-window-${bookId}`);
+    if (!raw) return { width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT };
+    const parsed = JSON.parse(raw) as { width?: unknown; height?: unknown };
+    const width = typeof parsed.width === "number" && Number.isFinite(parsed.width) ? parsed.width : DEFAULT_WIDTH;
+    const height = typeof parsed.height === "number" && Number.isFinite(parsed.height) ? parsed.height : DEFAULT_HEIGHT;
+    return {
+      width: Math.max(MIN_WIDTH, Math.round(width)),
+      height: Math.max(MIN_HEIGHT, Math.round(height)),
+    };
+  } catch {
+    return { width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT };
+  }
+}
+
 export async function openReaderWindow(
   bookId: string,
   options?: ReaderWindowOptions
@@ -32,13 +53,15 @@ export async function openReaderWindow(
     if (qs) url += `?${qs}`;
   }
 
+  const { width, height } = loadSavedSize(bookId);
+
   new WebviewWindow(label, {
     url,
     title: "Quill",
-    width: 1440,
-    height: 960,
-    minWidth: 700,
-    minHeight: 500,
+    width,
+    height,
+    minWidth: MIN_WIDTH,
+    minHeight: MIN_HEIGHT,
     titleBarStyle: "overlay",
     hiddenTitle: true,
   });
