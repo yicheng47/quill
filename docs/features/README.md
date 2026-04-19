@@ -18,3 +18,4 @@ Specs for features that are in progress or planned. Shipped specs are moved to [
 - [30 — MCP Server](30-mcp-server.md)
 - [31 — Sync](31-sync.md)
 - [146 — PDF Continuous Scroll Mode](146-pdf-scroll-mode.md)
+- [198 — Persist Per-Book Window Size and PDF Zoom](198-per-book-window-zoom.md)
