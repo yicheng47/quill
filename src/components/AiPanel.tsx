@@ -39,10 +39,14 @@ export default function AiPanel({ bookId, bookTitle, bookAuthor, currentChapter,
 
   const currentChat = chats.find((c) => c.id === chatId);
 
-  // Initialize on mount / bookId change
+  // Initialize on mount / bookId change.
+  // Skip when an incoming context is pending — the context effect below will
+  // create a new chat for it, and we don't want a racing initialize() to load
+  // a stale chat and cancel the stream.
   useEffect(() => {
+    if (context) return;
     initialize();
-  }, [initialize]);
+  }, [initialize, context]);
 
   // Load specific chat when navigating from ChatsPage
   useEffect(() => {
@@ -56,13 +60,17 @@ export default function AiPanel({ bookId, bookTitle, bookAuthor, currentChapter,
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // Handle context from "Ask AI" context menu — auto-send
+  // Handle context from "Ask AI" context menu — always start a new chat.
+  // reset() clears chatId so send()'s lazy-create path fires; that path is
+  // also what marks the message as belonging to a new chat (drives title gen).
   useEffect(() => {
-    if (context && !streaming) {
+    if (!context || streaming || !bookId) return;
+    (async () => {
+      await reset();
       send(t("ai.explain"), context.text, context.cfi);
-      onContextConsumed?.();
-    }
-  }, [context, onContextConsumed, send, streaming]);
+    })();
+    onContextConsumed?.();
+  }, [context, bookId, onContextConsumed, reset, send, streaming, t]);
 
   // Focus title input when editing
   useEffect(() => {
