@@ -212,6 +212,7 @@ export default function Reader() {
   const currentCfiRef = useRef<string | null>(null);
   const [bookReady, setBookReady] = useState(false);
   const [canGoBack, setCanGoBack] = useState(false);
+  const backButtonTimerRef = useRef<number | null>(null);
   const [icloudDownloading, setIcloudDownloading] = useState(false);
   const [icloudTimeout, setIcloudTimeout] = useState(false);
   const [contextMenu, setContextMenu] = useState<{
@@ -440,9 +441,21 @@ export default function Reader() {
         }
       }) as EventListener);
 
-      // Track navigation history for back button
+      // Track navigation history for back button. Auto-hide 10s after the
+      // last jump so it doesn't linger once the reader has settled.
       view.history.addEventListener("index-change", () => {
-        setCanGoBack(view.history.canGoBack);
+        const canBack = view.history.canGoBack;
+        setCanGoBack(canBack);
+        if (backButtonTimerRef.current !== null) {
+          window.clearTimeout(backButtonTimerRef.current);
+          backButtonTimerRef.current = null;
+        }
+        if (canBack) {
+          backButtonTimerRef.current = window.setTimeout(() => {
+            setCanGoBack(false);
+            backButtonTimerRef.current = null;
+          }, 10000);
+        }
       });
 
       // Handle section loads — text selection, keyboard, highlights
@@ -639,6 +652,11 @@ export default function Reader() {
 
     return () => {
       cancelled = true;
+      if (backButtonTimerRef.current !== null) {
+        window.clearTimeout(backButtonTimerRef.current);
+        backButtonTimerRef.current = null;
+      }
+      setCanGoBack(false);
       if (viewRef.current) {
         viewRef.current.close();
         viewRef.current.remove();
