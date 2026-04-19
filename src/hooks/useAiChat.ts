@@ -203,6 +203,8 @@ export function useAiChat(bookId?: string, bookContext?: BookContext) {
       setChatId(chat.id);
       chatIdRef.current = chat.id;
       updateMessages([]);
+      // Mark book as initialized so a later initialize() call won't reload a stale chat.
+      initializedBookRef.current = bid;
       await refreshChats(bid);
       return chat;
     } catch (err) {
