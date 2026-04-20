@@ -193,6 +193,36 @@ const highlightColorMap: Record<string, string> = {
 const appWindow = getCurrentWebviewWindow();
 const isStandaloneWindow = appWindow.label.startsWith("reader-");
 
+// One-time migration of `reader-zoom-${bookId}` keys written by PR #199.
+// That PR saved "100" on every default open, so every pre-upgrade book has
+// it even when the user never touched zoom. Under the new scheme, the
+// default is "fit" and "100" should mean the user explicitly chose 100%.
+// Rewrite legacy "100" → "fit" once, guarded by a global marker so new
+// explicit 100% saves aren't clobbered on subsequent opens.
+(() => {
+  try {
+    if (localStorage.getItem("reader-zoom-v2")) return;
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const k = localStorage.key(i);
+      if (k?.startsWith("reader-zoom-") && localStorage.getItem(k) === "100") {
+        localStorage.setItem(k, "fit");
+      }
+    }
+    localStorage.setItem("reader-zoom-v2", "1");
+  } catch { /* private-mode storage failures are non-fatal */ }
+})();
+
+// Synthesize a foliate "fake" CFI for a PDF section index so legacy books
+// without a saved CFI (only `progress`) still restore to the right page.
+// Mirrors `CFI.fake.fromIndex` in epubcfi.js. Returning a CFI string (not a
+// number) ensures `view.init` treats page 0 as present — it checks
+// `lastLocation ? ...` and numeric 0 would be seen as absent.
+function getPdfStartCfi(progress: number, pageCount: number | null | undefined): string | undefined {
+  if (!Number.isFinite(progress) || progress <= 0 || !pageCount || pageCount <= 0) return undefined;
+  const idx = Math.min(pageCount - 1, Math.max(0, Math.ceil((progress / 100) * pageCount) - 1));
+  return `epubcfi(/6/${(idx + 1) * 2})`;
+}
+
 export default function Reader() {
   const { bookId } = useParams();
   const navigate = useNavigate();
@@ -203,7 +233,7 @@ export default function Reader() {
   const [sidePanel, setSidePanel] = useState<SidePanel>(null);
   const [panelWidth, setPanelWidth] = useState(PANEL_DEFAULT_WIDTH);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [zoomLevel, setZoomLevel] = useState(100);
+  const [zoom, setZoom] = useState<number | "fit">("fit");
   const [tocOpen, setTocOpen] = useState(false);
   const [chapters, setChapters] = useState<TocChapter[]>([]);
   const [currentChapterIndex, setCurrentChapterIndex] = useState(-1);
@@ -299,9 +329,13 @@ export default function Reader() {
         margins: bookSettings.margins ?? (g.margins ? parseInt(g.margins) : prev.margins),
       }));
       const savedZoom = localStorage.getItem(`reader-zoom-${bookId}`);
-      const parsedZoom = savedZoom ? parseInt(savedZoom, 10) : NaN;
-      if (Number.isFinite(parsedZoom) && parsedZoom >= 50 && parsedZoom <= 300) {
-        setZoomLevel(parsedZoom);
+      if (savedZoom === "fit") {
+        setZoom("fit");
+      } else {
+        const parsedZoom = savedZoom ? parseInt(savedZoom, 10) : NaN;
+        if (Number.isFinite(parsedZoom) && parsedZoom >= 50 && parsedZoom <= 300) {
+          setZoom(parsedZoom);
+        }
       }
       dbSettingsLoaded.current = true;
     }).catch(() => {});
@@ -321,10 +355,10 @@ export default function Reader() {
     if (!dbSettingsLoaded.current) return;
     if (book?.format !== "pdf") return;
     const handle = window.setTimeout(() => {
-      localStorage.setItem(`reader-zoom-${bookId}`, String(zoomLevel));
+      localStorage.setItem(`reader-zoom-${bookId}`, zoom === "fit" ? "fit" : String(zoom));
     }, 500);
     return () => window.clearTimeout(handle);
-  }, [zoomLevel, bookId, book?.format]);
+  }, [zoom, bookId, book?.format]);
 
   // Persist per-book reader window size. Standalone reader windows are
   // labelled `reader-${bookId}`; openReaderWindow reads this key back on
@@ -438,6 +472,16 @@ export default function Reader() {
       // Spread mode for fixed-layout (PDF) — 'none' = single page, default = two pages
       if (book.format === "pdf") {
         view.renderer.setAttribute("spread", readerSettings.pageColumns === 1 ? "none" : "auto");
+        // Seed zoom from localStorage BEFORE view.init so CFI restore lands on
+        // the right scroll offset. Re-applying after init would trigger a
+        // #layoutAll() that invalidates the pixel position for the restored CFI.
+        const savedZoom = localStorage.getItem(`reader-zoom-${bookId}`);
+        let zoomAttr = "fit-width";
+        if (savedZoom && savedZoom !== "fit") {
+          const n = parseInt(savedZoom, 10);
+          if (Number.isFinite(n) && n >= 50 && n <= 300) zoomAttr = String(n / 100);
+        }
+        view.renderer.setAttribute("zoom", zoomAttr);
       }
 
       // Apply styles
@@ -674,7 +718,12 @@ export default function Reader() {
       // initial load — matters when re-init is triggered by a reading-mode
       // toggle mid-session.
       const startCfi = currentCfiRef.current || book.current_cfi;
-      await view.init({ lastLocation: startCfi || undefined, showTextStart: !startCfi });
+      let startLocation: string | undefined = startCfi || undefined;
+      if (!startLocation && book.format === "pdf") {
+        const pageCount = view.book?.sections?.length ?? book.pages;
+        startLocation = getPdfStartCfi(book.progress, pageCount);
+      }
+      await view.init({ lastLocation: startLocation, showTextStart: !startLocation });
 
       if (cancelled) return;
 
@@ -746,131 +795,57 @@ export default function Reader() {
     // fixes a race where DB-loaded settings arrive before view.renderer exists.
   }, [readerSettings, book?.format, bookReady]);
 
-  // Prepare renderer for GPU-accelerated zoom transforms
-  useEffect(() => {
-    const view = viewRef.current;
-    if (!view?.renderer || book?.format !== "pdf") return;
-    view.renderer.style.willChange = "transform";
-  }, [book?.format]);
+  const zoomRef = useRef<number | "fit">(zoom);
+  zoomRef.current = zoom;
 
-  const zoomRef = useRef(zoomLevel);
-  zoomRef.current = zoomLevel;
+  // Effective fit-width percentage, updated as the viewer resizes. Used to
+  // seed the numeric zoom when the user clicks +/- from fit mode so the
+  // transition is smooth (e.g. fit≈1.47 → tap + → 150%, not 110%).
+  const fitPctRef = useRef(100);
 
-  const applyZoomToRenderer = useCallback((next: number) => {
-    const view = viewRef.current;
-    const viewer = viewerRef.current;
-    if (!view?.renderer || !viewer) return;
-    const renderer = view.renderer;
+  const applyZoom = useCallback((value: number | "fit") => {
+    const renderer = viewRef.current?.renderer;
+    if (!renderer) return;
+    renderer.setAttribute("zoom", value === "fit" ? "fit-width" : String(value / 100));
+  }, []);
 
-    // Scroll mode (foliate-pdf-scroll): the renderer observes a `zoom`
-    // attribute and re-lays out rows + re-renders canvases via the pdfjs
-    // onZoom hook. CSS transform would break IntersectionObserver math.
-    if (book?.format === "pdf" && readerSettings.readingMode === "scrolling") {
-      renderer.setAttribute("zoom", String(next / 100));
-      return;
-    }
+  const handleZoom = useCallback((delta: number) => {
+    const base = zoomRef.current === "fit" ? fitPctRef.current : zoomRef.current;
+    const next = Math.min(300, Math.max(50, Math.round((base + delta) / 10) * 10));
+    applyZoom(next);
+    setZoom(next);
+  }, [applyZoom]);
 
-    if (next === 100) {
-      renderer.style.width = "";
-      renderer.style.height = "";
-      renderer.style.transform = "";
-      viewer.style.width = "";
-      viewer.style.height = "";
-    } else {
-      if (!renderer.style.width) {
-        renderer.style.width = `${renderer.clientWidth}px`;
-        renderer.style.height = `${renderer.clientHeight}px`;
-      }
-      const scale = next / 100;
-      renderer.style.transform = `scale(${scale})`;
-      renderer.style.transformOrigin = "top left";
-      const baseW = parseInt(renderer.style.width);
-      const baseH = parseInt(renderer.style.height);
-      viewer.style.width = `${baseW * scale}px`;
-      viewer.style.height = `${baseH * scale}px`;
-    }
-  }, [book?.format, readerSettings.readingMode]);
-
-  const handleZoom = (delta: number) => {
-    const next = Math.min(300, Math.max(50, zoomRef.current + delta));
-    applyZoomToRenderer(next);
-    setZoomLevel(next);
-  };
-
-  // Apply the seeded zoom once the PDF is rendered — state alone doesn't
-  // transform the renderer. Re-apply when readingMode flips (pagination
-  // tears down the view and rebuilds it).
+  // Track the current fit-width scale so +/- from fit mode lands near the
+  // visible size. Observes the renderer and sums the natural widths of the
+  // pages in a single row — one page in single mode, two in spread mode —
+  // to match what fixed-layout.js / pdf-scroll.js actually fit.
   useEffect(() => {
     if (!bookReady || book?.format !== "pdf") return;
-    if (zoomRef.current === 100) return;
-    applyZoomToRenderer(zoomRef.current);
-  }, [bookReady, book?.format, readerSettings.readingMode, applyZoomToRenderer]);
+    const renderer = viewRef.current?.renderer;
+    const foliateBook = viewRef.current?.book;
+    if (!renderer || !foliateBook?.getPageSize) return;
+    const isSpread = readerSettings.pageColumns === 2;
+    let cancelled = false;
+    const update = async () => {
+      try {
+        const first = await foliateBook.getPageSize(0);
+        const second = isSpread ? await foliateBook.getPageSize(1).catch(() => null) : null;
+        if (cancelled || !first?.width) return;
+        const rowWidth = first.width + (second?.width ?? 0);
+        const containerW = Math.max(renderer.clientWidth - 24, 1);
+        fitPctRef.current = Math.round((containerW / rowWidth) * 100);
+      } catch { /* book may have closed */ }
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(renderer);
+    return () => { cancelled = true; ro.disconnect(); };
+  }, [bookReady, book?.format, readerSettings.readingMode, readerSettings.pageColumns]);
 
   const togglePanel = (panel: "ai" | "bookmarks" | "vocab") => {
     setSidePanel((prev) => (prev === panel ? null : panel));
   };
-
-  // When side panel toggles while zoomed, re-fit the renderer to the new container size
-  useEffect(() => {
-    if (book?.format !== "pdf" || zoomLevel === 100) return;
-    // Scroll mode reflows via its own ResizeObserver in pdf-scroll.js,
-    // so the lock-and-rescale dance below is not needed. Skip.
-    if (readerSettings.readingMode === "scrolling") return;
-    const view = viewRef.current;
-    const viewer = viewerRef.current;
-    if (!view?.renderer || !viewer) return;
-    const renderer = view.renderer;
-
-    // Unlock so renderer adapts to new container width
-    renderer.style.width = "";
-    renderer.style.height = "";
-    viewer.style.width = "";
-    viewer.style.height = "";
-    renderer.style.transform = "";
-
-    // After layout settles, re-lock and re-apply zoom
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        const w = renderer.clientWidth;
-        const h = renderer.clientHeight;
-        renderer.style.width = `${w}px`;
-        renderer.style.height = `${h}px`;
-        const scale = zoomLevel / 100;
-        renderer.style.transform = `scale(${scale})`;
-        renderer.style.transformOrigin = "top left";
-        viewer.style.width = `${w * scale}px`;
-        viewer.style.height = `${h * scale}px`;
-      });
-    });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sidePanel]);
-
-  // Reset zoom to 100% on window resize so PDF re-fits to new size
-  useEffect(() => {
-    if (book?.format !== "pdf") return;
-    const resetZoom = () => {
-      if (zoomRef.current === 100) return;
-      const view = viewRef.current;
-      const viewer = viewerRef.current;
-      if (!view?.renderer || !viewer) return;
-      const renderer = view.renderer;
-      // Scroll mode handles its own re-layout via the `zoom` attribute and
-      // the IntersectionObserver; don't poke at inline styles.
-      if (readerSettings.readingMode === "scrolling") {
-        renderer.setAttribute("zoom", "1");
-        setZoomLevel(100);
-        return;
-      }
-      renderer.style.width = "";
-      renderer.style.height = "";
-      renderer.style.transform = "";
-      viewer.style.width = "";
-      viewer.style.height = "";
-      setZoomLevel(100);
-    };
-    window.addEventListener("resize", resetZoom);
-    return () => window.removeEventListener("resize", resetZoom);
-  }, [book?.format, readerSettings.readingMode]);
 
   // Keyboard navigation — parent document listener
   useEffect(() => {
@@ -892,7 +867,7 @@ export default function Reader() {
     return () => {
       document.removeEventListener("keydown", handleKeyDown);
     };
-  }, [book?.format]);
+  }, [book?.format, handleZoom]);
 
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     const selection = window.getSelection();
@@ -1232,12 +1207,12 @@ export default function Reader() {
 
       {/* Body */}
       <div
-        className={`flex flex-1 ${book.format === "pdf" && zoomLevel !== 100 ? "overflow-auto" : "overflow-hidden"}`}
+        className="flex flex-1 overflow-hidden"
         style={{ backgroundColor: getThemeStyles(readerSettings.theme).body }}
       >
         <div className="flex-1 flex flex-col min-w-0" style={{ backgroundColor: getThemeStyles(readerSettings.theme).body }}>
           <main
-            className={`flex-1 relative ${book.format === "pdf" && zoomLevel !== 100 ? "overflow-auto" : "overflow-hidden"}`}
+            className="flex-1 relative overflow-hidden"
             style={{ backgroundColor: getThemeStyles(readerSettings.theme).body }}
             onContextMenu={handleContextMenu}
             onClick={() => {
@@ -1260,16 +1235,11 @@ export default function Reader() {
             {book.format === "pdf" && (() => {
               const overlay = getPdfOverlays(readerSettings.theme);
               if (!overlay) return null;
-              const zoomed = zoomLevel !== 100 && viewerRef.current;
-              const overlayStyle = zoomed ? {
-                width: viewerRef.current!.style.width || "100%",
-                height: viewerRef.current!.style.height || "100%",
-              } : undefined;
               return overlay.layers.map((style, i) => (
                 <div
                   key={i}
-                  className={`z-10 pointer-events-none ${zoomed ? "absolute top-0 left-0" : "absolute inset-0"}`}
-                  style={zoomed ? { ...style, ...overlayStyle } : style}
+                  className="z-10 pointer-events-none absolute inset-0"
+                  style={style}
                 />
               ));
             })()}
@@ -1316,9 +1286,14 @@ export default function Reader() {
                     <Button variant="icon" size="sm" onClick={() => handleZoom(-10)}>
                       <Minus size={12} />
                     </Button>
-                    <span className={`text-[12px] font-medium w-[36px] text-center tabular-nums ${isStandaloneWindow ? "opacity-60" : "text-text-muted"}`}>
-                      {zoomLevel}%
-                    </span>
+                    <button
+                      type="button"
+                      onClick={() => { applyZoom("fit"); setZoom("fit"); }}
+                      title={t("reader.zoom.fitTooltip")}
+                      className={`text-[12px] font-medium min-w-[36px] px-1 text-center tabular-nums hover:opacity-100 ${isStandaloneWindow ? "opacity-60" : "text-text-muted"} ${zoom === "fit" ? "" : "cursor-pointer"}`}
+                    >
+                      {zoom === "fit" ? t("reader.zoom.fit") : `${zoom}%`}
+                    </button>
                     <Button variant="icon" size="sm" onClick={() => handleZoom(10)}>
                       <Plus size={12} />
                     </Button>

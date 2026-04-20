@@ -43,6 +43,8 @@
   "reader.closeWindow": "Close",
   "reader.downloadingFromICloud": "Downloading from iCloud...",
   "reader.downloadTimeout": "Download is taking too long. Please check your internet connection.",
+  "reader.zoom.fit": "Fit",
+  "reader.zoom.fitTooltip": "Fit to width",
 
   "ai.newChat": "New Chat",
   "ai.generatingTitle": "Generating title...",
