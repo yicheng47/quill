@@ -28,13 +28,11 @@ import { getBook, updateReadingProgress, checkBookAvailable, type Book } from ".
 import { getAllSettings } from "../hooks/useSettings";
 import type { Highlight } from "../hooks/useBookmarks";
 
-type FoliateLocation = string | number | { fraction: number };
-
 // foliate-js <foliate-view> web component interface
 /* eslint-disable @typescript-eslint/no-explicit-any -- foliate-js has no TS definitions */
 interface FoliateView extends HTMLElement {
   open(file: string | File | Blob): Promise<void>;
-  init(opts: { lastLocation?: FoliateLocation; showTextStart?: boolean }): Promise<void>;
+  init(opts: { lastLocation?: string; showTextStart?: boolean }): Promise<void>;
   goTo(target: string | number): Promise<any>;
   prev(): Promise<void>;
   next(): Promise<void>;
@@ -195,9 +193,15 @@ const highlightColorMap: Record<string, string> = {
 const appWindow = getCurrentWebviewWindow();
 const isStandaloneWindow = appWindow.label.startsWith("reader-");
 
-function getPdfProgressIndex(progress: number, pageCount: number | null | undefined): number | undefined {
+// Synthesize a foliate "fake" CFI for a PDF section index so legacy books
+// without a saved CFI (only `progress`) still restore to the right page.
+// Mirrors `CFI.fake.fromIndex` in epubcfi.js. Returning a CFI string (not a
+// number) ensures `view.init` treats page 0 as present — it checks
+// `lastLocation ? ...` and numeric 0 would be seen as absent.
+function getPdfStartCfi(progress: number, pageCount: number | null | undefined): string | undefined {
   if (!Number.isFinite(progress) || progress <= 0 || !pageCount || pageCount <= 0) return undefined;
-  return Math.min(pageCount - 1, Math.max(0, Math.ceil((progress / 100) * pageCount) - 1));
+  const idx = Math.min(pageCount - 1, Math.max(0, Math.ceil((progress / 100) * pageCount) - 1));
+  return `epubcfi(/6/${(idx + 1) * 2})`;
 }
 
 export default function Reader() {
@@ -306,7 +310,11 @@ export default function Reader() {
         margins: bookSettings.margins ?? (g.margins ? parseInt(g.margins) : prev.margins),
       }));
       const savedZoom = localStorage.getItem(`reader-zoom-${bookId}`);
-      if (savedZoom === "fit") {
+      if (savedZoom === "fit" || savedZoom === "100") {
+        // PR #199 wrote "100" as the effective default on every open, so
+        // every pre-upgrade book has it. Treat legacy 100 as fit-width so
+        // users get the new adaptive default; anyone who explicitly wants
+        // 100% can tap − once from fit.
         setZoom("fit");
       } else {
         const parsedZoom = savedZoom ? parseInt(savedZoom, 10) : NaN;
@@ -454,7 +462,9 @@ export default function Reader() {
         // #layoutAll() that invalidates the pixel position for the restored CFI.
         const savedZoom = localStorage.getItem(`reader-zoom-${bookId}`);
         let zoomAttr = "fit-width";
-        if (savedZoom && savedZoom !== "fit") {
+        // Treat legacy "100" (PR #199 default) as fit-width — see the
+        // matching migration in the book-load effect.
+        if (savedZoom && savedZoom !== "fit" && savedZoom !== "100") {
           const n = parseInt(savedZoom, 10);
           if (Number.isFinite(n) && n >= 50 && n <= 300) zoomAttr = String(n / 100);
         }
@@ -695,12 +705,12 @@ export default function Reader() {
       // initial load — matters when re-init is triggered by a reading-mode
       // toggle mid-session.
       const startCfi = currentCfiRef.current || book.current_cfi;
-      let startLocation: FoliateLocation | undefined = startCfi || undefined;
+      let startLocation: string | undefined = startCfi || undefined;
       if (!startLocation && book.format === "pdf") {
         const pageCount = view.book?.sections?.length ?? book.pages;
-        startLocation = getPdfProgressIndex(book.progress, pageCount);
+        startLocation = getPdfStartCfi(book.progress, pageCount);
       }
-      await view.init({ lastLocation: startLocation, showTextStart: startLocation == null });
+      await view.init({ lastLocation: startLocation, showTextStart: !startLocation });
 
       if (cancelled) return;
 
@@ -794,27 +804,31 @@ export default function Reader() {
   }, [applyZoom]);
 
   // Track the current fit-width scale so +/- from fit mode lands near the
-  // visible size. Observes the renderer and reads the first page's natural
-  // width from the foliate book (cached after first call).
+  // visible size. Observes the renderer and sums the natural widths of the
+  // pages in a single row — one page in single mode, two in spread mode —
+  // to match what fixed-layout.js / pdf-scroll.js actually fit.
   useEffect(() => {
     if (!bookReady || book?.format !== "pdf") return;
     const renderer = viewRef.current?.renderer;
     const foliateBook = viewRef.current?.book;
     if (!renderer || !foliateBook?.getPageSize) return;
+    const isSpread = readerSettings.pageColumns === 2;
     let cancelled = false;
     const update = async () => {
       try {
-        const { width: pw } = await foliateBook.getPageSize(0);
-        if (cancelled || !pw) return;
+        const first = await foliateBook.getPageSize(0);
+        const second = isSpread ? await foliateBook.getPageSize(1).catch(() => null) : null;
+        if (cancelled || !first?.width) return;
+        const rowWidth = first.width + (second?.width ?? 0);
         const containerW = Math.max(renderer.clientWidth - 24, 1);
-        fitPctRef.current = Math.round((containerW / pw) * 100);
+        fitPctRef.current = Math.round((containerW / rowWidth) * 100);
       } catch { /* book may have closed */ }
     };
     update();
     const ro = new ResizeObserver(update);
     ro.observe(renderer);
     return () => { cancelled = true; ro.disconnect(); };
-  }, [bookReady, book?.format, readerSettings.readingMode]);
+  }, [bookReady, book?.format, readerSettings.readingMode, readerSettings.pageColumns]);
 
   const togglePanel = (panel: "ai" | "bookmarks" | "vocab") => {
     setSidePanel((prev) => (prev === panel ? null : panel));
