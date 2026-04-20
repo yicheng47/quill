@@ -193,6 +193,25 @@ const highlightColorMap: Record<string, string> = {
 const appWindow = getCurrentWebviewWindow();
 const isStandaloneWindow = appWindow.label.startsWith("reader-");
 
+// One-time migration of `reader-zoom-${bookId}` keys written by PR #199.
+// That PR saved "100" on every default open, so every pre-upgrade book has
+// it even when the user never touched zoom. Under the new scheme, the
+// default is "fit" and "100" should mean the user explicitly chose 100%.
+// Rewrite legacy "100" → "fit" once, guarded by a global marker so new
+// explicit 100% saves aren't clobbered on subsequent opens.
+(() => {
+  try {
+    if (localStorage.getItem("reader-zoom-v2")) return;
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const k = localStorage.key(i);
+      if (k?.startsWith("reader-zoom-") && localStorage.getItem(k) === "100") {
+        localStorage.setItem(k, "fit");
+      }
+    }
+    localStorage.setItem("reader-zoom-v2", "1");
+  } catch { /* private-mode storage failures are non-fatal */ }
+})();
+
 // Synthesize a foliate "fake" CFI for a PDF section index so legacy books
 // without a saved CFI (only `progress`) still restore to the right page.
 // Mirrors `CFI.fake.fromIndex` in epubcfi.js. Returning a CFI string (not a
@@ -310,11 +329,7 @@ export default function Reader() {
         margins: bookSettings.margins ?? (g.margins ? parseInt(g.margins) : prev.margins),
       }));
       const savedZoom = localStorage.getItem(`reader-zoom-${bookId}`);
-      if (savedZoom === "fit" || savedZoom === "100") {
-        // PR #199 wrote "100" as the effective default on every open, so
-        // every pre-upgrade book has it. Treat legacy 100 as fit-width so
-        // users get the new adaptive default; anyone who explicitly wants
-        // 100% can tap − once from fit.
+      if (savedZoom === "fit") {
         setZoom("fit");
       } else {
         const parsedZoom = savedZoom ? parseInt(savedZoom, 10) : NaN;
@@ -462,9 +477,7 @@ export default function Reader() {
         // #layoutAll() that invalidates the pixel position for the restored CFI.
         const savedZoom = localStorage.getItem(`reader-zoom-${bookId}`);
         let zoomAttr = "fit-width";
-        // Treat legacy "100" (PR #199 default) as fit-width — see the
-        // matching migration in the book-load effect.
-        if (savedZoom && savedZoom !== "fit" && savedZoom !== "100") {
+        if (savedZoom && savedZoom !== "fit") {
           const n = parseInt(savedZoom, 10);
           if (Number.isFinite(n) && n >= 50 && n <= 300) zoomAttr = String(n / 100);
         }
