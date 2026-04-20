@@ -43,6 +43,8 @@
   "reader.closeWindow": "关闭",
   "reader.downloadingFromICloud": "正在从 iCloud 下载...",
   "reader.downloadTimeout": "下载时间过长，请检查网络连接。",
+  "reader.zoom.fit": "适应",
+  "reader.zoom.fitTooltip": "适应宽度",
 
   "ai.newChat": "新对话",
   "ai.generatingTitle": "正在生成标题...",
