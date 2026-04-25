@@ -150,18 +150,38 @@ pub fn delete_own_manifest(shared_dir: &Path, device_uuid: &str) -> AppResult<()
 /// last means a mid-call I/O error never strands log/snapshot orphans
 /// that the UI can no longer surface.
 ///
+/// **Self-guard is value-based, not string-based.** Both UUIDs are
+/// parsed and compared as `Uuid` values, so casing differences (e.g.
+/// `ABCDEF…` vs `abcdef…`) cannot bypass the guard. iCloud's HFS+/APFS
+/// volumes are case-insensitive by default — without the value-based
+/// compare, a peer manifest at `<UPPER-OWN-UUID>.jsonl` would resolve
+/// to the same on-disk file as the lowercase own log and the call
+/// would happily wipe local state. The on-disk path stays in the
+/// caller-supplied case so cross-device sync onto a case-sensitive
+/// filesystem still finds the right file.
+///
 /// Idempotent: missing files are not an error. Any other I/O failure
 /// stops at the first error and propagates — the UI surfaces it and
 /// the user can retry.
 pub fn delete_peer(shared_dir: &Path, device_uuid: &str, own_uuid: &str) -> AppResult<()> {
-    if device_uuid == own_uuid {
+    let target = match Uuid::parse_str(device_uuid) {
+        Ok(u) => u,
+        Err(_) => {
+            return Err(AppError::Other(format!(
+                "refusing to delete peer: {device_uuid:?} is not a valid UUID"
+            )));
+        }
+    };
+    // Compare as parsed Uuid values so casing can't sneak past the
+    // self-guard on case-insensitive filesystems. own_uuid is owned
+    // by us and always parses; if it ever doesn't, we still refuse.
+    let own = Uuid::parse_str(own_uuid).map_err(|_| {
+        AppError::Other(format!("refusing to delete peer: own_uuid {own_uuid:?} is not a valid UUID"))
+    })?;
+    if target == own {
         return Ok(());
     }
-    if Uuid::parse_str(device_uuid).is_err() {
-        return Err(AppError::Other(format!(
-            "refusing to delete peer: {device_uuid:?} is not a valid UUID"
-        )));
-    }
+
     let log = shared_dir
         .join("logs")
         .join(format!("{device_uuid}.jsonl"));
@@ -195,6 +215,14 @@ pub fn delete_peer(shared_dir: &Path, device_uuid: &str, own_uuid: &str) -> AppR
 /// `device_uuid = "<victim>"` and trick the UI's trash button into
 /// deleting the victim's manifest/log/snapshot. Filenames must parse
 /// as a UUID; non-conforming entries are skipped.
+///
+/// **Self-filter is value-based.** Both the filename stem and
+/// `own_uuid` are parsed as `Uuid` values for the equality check, so
+/// casing differences (UPPERCASE vs lowercase) cannot make this
+/// device's own manifest show up in the peer list. iCloud's case-
+/// insensitive volumes resolve both to the same on-disk file, so a
+/// mis-cased self entry would otherwise let the UI delete its own
+/// state.
 pub fn list_peers(shared_dir: &Path, own_uuid: &str) -> AppResult<Vec<Peer>> {
     let dir = shared_dir.join(DEVICES_SUBDIR);
     let entries = match fs::read_dir(&dir) {
@@ -202,6 +230,12 @@ pub fn list_peers(shared_dir: &Path, own_uuid: &str) -> AppResult<Vec<Peer>> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(e) => return Err(AppError::Io(e)),
     };
+
+    // Parse own_uuid once. If it doesn't parse (shouldn't happen —
+    // it's our own DeviceIdentity), fall through with `None` so the
+    // self-filter never matches and the UI sees every entry; that's
+    // strictly safer than crashing the status call.
+    let own_parsed = Uuid::parse_str(own_uuid).ok();
 
     let mut out = Vec::new();
     for entry in entries.flatten() {
@@ -216,11 +250,19 @@ pub fn list_peers(shared_dir: &Path, own_uuid: &str) -> AppResult<Vec<Peer>> {
             Some(s) => s,
             None => continue,
         };
-        if Uuid::parse_str(stem).is_err() {
-            eprintln!(
-                "sync: skipping non-UUID peer manifest filename {}",
-                path.display()
-            );
+        let stem_parsed = match Uuid::parse_str(stem) {
+            Ok(u) => u,
+            Err(_) => {
+                eprintln!(
+                    "sync: skipping non-UUID peer manifest filename {}",
+                    path.display()
+                );
+                continue;
+            }
+        };
+        // Value-based self filter — applied BEFORE reading the file,
+        // since we already know the identity from the filename.
+        if Some(stem_parsed) == own_parsed {
             continue;
         }
         let bytes = match fs::read(&path) {
@@ -254,9 +296,6 @@ pub fn list_peers(shared_dir: &Path, own_uuid: &str) -> AppResult<Vec<Peer>> {
             );
         }
         peer.device_uuid = stem.to_string();
-        if peer.device_uuid == own_uuid {
-            continue;
-        }
         out.push(peer);
     }
     // Stable ordering for the UI: most-recently-seen first.
@@ -467,6 +506,64 @@ mod tests {
         let peers = list_peers(shared, SELF_UUID).unwrap();
         assert_eq!(peers.len(), 1);
         assert_eq!(peers[0].device_uuid, PEER_B_UUID);
+    }
+
+    /// Self-guard must be value-based, not string-based: an
+    /// uppercase-cased UUID matches the same on-disk file as the
+    /// lowercase form on iCloud's case-insensitive volumes. A
+    /// string-only compare would let a UPPER-cased self UUID slip
+    /// past as "another peer" and the resulting delete_peer call
+    /// would wipe local state. `Uuid::parse_str` normalises casing.
+    #[test]
+    fn delete_peer_self_guard_ignores_uuid_casing() {
+        let tmp = TempDir::new().unwrap();
+        let shared = tmp.path();
+        // Seed a self log/snapshot/manifest under the canonical
+        // (lowercase) UUID — the actual on-disk state for this device.
+        write_own_manifest(shared, SELF_UUID, "Self", "macos", "1.0.0", 1_000).unwrap();
+        seed_peer_log_and_snapshot(shared, SELF_UUID);
+
+        // Caller hands in the uppercase form (e.g. read from a
+        // peer-impersonating manifest). delete_peer must treat it as
+        // self and refuse, regardless of casing.
+        let upper = SELF_UUID.to_uppercase();
+        delete_peer(shared, &upper, SELF_UUID).unwrap();
+
+        assert!(manifest_path(shared, SELF_UUID).exists());
+        assert!(shared.join(format!("logs/{SELF_UUID}.jsonl")).exists());
+        assert!(shared.join(format!("logs/{SELF_UUID}.snapshot.json")).exists());
+    }
+
+    /// Same hazard at the discovery layer: list_peers must filter
+    /// out a manifest whose filename is the casing-shifted form of
+    /// our own UUID, so the UI never even surfaces a "trash" target
+    /// that points at our own state.
+    #[test]
+    fn list_peers_filters_self_uuid_regardless_of_filename_casing() {
+        let tmp = TempDir::new().unwrap();
+        let shared = tmp.path();
+        let dir = shared.join(DEVICES_SUBDIR);
+        fs::create_dir_all(&dir).unwrap();
+
+        // Drop a manifest whose filename is the uppercase form of our
+        // own UUID. On a case-insensitive filesystem this is the same
+        // file as our own; on a case-sensitive one it's a distinct
+        // file — either way it must NOT appear in the peer list.
+        let upper_path = dir.join(format!("{}.json", SELF_UUID.to_uppercase()));
+        let manifest = Peer {
+            device_uuid: SELF_UUID.to_uppercase(),
+            name: "Maybe me, maybe not".into(),
+            platform: "macos".into(),
+            app_version: "1.0.0".into(),
+            last_seen: 1_000,
+        };
+        fs::write(&upper_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+        // Plus one real peer so we know discovery still works.
+        write_own_manifest(shared, PEER_A_UUID, "Real Peer", "macos", "1.0.0", 2_000).unwrap();
+
+        let peers = list_peers(shared, SELF_UUID).unwrap();
+        assert_eq!(peers.len(), 1);
+        assert_eq!(peers[0].device_uuid, PEER_A_UUID);
     }
 
     /// Path-traversal guard: a manifest under attacker control could
