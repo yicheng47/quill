@@ -301,6 +301,10 @@
   "settings.librarySync.confirmDisable": "Stop syncing with iCloud?",
   "settings.librarySync.confirmDisableMsg": "Your library will be copied back to local storage. Other devices keep their own copy until you delete it.",
   "settings.librarySync.confirmDisableCta": "Stop syncing",
+  "settings.librarySync.removeDevice": "Remove device",
+  "settings.librarySync.removeDeviceTitle": "Remove {{name}} from sync?",
+  "settings.librarySync.removeDeviceBody": "This device's log, snapshot, and manifest in iCloud will be deleted. Any books already synced to this device are kept. The other device will reappear here if it opens Quill again and re-registers.",
+  "settings.librarySync.remove": "Remove",
 
   "settings.appearance.title": "Appearance",
   "settings.appearance.subtitle": "Customize the look and feel of the app",

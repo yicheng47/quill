@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Loader2, Monitor, Smartphone, Laptop } from "lucide-react";
+import { Loader2, Monitor, Smartphone, Laptop, Trash2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import Button from "../ui/Button";
 import Toggle from "../ui/Toggle";
@@ -71,6 +71,9 @@ export default function LibrarySyncSettings(_props: SettingsProps) {
   // Disable flow (because `migration_complete` is now true), leaving
   // the user with no UI path to finish the half-completed enable.
   const [lastFailedAction, setLastFailedAction] = useState<"enable" | "disable" | null>(null);
+  // Peer the user clicked the trash icon on; opens a confirmation
+  // modal until cleared (cancel) or acted on (remove).
+  const [pendingRemoval, setPendingRemoval] = useState<PeerInfo | null>(null);
   // Tick once a minute so "Last seen 2m ago" stays fresh while the modal
   // is open. Cheap; the component re-renders are bounded.
   const [now, setNow] = useState(Date.now());
@@ -153,6 +156,22 @@ export default function LibrarySyncSettings(_props: SettingsProps) {
     setError(null);
     try {
       await invoke<SyncNowResult>("sync_now");
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onConfirmRemovePeer = async () => {
+    const peer = pendingRemoval;
+    setPendingRemoval(null);
+    if (!peer) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await invoke("sync_remove_peer", { deviceUuid: peer.device_uuid });
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -269,6 +288,16 @@ export default function LibrarySyncSettings(_props: SettingsProps) {
                             {p.pending_events}
                           </span>
                         )}
+                        <button
+                          type="button"
+                          onClick={() => setPendingRemoval(p)}
+                          disabled={busy}
+                          aria-label={t("settings.librarySync.removeDevice")}
+                          title={t("settings.librarySync.removeDevice")}
+                          className="text-text-muted hover:text-[#e7000b] dark:hover:text-red-400 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer p-1 -m-1"
+                        >
+                          <Trash2 size={14} />
+                        </button>
                       </div>
                     );
                   })}
@@ -338,6 +367,33 @@ export default function LibrarySyncSettings(_props: SettingsProps) {
           </div>
         )}
       </div>
+
+      {/* Remove-device confirmation. Mirrors iOS's destructive alert
+          copy so the cross-platform UX matches. */}
+      {pendingRemoval && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40">
+          <div className="bg-bg-surface rounded-xl shadow-lg w-[400px] p-6">
+            <h3 className="text-[18px] font-semibold text-text-primary mb-2">
+              {t("settings.librarySync.removeDeviceTitle", { name: pendingRemoval.name })}
+            </h3>
+            <p className="text-[14px] text-text-secondary leading-5 mb-6">
+              {t("settings.librarySync.removeDeviceBody")}
+            </p>
+            <div className="flex justify-end gap-3">
+              <Button variant="ghost" size="md" onClick={() => setPendingRemoval(null)}>
+                {t("common.cancel")}
+              </Button>
+              <button
+                type="button"
+                onClick={onConfirmRemovePeer}
+                className="bg-[#e7000b] hover:bg-[#c00009] text-white text-[14px] font-medium rounded-md px-4 py-2 cursor-pointer"
+              >
+                {t("settings.librarySync.remove")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Confirmation dialog — same shape as the legacy iCloud one so
           the UX is identical at the point of decision. */}

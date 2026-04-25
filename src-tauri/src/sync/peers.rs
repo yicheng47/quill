@@ -126,6 +126,41 @@ pub fn delete_own_manifest(shared_dir: &Path, device_uuid: &str) -> AppResult<()
     }
 }
 
+/// Remove a peer device from the shared folder: deletes its manifest,
+/// event log, and snapshot. Used by the settings UI's per-device trash
+/// button to clean up orphaned entries (uninstalled apps, prior
+/// installs after a reinstall).
+///
+/// Refuses to touch the caller's own UUID — early return, not an
+/// error. Mirrors iOS's `Peers.deletePeer` guard so a stale UUID can't
+/// accidentally wipe local state.
+///
+/// Idempotent: missing files are not an error. Any other I/O failure
+/// stops at the first error and propagates — the UI surfaces it and
+/// the user can retry. Subsequent retries pick up wherever the previous
+/// attempt left off.
+pub fn delete_peer(shared_dir: &Path, device_uuid: &str, own_uuid: &str) -> AppResult<()> {
+    if device_uuid == own_uuid {
+        return Ok(());
+    }
+    let manifest = manifest_path(shared_dir, device_uuid);
+    let log = shared_dir
+        .join("logs")
+        .join(format!("{device_uuid}.jsonl"));
+    let snapshot = shared_dir
+        .join("logs")
+        .join(format!("{device_uuid}.snapshot.json"));
+
+    for path in [&manifest, &log, &snapshot] {
+        match fs::remove_file(path) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(AppError::Io(e)),
+        }
+    }
+    Ok(())
+}
+
 /// List every peer manifest under `<shared>/devices/` excluding our own
 /// UUID. Parse failures are logged and skipped — discovery degrades
 /// gracefully rather than failing the whole status call.
@@ -239,6 +274,74 @@ mod tests {
         let peers = list_peers(shared, "other").unwrap();
         assert_eq!(peers.len(), 1);
         assert_eq!(peers[0].last_seen, 5_000);
+    }
+
+    /// Helper: drop a fake event log + snapshot for a given peer so
+    /// `delete_peer` tests can assert cleanup of all three artifacts.
+    fn seed_peer_log_and_snapshot(shared: &Path, uuid: &str) {
+        let logs = shared.join("logs");
+        fs::create_dir_all(&logs).unwrap();
+        fs::write(logs.join(format!("{uuid}.jsonl")), b"{}\n").unwrap();
+        fs::write(logs.join(format!("{uuid}.snapshot.json")), b"{}").unwrap();
+    }
+
+    #[test]
+    fn delete_peer_removes_manifest_log_and_snapshot() {
+        let tmp = TempDir::new().unwrap();
+        let shared = tmp.path();
+        write_own_manifest(shared, "peer-A", "Mac A", "macos", "1.0.0", 1_000).unwrap();
+        seed_peer_log_and_snapshot(shared, "peer-A");
+
+        delete_peer(shared, "peer-A", "self").unwrap();
+
+        assert!(!manifest_path(shared, "peer-A").exists());
+        assert!(!shared.join("logs/peer-A.jsonl").exists());
+        assert!(!shared.join("logs/peer-A.snapshot.json").exists());
+    }
+
+    #[test]
+    fn delete_peer_is_idempotent_on_missing_files() {
+        let tmp = TempDir::new().unwrap();
+        let shared = tmp.path();
+        // No files exist yet — must not error.
+        delete_peer(shared, "ghost", "self").unwrap();
+
+        // Partial state: only a manifest exists.
+        write_own_manifest(shared, "ghost", "Ghost", "macos", "1.0.0", 1_000).unwrap();
+        delete_peer(shared, "ghost", "self").unwrap();
+        assert!(!manifest_path(shared, "ghost").exists());
+
+        // Re-deleting after everything is gone is still a no-op.
+        delete_peer(shared, "ghost", "self").unwrap();
+    }
+
+    #[test]
+    fn delete_peer_refuses_self_uuid() {
+        let tmp = TempDir::new().unwrap();
+        let shared = tmp.path();
+        write_own_manifest(shared, "self", "Self", "macos", "1.0.0", 1_000).unwrap();
+        seed_peer_log_and_snapshot(shared, "self");
+
+        delete_peer(shared, "self", "self").unwrap();
+
+        // All three self artifacts must remain — guard refuses the call.
+        assert!(manifest_path(shared, "self").exists());
+        assert!(shared.join("logs/self.jsonl").exists());
+        assert!(shared.join("logs/self.snapshot.json").exists());
+    }
+
+    #[test]
+    fn list_peers_excludes_uuid_after_delete_peer() {
+        let tmp = TempDir::new().unwrap();
+        let shared = tmp.path();
+        write_own_manifest(shared, "peer-A", "Mac A", "macos", "1.0.0", 2_000).unwrap();
+        write_own_manifest(shared, "peer-B", "Mac B", "macos", "1.0.0", 3_000).unwrap();
+
+        delete_peer(shared, "peer-A", "self").unwrap();
+
+        let peers = list_peers(shared, "self").unwrap();
+        assert_eq!(peers.len(), 1);
+        assert_eq!(peers[0].device_uuid, "peer-B");
     }
 
     #[test]
