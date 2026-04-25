@@ -55,14 +55,8 @@ fn boot_sync_engine(
     // Initial tick — drains any leftover outbox, applies peer snapshots
     // and log tails since last launch. Failure here is non-fatal; the
     // watcher's first event will retry.
-    {
-        let mut conn = db
-            .conn
-            .lock()
-            .map_err(|e| error::AppError::Other(format!("db conn mutex: {e}")))?;
-        if let Err(e) = engine.tick(&mut conn) {
-            eprintln!("sync: initial replay tick failed: {e}");
-        }
+    if let Err(e) = engine.tick(db) {
+        eprintln!("sync: initial replay tick failed: {e}");
     }
 
     // If watcher spawn fails, roll back the writer so new writes fall

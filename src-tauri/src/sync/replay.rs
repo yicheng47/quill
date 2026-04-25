@@ -30,6 +30,7 @@ use std::sync::{Arc, Mutex};
 
 use rusqlite::{params, Connection};
 
+use crate::db::Db;
 use crate::error::{AppError, AppResult};
 
 use super::events::{Event, EventBody};
@@ -69,51 +70,67 @@ impl ReplayEngine {
         }
     }
 
-    pub fn tick(&self, conn: &mut Connection) -> AppResult<ReplayReport> {
+    /// Run a single replay pass.
+    ///
+    /// Takes `&Db` rather than `&mut Connection` so the SQLite mutex
+    /// can be released around the slow iCloud I/O — `flush_outbox`,
+    /// `write_own_manifest`, and `compact_own_log` all hit
+    /// `NSFileCoordinator`, and holding `db.conn` across those waits
+    /// previously serialized every UI write (`import_book` etc.)
+    /// behind the watcher's tick.
+    pub fn tick(&self, db: &Db) -> AppResult<ReplayReport> {
         let _guard = TICK_MUTEX
             .lock()
             .map_err(|e| AppError::Other(format!("replay tick mutex poisoned: {e}")))?;
 
-        // Phase 0 — drain the outbox into the device log. Failures here
-        // surface to the caller; peers will see the local writes on the
-        // next successful tick.
-        let outbox_flushed = self.flush_outbox(conn)?;
+        // Phase 0 — drain the outbox into the device log. Manages its
+        // own per-row locking; the slow `log.append` runs without
+        // holding `db.conn`. Failures surface to the caller; peers
+        // will see the local writes on the next successful tick.
+        let outbox_flushed = flush_outbox(db, &self.own_log)?;
 
-        // Phase 1 — discover peers (including self).
+        // Phase 1 — discover peers (including self). Pure fs read.
         let peers = discover_peers(&self.shared_dir)?;
         let peers_seen = peers.len();
 
-        // Phase 2/3/4 — read peer files, apply in one tx, advance watermarks.
-        // FK off mirrors the merge engine's contract; orphan rows from
-        // out-of-order delivery are tolerated until parents arrive.
-        //
-        // The pragma must be restored even if the merge work errors mid-way,
-        // otherwise the shared connection silently loses FK enforcement for
-        // every subsequent command. We capture the inner result and run the
-        // restore unconditionally before returning.
-        conn.execute_batch("PRAGMA foreign_keys = OFF;")?;
-        let inner = self.apply_in_tx(conn, &peers);
-        let restore = conn.execute_batch("PRAGMA foreign_keys = ON;");
+        // Phase 2/3/4 — read peer files, apply in one tx, advance
+        // watermarks. FK off mirrors the merge engine's contract;
+        // orphan rows from out-of-order delivery are tolerated until
+        // parents arrive. The pragma must be restored even if the
+        // merge work errors mid-way, otherwise the shared connection
+        // silently loses FK enforcement for every subsequent command.
+        let (snapshots_applied, events_applied) = {
+            let mut conn = db
+                .conn
+                .lock()
+                .map_err(|e| AppError::Other(format!("db conn mutex: {e}")))?;
+            conn.execute_batch("PRAGMA foreign_keys = OFF;")?;
+            let inner = self.apply_in_tx(&mut conn, &peers);
+            let restore = conn.execute_batch("PRAGMA foreign_keys = ON;");
+            let counts = match (inner, restore) {
+                (Ok(counts), Ok(())) => counts,
+                (Err(e), _) => return Err(e),
+                (Ok(_), Err(e)) => return Err(AppError::Db(e)),
+            };
 
-        let (snapshots_applied, events_applied) = match (inner, restore) {
-            (Ok(counts), Ok(())) => counts,
-            (Err(e), _) => return Err(e),
-            (Ok(_), Err(e)) => return Err(AppError::Db(e)),
+            // Stamp self's `_replay_state.updated_at` so the settings
+            // UI's "Last sync" reflects every successful tick — not
+            // only the ones that happened to move a peer watermark.
+            // A no-op `sync_now` click (no peer changes, no outbox
+            // drain) still proves the engine is healthy, and the UI
+            // deserves to show that. Upserts a NULL-watermark self
+            // row on first call.
+            let now = chrono::Utc::now().timestamp_millis();
+            conn.execute(
+                "INSERT INTO _replay_state (peer_device, last_snapshot_id, last_event_id, updated_at)
+                 VALUES (?1, NULL, NULL, ?2)
+                 ON CONFLICT(peer_device) DO UPDATE SET updated_at = excluded.updated_at",
+                params![self.self_device, now],
+            )?;
+            counts
         };
-
-        // Stamp self's `_replay_state.updated_at` so the settings UI's
-        // "Last sync" reflects every successful tick — not only the
-        // ones that happened to move a peer watermark. A no-op
-        // `sync_now` click (no peer changes, no outbox drain) still
-        // proves the engine is healthy, and the UI deserves to show
-        // that. Upserts a NULL-watermark self row on first call.
-        let now = chrono::Utc::now().timestamp_millis();
-        conn.execute(
-            "INSERT INTO _replay_state (peer_device, last_snapshot_id, last_event_id, updated_at)
-             VALUES (?1, NULL, NULL, ?2)
-             ON CONFLICT(peer_device) DO UPDATE SET updated_at = excluded.updated_at",
-            params![self.self_device, now],
-        )?;
+        // db.conn released — heartbeat and compaction below run on
+        // iCloud without blocking concurrent UI writes.
 
         // Refresh own peer manifest's `last_seen` so other devices see
         // us as currently active. A failed heartbeat is non-fatal — peers
@@ -230,13 +247,6 @@ impl ReplayEngine {
         Ok((snapshots_applied, events_applied))
     }
 
-    /// Drain `_pending_publish` into the own device log. Thin wrapper over
-    /// the free function `flush_outbox` so `SyncWriter` (Chunk 5) can call
-    /// the same drain path right after a successful commit without going
-    /// through a `ReplayEngine`.
-    fn flush_outbox(&self, conn: &mut Connection) -> AppResult<usize> {
-        flush_outbox(conn, &self.own_log)
-    }
 }
 
 /// Drain `_pending_publish` into `log`. Each row is re-serialized into an
@@ -248,8 +258,22 @@ impl ReplayEngine {
 /// (post-commit step) so the publish-retry guarantee holds end-to-end:
 /// every committed-but-not-yet-published event lands in the device log on
 /// the next successful flush from either path.
-pub fn flush_outbox(conn: &mut Connection, log: &EventLog) -> AppResult<usize> {
-    let pending = read_outbox(conn)?;
+///
+/// **Locking discipline.** Takes `&Db` (not `&mut Connection`) so we can
+/// release the SQLite mutex around `log.append`. On macOS that append
+/// goes through `NSFileCoordinator` and synchronously waits for Apple's
+/// `bird` daemon — often several seconds. Holding `db.conn` across that
+/// wait would serialize every UI write behind the watcher's tick, which
+/// is exactly the "import spinner hangs" symptom users hit. Per-row
+/// lock/unlock is cheap relative to the iCloud I/O.
+pub fn flush_outbox(db: &Db, log: &EventLog) -> AppResult<usize> {
+    let pending = {
+        let conn = db
+            .conn
+            .lock()
+            .map_err(|e| AppError::Other(format!("db conn mutex: {e}")))?;
+        read_outbox(&conn)?
+    };
     if pending.is_empty() {
         return Ok(0);
     }
@@ -262,13 +286,20 @@ pub fn flush_outbox(conn: &mut Connection, log: &EventLog) -> AppResult<usize> {
                 row.id
             ))
         })?;
+        // Slow part — runs WITHOUT holding db.conn so concurrent UI
+        // writes (import_book, highlight.add, etc.) are not blocked.
         log.append(body, row.ts)?;
         // Per-row delete: if a later append in this batch fails, the
         // earlier rows are already published and can be removed cleanly.
+        let conn = db
+            .conn
+            .lock()
+            .map_err(|e| AppError::Other(format!("db conn mutex: {e}")))?;
         conn.execute(
             "DELETE FROM _pending_publish WHERE id = ?1",
             params![row.id],
         )?;
+        drop(conn);
         flushed += 1;
     }
     Ok(flushed)
@@ -385,12 +416,23 @@ mod tests {
     use std::sync::Arc;
     use tempfile::TempDir;
 
-    /// Test harness: shared dir + local SQLite + own EventLog.
+    /// Test harness: shared dir + local SQLite (wrapped in a Db so
+    /// `engine.tick(&db)` can re-acquire the conn lock the same way
+    /// production does) + own EventLog.
     struct Env {
         _dir: TempDir,
         shared: PathBuf,
-        conn: Connection,
+        db: Db,
         engine: ReplayEngine,
+    }
+
+    impl Env {
+        /// Convenience accessor for tests that want to do raw SQL
+        /// without going through `with_tx`. Holds the lock for the
+        /// returned guard's lifetime — keep the binding short-lived.
+        fn conn(&self) -> std::sync::MutexGuard<'_, Connection> {
+            self.db.conn.lock().unwrap()
+        }
     }
 
     fn setup(self_device: &str) -> Env {
@@ -401,6 +443,10 @@ mod tests {
 
         let conn = Connection::open_in_memory().unwrap();
         Db::run_migrations_on(&conn).unwrap();
+        let db = Db {
+            conn: Arc::new(Mutex::new(conn)),
+            data_dir: Arc::new(Mutex::new(dir.path().to_path_buf())),
+        };
 
         let own_log_path = logs.join(format!("{self_device}.jsonl"));
         let own_log = Arc::new(EventLog::open(&own_log_path, self_device, false).unwrap());
@@ -409,7 +455,7 @@ mod tests {
         Env {
             _dir: dir,
             shared,
-            conn,
+            db,
             engine,
         }
     }
@@ -461,7 +507,7 @@ mod tests {
         // whose log append failed.
         let body1 = import("b1");
         let body2 = import("b2");
-        env.conn
+        env.conn()
             .execute(
                 "INSERT INTO _pending_publish (id, ts, body_json, created_at) VALUES (?1, ?2, ?3, ?4)",
                 params![
@@ -472,7 +518,7 @@ mod tests {
                 ],
             )
             .unwrap();
-        env.conn
+        env.conn()
             .execute(
                 "INSERT INTO _pending_publish (id, ts, body_json, created_at) VALUES (?1, ?2, ?3, ?4)",
                 params![
@@ -484,12 +530,12 @@ mod tests {
             )
             .unwrap();
 
-        let report = env.engine.tick(&mut env.conn).unwrap();
+        let report = env.engine.tick(&env.db).unwrap();
         assert_eq!(report.outbox_flushed, 2);
 
         // Outbox is empty.
         let n: i64 = env
-            .conn
+            .conn()
             .query_row("SELECT COUNT(*) FROM _pending_publish", [], |r| r.get(0))
             .unwrap();
         assert_eq!(n, 0);
@@ -501,7 +547,7 @@ mod tests {
         assert_eq!(log_events.len(), 2);
 
         let n_books: i64 = env
-            .conn
+            .conn()
             .query_row("SELECT COUNT(*) FROM books", [], |r| r.get(0))
             .unwrap();
         assert_eq!(n_books, 2);
@@ -531,19 +577,19 @@ mod tests {
         ];
         write_peer_log(&env.shared, "peer-A", &peer_events);
 
-        let report = env.engine.tick(&mut env.conn).unwrap();
+        let report = env.engine.tick(&env.db).unwrap();
         assert_eq!(report.events_applied, 2);
         assert_eq!(report.peers_seen, 2, "peer-A + self");
 
         let n_books: i64 = env
-            .conn
+            .conn()
             .query_row("SELECT COUNT(*) FROM books", [], |r| r.get(0))
             .unwrap();
         assert_eq!(n_books, 1);
 
         // Watermark advanced to the max id from peer-A.
         let last: Option<String> = env
-            .conn
+            .conn()
             .query_row(
                 "SELECT last_event_id FROM _replay_state WHERE peer_device = 'peer-A'",
                 [], |r| r.get(0),
@@ -558,11 +604,11 @@ mod tests {
         let peer_events = vec![ev(1000, "peer-A", import("b1"))];
         write_peer_log(&env.shared, "peer-A", &peer_events);
 
-        let r1 = env.engine.tick(&mut env.conn).unwrap();
+        let r1 = env.engine.tick(&env.db).unwrap();
         assert_eq!(r1.events_applied, 1);
 
         // Second tick — same log, no new events.
-        let r2 = env.engine.tick(&mut env.conn).unwrap();
+        let r2 = env.engine.tick(&env.db).unwrap();
         assert_eq!(r2.events_applied, 0, "watermark should suppress re-apply");
 
         // Append a new event to peer-A's log; tick picks it up.
@@ -578,11 +624,11 @@ mod tests {
         ));
         write_peer_log(&env.shared, "peer-A", &more);
 
-        let r3 = env.engine.tick(&mut env.conn).unwrap();
+        let r3 = env.engine.tick(&env.db).unwrap();
         assert_eq!(r3.events_applied, 1);
 
         let progress: i32 = env
-            .conn
+            .conn()
             .query_row("SELECT progress FROM books WHERE id = 'b1'", [], |r| r.get(0))
             .unwrap();
         assert_eq!(progress, 50);
@@ -616,9 +662,9 @@ mod tests {
             ),
         ]);
 
-        env.engine.tick(&mut env.conn).unwrap();
+        env.engine.tick(&env.db).unwrap();
         let progress: i32 = env
-            .conn
+            .conn()
             .query_row("SELECT progress FROM books WHERE id = 'b1'", [], |r| r.get(0))
             .unwrap();
         assert_eq!(progress, 80, "later peer-B event wins");
@@ -652,16 +698,16 @@ mod tests {
         )];
         write_peer_log(&env.shared, "peer-A", &tail);
 
-        let report = env.engine.tick(&mut env.conn).unwrap();
+        let report = env.engine.tick(&env.db).unwrap();
         assert!(report.snapshots_applied >= 1);
         assert_eq!(report.events_applied, 1);
 
         let n_books: i64 = env
-            .conn
+            .conn()
             .query_row("SELECT COUNT(*) FROM books", [], |r| r.get(0))
             .unwrap();
         let n_hl: i64 = env
-            .conn
+            .conn()
             .query_row("SELECT COUNT(*) FROM highlights", [], |r| r.get(0))
             .unwrap();
         assert_eq!(n_books, 1);
@@ -675,7 +721,7 @@ mod tests {
     #[test]
     fn empty_shared_dir_is_a_noop() {
         let mut env = setup("self");
-        let report = env.engine.tick(&mut env.conn).unwrap();
+        let report = env.engine.tick(&env.db).unwrap();
         // Self log was created at setup → 1 peer (self).
         assert_eq!(report.peers_seen, 1);
         assert_eq!(report.events_applied, 0);
@@ -688,7 +734,7 @@ mod tests {
         let bad = env.shared.join("logs/peer-X.snapshot.json");
         fs::write(&bad, b"{not valid json").unwrap();
         // Tick must not error; bad file is logged + skipped.
-        let report = env.engine.tick(&mut env.conn).unwrap();
+        let report = env.engine.tick(&env.db).unwrap();
         assert_eq!(report.snapshots_applied, 0);
         assert_eq!(report.events_applied, 0);
     }
@@ -717,12 +763,12 @@ mod tests {
         write_peer_log(&env.shared, "peer-A", &bad);
 
         // Pre-set FK ON so the restore is observable.
-        env.conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
-        let result = env.engine.tick(&mut env.conn);
+        env.conn().execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        let result = env.engine.tick(&env.db);
         assert!(result.is_err(), "malformed metadata event should propagate");
 
         let fk: i64 = env
-            .conn
+            .conn()
             .query_row("PRAGMA foreign_keys", [], |r| r.get(0))
             .unwrap();
         assert_eq!(fk, 1, "FK must be restored to ON even after a tick error");
@@ -740,10 +786,10 @@ mod tests {
         // First tick — empty shared dir, nothing to apply. Self row
         // doesn't exist yet.
         let before = chrono::Utc::now().timestamp_millis();
-        env.engine.tick(&mut env.conn).unwrap();
+        env.engine.tick(&env.db).unwrap();
 
         let row1: Option<i64> = env
-            .conn
+            .conn()
             .query_row(
                 "SELECT updated_at FROM _replay_state WHERE peer_device = 'self'",
                 [],
@@ -756,10 +802,10 @@ mod tests {
         // Sleep a few millis so the second tick's timestamp is
         // visibly newer.
         std::thread::sleep(std::time::Duration::from_millis(5));
-        env.engine.tick(&mut env.conn).unwrap();
+        env.engine.tick(&env.db).unwrap();
 
         let row2: i64 = env
-            .conn
+            .conn()
             .query_row(
                 "SELECT updated_at FROM _replay_state WHERE peer_device = 'self'",
                 [],
@@ -777,7 +823,7 @@ mod tests {
     fn tick_refreshes_own_peer_manifest() {
         let mut env = setup("self");
         let before = chrono::Utc::now().timestamp_millis();
-        env.engine.tick(&mut env.conn).unwrap();
+        env.engine.tick(&env.db).unwrap();
 
         let manifest = peers::manifest_path(&env.shared, "self");
         assert!(manifest.exists(), "tick should publish own peer manifest");
@@ -794,10 +840,10 @@ mod tests {
     #[test]
     fn fk_pragma_restored_after_tick() {
         let mut env = setup("self");
-        env.conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
-        env.engine.tick(&mut env.conn).unwrap();
+        env.conn().execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        env.engine.tick(&env.db).unwrap();
         let fk: i64 = env
-            .conn
+            .conn()
             .query_row("PRAGMA foreign_keys", [], |r| r.get(0))
             .unwrap();
         assert_eq!(fk, 1, "FK should be restored to ON after tick");
