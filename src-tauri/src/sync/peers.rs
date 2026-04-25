@@ -186,6 +186,15 @@ pub fn delete_peer(shared_dir: &Path, device_uuid: &str, own_uuid: &str) -> AppR
 ///
 /// Missing `<shared>/devices/` directory returns an empty vec — happens
 /// on a fresh shared folder before any device has enabled sync.
+///
+/// **Filename is the source of truth for `device_uuid`.** The shared
+/// folder is writable by every peer, so the JSON payload's
+/// `device_uuid` is treated as untrusted: the field is overwritten
+/// with the filename stem before the `Peer` is returned. Without
+/// this, a hostile manifest at `devices/<attacker>.json` could declare
+/// `device_uuid = "<victim>"` and trick the UI's trash button into
+/// deleting the victim's manifest/log/snapshot. Filenames must parse
+/// as a UUID; non-conforming entries are skipped.
 pub fn list_peers(shared_dir: &Path, own_uuid: &str) -> AppResult<Vec<Peer>> {
     let dir = shared_dir.join(DEVICES_SUBDIR);
     let entries = match fs::read_dir(&dir) {
@@ -200,6 +209,20 @@ pub fn list_peers(shared_dir: &Path, own_uuid: &str) -> AppResult<Vec<Peer>> {
         if path.extension().and_then(|s| s.to_str()) != Some("json") {
             continue;
         }
+        // Filename stem is the trusted identity. Skip anything whose
+        // basename doesn't parse as a UUID — random files in the
+        // shared folder shouldn't ever appear in the peer list.
+        let stem = match path.file_stem().and_then(|s| s.to_str()) {
+            Some(s) => s,
+            None => continue,
+        };
+        if Uuid::parse_str(stem).is_err() {
+            eprintln!(
+                "sync: skipping non-UUID peer manifest filename {}",
+                path.display()
+            );
+            continue;
+        }
         let bytes = match fs::read(&path) {
             Ok(b) => b,
             Err(e) => {
@@ -210,7 +233,7 @@ pub fn list_peers(shared_dir: &Path, own_uuid: &str) -> AppResult<Vec<Peer>> {
                 continue;
             }
         };
-        let peer: Peer = match serde_json::from_slice(&bytes) {
+        let mut peer: Peer = match serde_json::from_slice(&bytes) {
             Ok(p) => p,
             Err(e) => {
                 eprintln!(
@@ -220,6 +243,17 @@ pub fn list_peers(shared_dir: &Path, own_uuid: &str) -> AppResult<Vec<Peer>> {
                 continue;
             }
         };
+        // Discard whatever identity the payload claims; trust only
+        // the filename stem so impersonation isn't reachable from any
+        // downstream consumer.
+        if peer.device_uuid != stem {
+            eprintln!(
+                "sync: peer manifest {} declared device_uuid {:?} that doesn't match its filename; using filename",
+                path.display(),
+                peer.device_uuid,
+            );
+        }
+        peer.device_uuid = stem.to_string();
         if peer.device_uuid == own_uuid {
             continue;
         }
@@ -235,37 +269,45 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
+    // Real UUIDs for tests — `list_peers` now requires the manifest
+    // filename stem to parse as a UUID, so the older string keys
+    // ("self", "peer-A") would be silently skipped by discovery.
+    const SELF_UUID: &str = "00000000-0000-4000-8000-000000000000";
+    const PEER_A_UUID: &str = "11111111-1111-4111-8111-111111111111";
+    const PEER_B_UUID: &str = "22222222-2222-4222-8222-222222222222";
+    const PEER_C_UUID: &str = "33333333-3333-4333-8333-333333333333";
+
     #[test]
     fn write_then_list_skips_own_uuid() {
         let tmp = TempDir::new().unwrap();
         let shared = tmp.path();
-        write_own_manifest(shared, "self", "Self Mac", "macos", "0.10.0", 1_000).unwrap();
-        write_own_manifest(shared, "peer-A", "Mac A", "macos", "0.10.0", 2_000).unwrap();
-        write_own_manifest(shared, "peer-B", "Mac B", "macos", "0.10.0", 3_000).unwrap();
+        write_own_manifest(shared, SELF_UUID, "Self Mac", "macos", "0.10.0", 1_000).unwrap();
+        write_own_manifest(shared, PEER_A_UUID, "Mac A", "macos", "0.10.0", 2_000).unwrap();
+        write_own_manifest(shared, PEER_B_UUID, "Mac B", "macos", "0.10.0", 3_000).unwrap();
 
-        let peers = list_peers(shared, "self").unwrap();
+        let peers = list_peers(shared, SELF_UUID).unwrap();
         assert_eq!(peers.len(), 2);
-        assert!(peers.iter().all(|p| p.device_uuid != "self"));
+        assert!(peers.iter().all(|p| p.device_uuid != SELF_UUID));
     }
 
     #[test]
     fn list_orders_by_last_seen_descending() {
         let tmp = TempDir::new().unwrap();
         let shared = tmp.path();
-        write_own_manifest(shared, "old", "Old", "macos", "0.10.0", 1_000).unwrap();
-        write_own_manifest(shared, "new", "New", "macos", "0.10.0", 9_000).unwrap();
-        write_own_manifest(shared, "mid", "Mid", "macos", "0.10.0", 5_000).unwrap();
+        write_own_manifest(shared, PEER_A_UUID, "Old", "macos", "0.10.0", 1_000).unwrap();
+        write_own_manifest(shared, PEER_B_UUID, "New", "macos", "0.10.0", 9_000).unwrap();
+        write_own_manifest(shared, PEER_C_UUID, "Mid", "macos", "0.10.0", 5_000).unwrap();
 
-        let peers = list_peers(shared, "self").unwrap();
-        assert_eq!(peers[0].device_uuid, "new");
-        assert_eq!(peers[1].device_uuid, "mid");
-        assert_eq!(peers[2].device_uuid, "old");
+        let peers = list_peers(shared, SELF_UUID).unwrap();
+        assert_eq!(peers[0].device_uuid, PEER_B_UUID);
+        assert_eq!(peers[1].device_uuid, PEER_C_UUID);
+        assert_eq!(peers[2].device_uuid, PEER_A_UUID);
     }
 
     #[test]
     fn missing_devices_dir_returns_empty_list() {
         let tmp = TempDir::new().unwrap();
-        let peers = list_peers(tmp.path(), "self").unwrap();
+        let peers = list_peers(tmp.path(), SELF_UUID).unwrap();
         assert!(peers.is_empty());
     }
 
@@ -273,26 +315,90 @@ mod tests {
     fn malformed_manifest_is_skipped_not_fatal() {
         let tmp = TempDir::new().unwrap();
         let shared = tmp.path();
-        write_own_manifest(shared, "good", "Good", "macos", "0.10.0", 1_000).unwrap();
+        write_own_manifest(shared, PEER_A_UUID, "Good", "macos", "0.10.0", 1_000).unwrap();
 
-        let bad_path = shared.join(DEVICES_SUBDIR).join("bad.json");
+        let bad_path = shared
+            .join(DEVICES_SUBDIR)
+            .join(format!("{PEER_B_UUID}.json"));
         fs::write(&bad_path, b"{not valid json").unwrap();
 
-        let peers = list_peers(shared, "self").unwrap();
+        let peers = list_peers(shared, SELF_UUID).unwrap();
         assert_eq!(peers.len(), 1);
-        assert_eq!(peers[0].device_uuid, "good");
+        assert_eq!(peers[0].device_uuid, PEER_A_UUID);
     }
 
     #[test]
     fn rewrite_overwrites_in_place_with_new_last_seen() {
         let tmp = TempDir::new().unwrap();
         let shared = tmp.path();
-        write_own_manifest(shared, "me", "Me", "macos", "0.10.0", 1_000).unwrap();
-        write_own_manifest(shared, "me", "Me", "macos", "0.10.0", 5_000).unwrap();
+        write_own_manifest(shared, PEER_A_UUID, "Me", "macos", "0.10.0", 1_000).unwrap();
+        write_own_manifest(shared, PEER_A_UUID, "Me", "macos", "0.10.0", 5_000).unwrap();
 
-        let peers = list_peers(shared, "other").unwrap();
+        let peers = list_peers(shared, SELF_UUID).unwrap();
         assert_eq!(peers.len(), 1);
         assert_eq!(peers[0].last_seen, 5_000);
+    }
+
+    /// Filename is the source of truth for `device_uuid`. A hostile
+    /// manifest at `devices/<attacker>.json` could declare
+    /// `device_uuid = "<victim>"` to trick downstream code into
+    /// targeting the victim's files. `list_peers` must overwrite the
+    /// payload field with the filename-derived UUID.
+    #[test]
+    fn list_peers_overrides_payload_uuid_with_filename() {
+        let tmp = TempDir::new().unwrap();
+        let shared = tmp.path();
+        // Attacker's manifest filename is PEER_A but it claims to be PEER_B.
+        let attacker = Peer {
+            device_uuid: PEER_B_UUID.to_string(),
+            name: "Impersonator".into(),
+            platform: "macos".into(),
+            app_version: "0.10.0".into(),
+            last_seen: 1_000,
+        };
+        let dir = shared.join(DEVICES_SUBDIR);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join(format!("{PEER_A_UUID}.json")),
+            serde_json::to_vec(&attacker).unwrap(),
+        )
+        .unwrap();
+
+        let peers = list_peers(shared, SELF_UUID).unwrap();
+        assert_eq!(peers.len(), 1);
+        assert_eq!(
+            peers[0].device_uuid, PEER_A_UUID,
+            "device_uuid must come from the filename, not the JSON payload",
+        );
+    }
+
+    /// A manifest with a non-UUID filename (random file dropped into
+    /// the shared folder by some other tool) must not appear in the
+    /// peer list — the UI's trash button would otherwise be unable to
+    /// target it correctly anyway.
+    #[test]
+    fn list_peers_skips_non_uuid_filenames() {
+        let tmp = TempDir::new().unwrap();
+        let shared = tmp.path();
+        let dir = shared.join(DEVICES_SUBDIR);
+        fs::create_dir_all(&dir).unwrap();
+        let bogus = Peer {
+            device_uuid: PEER_A_UUID.to_string(),
+            name: "Looks legit".into(),
+            platform: "macos".into(),
+            app_version: "0.10.0".into(),
+            last_seen: 1_000,
+        };
+        fs::write(
+            dir.join("not-a-uuid.json"),
+            serde_json::to_vec(&bogus).unwrap(),
+        )
+        .unwrap();
+        write_own_manifest(shared, PEER_B_UUID, "Real Peer", "macos", "0.10.0", 2_000).unwrap();
+
+        let peers = list_peers(shared, SELF_UUID).unwrap();
+        assert_eq!(peers.len(), 1);
+        assert_eq!(peers[0].device_uuid, PEER_B_UUID);
     }
 
     /// Helper: drop a fake event log + snapshot for a given peer so
@@ -304,25 +410,18 @@ mod tests {
         fs::write(logs.join(format!("{uuid}.snapshot.json")), b"{}").unwrap();
     }
 
-    // Real UUIDs for delete_peer tests — input is now validated as a
-    // genuine UUID, so the older string keys ("peer-A", "self") would
-    // be rejected by the path-traversal guard.
-    const PEER_A: &str = "11111111-1111-4111-8111-111111111111";
-    const PEER_B: &str = "22222222-2222-4222-8222-222222222222";
-    const SELF: &str = "00000000-0000-4000-8000-000000000000";
-
     #[test]
     fn delete_peer_removes_manifest_log_and_snapshot() {
         let tmp = TempDir::new().unwrap();
         let shared = tmp.path();
-        write_own_manifest(shared, PEER_A, "Mac A", "macos", "1.0.0", 1_000).unwrap();
-        seed_peer_log_and_snapshot(shared, PEER_A);
+        write_own_manifest(shared, PEER_A_UUID, "Mac A", "macos", "1.0.0", 1_000).unwrap();
+        seed_peer_log_and_snapshot(shared, PEER_A_UUID);
 
-        delete_peer(shared, PEER_A, SELF).unwrap();
+        delete_peer(shared, PEER_A_UUID, SELF_UUID).unwrap();
 
-        assert!(!manifest_path(shared, PEER_A).exists());
-        assert!(!shared.join(format!("logs/{PEER_A}.jsonl")).exists());
-        assert!(!shared.join(format!("logs/{PEER_A}.snapshot.json")).exists());
+        assert!(!manifest_path(shared, PEER_A_UUID).exists());
+        assert!(!shared.join(format!("logs/{PEER_A_UUID}.jsonl")).exists());
+        assert!(!shared.join(format!("logs/{PEER_A_UUID}.snapshot.json")).exists());
     }
 
     #[test]
@@ -330,44 +429,44 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let shared = tmp.path();
         // No files exist yet — must not error.
-        delete_peer(shared, PEER_A, SELF).unwrap();
+        delete_peer(shared, PEER_A_UUID, SELF_UUID).unwrap();
 
         // Partial state: only a manifest exists.
-        write_own_manifest(shared, PEER_A, "Ghost", "macos", "1.0.0", 1_000).unwrap();
-        delete_peer(shared, PEER_A, SELF).unwrap();
-        assert!(!manifest_path(shared, PEER_A).exists());
+        write_own_manifest(shared, PEER_A_UUID, "Ghost", "macos", "1.0.0", 1_000).unwrap();
+        delete_peer(shared, PEER_A_UUID, SELF_UUID).unwrap();
+        assert!(!manifest_path(shared, PEER_A_UUID).exists());
 
         // Re-deleting after everything is gone is still a no-op.
-        delete_peer(shared, PEER_A, SELF).unwrap();
+        delete_peer(shared, PEER_A_UUID, SELF_UUID).unwrap();
     }
 
     #[test]
     fn delete_peer_refuses_self_uuid() {
         let tmp = TempDir::new().unwrap();
         let shared = tmp.path();
-        write_own_manifest(shared, SELF, "Self", "macos", "1.0.0", 1_000).unwrap();
-        seed_peer_log_and_snapshot(shared, SELF);
+        write_own_manifest(shared, SELF_UUID, "Self", "macos", "1.0.0", 1_000).unwrap();
+        seed_peer_log_and_snapshot(shared, SELF_UUID);
 
-        delete_peer(shared, SELF, SELF).unwrap();
+        delete_peer(shared, SELF_UUID, SELF_UUID).unwrap();
 
         // All three self artifacts must remain — guard refuses the call.
-        assert!(manifest_path(shared, SELF).exists());
-        assert!(shared.join(format!("logs/{SELF}.jsonl")).exists());
-        assert!(shared.join(format!("logs/{SELF}.snapshot.json")).exists());
+        assert!(manifest_path(shared, SELF_UUID).exists());
+        assert!(shared.join(format!("logs/{SELF_UUID}.jsonl")).exists());
+        assert!(shared.join(format!("logs/{SELF_UUID}.snapshot.json")).exists());
     }
 
     #[test]
     fn list_peers_excludes_uuid_after_delete_peer() {
         let tmp = TempDir::new().unwrap();
         let shared = tmp.path();
-        write_own_manifest(shared, PEER_A, "Mac A", "macos", "1.0.0", 2_000).unwrap();
-        write_own_manifest(shared, PEER_B, "Mac B", "macos", "1.0.0", 3_000).unwrap();
+        write_own_manifest(shared, PEER_A_UUID, "Mac A", "macos", "1.0.0", 2_000).unwrap();
+        write_own_manifest(shared, PEER_B_UUID, "Mac B", "macos", "1.0.0", 3_000).unwrap();
 
-        delete_peer(shared, PEER_A, SELF).unwrap();
+        delete_peer(shared, PEER_A_UUID, SELF_UUID).unwrap();
 
-        let peers = list_peers(shared, SELF).unwrap();
+        let peers = list_peers(shared, SELF_UUID).unwrap();
         assert_eq!(peers.len(), 1);
-        assert_eq!(peers[0].device_uuid, PEER_B);
+        assert_eq!(peers[0].device_uuid, PEER_B_UUID);
     }
 
     /// Path-traversal guard: a manifest under attacker control could
@@ -392,7 +491,7 @@ mod tests {
             "valid-looking-but-not-a-uuid",
             "",
         ] {
-            let result = delete_peer(&shared, evil, SELF);
+            let result = delete_peer(&shared, evil, SELF_UUID);
             assert!(
                 result.is_err(),
                 "delete_peer must reject non-UUID input {evil:?}",
@@ -414,15 +513,15 @@ mod tests {
     fn delete_peer_order_lets_user_retry_after_partial_failure() {
         let tmp = TempDir::new().unwrap();
         let shared = tmp.path();
-        write_own_manifest(shared, PEER_A, "Mac A", "macos", "1.0.0", 1_000).unwrap();
-        seed_peer_log_and_snapshot(shared, PEER_A);
+        write_own_manifest(shared, PEER_A_UUID, "Mac A", "macos", "1.0.0", 1_000).unwrap();
+        seed_peer_log_and_snapshot(shared, PEER_A_UUID);
 
         // Simulate a successful first attempt that took out log +
         // snapshot but somehow failed (or was interrupted) before the
         // manifest delete: peer must still be discoverable.
-        fs::remove_file(shared.join(format!("logs/{PEER_A}.jsonl"))).unwrap();
-        fs::remove_file(shared.join(format!("logs/{PEER_A}.snapshot.json"))).unwrap();
-        let peers = list_peers(shared, SELF).unwrap();
+        fs::remove_file(shared.join(format!("logs/{PEER_A_UUID}.jsonl"))).unwrap();
+        fs::remove_file(shared.join(format!("logs/{PEER_A_UUID}.snapshot.json"))).unwrap();
+        let peers = list_peers(shared, SELF_UUID).unwrap();
         assert_eq!(
             peers.len(),
             1,
@@ -430,22 +529,22 @@ mod tests {
         );
 
         // Retry from the UI completes cleanup.
-        delete_peer(shared, PEER_A, SELF).unwrap();
-        assert!(list_peers(shared, SELF).unwrap().is_empty());
+        delete_peer(shared, PEER_A_UUID, SELF_UUID).unwrap();
+        assert!(list_peers(shared, SELF_UUID).unwrap().is_empty());
     }
 
     #[test]
     fn delete_own_manifest_removes_file_and_is_idempotent() {
         let tmp = TempDir::new().unwrap();
         let shared = tmp.path();
-        write_own_manifest(shared, "me", "Me", "macos", "0.10.0", 1_000).unwrap();
-        assert!(manifest_path(shared, "me").exists());
+        write_own_manifest(shared, PEER_A_UUID, "Me", "macos", "0.10.0", 1_000).unwrap();
+        assert!(manifest_path(shared, PEER_A_UUID).exists());
 
-        delete_own_manifest(shared, "me").unwrap();
-        assert!(!manifest_path(shared, "me").exists());
+        delete_own_manifest(shared, PEER_A_UUID).unwrap();
+        assert!(!manifest_path(shared, PEER_A_UUID).exists());
 
         // Re-deleting is a no-op.
-        delete_own_manifest(shared, "me").unwrap();
+        delete_own_manifest(shared, PEER_A_UUID).unwrap();
     }
 
     #[test]
@@ -474,13 +573,13 @@ mod tests {
     fn non_json_files_in_devices_dir_are_ignored() {
         let tmp = TempDir::new().unwrap();
         let shared = tmp.path();
-        write_own_manifest(shared, "me", "Me", "macos", "0.10.0", 1_000).unwrap();
+        write_own_manifest(shared, PEER_A_UUID, "Me", "macos", "0.10.0", 1_000).unwrap();
 
         // A `.DS_Store` or stray temp file shouldn't break listing.
         fs::write(shared.join(DEVICES_SUBDIR).join(".DS_Store"), b"").unwrap();
         fs::write(shared.join(DEVICES_SUBDIR).join("scratch.txt"), b"hi").unwrap();
 
-        let peers = list_peers(shared, "other").unwrap();
+        let peers = list_peers(shared, SELF_UUID).unwrap();
         assert_eq!(peers.len(), 1);
     }
 }
