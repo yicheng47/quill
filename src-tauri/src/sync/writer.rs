@@ -97,6 +97,12 @@ pub struct SyncWriter {
     /// Per-book leading-edge throttle for `book.progress.set`. Key: book
     /// id. Value: unix millis of the most recent event we let through.
     progress_throttle: Mutex<HashMap<String, i64>>,
+    /// Test-only knob: when true, the Phase 2 outbox flush runs inline
+    /// on the caller's thread instead of being dispatched to a
+    /// background worker. Production always leaves this `false` so the
+    /// UI never blocks on `bird` / `NSFileCoordinator`. Tests flip it
+    /// on so they can assert post-commit log state without polling.
+    flush_inline_for_tests: AtomicBool,
 }
 
 impl SyncWriter {
@@ -106,7 +112,16 @@ impl SyncWriter {
             log: Mutex::new(None),
             should_queue: AtomicBool::new(false),
             progress_throttle: Mutex::new(HashMap::new()),
+            flush_inline_for_tests: AtomicBool::new(false),
         }
+    }
+
+    /// Test-only: force `with_tx`'s Phase 2 flush to run inline on the
+    /// caller's thread. Production code never calls this.
+    #[cfg(test)]
+    pub fn set_flush_inline_for_tests(&self, on: bool) {
+        self.flush_inline_for_tests
+            .store(on, Ordering::SeqCst);
     }
 
     pub fn self_device(&self) -> &str {
@@ -222,13 +237,33 @@ impl SyncWriter {
         // (i.e. the engine booted this session). Failures just leave
         // rows in the outbox for the next caller / replay tick to
         // retry.
+        //
+        // Runs on a background thread so the command thread never
+        // blocks on `EventLog::append`. On macOS, `append` wraps the
+        // write in `NSFileCoordinator.coordinateWritingItemAtURL`,
+        // which synchronously waits for Apple's `bird` daemon to
+        // settle on the log file. `bird` can hold the writing
+        // accessor for several seconds after any nearby iCloud
+        // activity (just-copied EPUB, a peer's snapshot landing,
+        // etc.), so a synchronous flush stalls every UI write —
+        // exactly the "import spinner hangs" symptom users reported
+        // on v1.0.x. The row is durable in `_pending_publish` after
+        // commit, and both the watcher tick and the next write's
+        // post-commit flush retry, so dropping this onto a worker
+        // thread loses nothing — only the optimistic "publish before
+        // returning to the UI" timing.
         if let Some(log) = log_snapshot {
-            let mut conn = db
-                .conn
-                .lock()
-                .map_err(|e| AppError::Other(format!("db conn mutex: {e}")))?;
-            if let Err(e) = replay::flush_outbox(&mut conn, &log) {
-                eprintln!("sync: post-commit outbox flush failed: {e}");
+            if self.flush_inline_for_tests.load(Ordering::SeqCst) {
+                if let Err(e) = replay::flush_outbox(db, &log) {
+                    eprintln!("sync: post-commit outbox flush failed: {e}");
+                }
+            } else {
+                let db = db.clone();
+                std::thread::spawn(move || {
+                    if let Err(e) = replay::flush_outbox(&db, &log) {
+                        eprintln!("sync: post-commit outbox flush failed: {e}");
+                    }
+                });
             }
         }
 
@@ -279,6 +314,11 @@ mod tests {
         let log = Arc::new(EventLog::open(&log_path, writer.self_device(), false).unwrap());
         writer.set_should_queue(true);
         writer.set_log(Some(log.clone()));
+        // Tests assert log + outbox state immediately after `with_tx`.
+        // Production runs Phase 2 on a worker thread to keep the UI
+        // off `bird` / `NSFileCoordinator`; force inline here so the
+        // asserts don't race the spawn.
+        writer.set_flush_inline_for_tests(true);
         log
     }
 

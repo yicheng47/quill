@@ -169,16 +169,12 @@ fn run_loop(
             return;
         }
 
-        // Tick. We hold the conn lock for the duration; commands will
-        // wait, which is fine — replay batches are typically short.
-        let mut conn = match db.conn.lock() {
-            Ok(c) => c,
-            Err(e) => {
-                eprintln!("sync watcher: db conn lock poisoned: {e}");
-                continue;
-            }
-        };
-        if let Err(e) = engine.tick(&mut conn) {
+        // Tick. `tick` manages its own `db.conn` locking — it only
+        // holds the mutex while running SQL, releasing it around the
+        // slow iCloud I/O (`flush_outbox`, `write_own_manifest`,
+        // `compact_own_log`). That keeps user-driven commands (e.g.
+        // `import_book`) responsive while a tick is in flight.
+        if let Err(e) = engine.tick(&db) {
             eprintln!("sync watcher: tick failed: {e}");
         }
     }

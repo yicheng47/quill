@@ -356,14 +356,8 @@ pub fn sync_enable(
     // is non-fatal — the watcher will retry on the next event, and a
     // fresh-enable session doesn't have leftover outbox rows or peer
     // tails that would get stuck pending.
-    {
-        let mut conn = db
-            .conn
-            .lock()
-            .map_err(|e| AppError::Other(format!("db conn mutex: {e}")))?;
-        if let Err(e) = engine.tick(&mut conn) {
-            eprintln!("sync_enable: initial tick failed: {e}");
-        }
+    if let Err(e) = engine.tick(&db) {
+        eprintln!("sync_enable: initial tick failed: {e}");
     }
 
     Ok(())
@@ -460,11 +454,7 @@ pub fn sync_now(
     let engine = sync_state
         .engine_snapshot()?
         .ok_or_else(|| AppError::Other("sync is not enabled on this device".into()))?;
-    let mut conn = db
-        .conn
-        .lock()
-        .map_err(|e| AppError::Other(format!("db conn mutex: {e}")))?;
-    let report = engine.tick(&mut conn)?;
+    let report = engine.tick(&db)?;
     Ok(report.into())
 }
 

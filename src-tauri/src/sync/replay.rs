@@ -30,6 +30,7 @@ use std::sync::{Arc, Mutex};
 
 use rusqlite::{params, Connection};
 
+use crate::db::Db;
 use crate::error::{AppError, AppResult};
 
 use super::events::{Event, EventBody};
@@ -42,6 +43,17 @@ use super::snapshot::{self, Snapshot};
 /// is purely for throughput hygiene — concurrent ticks are functionally safe
 /// because every operation is idempotent — but they'd duplicate I/O work.
 static TICK_MUTEX: Mutex<()> = Mutex::new(());
+
+/// Process-wide lock that serializes `flush_outbox` callers so the
+/// outbox drain stays exactly-once. Without it, `SyncWriter::with_tx`'s
+/// background flush worker and a concurrent watcher tick could both
+/// read the same pending row before either deletes it, then each
+/// append the same event to the device log under a fresh ULID — the
+/// peer would apply the event twice. Most merges are idempotent (UUID
+/// dedup, LWW), but some payload shapes are not safe to publish twice,
+/// and even idempotent ones balloon the log. The mutex is entirely
+/// outside `db.conn`, so a flush in flight does not block UI writes.
+static FLUSH_OUTBOX_MUTEX: Mutex<()> = Mutex::new(());
 
 /// What `tick()` did, surfaced for the "Sync now" UI and for tests.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -69,51 +81,58 @@ impl ReplayEngine {
         }
     }
 
-    pub fn tick(&self, conn: &mut Connection) -> AppResult<ReplayReport> {
+    /// Run a single replay pass.
+    ///
+    /// Takes `&Db` rather than `&mut Connection` so the SQLite mutex
+    /// can be released around the slow iCloud I/O — `flush_outbox`,
+    /// `write_own_manifest`, and `compact_own_log` all hit
+    /// `NSFileCoordinator`, and holding `db.conn` across those waits
+    /// previously serialized every UI write (`import_book` etc.)
+    /// behind the watcher's tick.
+    pub fn tick(&self, db: &Db) -> AppResult<ReplayReport> {
         let _guard = TICK_MUTEX
             .lock()
             .map_err(|e| AppError::Other(format!("replay tick mutex poisoned: {e}")))?;
 
-        // Phase 0 — drain the outbox into the device log. Failures here
-        // surface to the caller; peers will see the local writes on the
-        // next successful tick.
-        let outbox_flushed = self.flush_outbox(conn)?;
+        // Phase 0 — drain the outbox into the device log. Manages its
+        // own per-row locking; the slow `log.append` runs without
+        // holding `db.conn`. Failures surface to the caller; peers
+        // will see the local writes on the next successful tick.
+        let outbox_flushed = flush_outbox(db, &self.own_log)?;
 
-        // Phase 1 — discover peers (including self).
+        // Phase 1 — discover peers (including self). Pure fs read.
         let peers = discover_peers(&self.shared_dir)?;
         let peers_seen = peers.len();
 
-        // Phase 2/3/4 — read peer files, apply in one tx, advance watermarks.
-        // FK off mirrors the merge engine's contract; orphan rows from
-        // out-of-order delivery are tolerated until parents arrive.
-        //
-        // The pragma must be restored even if the merge work errors mid-way,
-        // otherwise the shared connection silently loses FK enforcement for
-        // every subsequent command. We capture the inner result and run the
-        // restore unconditionally before returning.
-        conn.execute_batch("PRAGMA foreign_keys = OFF;")?;
-        let inner = self.apply_in_tx(conn, &peers);
-        let restore = conn.execute_batch("PRAGMA foreign_keys = ON;");
+        // Phase 2/3/4 — read peer files (no SQL lock), then apply in
+        // one tx. The disk I/O for snapshots and peer logs lives
+        // inside `apply_in_tx`'s "Phase A" so an iCloud-stalled or
+        // large peer file does not stall any concurrent UI writes
+        // behind the watcher tick. The PRAGMA wrap also lives inside
+        // `apply_in_tx` so any error path still restores FK = ON.
+        let (snapshots_applied, events_applied) = self.apply_in_tx(db, &peers)?;
 
-        let (snapshots_applied, events_applied) = match (inner, restore) {
-            (Ok(counts), Ok(())) => counts,
-            (Err(e), _) => return Err(e),
-            (Ok(_), Err(e)) => return Err(AppError::Db(e)),
-        };
-
-        // Stamp self's `_replay_state.updated_at` so the settings UI's
-        // "Last sync" reflects every successful tick — not only the
-        // ones that happened to move a peer watermark. A no-op
+        // Stamp self's `_replay_state.updated_at` so the settings
+        // UI's "Last sync" reflects every successful tick — not only
+        // the ones that happened to move a peer watermark. A no-op
         // `sync_now` click (no peer changes, no outbox drain) still
         // proves the engine is healthy, and the UI deserves to show
         // that. Upserts a NULL-watermark self row on first call.
-        let now = chrono::Utc::now().timestamp_millis();
-        conn.execute(
-            "INSERT INTO _replay_state (peer_device, last_snapshot_id, last_event_id, updated_at)
-             VALUES (?1, NULL, NULL, ?2)
-             ON CONFLICT(peer_device) DO UPDATE SET updated_at = excluded.updated_at",
-            params![self.self_device, now],
-        )?;
+        {
+            let conn = db
+                .conn
+                .lock()
+                .map_err(|e| AppError::Other(format!("db conn mutex: {e}")))?;
+            let now = chrono::Utc::now().timestamp_millis();
+            conn.execute(
+                "INSERT INTO _replay_state (peer_device, last_snapshot_id, last_event_id, updated_at)
+                 VALUES (?1, NULL, NULL, ?2)
+                 ON CONFLICT(peer_device) DO UPDATE SET updated_at = excluded.updated_at",
+                params![self.self_device, now],
+            )?;
+        }
+        // db.conn released — heartbeat and compaction below run on
+        // iCloud without blocking concurrent UI writes.
 
         // Refresh own peer manifest's `last_seen` so other devices see
         // us as currently active. A failed heartbeat is non-fatal — peers
@@ -152,14 +171,79 @@ impl ReplayEngine {
         })
     }
 
-    /// Inner helper for `tick`: snapshot apply + log-tail merge inside a
-    /// single SQL transaction. Returns `(snapshots_applied, events_applied)`
-    /// counts. Caller is responsible for toggling `PRAGMA foreign_keys`
-    /// around the call so any error here doesn't leak FK = OFF.
+    /// Snapshot apply + log-tail merge.
+    ///
+    /// Split into two phases so the slow disk I/O on the iCloud
+    /// shared folder never runs while holding `db.conn`:
+    ///
+    /// - **Phase A — read** (no SQL lock): deserialize every peer
+    ///   snapshot file and slurp every peer log file from disk.
+    ///   iCloud-evicted or large peer files can stall here without
+    ///   blocking any concurrent UI write.
+    /// - **Phase B — apply** (one tx, conn lock held): apply the
+    ///   pre-loaded snapshots, then the log tails filtered against
+    ///   each peer's (possibly snapshot-bumped) `last_event_id`,
+    ///   then advance the watermarks.
+    ///
+    /// FK off mirrors the merge engine's contract; orphan rows from
+    /// out-of-order delivery are tolerated until parents arrive. The
+    /// PRAGMA wrap is inside this function so any error path still
+    /// restores `foreign_keys = ON` on the shared connection.
     fn apply_in_tx(
         &self,
-        conn: &mut Connection,
+        db: &Db,
         peers: &BTreeMap<String, PeerFiles>,
+    ) -> AppResult<(usize, usize)> {
+        // -- Phase A — read everything from disk. No SQL lock held. --
+        let mut snapshots: Vec<(String, Snapshot)> = Vec::new();
+        for (device, files) in peers {
+            let Some(snap_path) = &files.snap_path else {
+                continue;
+            };
+            match Snapshot::read_from(snap_path) {
+                Ok(s) => snapshots.push((device.clone(), s)),
+                Err(e) => {
+                    eprintln!(
+                        "sync: skipping malformed snapshot {}: {e}",
+                        snap_path.display()
+                    );
+                }
+            }
+        }
+        // Read full log tail; per-peer watermark filter happens in
+        // Phase B against the post-snapshot-apply watermark, so
+        // events the snapshot already covered get dropped there.
+        // Most merges are idempotent (UUID dedup, LWW), but filtering
+        // saves the apply cost.
+        let mut peer_logs: Vec<(String, Vec<Event>)> = Vec::new();
+        for (device, files) in peers {
+            let Some(log_path) = &files.log_path else {
+                continue;
+            };
+            let events = log::read_log_file_after(log_path, None)?;
+            peer_logs.push((device.clone(), events));
+        }
+
+        // -- Phase B — apply under one tx. Conn lock held throughout. --
+        let mut conn = db
+            .conn
+            .lock()
+            .map_err(|e| AppError::Other(format!("db conn mutex: {e}")))?;
+        conn.execute_batch("PRAGMA foreign_keys = OFF;")?;
+        let inner = self.apply_phase_b(&mut conn, &snapshots, &peer_logs);
+        let restore = conn.execute_batch("PRAGMA foreign_keys = ON;");
+        match (inner, restore) {
+            (Ok(counts), Ok(())) => Ok(counts),
+            (Err(e), _) => Err(e),
+            (Ok(_), Err(e)) => Err(AppError::Db(e)),
+        }
+    }
+
+    fn apply_phase_b(
+        &self,
+        conn: &mut Connection,
+        snapshots: &[(String, Snapshot)],
+        peer_logs: &[(String, Vec<Event>)],
     ) -> AppResult<(usize, usize)> {
         let mut snapshots_applied = 0usize;
         let mut events_applied = 0usize;
@@ -172,20 +256,7 @@ impl ReplayEngine {
         //     snapshot moves the watermark forward). Doing them before the
         //     log tails means the per-peer `last_event_id` we read in 3b
         //     reflects any snapshot bump.
-        for (device, files) in peers {
-            let Some(snap_path) = &files.snap_path else {
-                continue;
-            };
-            let snap = match Snapshot::read_from(snap_path) {
-                Ok(s) => s,
-                Err(e) => {
-                    eprintln!(
-                        "sync: skipping malformed snapshot {}: {e}",
-                        snap_path.display()
-                    );
-                    continue;
-                }
-            };
+        for (device, snap) in snapshots {
             let outcome = snap.apply_peer(&tx, device)?;
             if matches!(
                 outcome,
@@ -196,16 +267,18 @@ impl ReplayEngine {
             }
         }
 
-        // 3b. Read each peer's log tail past its (possibly just-bumped)
-        //     watermark. Collect, sort by `(ts, device)`, apply.
-        let mut all_events: Vec<Event> = Vec::new();
-        for (device, files) in peers {
-            let Some(log_path) = &files.log_path else {
-                continue;
-            };
+        // 3b. Filter each peer's pre-loaded log against its (possibly
+        //     just-bumped) watermark. Collect, sort by `(ts, device)`,
+        //     apply.
+        let mut all_events: Vec<&Event> = Vec::new();
+        for (device, events) in peer_logs {
             let last_id = read_last_event_id(&tx, device)?;
-            let events = log::read_log_file_after(log_path, last_id.as_deref())?;
             for ev in events {
+                if let Some(w) = last_id.as_deref() {
+                    if ev.id.as_str() <= w {
+                        continue;
+                    }
+                }
                 all_events.push(ev);
             }
         }
@@ -230,13 +303,6 @@ impl ReplayEngine {
         Ok((snapshots_applied, events_applied))
     }
 
-    /// Drain `_pending_publish` into the own device log. Thin wrapper over
-    /// the free function `flush_outbox` so `SyncWriter` (Chunk 5) can call
-    /// the same drain path right after a successful commit without going
-    /// through a `ReplayEngine`.
-    fn flush_outbox(&self, conn: &mut Connection) -> AppResult<usize> {
-        flush_outbox(conn, &self.own_log)
-    }
 }
 
 /// Drain `_pending_publish` into `log`. Each row is re-serialized into an
@@ -248,8 +314,31 @@ impl ReplayEngine {
 /// (post-commit step) so the publish-retry guarantee holds end-to-end:
 /// every committed-but-not-yet-published event lands in the device log on
 /// the next successful flush from either path.
-pub fn flush_outbox(conn: &mut Connection, log: &EventLog) -> AppResult<usize> {
-    let pending = read_outbox(conn)?;
+///
+/// **Locking discipline.** Takes `&Db` (not `&mut Connection`) so we can
+/// release the SQLite mutex around `log.append`. On macOS that append
+/// goes through `NSFileCoordinator` and synchronously waits for Apple's
+/// `bird` daemon — often several seconds. Holding `db.conn` across that
+/// wait would serialize every UI write behind the watcher's tick, which
+/// is exactly the "import spinner hangs" symptom users hit. Per-row
+/// lock/unlock is cheap relative to the iCloud I/O.
+///
+/// **Single-flight via `FLUSH_OUTBOX_MUTEX`.** Concurrent callers (the
+/// `SyncWriter` background worker + a watcher-driven `tick`) would
+/// otherwise both read the same pending row, both append, and both
+/// delete — duplicating the event in the device log. The mutex sits
+/// outside `db.conn` so a flush in flight does not block UI writes.
+pub fn flush_outbox(db: &Db, log: &EventLog) -> AppResult<usize> {
+    let _guard = FLUSH_OUTBOX_MUTEX
+        .lock()
+        .map_err(|e| AppError::Other(format!("flush outbox mutex poisoned: {e}")))?;
+    let pending = {
+        let conn = db
+            .conn
+            .lock()
+            .map_err(|e| AppError::Other(format!("db conn mutex: {e}")))?;
+        read_outbox(&conn)?
+    };
     if pending.is_empty() {
         return Ok(0);
     }
@@ -262,13 +351,20 @@ pub fn flush_outbox(conn: &mut Connection, log: &EventLog) -> AppResult<usize> {
                 row.id
             ))
         })?;
+        // Slow part — runs WITHOUT holding db.conn so concurrent UI
+        // writes (import_book, highlight.add, etc.) are not blocked.
         log.append(body, row.ts)?;
         // Per-row delete: if a later append in this batch fails, the
         // earlier rows are already published and can be removed cleanly.
+        let conn = db
+            .conn
+            .lock()
+            .map_err(|e| AppError::Other(format!("db conn mutex: {e}")))?;
         conn.execute(
             "DELETE FROM _pending_publish WHERE id = ?1",
             params![row.id],
         )?;
+        drop(conn);
         flushed += 1;
     }
     Ok(flushed)
@@ -385,12 +481,23 @@ mod tests {
     use std::sync::Arc;
     use tempfile::TempDir;
 
-    /// Test harness: shared dir + local SQLite + own EventLog.
+    /// Test harness: shared dir + local SQLite (wrapped in a Db so
+    /// `engine.tick(&db)` can re-acquire the conn lock the same way
+    /// production does) + own EventLog.
     struct Env {
         _dir: TempDir,
         shared: PathBuf,
-        conn: Connection,
+        db: Db,
         engine: ReplayEngine,
+    }
+
+    impl Env {
+        /// Convenience accessor for tests that want to do raw SQL
+        /// without going through `with_tx`. Holds the lock for the
+        /// returned guard's lifetime — keep the binding short-lived.
+        fn conn(&self) -> std::sync::MutexGuard<'_, Connection> {
+            self.db.conn.lock().unwrap()
+        }
     }
 
     fn setup(self_device: &str) -> Env {
@@ -401,6 +508,10 @@ mod tests {
 
         let conn = Connection::open_in_memory().unwrap();
         Db::run_migrations_on(&conn).unwrap();
+        let db = Db {
+            conn: Arc::new(Mutex::new(conn)),
+            data_dir: Arc::new(Mutex::new(dir.path().to_path_buf())),
+        };
 
         let own_log_path = logs.join(format!("{self_device}.jsonl"));
         let own_log = Arc::new(EventLog::open(&own_log_path, self_device, false).unwrap());
@@ -409,7 +520,7 @@ mod tests {
         Env {
             _dir: dir,
             shared,
-            conn,
+            db,
             engine,
         }
     }
@@ -456,12 +567,12 @@ mod tests {
 
     #[test]
     fn outbox_drains_into_own_log_and_advances_to_caller() {
-        let mut env = setup("self");
+        let env = setup("self");
         // Seed two outbox rows representing previously-committed SQL writes
         // whose log append failed.
         let body1 = import("b1");
         let body2 = import("b2");
-        env.conn
+        env.conn()
             .execute(
                 "INSERT INTO _pending_publish (id, ts, body_json, created_at) VALUES (?1, ?2, ?3, ?4)",
                 params![
@@ -472,7 +583,7 @@ mod tests {
                 ],
             )
             .unwrap();
-        env.conn
+        env.conn()
             .execute(
                 "INSERT INTO _pending_publish (id, ts, body_json, created_at) VALUES (?1, ?2, ?3, ?4)",
                 params![
@@ -484,12 +595,12 @@ mod tests {
             )
             .unwrap();
 
-        let report = env.engine.tick(&mut env.conn).unwrap();
+        let report = env.engine.tick(&env.db).unwrap();
         assert_eq!(report.outbox_flushed, 2);
 
         // Outbox is empty.
         let n: i64 = env
-            .conn
+            .conn()
             .query_row("SELECT COUNT(*) FROM _pending_publish", [], |r| r.get(0))
             .unwrap();
         assert_eq!(n, 0);
@@ -501,10 +612,54 @@ mod tests {
         assert_eq!(log_events.len(), 2);
 
         let n_books: i64 = env
-            .conn
+            .conn()
             .query_row("SELECT COUNT(*) FROM books", [], |r| r.get(0))
             .unwrap();
         assert_eq!(n_books, 2);
+    }
+
+    /// Regression for the review finding on PR #209: two callers of
+    /// `flush_outbox` racing on the same outbox row would each read,
+    /// each append, and each delete — duplicating the device-log
+    /// event. With the `FLUSH_OUTBOX_MUTEX` single-flight guard, the
+    /// log must hold exactly one event after concurrent drains.
+    #[test]
+    fn concurrent_flush_outbox_does_not_double_publish() {
+        use std::thread;
+
+        let env = setup("self");
+        let body = import("b1");
+        env.conn()
+            .execute(
+                "INSERT INTO _pending_publish (id, ts, body_json, created_at) VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    uuid::Uuid::new_v4().to_string(),
+                    1000_i64,
+                    serde_json::to_string(&body).unwrap(),
+                    1000_i64,
+                ],
+            )
+            .unwrap();
+
+        let db = env.db.clone();
+        let log = Arc::clone(&env.engine.own_log);
+        let db2 = env.db.clone();
+        let log2 = Arc::clone(&env.engine.own_log);
+
+        // Two concurrent flush attempts. The mutex must serialize
+        // them; the loser sees an empty outbox and is a no-op.
+        let h1 = thread::spawn(move || flush_outbox(&db, &log).unwrap());
+        let h2 = thread::spawn(move || flush_outbox(&db2, &log2).unwrap());
+        let n1 = h1.join().unwrap();
+        let n2 = h2.join().unwrap();
+        assert_eq!(n1 + n2, 1, "exactly one flush wins; the other is a no-op");
+
+        let log_events = env.engine.own_log.read_all().unwrap();
+        assert_eq!(
+            log_events.len(),
+            1,
+            "single-flight guard must prevent duplicate device-log events",
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -513,7 +668,7 @@ mod tests {
 
     #[test]
     fn applies_events_from_a_single_peer_log() {
-        let mut env = setup("self");
+        let env = setup("self");
         let peer_events = vec![
             ev(1000, "peer-A", import("b1")),
             ev(
@@ -531,19 +686,19 @@ mod tests {
         ];
         write_peer_log(&env.shared, "peer-A", &peer_events);
 
-        let report = env.engine.tick(&mut env.conn).unwrap();
+        let report = env.engine.tick(&env.db).unwrap();
         assert_eq!(report.events_applied, 2);
         assert_eq!(report.peers_seen, 2, "peer-A + self");
 
         let n_books: i64 = env
-            .conn
+            .conn()
             .query_row("SELECT COUNT(*) FROM books", [], |r| r.get(0))
             .unwrap();
         assert_eq!(n_books, 1);
 
         // Watermark advanced to the max id from peer-A.
         let last: Option<String> = env
-            .conn
+            .conn()
             .query_row(
                 "SELECT last_event_id FROM _replay_state WHERE peer_device = 'peer-A'",
                 [], |r| r.get(0),
@@ -554,15 +709,15 @@ mod tests {
 
     #[test]
     fn watermark_skips_already_applied_events_on_second_tick() {
-        let mut env = setup("self");
+        let env = setup("self");
         let peer_events = vec![ev(1000, "peer-A", import("b1"))];
         write_peer_log(&env.shared, "peer-A", &peer_events);
 
-        let r1 = env.engine.tick(&mut env.conn).unwrap();
+        let r1 = env.engine.tick(&env.db).unwrap();
         assert_eq!(r1.events_applied, 1);
 
         // Second tick — same log, no new events.
-        let r2 = env.engine.tick(&mut env.conn).unwrap();
+        let r2 = env.engine.tick(&env.db).unwrap();
         assert_eq!(r2.events_applied, 0, "watermark should suppress re-apply");
 
         // Append a new event to peer-A's log; tick picks it up.
@@ -578,11 +733,11 @@ mod tests {
         ));
         write_peer_log(&env.shared, "peer-A", &more);
 
-        let r3 = env.engine.tick(&mut env.conn).unwrap();
+        let r3 = env.engine.tick(&env.db).unwrap();
         assert_eq!(r3.events_applied, 1);
 
         let progress: i32 = env
-            .conn
+            .conn()
             .query_row("SELECT progress FROM books WHERE id = 'b1'", [], |r| r.get(0))
             .unwrap();
         assert_eq!(progress, 50);
@@ -590,7 +745,7 @@ mod tests {
 
     #[test]
     fn cross_peer_events_apply_in_global_ts_order() {
-        let mut env = setup("self");
+        let env = setup("self");
         // Two peers write the same book progress at different ts.
         write_peer_log(&env.shared, "peer-A", &[
             ev(1000, "peer-A", import("b1")),
@@ -616,9 +771,9 @@ mod tests {
             ),
         ]);
 
-        env.engine.tick(&mut env.conn).unwrap();
+        env.engine.tick(&env.db).unwrap();
         let progress: i32 = env
-            .conn
+            .conn()
             .query_row("SELECT progress FROM books WHERE id = 'b1'", [], |r| r.get(0))
             .unwrap();
         assert_eq!(progress, 80, "later peer-B event wins");
@@ -630,7 +785,7 @@ mod tests {
 
     #[test]
     fn applies_peer_snapshot_then_log_tail() {
-        let mut env = setup("self");
+        let env = setup("self");
         // Build peer-A's snapshot + log split. Snapshot covers b1; the log
         // adds a highlight after the snapshot.
         let snap_events = vec![ev(1000, "peer-A", import("b1"))];
@@ -652,16 +807,16 @@ mod tests {
         )];
         write_peer_log(&env.shared, "peer-A", &tail);
 
-        let report = env.engine.tick(&mut env.conn).unwrap();
+        let report = env.engine.tick(&env.db).unwrap();
         assert!(report.snapshots_applied >= 1);
         assert_eq!(report.events_applied, 1);
 
         let n_books: i64 = env
-            .conn
+            .conn()
             .query_row("SELECT COUNT(*) FROM books", [], |r| r.get(0))
             .unwrap();
         let n_hl: i64 = env
-            .conn
+            .conn()
             .query_row("SELECT COUNT(*) FROM highlights", [], |r| r.get(0))
             .unwrap();
         assert_eq!(n_books, 1);
@@ -674,8 +829,8 @@ mod tests {
 
     #[test]
     fn empty_shared_dir_is_a_noop() {
-        let mut env = setup("self");
-        let report = env.engine.tick(&mut env.conn).unwrap();
+        let env = setup("self");
+        let report = env.engine.tick(&env.db).unwrap();
         // Self log was created at setup → 1 peer (self).
         assert_eq!(report.peers_seen, 1);
         assert_eq!(report.events_applied, 0);
@@ -684,11 +839,11 @@ mod tests {
 
     #[test]
     fn malformed_snapshot_is_skipped_not_fatal() {
-        let mut env = setup("self");
+        let env = setup("self");
         let bad = env.shared.join("logs/peer-X.snapshot.json");
         fs::write(&bad, b"{not valid json").unwrap();
         // Tick must not error; bad file is logged + skipped.
-        let report = env.engine.tick(&mut env.conn).unwrap();
+        let report = env.engine.tick(&env.db).unwrap();
         assert_eq!(report.snapshots_applied, 0);
         assert_eq!(report.events_applied, 0);
     }
@@ -701,7 +856,7 @@ mod tests {
         // book.metadata.set with a number where a string is expected) and
         // assert the connection's FK pragma is back to ON after tick
         // returns Err.
-        let mut env = setup("self");
+        let env = setup("self");
         let bad = vec![
             ev(1000, "peer-A", import("b1")),
             ev(
@@ -717,12 +872,12 @@ mod tests {
         write_peer_log(&env.shared, "peer-A", &bad);
 
         // Pre-set FK ON so the restore is observable.
-        env.conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
-        let result = env.engine.tick(&mut env.conn);
+        env.conn().execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        let result = env.engine.tick(&env.db);
         assert!(result.is_err(), "malformed metadata event should propagate");
 
         let fk: i64 = env
-            .conn
+            .conn()
             .query_row("PRAGMA foreign_keys", [], |r| r.get(0))
             .unwrap();
         assert_eq!(fk, 1, "FK must be restored to ON even after a tick error");
@@ -735,15 +890,15 @@ mod tests {
     /// tick is still a successful tick from the user's perspective.
     #[test]
     fn tick_bumps_self_updated_at_even_on_noop() {
-        let mut env = setup("self");
+        let env = setup("self");
 
         // First tick — empty shared dir, nothing to apply. Self row
         // doesn't exist yet.
         let before = chrono::Utc::now().timestamp_millis();
-        env.engine.tick(&mut env.conn).unwrap();
+        env.engine.tick(&env.db).unwrap();
 
         let row1: Option<i64> = env
-            .conn
+            .conn()
             .query_row(
                 "SELECT updated_at FROM _replay_state WHERE peer_device = 'self'",
                 [],
@@ -756,10 +911,10 @@ mod tests {
         // Sleep a few millis so the second tick's timestamp is
         // visibly newer.
         std::thread::sleep(std::time::Duration::from_millis(5));
-        env.engine.tick(&mut env.conn).unwrap();
+        env.engine.tick(&env.db).unwrap();
 
         let row2: i64 = env
-            .conn
+            .conn()
             .query_row(
                 "SELECT updated_at FROM _replay_state WHERE peer_device = 'self'",
                 [],
@@ -775,9 +930,9 @@ mod tests {
 
     #[test]
     fn tick_refreshes_own_peer_manifest() {
-        let mut env = setup("self");
+        let env = setup("self");
         let before = chrono::Utc::now().timestamp_millis();
-        env.engine.tick(&mut env.conn).unwrap();
+        env.engine.tick(&env.db).unwrap();
 
         let manifest = peers::manifest_path(&env.shared, "self");
         assert!(manifest.exists(), "tick should publish own peer manifest");
@@ -793,11 +948,11 @@ mod tests {
 
     #[test]
     fn fk_pragma_restored_after_tick() {
-        let mut env = setup("self");
-        env.conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
-        env.engine.tick(&mut env.conn).unwrap();
+        let env = setup("self");
+        env.conn().execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        env.engine.tick(&env.db).unwrap();
         let fk: i64 = env
-            .conn
+            .conn()
             .query_row("PRAGMA foreign_keys", [], |r| r.get(0))
             .unwrap();
         assert_eq!(fk, 1, "FK should be restored to ON after tick");

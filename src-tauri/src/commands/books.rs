@@ -21,12 +21,31 @@ fn slugify(title: &str) -> String {
         .collect::<Vec<_>>()
         .join("-")
         .to_lowercase();
-    // Truncate to ~60 chars at a word boundary
+    // Truncate to ~60 bytes at a word boundary, but never slice into
+    // a multi-byte UTF-8 character. Naive `slug[..60]` panics on
+    // non-ASCII titles (e.g. CJK) where byte 60 lands mid-codepoint —
+    // which surfaces as `import_book` returning a command-runtime
+    // panic the UI sees as "spinner forever". `floor_char_boundary`
+    // walks back to the previous char start.
     if slug.len() <= 60 {
         slug
     } else {
-        slug[..60].rfind('-').map_or(&slug[..60], |i| &slug[..i]).to_string()
+        let cut = floor_char_boundary(&slug, 60);
+        let head = &slug[..cut];
+        head.rfind('-').map_or(head, |i| &head[..i]).to_string()
     }
+}
+
+/// Largest valid char-boundary `<= max_bytes`. Stable equivalent of
+/// `str::floor_char_boundary` (which is still nightly-only as of
+/// rustc 1.85). Walks at most 3 bytes back since UTF-8 codepoints are
+/// at most 4 bytes wide.
+fn floor_char_boundary(s: &str, max_bytes: usize) -> usize {
+    let mut i = max_bytes.min(s.len());
+    while i > 0 && !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
 }
 
 /// Build a human-readable filename: `{slug}_{short-id}.{ext}`
@@ -656,6 +675,36 @@ mod tests {
     use crate::db::Db;
     use rusqlite::params;
     use tempfile::TempDir;
+
+    /// Regression: slugify of a CJK title used to panic when the
+    /// 60-byte truncation point landed mid-codepoint. The user-facing
+    /// symptom was `import_book` hanging forever (Tauri's command
+    /// runtime swallows the panic so the spinner never resolves).
+    /// This particular title — "百年孤独 (root edition note)" — slugs
+    /// to exactly 62 bytes so the cut at byte 60 falls inside the
+    /// last `删` character.
+    #[test]
+    fn slugify_does_not_panic_on_cjk_title_at_byte_boundary() {
+        let title = "百年孤独(根据马尔克斯指定版本翻译,未做任何增删)";
+        let slug = slugify(title);
+        // Must be valid UTF-8 (the .to_string() in slugify would have
+        // panicked if the slice were invalid) and not empty.
+        assert!(!slug.is_empty());
+        assert!(slug.chars().count() > 0);
+        // Must round-trip into book_filename without panicking.
+        let _ = book_filename(title, "abcdef0123456789", "epub");
+    }
+
+    /// ASCII titles still get a meaningful slug after the truncation
+    /// fix (regression safety on the common path).
+    #[test]
+    fn slugify_truncates_long_ascii_at_word_boundary() {
+        let title = "the quick brown fox jumps over the lazy dog and then keeps on running";
+        let slug = slugify(title);
+        assert!(slug.len() <= 60);
+        assert!(slug.starts_with("the-quick-brown-fox"));
+        assert!(!slug.ends_with('-'));
+    }
 
     fn setup() -> (TempDir, Db) {
         let dir = TempDir::new().unwrap();
