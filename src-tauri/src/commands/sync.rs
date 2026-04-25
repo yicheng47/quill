@@ -484,6 +484,31 @@ pub fn sync_compact(sync_state: State<'_, SyncState>) -> AppResult<SyncCompactRe
     Ok(report.into())
 }
 
+/// Remove a peer device's footprint from the shared folder. Deletes
+/// the peer's manifest, event log, and snapshot. Used by the settings
+/// UI's per-device trash button to clean up orphaned entries (e.g. an
+/// uninstalled app whose UUID is still publishing a stale `last_seen`).
+///
+/// Idempotent — re-deleting an already-removed peer returns Ok. No-op
+/// when the device_uuid matches the local device (defense in depth;
+/// the UI doesn't render self in the peer list to begin with).
+///
+/// Resolves the shared dir the same way `sync_status` does so the
+/// command works whether or not the engine is currently booted in this
+/// process. Returns an error only when no shared dir can be resolved
+/// (iCloud unavailable AND no recorded marker).
+#[tauri::command]
+pub fn sync_remove_peer(
+    device_uuid: String,
+    local: State<'_, LocalDir>,
+    device: State<'_, DeviceIdentity>,
+) -> AppResult<()> {
+    let shared_dir = sync::migration::recorded_data_dir(&local.0)
+        .or_else(icloud::icloud_data_dir_deterministic)
+        .ok_or_else(|| AppError::Other("iCloud shared folder is not available".into()))?;
+    peers::delete_peer(&shared_dir, &device_uuid, &device.device_uuid)
+}
+
 /// Placeholder for the 30-day grace-window rollback to legacy file-sync.
 /// The legacy implementation has been removed in this chunk, so the
 /// rollback can't actually restore old behavior — return a clear

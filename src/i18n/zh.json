@@ -303,6 +303,10 @@
   "settings.librarySync.confirmDisable": "停止与 iCloud 同步？",
   "settings.librarySync.confirmDisableMsg": "你的书库将被复制回本地存储。其他设备的副本将保留，直到你手动删除。",
   "settings.librarySync.confirmDisableCta": "停止同步",
+  "settings.librarySync.removeDevice": "移除设备",
+  "settings.librarySync.removeDeviceTitle": "将 {{name}} 从同步中移除？",
+  "settings.librarySync.removeDeviceBody": "iCloud 中该设备的日志、快照和清单文件将被删除。已同步到此设备的书籍会被保留。如果该设备再次打开 Quill 并重新注册，它会再次出现在这里。",
+  "settings.librarySync.remove": "移除",
 
   "settings.appearance.title": "外观",
   "settings.appearance.subtitle": "自定义应用的外观和风格",

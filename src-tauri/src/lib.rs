@@ -408,6 +408,7 @@ pub fn run() {
             commands::sync::sync_now,
             commands::sync::sync_compact,
             commands::sync::sync_revert_to_legacy,
+            commands::sync::sync_remove_peer,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
