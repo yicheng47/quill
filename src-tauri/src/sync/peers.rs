@@ -25,6 +25,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use crate::error::{AppError, AppResult};
 
@@ -126,32 +127,50 @@ pub fn delete_own_manifest(shared_dir: &Path, device_uuid: &str) -> AppResult<()
     }
 }
 
-/// Remove a peer device from the shared folder: deletes its manifest,
-/// event log, and snapshot. Used by the settings UI's per-device trash
-/// button to clean up orphaned entries (uninstalled apps, prior
-/// installs after a reinstall).
+/// Remove a peer device from the shared folder: deletes its log,
+/// snapshot, and finally its manifest. Used by the settings UI's
+/// per-device trash button to clean up orphaned entries (uninstalled
+/// apps, prior installs after a reinstall).
 ///
 /// Refuses to touch the caller's own UUID — early return, not an
 /// error. Mirrors iOS's `Peers.deletePeer` guard so a stale UUID can't
 /// accidentally wipe local state.
 ///
+/// **UUID validation.** `device_uuid` is rejected unless it parses as
+/// a real UUID. The shared folder is writable by every peer, so a
+/// malformed or hostile manifest could otherwise inject path
+/// components like `..` and steer this destructive command outside
+/// the `<shared>/devices/` and `<shared>/logs/` namespace. Strict
+/// parsing eliminates that whole class of input.
+///
+/// **Deletion order.** Log first, then snapshot, then manifest. Peer
+/// discovery (`list_peers`) keys off the manifest, so as long as the
+/// manifest still exists the user can retry from the UI after a
+/// partial failure on the log/snapshot writes. Deleting the manifest
+/// last means a mid-call I/O error never strands log/snapshot orphans
+/// that the UI can no longer surface.
+///
 /// Idempotent: missing files are not an error. Any other I/O failure
 /// stops at the first error and propagates — the UI surfaces it and
-/// the user can retry. Subsequent retries pick up wherever the previous
-/// attempt left off.
+/// the user can retry.
 pub fn delete_peer(shared_dir: &Path, device_uuid: &str, own_uuid: &str) -> AppResult<()> {
     if device_uuid == own_uuid {
         return Ok(());
     }
-    let manifest = manifest_path(shared_dir, device_uuid);
+    if Uuid::parse_str(device_uuid).is_err() {
+        return Err(AppError::Other(format!(
+            "refusing to delete peer: {device_uuid:?} is not a valid UUID"
+        )));
+    }
     let log = shared_dir
         .join("logs")
         .join(format!("{device_uuid}.jsonl"));
     let snapshot = shared_dir
         .join("logs")
         .join(format!("{device_uuid}.snapshot.json"));
+    let manifest = manifest_path(shared_dir, device_uuid);
 
-    for path in [&manifest, &log, &snapshot] {
+    for path in [&log, &snapshot, &manifest] {
         match fs::remove_file(path) {
             Ok(()) => {}
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
@@ -285,18 +304,25 @@ mod tests {
         fs::write(logs.join(format!("{uuid}.snapshot.json")), b"{}").unwrap();
     }
 
+    // Real UUIDs for delete_peer tests — input is now validated as a
+    // genuine UUID, so the older string keys ("peer-A", "self") would
+    // be rejected by the path-traversal guard.
+    const PEER_A: &str = "11111111-1111-4111-8111-111111111111";
+    const PEER_B: &str = "22222222-2222-4222-8222-222222222222";
+    const SELF: &str = "00000000-0000-4000-8000-000000000000";
+
     #[test]
     fn delete_peer_removes_manifest_log_and_snapshot() {
         let tmp = TempDir::new().unwrap();
         let shared = tmp.path();
-        write_own_manifest(shared, "peer-A", "Mac A", "macos", "1.0.0", 1_000).unwrap();
-        seed_peer_log_and_snapshot(shared, "peer-A");
+        write_own_manifest(shared, PEER_A, "Mac A", "macos", "1.0.0", 1_000).unwrap();
+        seed_peer_log_and_snapshot(shared, PEER_A);
 
-        delete_peer(shared, "peer-A", "self").unwrap();
+        delete_peer(shared, PEER_A, SELF).unwrap();
 
-        assert!(!manifest_path(shared, "peer-A").exists());
-        assert!(!shared.join("logs/peer-A.jsonl").exists());
-        assert!(!shared.join("logs/peer-A.snapshot.json").exists());
+        assert!(!manifest_path(shared, PEER_A).exists());
+        assert!(!shared.join(format!("logs/{PEER_A}.jsonl")).exists());
+        assert!(!shared.join(format!("logs/{PEER_A}.snapshot.json")).exists());
     }
 
     #[test]
@@ -304,44 +330,108 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let shared = tmp.path();
         // No files exist yet — must not error.
-        delete_peer(shared, "ghost", "self").unwrap();
+        delete_peer(shared, PEER_A, SELF).unwrap();
 
         // Partial state: only a manifest exists.
-        write_own_manifest(shared, "ghost", "Ghost", "macos", "1.0.0", 1_000).unwrap();
-        delete_peer(shared, "ghost", "self").unwrap();
-        assert!(!manifest_path(shared, "ghost").exists());
+        write_own_manifest(shared, PEER_A, "Ghost", "macos", "1.0.0", 1_000).unwrap();
+        delete_peer(shared, PEER_A, SELF).unwrap();
+        assert!(!manifest_path(shared, PEER_A).exists());
 
         // Re-deleting after everything is gone is still a no-op.
-        delete_peer(shared, "ghost", "self").unwrap();
+        delete_peer(shared, PEER_A, SELF).unwrap();
     }
 
     #[test]
     fn delete_peer_refuses_self_uuid() {
         let tmp = TempDir::new().unwrap();
         let shared = tmp.path();
-        write_own_manifest(shared, "self", "Self", "macos", "1.0.0", 1_000).unwrap();
-        seed_peer_log_and_snapshot(shared, "self");
+        write_own_manifest(shared, SELF, "Self", "macos", "1.0.0", 1_000).unwrap();
+        seed_peer_log_and_snapshot(shared, SELF);
 
-        delete_peer(shared, "self", "self").unwrap();
+        delete_peer(shared, SELF, SELF).unwrap();
 
         // All three self artifacts must remain — guard refuses the call.
-        assert!(manifest_path(shared, "self").exists());
-        assert!(shared.join("logs/self.jsonl").exists());
-        assert!(shared.join("logs/self.snapshot.json").exists());
+        assert!(manifest_path(shared, SELF).exists());
+        assert!(shared.join(format!("logs/{SELF}.jsonl")).exists());
+        assert!(shared.join(format!("logs/{SELF}.snapshot.json")).exists());
     }
 
     #[test]
     fn list_peers_excludes_uuid_after_delete_peer() {
         let tmp = TempDir::new().unwrap();
         let shared = tmp.path();
-        write_own_manifest(shared, "peer-A", "Mac A", "macos", "1.0.0", 2_000).unwrap();
-        write_own_manifest(shared, "peer-B", "Mac B", "macos", "1.0.0", 3_000).unwrap();
+        write_own_manifest(shared, PEER_A, "Mac A", "macos", "1.0.0", 2_000).unwrap();
+        write_own_manifest(shared, PEER_B, "Mac B", "macos", "1.0.0", 3_000).unwrap();
 
-        delete_peer(shared, "peer-A", "self").unwrap();
+        delete_peer(shared, PEER_A, SELF).unwrap();
 
-        let peers = list_peers(shared, "self").unwrap();
+        let peers = list_peers(shared, SELF).unwrap();
         assert_eq!(peers.len(), 1);
-        assert_eq!(peers[0].device_uuid, "peer-B");
+        assert_eq!(peers[0].device_uuid, PEER_B);
+    }
+
+    /// Path-traversal guard: a manifest under attacker control could
+    /// claim `device_uuid = "../../etc/passwd"` (or similar). The
+    /// command must refuse before constructing any paths so a
+    /// malformed shared folder cannot steer file deletion outside
+    /// `<shared>/devices/` and `<shared>/logs/`.
+    #[test]
+    fn delete_peer_rejects_path_traversal_input() {
+        let tmp = TempDir::new().unwrap();
+        let shared = tmp.path().join("shared");
+        let outside = tmp.path().join("victim.txt");
+        fs::create_dir_all(&shared).unwrap();
+        fs::write(&outside, b"keep me").unwrap();
+
+        // Whatever the attacker puts in `device_uuid`, the call must
+        // error and the outside file must remain. Try several shapes.
+        for evil in [
+            "../victim",
+            "../../etc/passwd",
+            "..\\windows",
+            "valid-looking-but-not-a-uuid",
+            "",
+        ] {
+            let result = delete_peer(&shared, evil, SELF);
+            assert!(
+                result.is_err(),
+                "delete_peer must reject non-UUID input {evil:?}",
+            );
+        }
+        assert!(outside.exists(), "outside file must be untouched");
+    }
+
+    /// Deletion order: log + snapshot first, manifest last. This means
+    /// a partial-failure mid-call leaves the manifest behind so the
+    /// peer still appears in `list_peers` and the user can retry the
+    /// trash button. The opposite order would orphan log/snapshot
+    /// files no UI surface can target.
+    ///
+    /// We simulate "mid-call failure" by manually deleting only the
+    /// log + snapshot, leaving the manifest, then verifying the peer
+    /// is still listed and a follow-up `delete_peer` finishes the job.
+    #[test]
+    fn delete_peer_order_lets_user_retry_after_partial_failure() {
+        let tmp = TempDir::new().unwrap();
+        let shared = tmp.path();
+        write_own_manifest(shared, PEER_A, "Mac A", "macos", "1.0.0", 1_000).unwrap();
+        seed_peer_log_and_snapshot(shared, PEER_A);
+
+        // Simulate a successful first attempt that took out log +
+        // snapshot but somehow failed (or was interrupted) before the
+        // manifest delete: peer must still be discoverable.
+        fs::remove_file(shared.join(format!("logs/{PEER_A}.jsonl"))).unwrap();
+        fs::remove_file(shared.join(format!("logs/{PEER_A}.snapshot.json"))).unwrap();
+        let peers = list_peers(shared, SELF).unwrap();
+        assert_eq!(
+            peers.len(),
+            1,
+            "manifest must outlive the log/snapshot so the UI can retry",
+        );
+
+        // Retry from the UI completes cleanup.
+        delete_peer(shared, PEER_A, SELF).unwrap();
+        assert!(list_peers(shared, SELF).unwrap().is_empty());
     }
 
     #[test]
