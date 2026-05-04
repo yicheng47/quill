@@ -72,20 +72,28 @@ fn resolve_cover_resource(
     // The crate parses this into a metadata item with property
     // "cover" whose value is the manifest id.
     if let Some(id) = doc.mdata("cover").map(|m| m.value.clone()) {
-        if let Some(resource) = doc.get_resource(&id) {
+        if let Some(resource) = doc.get_resource(&id).filter(is_image_resource) {
             return Some(resource);
         }
     }
 
     // Conventional ids used by various publisher toolchains when
     // neither the EPUB3 property nor the EPUB2 meta hint is present.
+    // Filter on the resource's mime type — `id="cover"` in particular
+    // commonly points at `cover.xhtml` (the cover *page*) rather than
+    // the cover image, and writing XHTML bytes to `<book_id>.jpg`
+    // would render as a broken image in the library.
     for id in ["cover-image", "cover", "ci"] {
-        if let Some(resource) = doc.get_resource(id) {
+        if let Some(resource) = doc.get_resource(id).filter(is_image_resource) {
             return Some(resource);
         }
     }
 
     None
+}
+
+fn is_image_resource(resource: &(Vec<u8>, String)) -> bool {
+    resource.1.starts_with("image/")
 }
 
 pub fn count_chapters(epub_path: &Path) -> AppResult<usize> {
