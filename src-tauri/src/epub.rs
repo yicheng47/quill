@@ -37,7 +37,7 @@ pub fn extract_metadata(epub_path: &Path, covers_dir: &Path, book_id: &str) -> A
 }
 
 fn extract_cover(doc: &mut EpubDoc<std::io::BufReader<std::fs::File>>, covers_dir: &Path, book_id: &str) -> Option<String> {
-    let (data, mime) = doc.get_cover()?;
+    let (data, mime) = resolve_cover_resource(doc)?;
 
     let ext = match mime.as_str() {
         "image/png" => "png",
@@ -52,6 +52,40 @@ fn extract_cover(doc: &mut EpubDoc<std::io::BufReader<std::fs::File>>, covers_di
 
     // Return relative path for DB storage
     Some(format!("covers/{}", cover_filename))
+}
+
+/// Resolve the cover image bytes + mime, walking through fallback
+/// strategies. The `epub` crate's `get_cover()` only handles the
+/// EPUB3 `properties="cover-image"` form, so books that declare a
+/// `version="3.0"` package but use the legacy EPUB2 `<meta
+/// name="cover" content="<id>"/>` pointer (common in older trade
+/// publishing pipelines) fall through to `None`. We re-implement the
+/// EPUB2 fallback here, then try a couple of conventional ids.
+fn resolve_cover_resource(
+    doc: &mut EpubDoc<std::io::BufReader<std::fs::File>>,
+) -> Option<(Vec<u8>, String)> {
+    if let Some(found) = doc.get_cover() {
+        return Some(found);
+    }
+
+    // EPUB2-style: `<meta name="cover" content="<manifest-id>"/>`.
+    // The crate parses this into a metadata item with property
+    // "cover" whose value is the manifest id.
+    if let Some(id) = doc.mdata("cover").map(|m| m.value.clone()) {
+        if let Some(resource) = doc.get_resource(&id) {
+            return Some(resource);
+        }
+    }
+
+    // Conventional ids used by various publisher toolchains when
+    // neither the EPUB3 property nor the EPUB2 meta hint is present.
+    for id in ["cover-image", "cover", "ci"] {
+        if let Some(resource) = doc.get_resource(id) {
+            return Some(resource);
+        }
+    }
+
+    None
 }
 
 pub fn count_chapters(epub_path: &Path) -> AppResult<usize> {
