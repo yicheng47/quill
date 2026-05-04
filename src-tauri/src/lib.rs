@@ -4,6 +4,7 @@ mod db;
 mod epub;
 mod error;
 mod icloud;
+mod mcp;
 mod secrets;
 mod sync;
 
@@ -12,6 +13,7 @@ use std::sync::Arc;
 
 use commands::sync::SyncState;
 use db::Db;
+use mcp::{McpServer, McpState};
 use secrets::Secrets;
 use sync::device::DeviceIdentity;
 use sync::log::EventLog;
@@ -305,6 +307,13 @@ pub fn run() {
                 }
             };
 
+            // Take a `Db` clone for the MCP server BEFORE handing the
+            // original to `app.manage`. `Db` is already cheap-clone via
+            // `Arc<Mutex<…>>` internals, so no `Arc<Db>` wrapper is
+            // needed here. See `db.rs:31-43` and the hard-constraint
+            // note in `docs/impls/30-mcp-server.md`.
+            let mcp_state = McpState::new(db.clone());
+
             app.manage(LocalDir(local_dir));
             app.manage(db);
             app.manage(secrets);
@@ -317,6 +326,30 @@ pub fn run() {
             // the watcher thread to stop and joins it on disable /
             // shutdown.
             app.manage(SyncState::new(replay_engine, watcher_handle));
+
+            // MCP server (Phase 1 — handshake only, no tools). Boot on
+            // the default port; settings UI gating arrives in Phase 4.
+            // Bind failure is logged but does not fail `setup()`; the
+            // rest of the app is fully usable without MCP.
+            let mcp_server = McpServer::new();
+            {
+                let mcp_server_for_boot = &mcp_server;
+                let state_for_boot = mcp_state.clone();
+                tauri::async_runtime::block_on(async move {
+                    match mcp_server_for_boot
+                        .start(state_for_boot, mcp::server::DEFAULT_PORT)
+                        .await
+                    {
+                        Ok(port) => {
+                            eprintln!("mcp: server listening on http://127.0.0.1:{port}/mcp");
+                        }
+                        Err(e) => {
+                            eprintln!("mcp: failed to start server: {e}");
+                        }
+                    }
+                });
+            }
+            app.manage(mcp_server);
 
             Ok(())
         })
@@ -408,6 +441,15 @@ pub fn run() {
         .expect("error while building tauri application");
 
     app.run(|app_handle, event| match &event {
+        // Drain the MCP server cleanly on quit so its TCP port is
+        // released before the next launch (otherwise a fresh `start`
+        // races with the kernel's TIME_WAIT). Best-effort: any error
+        // is logged inside `stop`.
+        tauri::RunEvent::ExitRequested { .. } => {
+            if let Some(server) = app_handle.try_state::<McpServer>() {
+                tauri::async_runtime::block_on(server.stop());
+            }
+        }
         #[cfg(target_os = "macos")]
         tauri::RunEvent::Opened { urls } => {
             // Files dropped on dock icon or opened via file association
