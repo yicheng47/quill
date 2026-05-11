@@ -2,22 +2,22 @@
 
 An eBook reader with a built-in AI reading assistant. Works with your ChatGPT subscription, API keys, and local models.
 
-<a href="https://www.youtube.com/watch?v=LNPL-dAxOV0">
-  <img src="https://img.youtube.com/vi/LNPL-dAxOV0/maxresdefault.jpg" alt="Quill demo" />
-</a>
-
 <table>
   <tr>
     <td><img src="assets/home.png" alt="Library view" /></td>
     <td><img src="assets/reader.png" alt="Reader with AI assistant and word lookup" /></td>
   </tr>
   <tr>
-    <td align="center"><em>Library</em></td>
-    <td align="center"><em>Reader with AI chat & word lookup</em></td>
+    <td align="center"><em>Home</em></td>
+    <td align="center"><em>Reader</em></td>
   </tr>
 </table>
 
 > Also on iOS — [Quill on the App Store](https://apps.apple.com/us/app/quill-ai-book-reader/id6762075206). Your library, reading progress, highlights, and settings sync between Mac, iPhone, and iPad via iCloud.
+
+## Demo
+
+https://github.com/user-attachments/assets/b0bcbe54-de4b-4ea8-b4c9-b0c4346eda40
 
 ## Features
 
