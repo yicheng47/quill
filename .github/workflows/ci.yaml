@@ -36,10 +36,28 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
+      # Tauri 2 on Linux needs webkit2gtk and friends even for `cargo check`
+      # because tauri-runtime-wry links against them. cache-apt-pkgs-action
+      # caches the *installed filesystem* (not just the .debs), so a cache
+      # hit untars in ~3s.
+      #
+      # Raw `apt-get install` takes 5+ min on a cold runner because Azure's
+      # Ubuntu mirror serves the 100+ transitive deps slowly with occasional
+      # 60s `Ign:` retries — that was the previous behavior here, and it
+      # consistently hit the 5-min wall on backend CI.
+      #
+      # `timeout-minutes` bounds the cold path so a stalled install fails
+      # fast instead of hanging the job; rerun to retry. Bump `version`
+      # when the package list changes to invalidate the cache.
+      - name: Install system dependencies (cached)
+        # Pinned to v1.6.0 (2025-10-15) — `@v1` moves to v1.5.3 which has
+        # had cache-restore flakes; v1.6.0 picks up the "ls error when no
+        # tar files exist in cache restore" fix plus a few other patches.
+        uses: awalsh128/cache-apt-pkgs-action@v1.6.0
+        timeout-minutes: 5
+        with:
+          packages: libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
+          version: 1.0
       - run: cargo clippy -- -D warnings
       - run: cargo check
       - run: cargo test --lib
