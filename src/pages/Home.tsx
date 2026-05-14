@@ -33,6 +33,7 @@ export default function Home() {
   const [searchQuery, setSearchQuery] = useState("");
   const [isDragging, setIsDragging] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [importSlow, setImportSlow] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
   const [importWarning, setImportWarning] = useState<string | null>(null);
   const [icloudSyncing, setIcloudSyncing] = useState(false);
@@ -120,6 +121,17 @@ export default function Home() {
     const timer = setTimeout(() => setImportError(null), 10000);
     return () => clearTimeout(timer);
   }, [importError]);
+
+  // After 5s of importing, hint that things are slower than usual. Healthy PDFs
+  // finish in 1–5s; past that pdf.js is probably stalled (see PDF_METADATA_TIMEOUT_MS).
+  useEffect(() => {
+    if (!importing) {
+      setImportSlow(false);
+      return;
+    }
+    const timer = setTimeout(() => setImportSlow(true), 5000);
+    return () => clearTimeout(timer);
+  }, [importing]);
 
   // iCloud background sync indicator + refresh books when sync finishes
   useEffect(() => {
@@ -349,6 +361,11 @@ export default function Home() {
             <p className="text-[18px] font-semibold text-text-primary">
               {t("home.importing")}
             </p>
+            {importSlow && (
+              <p className="max-w-[320px] text-center text-[13px] text-text-muted">
+                {t("home.importingSlow")}
+              </p>
+            )}
           </div>
         </div>
       )}

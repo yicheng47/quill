@@ -28,6 +28,7 @@
   "home.dropOverlay": "Drop to add to your library",
   "home.dropFormats": "EPUB & PDF",
   "home.importing": "Importing book...",
+  "home.importingSlow": "Still extracting metadata—this PDF is taking longer than usual",
   "home.importError": "Couldn't import book",
   "home.importWarning": "Imported with limited metadata",
 

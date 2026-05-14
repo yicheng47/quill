@@ -8,10 +8,12 @@ export interface PdfMetadata {
   coverData: Uint8Array | null;
 }
 
-// 30s is well above the 1–5s a normal PDF takes; past it we assume pdf.js
+// 10s is well above the 1–5s a normal PDF takes; past it we assume pdf.js
 // is stuck (specific PDFs and some WebKit versions silently hang inside
 // loadingTask.promise — macOS 14.8 reports confirm this isn't just <14.4).
-const PDF_METADATA_TIMEOUT_MS = 30_000;
+// Past ~10s the user has already concluded the app is broken; the
+// filename-only fallback gives them a working book faster than waiting longer.
+const PDF_METADATA_TIMEOUT_MS = 10_000;
 
 /**
  * Extract metadata from a PDF file by importing pdf.mjs directly.
