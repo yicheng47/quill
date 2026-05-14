@@ -61,6 +61,19 @@ async function importFile(
     return invoke<Book>("import_book", { filePath });
   }
 
+  // Hard runtime requirement: the vendored pdf.js (v5.5.207) uses
+  // `Promise.withResolvers` and `URL.parse`, both Safari 17.4+ APIs. Without
+  // them, the reader (public/foliate-js/pdf.js) also can't open the file, so
+  // letting the import succeed with filename-only metadata would leave the
+  // user with a book they can't read. Block at the door instead. (Note:
+  // hangs on 14.4+ are a separate problem — handled by the timeout in
+  // extractPdfMetadata, not this guard.)
+  if (typeof (Promise as unknown as { withResolvers?: unknown }).withResolvers !== "function") {
+    throw new Error(
+      "This Mac can't open PDFs — the PDF engine needs Safari 17.4+ (macOS 14.4 Sonoma or newer). EPUB files still work.",
+    );
+  }
+
   // PDF: stage → extract metadata from the staged copy → commit.
   // Staging into $APPDATA/books/ avoids fetching arbitrary user paths via
   // the asset protocol, which can fail on some Macs (TCC, scope, encoding).
