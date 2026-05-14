@@ -159,12 +159,16 @@ export async function extractPdfMetadata(filePath: string): Promise<PdfMetadata>
   try {
     return await Promise.race([work(), timeoutPromise]);
   } catch (err) {
-    // On timeout (or any other thrown error), make sure pdf.js releases the
-    // worker — otherwise the dangling loadingTask keeps a Worker alive and
-    // pins memory until the page reloads.
+    // Best-effort cleanup so pdf.js releases the worker — but do NOT await.
+    // `PDFDocumentLoadingTask.destroy()` waits on transport teardown, which
+    // sends "Terminate" to the worker and waits for a reply (pdf.mjs:15593).
+    // If the original stall is a nonresponsive worker, awaiting here would
+    // re-hang the importer for the full event loop. Fire-and-forget instead:
+    // the worker leaks until page reload in the pathological case, but the
+    // user gets the filename-only fallback immediately.
     if (loadingTask) {
       try {
-        await loadingTask.destroy?.();
+        loadingTask.destroy?.()?.catch?.(() => {});
       } catch {
         // Ignore — original error is what matters
       }

@@ -122,8 +122,10 @@ export default function Home() {
     return () => clearTimeout(timer);
   }, [importError]);
 
-  // After 5s of importing, hint that things are slower than usual. Healthy PDFs
-  // finish in 1–5s; past that pdf.js is probably stalled (see PDF_METADATA_TIMEOUT_MS).
+  // After 5s of any import, hint that things are slower than usual so the
+  // user knows the app hasn't frozen. Healthy imports finish in 1–5s; past
+  // that, either pdf.js is stalled (PDF_METADATA_TIMEOUT_MS) or the Rust
+  // EPUB path is grinding on a large file.
   useEffect(() => {
     if (!importing) {
       setImportSlow(false);

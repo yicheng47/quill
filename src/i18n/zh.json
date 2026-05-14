@@ -28,7 +28,7 @@
   "home.dropOverlay": "松开以添加到书库",
   "home.dropFormats": "EPUB & PDF",
   "home.importing": "正在导入书籍...",
-  "home.importingSlow": "仍在解析元数据，这个 PDF 比平常慢一些",
+  "home.importingSlow": "仍在处理，这个文件比平常慢一些",
   "home.importError": "无法导入书籍",
   "home.importWarning": "已导入，但元数据不完整",
 
