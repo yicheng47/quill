@@ -61,13 +61,16 @@ async function importFile(
     return invoke<Book>("import_book", { filePath });
   }
 
-  // PDF.js uses Promise.withResolvers() everywhere internally. That API
-  // shipped in Safari 17.4 / macOS Sonoma 14.4; older systems can't load
-  // PDF.js at all. Fail fast with a clear message instead of letting it
-  // explode deep inside pdf.mjs with "undefined is not a function".
+  // Hard runtime requirement: the vendored pdf.js (v5.5.207) uses
+  // `Promise.withResolvers` and `URL.parse`, both Safari 17.4+ APIs. Without
+  // them, the reader (public/foliate-js/pdf.js) also can't open the file, so
+  // letting the import succeed with filename-only metadata would leave the
+  // user with a book they can't read. Block at the door instead. (Note:
+  // hangs on 14.4+ are a separate problem — handled by the timeout in
+  // extractPdfMetadata, not this guard.)
   if (typeof (Promise as unknown as { withResolvers?: unknown }).withResolvers !== "function") {
     throw new Error(
-      "PDF support requires macOS 14.4 (Sonoma) or later. Please update macOS to import PDFs. EPUB files work on older systems.",
+      "This Mac can't open PDFs — the PDF engine needs Safari 17.4+ (macOS 14.4 Sonoma or newer). EPUB files still work.",
     );
   }
 

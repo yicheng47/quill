@@ -8,6 +8,13 @@ export interface PdfMetadata {
   coverData: Uint8Array | null;
 }
 
+// 10s is well above the 1–5s a normal PDF takes; past it we assume pdf.js
+// is stuck (specific PDFs and some WebKit versions silently hang inside
+// loadingTask.promise — macOS 14.8 reports confirm this isn't just <14.4).
+// Past ~10s the user has already concluded the app is broken; the
+// filename-only fallback gives them a working book faster than waiting longer.
+const PDF_METADATA_TIMEOUT_MS = 10_000;
+
 /**
  * Extract metadata from a PDF file by importing pdf.mjs directly.
  *
@@ -24,7 +31,24 @@ export interface PdfMetadata {
  */
 export async function extractPdfMetadata(filePath: string): Promise<PdfMetadata> {
   let step = "init";
-  try {
+  // Hoisted so the timeout path can cancel pdf.js even if we never reach
+  // the inner await — destroy() releases the worker and the cmap/font fetches.
+  // Typed `any` to match `pdfjs.getDocument(...)`'s any-return from the
+  // untyped dynamic import.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let loadingTask: any = null;
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(
+        new Error(
+          `timed out after ${PDF_METADATA_TIMEOUT_MS / 1000}s at "${step}" — pdf.js stopped responding`,
+        ),
+      );
+    }, PDF_METADATA_TIMEOUT_MS);
+  });
+
+  const work = async (): Promise<PdfMetadata> => {
     step = "convertFileSrc";
     const url = convertFileSrc(filePath);
 
@@ -63,7 +87,7 @@ export async function extractPdfMetadata(filePath: string): Promise<PdfMetadata>
       "/foliate-js/vendor/pdfjs/standard_fonts/",
       window.location.origin,
     ).href;
-    const loadingTask = pdfjs.getDocument({
+    loadingTask = pdfjs.getDocument({
       data: new Uint8Array(buffer),
       cMapUrl,
       cMapPacked: true,
@@ -72,7 +96,7 @@ export async function extractPdfMetadata(filePath: string): Promise<PdfMetadata>
     });
 
     step = "loadingTask.promise";
-    const pdf = await loadingTask.promise;
+    const pdf = await loadingTask!.promise;
 
     step = "pdf.getMetadata()";
     const metaResult = await pdf.getMetadata();
@@ -130,14 +154,33 @@ export async function extractPdfMetadata(filePath: string): Promise<PdfMetadata>
       pages,
       coverData,
     };
+  };
+
+  try {
+    return await Promise.race([work(), timeoutPromise]);
   } catch (err) {
+    // Best-effort cleanup so pdf.js releases the worker — but do NOT await.
+    // `PDFDocumentLoadingTask.destroy()` waits on transport teardown, which
+    // sends "Terminate" to the worker and waits for a reply (pdf.mjs:15593).
+    // If the original stall is a nonresponsive worker, awaiting here would
+    // re-hang the importer for the full event loop. Fire-and-forget instead:
+    // the worker leaks until page reload in the pathological case, but the
+    // user gets the filename-only fallback immediately.
+    if (loadingTask) {
+      try {
+        loadingTask.destroy?.()?.catch?.(() => {});
+      } catch {
+        // Ignore — original error is what matters
+      }
+    }
     const message = err instanceof Error ? err.message : String(err);
     const stackSnippet =
       err instanceof Error && err.stack
         ? ` | ${err.stack.split("\n").slice(0, 2).join(" / ")}`
         : "";
-    const wrapped = new Error(`PDF metadata failed at "${step}": ${message}${stackSnippet}`);
-    throw wrapped;
+    throw new Error(`PDF metadata failed at "${step}": ${message}${stackSnippet}`);
+  } finally {
+    if (timeoutId !== null) clearTimeout(timeoutId);
   }
 }
 
