@@ -5,11 +5,7 @@ import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { X, Loader2, Sparkles, BookmarkPlus, Check, Copy, Settings } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import Markdown from "react-markdown";
-
-// Shared prose classes for lookup markdown rendering — tight spacing for the
-// 13px popover body so bullets/paragraphs don't blow out the card height.
-const LOOKUP_PROSE =
-  "prose prose-sm max-w-none leading-[1.55] [&_p]:my-0 [&_p+p]:mt-1.5 [&_ul]:my-1 [&_ol]:my-1 [&_li]:my-0 [&_strong]:font-semibold [&_em]:italic [&_code]:bg-bg-muted [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_code]:text-[12px]";
+import { LOOKUP_PROSE } from "./lookup-prose";
 
 interface LookupPopoverProps {
   x: number;
@@ -166,14 +162,12 @@ export default function LookupPopover({
 
   const handleSave = async () => {
     try {
-      const fullDefinition = [definition.contentRef.current, context.contentRef.current]
-        .filter(Boolean)
-        .join("\n\n");
       await invoke("add_vocab_word", {
         bookId,
         word,
-        definition: fullDefinition,
+        definition: definition.contentRef.current ?? "",
         contextSentence: sentence || null,
+        contextExplanation: context.contentRef.current || null,
         cfi: cfi || null,
       });
       setSaved(true);

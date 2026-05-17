@@ -497,16 +497,17 @@ fn apply_vocab_add(tx: &Transaction, event: &Event, p: &VocabPayload) -> AppResu
     }
     tx.execute(
         "INSERT OR IGNORE INTO vocab_words
-         (id, book_id, word, definition, context_sentence, cfi,
+         (id, book_id, word, definition, context_sentence, context_explanation, cfi,
           mastery, review_count, next_review_at,
           created_at, updated_at, updated_by_device)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10, ?11)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11, ?12)",
         params![
             p.id,
             p.book_id,
             p.word,
             p.definition,
             p.context_sentence,
+            p.context_explanation,
             p.cfi,
             p.mastery,
             p.review_count,
@@ -1120,6 +1121,7 @@ mod tests {
                         word: "serendipity".into(),
                         definition: "fortunate".into(),
                         context_sentence: None,
+                        context_explanation: None,
                         cfi: None,
                         mastery: "new".into(),
                         review_count: 0,

@@ -14,6 +14,7 @@ pub struct VocabWord {
     pub word: String,
     pub definition: String,
     pub context_sentence: Option<String>,
+    pub context_explanation: Option<String>,
     pub cfi: Option<String>,
     pub mastery: String,
     pub review_count: i64,
@@ -46,6 +47,7 @@ fn row_to_vocab(row: &rusqlite::Row) -> rusqlite::Result<VocabWord> {
         next_review_at: row.get(8)?,
         created_at: row.get(9)?,
         updated_at: row.get(10)?,
+        context_explanation: row.get(11)?,
         book_title: None,
     })
 }
@@ -63,18 +65,21 @@ fn row_to_vocab_with_book(row: &rusqlite::Row) -> rusqlite::Result<VocabWord> {
         next_review_at: row.get(8)?,
         created_at: row.get(9)?,
         updated_at: row.get(10)?,
-        book_title: row.get(11)?,
+        context_explanation: row.get(11)?,
+        book_title: row.get(12)?,
     })
 }
 
-const SELECT_COLS: &str = "id, book_id, word, definition, context_sentence, cfi, mastery, review_count, next_review_at, created_at, updated_at";
+const SELECT_COLS: &str = "id, book_id, word, definition, context_sentence, cfi, mastery, review_count, next_review_at, created_at, updated_at, context_explanation";
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub fn add_vocab_word(
     book_id: String,
     word: String,
     definition: String,
     context_sentence: Option<String>,
+    context_explanation: Option<String>,
     cfi: Option<String>,
     db: State<'_, Db>,
     sync: State<'_, SyncWriter>,
@@ -108,9 +113,9 @@ pub fn add_vocab_word(
         }
 
         tx.execute(
-            "INSERT INTO vocab_words (id, book_id, word, definition, context_sentence, cfi, mastery, review_count, next_review_at, created_at, updated_at, updated_by_device)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'new', 0, NULL, ?7, ?7, ?8)",
-            params![id, book_id, word, definition, context_sentence, cfi, now, device],
+            "INSERT INTO vocab_words (id, book_id, word, definition, context_sentence, context_explanation, cfi, mastery, review_count, next_review_at, created_at, updated_at, updated_by_device)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'new', 0, NULL, ?8, ?8, ?9)",
+            params![id, book_id, word, definition, context_sentence, context_explanation, cfi, now, device],
         )?;
         events.push(EventBody::VocabAdd(VocabPayload {
             id: id.clone(),
@@ -118,6 +123,7 @@ pub fn add_vocab_word(
             word: word.clone(),
             definition: definition.clone(),
             context_sentence: context_sentence.clone(),
+            context_explanation: context_explanation.clone(),
             cfi: cfi.clone(),
             mastery: "new".to_string(),
             review_count: 0,
@@ -129,6 +135,7 @@ pub fn add_vocab_word(
             word: word.clone(),
             definition: definition.clone(),
             context_sentence: context_sentence.clone(),
+            context_explanation: context_explanation.clone(),
             cfi: cfi.clone(),
             mastery: "new".to_string(),
             review_count: 0,
@@ -190,7 +197,7 @@ pub fn check_vocab_exists(
 pub fn list_all_vocab_words(db: State<'_, Db>) -> AppResult<Vec<VocabWord>> {
     let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
     let mut stmt = conn.prepare(
-        "SELECT v.id, v.book_id, v.word, v.definition, v.context_sentence, v.cfi, v.mastery, v.review_count, v.next_review_at, v.created_at, v.updated_at, b.title FROM vocab_words v LEFT JOIN books b ON v.book_id = b.id ORDER BY v.created_at DESC"
+        "SELECT v.id, v.book_id, v.word, v.definition, v.context_sentence, v.cfi, v.mastery, v.review_count, v.next_review_at, v.created_at, v.updated_at, v.context_explanation, b.title FROM vocab_words v LEFT JOIN books b ON v.book_id = b.id ORDER BY v.created_at DESC"
     )?;
     let words = stmt
         .query_map([], row_to_vocab_with_book)?

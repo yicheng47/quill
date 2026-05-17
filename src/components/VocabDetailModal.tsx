@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ArrowRight, BookOpen, Trash2, X } from "lucide-react";
+import Markdown from "react-markdown";
 import type { DictionaryWord } from "../hooks/useDictionary";
 import { openReaderWindow } from "../utils/openReaderWindow";
+import { LOOKUP_PROSE } from "./lookup-prose";
 
 interface VocabDetailModalProps {
   word: DictionaryWord | null;
@@ -16,33 +18,43 @@ interface VocabDetailModalProps {
    */
   navigateMode?: "window" | "inline";
   onNavigateInline?: (cfi: string) => void;
+  /**
+   * Authoritative book title for the Source row. `list_vocab_words` (the
+   * per-book query DictionaryPanel uses) doesn't JOIN the title, so callers
+   * that already have it in hand (the Reader) should pass it here. Falls
+   * back to `word.book_title` (populated by `list_all_vocab_words`) and
+   * then the unknown-book string.
+   */
+  bookTitle?: string;
 }
 
 interface ParsedDefinition {
   pronunciation: string | null;
   partOfSpeech: string | null;
   definition: string;
-  inContext: string | null;
 }
 
+// Pulls the leading /.../ phonetic + optional "noun."/"verb."/etc. off the
+// first paragraph so they can render in the subtitle. Everything else — the
+// rest of the first paragraph plus all following paragraphs — stays in the
+// Definition region verbatim. Legacy rows saved before #214 had the in-context
+// blurb concatenated into `definition` with a `\n\n` separator; we now keep
+// that blob whole here (the In Context sub-card reads from
+// `word.context_explanation` instead).
 function parseDefinition(raw: string): ParsedDefinition {
-  const [head, ...rest] = raw.split(/\n\n+/);
-  const inContext = rest.join("\n\n").trim() || null;
-  // Match leading /.../ phonetic + optional "noun."/"verb."/etc prefix
+  const breakIdx = raw.search(/\n\n+/);
+  const head = breakIdx === -1 ? raw : raw.slice(0, breakIdx);
+  const tail = breakIdx === -1 ? "" : raw.slice(breakIdx).replace(/^\n+/, "");
   const match = head.match(/^\s*(\/[^/]+\/)\s*(?:(\w+)\.)?\s*([\s\S]*)$/);
-  if (!match) {
-    return {
-      pronunciation: null,
-      partOfSpeech: null,
-      definition: head.trim(),
-      inContext,
-    };
-  }
+  const headRemainder = (match ? match[3] ?? "" : head).trim();
+  const definition =
+    headRemainder && tail
+      ? `${headRemainder}\n\n${tail}`
+      : headRemainder || tail;
   return {
-    pronunciation: match[1] ?? null,
-    partOfSpeech: match[2] ?? null,
-    definition: (match[3] ?? "").trim(),
-    inContext,
+    pronunciation: match?.[1] ?? null,
+    partOfSpeech: match?.[2] ?? null,
+    definition,
   };
 }
 
@@ -52,6 +64,7 @@ export default function VocabDetailModal({
   onDelete,
   navigateMode = "window",
   onNavigateInline,
+  bookTitle,
 }: VocabDetailModalProps) {
   const { t } = useTranslation();
   const [confirmingDelete, setConfirmingDelete] = useState(false);
@@ -91,6 +104,7 @@ export default function VocabDetailModal({
     .filter(Boolean)
     .join(" · ");
   const contextSentence = word.context_sentence?.trim() || null;
+  const contextExplanation = word.context_explanation?.trim() || null;
 
   const handleOpen = () => {
     if (navigateMode === "inline") {
@@ -160,7 +174,7 @@ export default function VocabDetailModal({
                 </div>
                 <div className="flex flex-col min-w-0">
                   <span className="text-[14px] font-semibold text-text-primary truncate">
-                    {word.book_title || t("vocab.detail.unknownBook")}
+                    {bookTitle ?? word.book_title ?? t("vocab.detail.unknownBook")}
                   </span>
                 </div>
               </div>
@@ -179,17 +193,17 @@ export default function VocabDetailModal({
             <h3 className="text-[11px] font-semibold uppercase tracking-[0.4px] text-text-muted">
               {t("vocab.detail.definition")}
             </h3>
-            <p className="text-[14px] leading-[1.55] text-text-primary whitespace-pre-wrap">
-              {parsed.definition}
-            </p>
-            {parsed.inContext && (
-              <div className="mt-1 p-3.5 bg-bg-muted border border-border-light rounded-[10px] flex flex-col gap-1.5">
+            <div className={`${LOOKUP_PROSE} text-[14px] text-text-primary`}>
+              <Markdown>{parsed.definition}</Markdown>
+            </div>
+            {contextExplanation && (
+              <div className="mt-1 p-3 rounded-lg bg-bg-muted border border-border/50 flex flex-col gap-1.5">
                 <span className="text-[12px] font-medium text-text-muted">
                   {t("vocab.detail.inContext")}
                 </span>
-                <p className="text-[13px] leading-[1.5] text-text-secondary whitespace-pre-wrap">
-                  {parsed.inContext}
-                </p>
+                <div className={`${LOOKUP_PROSE} text-[13px] text-text-secondary`}>
+                  <Markdown>{contextExplanation}</Markdown>
+                </div>
               </div>
             )}
           </section>

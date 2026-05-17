@@ -170,6 +170,12 @@ pub struct VocabPayload {
     pub mastery: String,
     pub review_count: i64,
     pub next_review_at: Option<i64>,
+    // Added in #214: AI's in-context analysis, persisted separately from the
+    // dictionary-style definition. `default` lets older-client payloads decode;
+    // `skip_serializing_if` keeps the wire form compact for senders that never
+    // populate it (legacy rows, iOS clients pre-update).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_explanation: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -288,6 +294,7 @@ mod tests {
             mastery: "new".into(),
             review_count: 0,
             next_review_at: Some(1_714_856_400_000),
+            context_explanation: Some("Used to mean an unexpectedly happy turn.".into()),
         })));
         roundtrip(&mk(EventBody::VocabMasterySet {
             id: "v1".into(),
@@ -296,6 +303,40 @@ mod tests {
             review_count: 3,
         }));
         roundtrip(&mk(EventBody::VocabDelete { id: "v1".into() }));
+    }
+
+    #[test]
+    fn vocab_payload_decodes_without_context_explanation() {
+        // Older clients (pre-#214) emit payloads without this field. Make sure
+        // they decode and re-serialize without injecting a null key.
+        let src = json!({
+            "id": "01HYZX0000000000000000EVT1",
+            "ts": 1_714_770_000_000_i64,
+            "device": "dev-a",
+            "v": 1,
+            "type": "vocab.add",
+            "payload": {
+                "id": "v1",
+                "book_id": "b1",
+                "word": "serendipity",
+                "definition": "a fortunate accident",
+                "context_sentence": null,
+                "cfi": null,
+                "mastery": "new",
+                "review_count": 0,
+                "next_review_at": null
+            }
+        });
+        let ev: Event = serde_json::from_value(src).unwrap();
+        let EventBody::VocabAdd(p) = &ev.body else {
+            panic!("expected VocabAdd");
+        };
+        assert_eq!(p.context_explanation, None);
+        let wire: Value = serde_json::to_value(&ev).unwrap();
+        assert!(
+            wire["payload"].get("context_explanation").is_none(),
+            "context_explanation should be omitted when None: {wire}"
+        );
     }
 
     #[test]

@@ -8,6 +8,7 @@ import VocabDetailModal from "./VocabDetailModal";
 
 interface DictionaryPanelProps {
   bookId: string;
+  bookTitle?: string;
   initialTab?: "dictionary" | "translations";
   onNavigate?: (cfi: string) => void;
   getPageFromCfi?: (cfi: string) => number | null;
@@ -15,7 +16,7 @@ interface DictionaryPanelProps {
 
 type Tab = "dictionary" | "translations";
 
-export default function DictionaryPanel({ bookId, initialTab = "dictionary", onNavigate, getPageFromCfi }: DictionaryPanelProps) {
+export default function DictionaryPanel({ bookId, bookTitle, initialTab = "dictionary", onNavigate, getPageFromCfi }: DictionaryPanelProps) {
   const { t } = useTranslation();
   const [tab, setTab] = useState<Tab>(initialTab);
   const [dictSearch, setDictSearch] = useState("");
@@ -261,6 +262,7 @@ export default function DictionaryPanel({ bookId, initialTab = "dictionary", onN
 
       <VocabDetailModal
         word={activeWord}
+        bookTitle={bookTitle}
         onClose={() => setActiveWord(null)}
         onDelete={async (id) => {
           await removeWord(id);
