@@ -7,6 +7,7 @@ export interface DictionaryWord {
   word: string;
   definition: string;
   context_sentence: string | null;
+  context_explanation: string | null;
   cfi: string | null;
   mastery: string;
   review_count: number;
@@ -37,13 +38,15 @@ export function useDictionary(bookId: string) {
       word: string,
       definition: string,
       contextSentence?: string,
-      cfi?: string
+      cfi?: string,
+      contextExplanation?: string
     ) => {
       const dictionaryWord = await invoke<DictionaryWord>("add_vocab_word", {
         bookId,
         word,
         definition,
         contextSentence: contextSentence || null,
+        contextExplanation: contextExplanation || null,
         cfi: cfi || null,
       });
       setWords((prev) => [dictionaryWord, ...prev]);

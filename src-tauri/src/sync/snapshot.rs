@@ -136,6 +136,8 @@ pub struct VocabRow {
     pub word: String,
     pub definition: String,
     pub context_sentence: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_explanation: Option<String>,
     pub cfi: Option<String>,
     pub mastery: String,
     pub review_count: i64,
@@ -721,10 +723,10 @@ fn insert_bookmark(tx: &Transaction, id: &str, r: &BookmarkRow) -> AppResult<()>
 fn upsert_vocab(tx: &Transaction, id: &str, r: &VocabRow) -> AppResult<()> {
     tx.execute(
         "INSERT INTO vocab_words
-         (id, book_id, word, definition, context_sentence, cfi,
+         (id, book_id, word, definition, context_sentence, context_explanation, cfi,
           mastery, review_count, next_review_at,
           created_at, updated_at, updated_by_device)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
          ON CONFLICT(id) DO UPDATE SET
            mastery=excluded.mastery,
            review_count=excluded.review_count,
@@ -734,7 +736,7 @@ fn upsert_vocab(tx: &Transaction, id: &str, r: &VocabRow) -> AppResult<()> {
          WHERE (vocab_words.updated_at, vocab_words.updated_by_device)
              < (excluded.updated_at, excluded.updated_by_device)",
         params![
-            id, r.book_id, r.word, r.definition, r.context_sentence, r.cfi,
+            id, r.book_id, r.word, r.definition, r.context_sentence, r.context_explanation, r.cfi,
             r.mastery, r.review_count, r.next_review_at,
             r.created_at, r.updated_at, r.updated_by_device,
         ],
@@ -933,7 +935,7 @@ fn dump_state(conn: &Connection) -> AppResult<SnapshotState> {
     let mut stmt = conn.prepare(
         "SELECT id, book_id, word, definition, context_sentence, cfi,
                 mastery, review_count, next_review_at,
-                created_at, updated_at, updated_by_device FROM vocab_words",
+                created_at, updated_at, updated_by_device, context_explanation FROM vocab_words",
     )?;
     let rows = stmt.query_map([], |r| {
         Ok((
@@ -950,6 +952,7 @@ fn dump_state(conn: &Connection) -> AppResult<SnapshotState> {
                 created_at: r.get(9)?,
                 updated_at: r.get(10)?,
                 updated_by_device: r.get(11)?,
+                context_explanation: r.get(12)?,
             },
         ))
     })?;

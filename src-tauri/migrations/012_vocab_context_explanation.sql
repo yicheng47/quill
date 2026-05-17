@@ -1,0 +1,12 @@
+-- Migration 012 — split the AI's in-context analysis off `vocab_words.definition`.
+--
+-- The lookup popover used to persist `definition + "\n\n" + context_explanation`
+-- as a single TEXT blob and the detail modal split it back on `\n\n+`. Any
+-- paragraph break inside the definition stream (translation prefix, multi-
+-- paragraph definition, markdown list) corrupted the split — see #214.
+--
+-- New rows write the in-context analysis to its own column. Legacy rows keep
+-- NULL here; the modal renders their whole blob in the Definition region and
+-- hides the In Context sub-card. No backfill — regex-splitting the old blobs
+-- is the bug we're moving away from.
+ALTER TABLE vocab_words ADD COLUMN context_explanation TEXT;

@@ -1364,6 +1364,7 @@ export default function Reader() {
           {sidePanel === "vocab" && bookId && (
             <DictionaryPanel
               bookId={bookId}
+              bookTitle={book.title}
               onNavigate={(cfi) => {
                 viewRef.current?.goTo(cfi).then(() => {
                   viewRef.current?.addAnnotation({ value: cfi, color: "#c27aff" });
