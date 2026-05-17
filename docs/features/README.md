@@ -21,3 +21,4 @@ Specs for features that are in progress or planned. Shipped specs are moved to [
 - [198 — Persist Per-Book Window Size and PDF Zoom](198-per-book-window-zoom.md)
 - [206 — iCloud Device Management](206-icloud-device-management.md)
 - [215 — Split Ask AI into Explain and Quote](215-explain-and-quote.md)
+- [220 — App Logging (tauri-plugin-log + panic hook + Reveal logs)](220-app-logging.md)
