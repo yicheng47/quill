@@ -53,10 +53,7 @@ async function pickFile(): Promise<string | null> {
   });
 }
 
-async function importFile(
-  filePath: string,
-  onMetadataWarning?: (warning: string) => void,
-): Promise<Book> {
+async function importFile(filePath: string): Promise<Book> {
   if (!filePath.toLowerCase().endsWith(".pdf")) {
     return invoke<Book>("import_book", { filePath });
   }
@@ -88,11 +85,10 @@ async function importFile(
     } catch (err) {
       // Metadata extraction failed (PDF.js error, missing CMaps, malformed
       // PDF, etc.). Don't block the import — fall back to filename-based
-      // metadata so the user still gets their book. Surface the diagnostic
-      // via onMetadataWarning so we can debug what actually broke.
-      const message = err instanceof Error ? err.message : String(err);
+      // metadata so the user still gets their book. Console-only; the user
+      // can't act on this and the import still succeeds, so surfacing a
+      // toast reads as an error (#222).
       console.warn("PDF metadata extraction failed, importing with filename only:", err);
-      onMetadataWarning?.(message);
       meta = {
         title: filenameToTitle(filePath),
         author: null,

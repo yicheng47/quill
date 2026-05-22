@@ -8,12 +8,14 @@ export interface PdfMetadata {
   coverData: Uint8Array | null;
 }
 
-// 10s is well above the 1–5s a normal PDF takes; past it we assume pdf.js
-// is stuck (specific PDFs and some WebKit versions silently hang inside
-// loadingTask.promise — macOS 14.8 reports confirm this isn't just <14.4).
-// Past ~10s the user has already concluded the app is broken; the
-// filename-only fallback gives them a working book faster than waiting longer.
-const PDF_METADATA_TIMEOUT_MS = 10_000;
+// 5s backstop. The primary stall mode (#222) is fixed by passing a
+// self-constructed Worker via `workerPort` below — pdf.js's own
+// `_isSameOrigin`/`_createCDNWrapper` path sees `tauri://localhost`'s
+// opaque origin as "null", wraps the worker in a blob that re-imports the
+// tauri:// URL, and that pattern stalls silently inside macOS 14.x
+// WKWebView. With `workerPort` we skip that whole path; the timeout is
+// only a safety net for genuinely slow PDFs / unrelated stalls.
+const PDF_METADATA_TIMEOUT_MS = 5_000;
 
 /**
  * Extract metadata from a PDF file by importing pdf.mjs directly.
@@ -37,6 +39,9 @@ export async function extractPdfMetadata(filePath: string): Promise<PdfMetadata>
   // untyped dynamic import.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let loadingTask: any = null;
+  // pdf.js doesn't terminate Workers it receives via `workerPort` (only ones
+  // it constructs itself), so we own this Worker's lifecycle end-to-end.
+  let worker: Worker | undefined;
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
   const timeoutPromise = new Promise<never>((_, reject) => {
     timeoutId = setTimeout(() => {
@@ -70,8 +75,12 @@ export async function extractPdfMetadata(filePath: string): Promise<PdfMetadata>
       "/foliate-js/vendor/pdfjs/pdf.worker.mjs",
       window.location.origin,
     ).href;
+    // See PDF_METADATA_TIMEOUT_MS comment for why we bypass `workerSrc`.
+    // A self-constructed module Worker routes through pdf.js's
+    // `#initializeFromPort` and skips `_createCDNWrapper`'s blob shim.
+    worker = new Worker(workerUrl, { type: "module" });
     if (pdfjs.GlobalWorkerOptions) {
-      pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
+      pdfjs.GlobalWorkerOptions.workerPort = worker;
     }
 
     step = "getDocument lookup";
@@ -181,6 +190,11 @@ export async function extractPdfMetadata(filePath: string): Promise<PdfMetadata>
     throw new Error(`PDF metadata failed at "${step}": ${message}${stackSnippet}`);
   } finally {
     if (timeoutId !== null) clearTimeout(timeoutId);
+    // pdf.js skips terminating ports it didn't construct (pdf.mjs:15378-15386
+    // — `#webWorker` is only set in the self-construct path), so terminate
+    // here. Safe to call after a successful pdf.destroy() too — terminating
+    // an already-shut-down worker is a no-op.
+    worker?.terminate();
   }
 }
 

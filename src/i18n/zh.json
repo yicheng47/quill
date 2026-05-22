@@ -30,7 +30,6 @@
   "home.importing": "正在导入书籍...",
   "home.importingSlow": "仍在处理，这个文件比平常慢一些",
   "home.importError": "无法导入书籍",
-  "home.importWarning": "已导入，但元数据不完整",
 
   "reader.pageOf": "第 {{current}} 页，共 {{total}} 页",
   "reader.chapterOf": "第 {{current}} 章，共 {{total}} 章",
