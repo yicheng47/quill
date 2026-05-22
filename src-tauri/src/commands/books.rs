@@ -111,6 +111,8 @@ pub async fn import_book(
     db: State<'_, Db>,
     sync: State<'_, SyncWriter>,
 ) -> AppResult<Book> {
+    log::info!("import_book: start file={file_path} format=epub");
+
     let data_dir = db
         .data_dir
         .lock()
@@ -123,8 +125,10 @@ pub async fn import_book(
     let src = std::path::Path::new(&file_path);
 
     // Extract metadata before copying
-    let metadata = epub::extract_metadata(src, &covers_dir, &book_id)?;
-    let pages = epub::count_chapters(src)? as i32;
+    let metadata = epub::extract_metadata(src, &covers_dir, &book_id)
+        .inspect_err(|e| log::error!("import_book: extract_metadata failed for {file_path}: {e}"))?;
+    let pages = epub::count_chapters(src)
+        .inspect_err(|e| log::error!("import_book: count_chapters failed for {file_path}: {e}"))? as i32;
 
     // Copy epub to app data with readable filename
     let filename = book_filename(&metadata.title, &book_id, "epub");
@@ -190,6 +194,8 @@ pub async fn import_book(
         }));
         Ok(())
     })?;
+
+    log::info!("import_book: complete id={} title={:?}", book.id, book.title);
 
     // Return book with absolute paths for the frontend
     let mut result = book;
@@ -521,6 +527,8 @@ pub struct StagedPdf {
 /// arbitrary user paths, which is fragile across macOS/Tauri configurations).
 #[tauri::command]
 pub async fn stage_pdf_import(source_path: String, db: State<'_, Db>) -> AppResult<StagedPdf> {
+    log::info!("import_book: start file={source_path} format=pdf stage=stage");
+
     let data_dir = db
         .data_dir
         .lock()
@@ -531,7 +539,8 @@ pub async fn stage_pdf_import(source_path: String, db: State<'_, Db>) -> AppResu
 
     let book_id = uuid::Uuid::new_v4().to_string();
     let staged = books_dir.join(format!("{}.pdf", book_id));
-    fs::copy(std::path::Path::new(&source_path), &staged)?;
+    fs::copy(std::path::Path::new(&source_path), &staged)
+        .inspect_err(|e| log::error!("import_book: stage copy failed for {source_path}: {e}"))?;
 
     Ok(StagedPdf {
         book_id,
@@ -649,6 +658,8 @@ pub async fn commit_pdf_import(
         }));
         Ok(())
     })?;
+
+    log::info!("import_book: complete id={} title={:?} format=pdf", book.id, book.title);
 
     let mut result = book;
     resolve_book_paths(&mut result, &db);

@@ -115,6 +115,8 @@ pub fn add_highlight(
     let now = chrono::Utc::now().timestamp_millis();
     let color = color.unwrap_or_else(|| "yellow".to_string());
 
+    log::debug!("highlights: add_highlight book_id={book_id} color={color}");
+
     let highlight = Highlight {
         id: id.clone(),
         book_id: book_id.clone(),

@@ -65,6 +65,7 @@ pub async fn ai_lookup(
     } else {
         // Providers other than ollama require an API key
         if api_key.is_empty() && provider != "ollama" {
+            log::warn!("ai_lookup: AI_NOT_CONFIGURED provider={provider}");
             return Err(AppError::Other("AI_NOT_CONFIGURED".to_string()));
         }
         (api_key, None)
@@ -131,8 +132,11 @@ pub async fn ai_lookup(
 
     let event_name = format!("ai-lookup-chunk-{}", request_id);
 
+    log::info!("ai_lookup: spawn provider={provider} model={model} kind={kind}");
+
     let use_responses_api = auth_mode == "oauth" && provider == "openai";
     let app_clone = app.clone();
+    let log_provider = provider.clone();
     tauri::async_runtime::spawn(async move {
         let result = match provider.as_str() {
             "anthropic" => {
@@ -150,6 +154,7 @@ pub async fn ai_lookup(
             }
         };
         if let Err(e) = result {
+            log::error!("ai_lookup: provider={log_provider} streaming failed: {e}");
             let _ = app_clone.emit(&event_name, AiStreamChunk {
                 delta: format!("Error: {}", e),
                 done: false,
@@ -293,6 +298,7 @@ pub async fn ai_chat(
         (token, acct_id)
     } else {
         if api_key.is_empty() && provider != "ollama" {
+            log::warn!("ai_chat: AI_NOT_CONFIGURED provider={provider}");
             return Err(AppError::Other("AI_NOT_CONFIGURED".to_string()));
         }
         (api_key, None)
@@ -321,9 +327,12 @@ pub async fn ai_chat(
     });
     api_messages.extend(messages);
 
+    log::info!("ai_chat: spawn provider={provider} model={model} kind=chat");
+
     // Spawn streaming in a background task so events emit immediately
     let use_responses_api = auth_mode == "oauth" && provider == "openai";
     let app_clone = app.clone();
+    let log_provider = provider.clone();
     tauri::async_runtime::spawn(async move {
         let result = match provider.as_str() {
             "anthropic" => {
@@ -341,6 +350,7 @@ pub async fn ai_chat(
             }
         };
         if let Err(e) = result {
+            log::error!("ai_chat: provider={log_provider} streaming failed: {e}");
             let _ = app_clone.emit("ai-stream-chunk", AiStreamChunk {
                 delta: format!("Error: {}", e),
                 done: false,

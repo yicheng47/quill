@@ -255,13 +255,13 @@ impl SyncWriter {
         if let Some(log) = log_snapshot {
             if self.flush_inline_for_tests.load(Ordering::SeqCst) {
                 if let Err(e) = replay::flush_outbox(db, &log) {
-                    eprintln!("sync: post-commit outbox flush failed: {e}");
+                    log::warn!("sync: post-commit outbox flush failed: {e}");
                 }
             } else {
                 let db = db.clone();
                 std::thread::spawn(move || {
                     if let Err(e) = replay::flush_outbox(&db, &log) {
-                        eprintln!("sync: post-commit outbox flush failed: {e}");
+                        log::warn!("sync: post-commit outbox flush failed: {e}");
                     }
                 });
             }

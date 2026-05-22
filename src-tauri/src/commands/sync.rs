@@ -175,7 +175,7 @@ pub fn sync_status(
     // peers / `pending = 0`).
     let peers = match shared_dir.as_ref() {
         Some(dir) => peers::list_peers(dir, &device.device_uuid).unwrap_or_else(|e| {
-            eprintln!("sync_status: list_peers failed: {e}");
+            log::warn!("sync_status: list_peers failed: {e}");
             Vec::new()
         }),
         None => Vec::new(),
@@ -357,7 +357,7 @@ pub fn sync_enable(
     // fresh-enable session doesn't have leftover outbox rows or peer
     // tails that would get stuck pending.
     if let Err(e) = engine.tick(&db) {
-        eprintln!("sync_enable: initial tick failed: {e}");
+        log::warn!("sync_enable: initial tick failed: {e}");
     }
 
     Ok(())
@@ -434,7 +434,7 @@ pub fn sync_disable(
     // effort; failure is logged but doesn't block disable.
     if let Some(ub) = ubiquity_dir.as_ref() {
         if let Err(e) = peers::delete_own_manifest(ub, &device.device_uuid) {
-            eprintln!("sync_disable: failed to remove own peer manifest: {e}");
+            log::warn!("sync_disable: failed to remove own peer manifest: {e}");
         }
     }
 
@@ -691,7 +691,7 @@ fn move_dir_contents(src: &Path, dst: &Path) -> AppResult<()> {
             // Cross-device rename → copy then remove.
             fs::copy(entry.path(), &target)?;
             if let Err(e) = fs::remove_file(entry.path()) {
-                eprintln!(
+                log::warn!(
                     "sync_enable: failed to remove source after copy ({}): {e} (rename err: {rename_err})",
                     entry.path().display()
                 );

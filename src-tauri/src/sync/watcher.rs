@@ -175,7 +175,7 @@ fn run_loop(
         // `compact_own_log`). That keeps user-driven commands (e.g.
         // `import_book`) responsive while a tick is in flight.
         if let Err(e) = engine.tick(&db) {
-            eprintln!("sync watcher: tick failed: {e}");
+            log::error!("sync watcher: tick failed: {e}");
         }
     }
 }

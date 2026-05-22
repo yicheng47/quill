@@ -129,7 +129,7 @@ pub fn ensure_downloaded(icloud_dir: &Path) -> AppResult<()> {
         let path_str = NSString::from_str(&path.to_string_lossy());
         let url = NSURL::fileURLWithPath(&path_str);
         if let Err(e) = fm.startDownloadingUbiquitousItemAtURL_error(&url) {
-            eprintln!("iCloud: failed to trigger download for {}: {}", name, e);
+            log::warn!("iCloud: failed to trigger download for {}: {}", name, e);
         }
     }
     Ok(())

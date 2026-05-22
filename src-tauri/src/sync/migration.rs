@@ -178,7 +178,7 @@ pub fn reconcile_local_blobs_to_ubiquity(
                 match fs::copy(entry.path(), &target).and_then(|_| fs::remove_file(entry.path())) {
                     Ok(()) => {}
                     Err(copy_err) => {
-                        eprintln!(
+                        log::warn!(
                             "sync: failed to reconcile {} to ubiquity: rename={rename_err}, copy={copy_err}",
                             entry.path().display()
                         );
@@ -429,14 +429,14 @@ pub fn retire_ubiquity_db_with_report(ubiquity_dir: &Path) -> AppResult<RetireRe
                     // Loud warning so a migrating user sees something
                     // concrete in the console — conflict copies are
                     // deliberately discarded in v1 (see module doc).
-                    eprintln!(
+                    log::warn!(
                         "sync: WARNING — discarding legacy conflict copy {name:?} \
                          without merging. Any rows unique to this file are lost. \
                          The retired file remains at {new_name:?} for manual recovery."
                     );
                 }
             }
-            Err(e) => eprintln!(
+            Err(e) => log::warn!(
                 "sync: failed to retire ubiquity file {name:?}: {e}; will retry next launch"
             ),
         }

@@ -94,6 +94,8 @@ impl ReplayEngine {
             .lock()
             .map_err(|e| AppError::Other(format!("replay tick mutex poisoned: {e}")))?;
 
+        let started = std::time::Instant::now();
+
         // Phase 0 — drain the outbox into the device log. Manages its
         // own per-row locking; the slow `log.append` runs without
         // holding `db.conn`. Failures surface to the caller; peers
@@ -104,13 +106,28 @@ impl ReplayEngine {
         let peers = discover_peers(&self.shared_dir)?;
         let peers_seen = peers.len();
 
+        ::log::info!(
+            "sync: handshake peers={peers_seen} self={self_device}",
+            self_device = self.self_device,
+        );
+
         // Phase 2/3/4 — read peer files (no SQL lock), then apply in
         // one tx. The disk I/O for snapshots and peer logs lives
         // inside `apply_in_tx`'s "Phase A" so an iCloud-stalled or
         // large peer file does not stall any concurrent UI writes
         // behind the watcher tick. The PRAGMA wrap also lives inside
         // `apply_in_tx` so any error path still restores FK = ON.
-        let (snapshots_applied, events_applied) = self.apply_in_tx(db, &peers)?;
+        let (snapshots_applied, events_applied) =
+            self.apply_in_tx(db, &peers).inspect_err(|e| {
+                ::log::error!("sync: batch apply failed: {e}");
+            })?;
+
+        if events_applied > 0 || snapshots_applied > 0 || outbox_flushed > 0 {
+            ::log::info!(
+                "sync: batch applied events={events_applied} snapshots={snapshots_applied} outbox_flushed={outbox_flushed} elapsed_ms={}",
+                started.elapsed().as_millis(),
+            );
+        }
 
         // Stamp self's `_replay_state.updated_at` so the settings
         // UI's "Last sync" reflects every successful tick — not only
@@ -145,7 +162,7 @@ impl ReplayEngine {
             env!("CARGO_PKG_VERSION"),
             chrono::Utc::now().timestamp_millis(),
         ) {
-            eprintln!("sync: peer manifest refresh failed: {e}");
+            ::log::warn!("sync: peer manifest refresh failed: {e}");
         }
 
         // Background compaction. Cheap probe; only runs the full
@@ -154,12 +171,12 @@ impl ReplayEngine {
         // simply grows in the meantime.
         if snapshot::should_compact(&self.shared_dir, &self.self_device) {
             match snapshot::compact_own_log(&self.shared_dir, &self.own_log) {
-                Ok(report) if report.snapshot_written => eprintln!(
+                Ok(report) if report.snapshot_written => ::log::info!(
                     "sync: compacted own log — {} events folded, {} bytes freed",
                     report.events_folded, report.bytes_freed,
                 ),
                 Ok(_) => {}
-                Err(e) => eprintln!("sync: compaction failed: {e}"),
+                Err(e) => ::log::warn!("sync: compaction failed: {e}"),
             }
         }
 
@@ -203,7 +220,7 @@ impl ReplayEngine {
             match Snapshot::read_from(snap_path) {
                 Ok(s) => snapshots.push((device.clone(), s)),
                 Err(e) => {
-                    eprintln!(
+                    ::log::warn!(
                         "sync: skipping malformed snapshot {}: {e}",
                         snap_path.display()
                     );
@@ -285,7 +302,10 @@ impl ReplayEngine {
         all_events.sort_by(|a, b| (a.ts, &a.device).cmp(&(b.ts, &b.device)));
 
         for ev in &all_events {
-            merge::apply_event(&tx, ev)?;
+            if let Err(e) = merge::apply_event(&tx, ev) {
+                ::log::error!("sync: apply event {} from {} failed: {e}", ev.id, ev.device);
+                return Err(e);
+            }
             let entry = peer_max_event.entry(ev.device.clone()).or_default();
             if ev.id > *entry {
                 *entry = ev.id.clone();

@@ -1,10 +1,11 @@
 use tauri::{AppHandle, Manager};
+use tauri_plugin_opener::OpenerExt;
 
 #[cfg(target_os = "macos")]
 use tauri::Emitter;
 
 use crate::error::{AppError, AppResult};
-use crate::LocalDir;
+use crate::{resolve_log_dir, LocalDir};
 
 /// Called by the frontend after React has mounted and painted its first frame.
 /// Shows the main window — the window starts hidden so the user sees the dock
@@ -42,7 +43,7 @@ pub fn app_ready(app: AppHandle, _local_dir: tauri::State<'_, LocalDir>) -> AppR
                 if let Some(icloud_dir) = crate::icloud::icloud_data_dir() {
                     let _ = crate::icloud::ensure_downloaded(&icloud_dir);
                 } else {
-                    eprintln!(
+                    log::warn!(
                         "iCloud: daemon unreachable; running against the cached path. Sync will resume on next launch."
                     );
                 }
@@ -51,5 +52,24 @@ pub fn app_ready(app: AppHandle, _local_dir: tauri::State<'_, LocalDir>) -> AppR
         }
     }
 
+    Ok(())
+}
+
+/// Reveal the per-user app log directory in the OS file manager. Both the
+/// Help menu item ("Reveal Logs in Finder" / "Show Logs in Explorer") and
+/// the Settings → General → Diagnostics row route here.
+///
+/// Uses the same `resolve_log_dir()` helper as the plugin registration so
+/// the two surfaces can never drift — in debug builds, both point at
+/// `<base>/com.wycstudios.quill-dev/...` so dev runs don't pollute the
+/// release log path. The directory exists by the time this command can be
+/// invoked because the tauri-plugin-log file target creates it on the
+/// first `log::` call.
+#[tauri::command]
+pub fn reveal_logs(app: AppHandle) -> AppResult<()> {
+    let log_dir = resolve_log_dir();
+    app.opener()
+        .open_path(log_dir.to_string_lossy(), None::<&str>)
+        .map_err(|e| AppError::Other(format!("open log dir: {e}")))?;
     Ok(())
 }
