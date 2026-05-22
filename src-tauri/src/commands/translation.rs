@@ -171,6 +171,9 @@ pub fn save_translation(
     let id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().timestamp_millis();
     let id_for_return = id.clone();
+
+    log::debug!("translation: save_translation book_id={book_id} target={target_language}");
+
     sync.with_tx(&db, now, |tx, events| {
         tx.execute(
             "INSERT INTO translations (id, book_id, source_text, translated_text, target_language, cfi, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",

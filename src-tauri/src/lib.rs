@@ -4,6 +4,7 @@ mod db;
 mod epub;
 mod error;
 mod icloud;
+mod panic_hook;
 mod secrets;
 mod sync;
 
@@ -24,6 +25,75 @@ use tauri::Manager;
 
 /// The resolved local app data directory, accounting for dev-mode isolation.
 pub struct LocalDir(pub PathBuf);
+
+/// Resolve the plugin's level filter, honoring `RUST_LOG` over the cfg
+/// default. Plain `LevelFilter` only — no `env_logger`-style
+/// `target=level` syntax. The spec asks devs be able to "crank it up
+/// without rebuilding," which a single global level satisfies; the
+/// plugin's native `.level()` is the only filter point we wire.
+///
+/// Unparseable values (typos like `RUST_LOG=verbose`) fall back to the
+/// default rather than killing plugin init.
+fn resolve_log_level(default: log::LevelFilter) -> log::LevelFilter {
+    std::env::var("RUST_LOG")
+        .ok()
+        .and_then(|s| s.trim().parse::<log::LevelFilter>().ok())
+        .unwrap_or(default)
+}
+
+/// The bundle identifier this build should use for OS-scoped paths
+/// (logs, app_data). Adds the `-dev` suffix in debug builds so a
+/// `pnpm tauri dev` session doesn't pollute the production log dir or
+/// app-data dir the released app uses. Mirrors the dev-suffix logic
+/// already in the setup() callback for `app_data_dir`.
+fn bundle_identifier_for_build() -> &'static str {
+    if cfg!(debug_assertions) {
+        "com.wycstudios.quill-dev"
+    } else {
+        "com.wycstudios.quill"
+    }
+}
+
+/// Resolve the OS-conventional log directory for *this* build.
+///
+/// Single source of truth used by both plugin registration (the file
+/// target) and the `reveal_logs` Tauri command, so they can never drift
+/// apart. We construct the path from `HOME` / `LOCALAPPDATA` /
+/// `XDG_DATA_HOME` directly (not `app.path().app_log_dir()`) because
+/// `app_log_dir()` derives from `tauri.conf.json::identifier` with no
+/// dev/prod suffix, and the plugin builder runs before an `AppHandle`
+/// exists anyway.
+///
+/// Platform layout matches `tauri-plugin-log::TargetKind::LogDir`'s
+/// documented defaults, with the identifier dev-suffixed in debug.
+pub(crate) fn resolve_log_dir() -> PathBuf {
+    let identifier = bundle_identifier_for_build();
+
+    #[cfg(target_os = "macos")]
+    {
+        let home = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .expect("HOME env var");
+        home.join("Library/Logs").join(identifier)
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let base = std::env::var_os("LOCALAPPDATA")
+            .map(PathBuf::from)
+            .expect("LOCALAPPDATA env var");
+        base.join(identifier).join("logs")
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let base = std::env::var_os("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .or_else(|| {
+                std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share"))
+            })
+            .expect("HOME or XDG_DATA_HOME env var");
+        base.join(identifier).join("logs")
+    }
+}
 
 /// Construct the per-device EventLog, wire it into `sync_writer`, build a
 /// `ReplayEngine`, run one initial tick to converge with peer logs, and
@@ -56,7 +126,7 @@ fn boot_sync_engine(
     // and log tails since last launch. Failure here is non-fatal; the
     // watcher's first event will retry.
     if let Err(e) = engine.tick(db) {
-        eprintln!("sync: initial replay tick failed: {e}");
+        log::warn!("sync: initial replay tick failed: {e}");
     }
 
     // If watcher spawn fails, roll back the writer so new writes fall
@@ -75,12 +145,92 @@ fn boot_sync_engine(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // First line on purpose: the file target initializes lazily on the first
+    // `log::` call, so a panic during plugin init still lands in the log.
+    panic_hook::install();
+
+    let default_level = if cfg!(debug_assertions) {
+        log::LevelFilter::Debug
+    } else {
+        log::LevelFilter::Info
+    };
+    let level = resolve_log_level(default_level);
+
+    // Debug-only smoke trigger for the panic-hook pipeline. Reproduces
+    // spec smoke #5: `QUILL_PANIC_TEST=1 cargo run` arms a panicking
+    // thread 5s after launch so we can verify the hook chained, the
+    // backtrace landed in the log file, and the OS CrashReporter still
+    // fired. Gated on debug builds so it can't ship to users.
+    #[cfg(debug_assertions)]
+    if std::env::var("QUILL_PANIC_TEST").is_ok() {
+        std::thread::spawn(|| {
+            std::thread::sleep(std::time::Duration::from_secs(5));
+            panic!("QUILL_PANIC_TEST: intentional panic for smoke testing the panic hook");
+        });
+    }
+
     let app = tauri::Builder::default()
+        .plugin(
+            tauri_plugin_log::Builder::new()
+                .targets([
+                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Folder {
+                        path: resolve_log_dir(),
+                        file_name: Some("quill".into()),
+                    }),
+                    #[cfg(debug_assertions)]
+                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
+                ])
+                .level(level)
+                .max_file_size(10 * 1024 * 1024)
+                .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepSome(3))
+                .build(),
+        )
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .menu(|handle| {
+            // Start from the per-platform default menu so the standard
+            // App / Edit / View / Window entries stay intact. Only the
+            // Help submenu is augmented — the default Help on macOS is
+            // effectively empty (the About entry lives in the app menu),
+            // so we append a single "Reveal Logs" item there.
+            //
+            // Label is English at boot. Tauri's `.menu()` callback runs
+            // before `.setup()`, so the user-language setting (in the
+            // SQLite `settings` table) isn't readable yet. The i18n keys
+            // (`menu.help.revealLogs`) exist in en.json/zh.json for the
+            // Settings UI; menu localization would mean deferring menu
+            // construction to setup() via `app.set_menu()`. Tracked as a
+            // follow-up.  [[follow-up-220-menu-i18n]]
+            let menu = tauri::menu::Menu::default(handle)?;
+            let label = if cfg!(target_os = "macos") {
+                "Reveal Logs in Finder"
+            } else {
+                "Show Logs in Explorer"
+            };
+            if let Some(help_kind) = menu.get(tauri::menu::HELP_SUBMENU_ID) {
+                if let Some(help) = help_kind.as_submenu() {
+                    let item = tauri::menu::MenuItem::with_id(
+                        handle,
+                        "reveal_logs",
+                        label,
+                        true,
+                        None::<&str>,
+                    )?;
+                    help.append(&item)?;
+                }
+            }
+            Ok(menu)
+        })
+        .on_menu_event(|app, event| {
+            if event.id() == "reveal_logs" {
+                if let Err(e) = commands::app::reveal_logs(app.clone()) {
+                    log::warn!("menu: reveal_logs failed: {e}");
+                }
+            }
+        })
         .on_window_event(|window, event| {
             // On macOS, closing the main window via the red button should hide
             // it, not quit the app — matches the standard Mac convention. The
@@ -160,18 +310,18 @@ pub fn run() {
             if icloud_was_enabled && !sync::migration::is_migration_complete(&local_dir) {
                 if let Some(ub) = &ubiquity_dir {
                     match sync::migration::run_migration(&local_dir, ub, &device.device_uuid) {
-                        Ok(outcome) if outcome.deferred_for_download => eprintln!(
+                        Ok(outcome) if outcome.deferred_for_download => log::info!(
                             "sync: migration deferred — ubiquity quill.db is iCloud-evicted. \
                              Download triggered; will retry on next launch."
                         ),
-                        Ok(outcome) => eprintln!(
+                        Ok(outcome) => log::info!(
                             "sync: migration complete: copied_db={} wrote_snapshot={} retired={} conflict_copies_discarded={}",
                             outcome.copied_db,
                             outcome.wrote_snapshot,
                             outcome.retired_files,
                             outcome.conflict_copies_discarded,
                         ),
-                        Err(e) => eprintln!(
+                        Err(e) => log::error!(
                             "sync: migration failed (will retry next launch): {e}"
                         ),
                     }
@@ -201,7 +351,7 @@ pub fn run() {
                 sync::migration::recorded_data_dir(&local_dir)
                     .or_else(icloud::icloud_data_dir_deterministic)
                     .unwrap_or_else(|| {
-                        eprintln!(
+                        log::warn!(
                             "sync: migration is complete but no stable data_dir is \
                              available; falling back to local. Newly-imported binaries \
                              may not be visible to peers."
@@ -213,6 +363,15 @@ pub fn run() {
             };
             let db = Db::init_split(&local_dir, &data_dir)
                 .expect("failed to initialize database");
+
+            log::info!(
+                "quill start v{version} os={os} arch={arch} data_dir={data_dir} schema_v={schema}",
+                version = env!("CARGO_PKG_VERSION"),
+                os = std::env::consts::OS,
+                arch = std::env::consts::ARCH,
+                data_dir = local_dir.display(),
+                schema = db.schema_version(),
+            );
 
             // Self-healing: if migration is complete, retire any ubiquity
             // DB files that crept back (a legacy build temporarily
@@ -229,7 +388,7 @@ pub fn run() {
                     if let Err(e) =
                         sync::migration::reconcile_local_blobs_to_ubiquity(&local_dir, ub)
                     {
-                        eprintln!("sync: blob reconcile failed (continuing): {e}");
+                        log::warn!("sync: blob reconcile failed (continuing): {e}");
                     }
                 }
             }
@@ -288,15 +447,18 @@ pub fn run() {
             .flatten()
             {
                 Some(ub) => match boot_sync_engine(ub, &device.device_uuid, &db, &sync_writer) {
-                    Ok(pair) => pair,
+                    Ok(pair) => {
+                        log::info!("sync: engine booted (replay + watcher active)");
+                        pair
+                    }
                     Err(e) => {
-                        eprintln!("sync: failed to boot sync engine: {e}");
+                        log::error!("sync: failed to boot sync engine: {e}");
                         (None, None)
                     }
                 },
                 None => {
                     if sync::migration::is_migration_complete(&local_dir) {
-                        eprintln!(
+                        log::warn!(
                             "sync: skipping engine boot — iCloud container not reachable \
                              this launch; outbox preserved for the next launch"
                         );
@@ -323,6 +485,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             // App lifecycle
             commands::app::app_ready,
+            commands::app::reveal_logs,
             // Books
             commands::books::import_book,
             commands::books::stage_pdf_import,
@@ -452,4 +615,104 @@ pub fn run() {
         }
         _ => {}
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{resolve_log_dir, resolve_log_level};
+    use log::LevelFilter;
+
+    /// Regression guard: `tauri-plugin-log` resolves the file target's
+    /// directory via the bundle identifier in `tauri.conf.json`. Renaming
+    /// the identifier silently moves the log path on every platform and
+    /// any user's existing log directory orphans. Pinning the expected
+    /// value here forces a deliberate update of both this test and the
+    /// migration story if the identifier ever needs to change.
+    #[test]
+    fn bundle_identifier_matches_log_path_assumption() {
+        let conf = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tauri.conf.json"
+        ))
+        .expect("read tauri.conf.json");
+        let v: serde_json::Value =
+            serde_json::from_str(&conf).expect("parse tauri.conf.json");
+        let id = v["identifier"].as_str().expect("identifier field");
+        assert_eq!(
+            id, "com.wycstudios.quill",
+            "bundle identifier changed — update log path docs and migration",
+        );
+    }
+
+    /// `RUST_LOG` overrides win over the cfg-based default; unset or
+    /// garbage falls back to the default. Single test that flips
+    /// `RUST_LOG` between cases — env vars are process-global so we
+    /// serialize the mutations within one test rather than relying on
+    /// test isolation.
+    #[test]
+    fn resolve_log_level_honors_rust_log_env() {
+        // Save whatever the caller's env had so the test harness isn't
+        // poisoned for later tests in the same process.
+        let saved = std::env::var("RUST_LOG").ok();
+
+        // Unset → default.
+        std::env::remove_var("RUST_LOG");
+        assert_eq!(resolve_log_level(LevelFilter::Info), LevelFilter::Info);
+        assert_eq!(resolve_log_level(LevelFilter::Warn), LevelFilter::Warn);
+
+        // Valid value overrides the default.
+        std::env::set_var("RUST_LOG", "warn");
+        assert_eq!(resolve_log_level(LevelFilter::Info), LevelFilter::Warn);
+        std::env::set_var("RUST_LOG", "trace");
+        assert_eq!(resolve_log_level(LevelFilter::Info), LevelFilter::Trace);
+        std::env::set_var("RUST_LOG", "off");
+        assert_eq!(resolve_log_level(LevelFilter::Info), LevelFilter::Off);
+
+        // Garbage falls back to default rather than killing init.
+        std::env::set_var("RUST_LOG", "verbose");
+        assert_eq!(resolve_log_level(LevelFilter::Info), LevelFilter::Info);
+
+        // Whitespace tolerated.
+        std::env::set_var("RUST_LOG", "  debug  ");
+        assert_eq!(resolve_log_level(LevelFilter::Info), LevelFilter::Debug);
+
+        // Restore.
+        match saved {
+            Some(v) => std::env::set_var("RUST_LOG", v),
+            None => std::env::remove_var("RUST_LOG"),
+        }
+    }
+
+    /// `pnpm tauri dev` and a packaged release build must not write to
+    /// the same log file. The helper appends `-dev` to the bundle
+    /// identifier under `cfg(debug_assertions)` so the two layouts are
+    /// physically isolated. `cfg!(debug_assertions)` is fixed per-build,
+    /// so only one branch is meaningfully exercised per `cargo test`
+    /// invocation — but both branches compile, and the assertion picks
+    /// the right expected value for the build being tested.
+    #[test]
+    fn resolve_log_dir_uses_dev_suffix_in_debug() {
+        let dir = resolve_log_dir();
+        let expected_id = if cfg!(debug_assertions) {
+            "com.wycstudios.quill-dev"
+        } else {
+            "com.wycstudios.quill"
+        };
+        let dir_str = dir.to_string_lossy().to_string();
+        assert!(
+            dir_str.contains(expected_id),
+            "log dir {dir_str} should contain {expected_id} for this build",
+        );
+        // Guard against the dev path accidentally landing under the
+        // prod identifier (e.g. if someone changes the suffix logic).
+        // In debug builds, the prod-only id must not appear in the
+        // path UNLESS it's the substring of the dev id itself.
+        if cfg!(debug_assertions) {
+            let stripped = dir_str.replace("com.wycstudios.quill-dev", "");
+            assert!(
+                !stripped.contains("com.wycstudios.quill"),
+                "debug build log dir {dir_str} leaks the prod identifier outside the -dev suffix",
+            );
+        }
+    }
 }

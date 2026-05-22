@@ -307,6 +307,12 @@
   "settings.librarySync.removeDeviceBody": "This device's log, snapshot, and manifest in iCloud will be deleted. Any books already synced to this device are kept. The other device will reappear here if it opens Quill again and re-registers.",
   "settings.librarySync.remove": "Remove",
 
+  "settings.diagnostics.title": "Diagnostics",
+  "settings.diagnostics.revealLogs": "Reveal Logs",
+  "settings.diagnostics.revealLogsHint": "Open the Quill log directory in your file manager",
+  "settings.diagnostics.revealLogsButton": "Open",
+  "menu.help.revealLogs": "Reveal Logs in Finder",
+
   "settings.appearance.title": "Appearance",
   "settings.appearance.subtitle": "Customize the look and feel of the app",
   "settings.appearance.theme": "Theme",

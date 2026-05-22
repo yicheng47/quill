@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
+import { invoke } from "@tauri-apps/api/core";
 import Select from "../ui/Select";
 import Toggle from "../ui/Toggle";
 import type { SettingsProps } from "./types";
@@ -85,6 +86,29 @@ export default function GeneralSettings({ settings, loading, save, showSavedToas
             showSavedToast();
           }}
         />
+      </div>
+
+      {/* Diagnostics — log triage entry point. Mirrors the Help menu's
+          "Reveal Logs" item so the discoverability path doesn't depend
+          on the user knowing about the menu. */}
+      <div className="mt-8 mb-2 text-[11px] font-medium uppercase tracking-[0.5px] text-text-muted">
+        {t("settings.diagnostics.title")}
+      </div>
+      <div className="h-px bg-black/10" />
+      <div className="flex items-center justify-between h-[73px]">
+        <div>
+          <p className="text-[14px] font-medium text-text-primary tracking-[-0.15px]">{t("settings.diagnostics.revealLogs")}</p>
+          <p className="text-[12px] text-text-muted mt-0.5">{t("settings.diagnostics.revealLogsHint")}</p>
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            invoke("reveal_logs").catch(() => {});
+          }}
+          className="h-8 px-3 bg-white dark:bg-bg-surface rounded-[10px] text-[13px] font-medium text-text-secondary border border-border hover:border-accent transition-colors"
+        >
+          {t("settings.diagnostics.revealLogsButton")}
+        </button>
       </div>
     </div>
   );

@@ -193,7 +193,7 @@ pub fn cascade_delete(tx: &Transaction, entity: &str, id: &str, ts: i64) -> AppR
             Ok(())
         }
         other => {
-            eprintln!("sync: cascade_delete called with unknown entity {other:?}");
+            log::warn!("sync: cascade_delete called with unknown entity {other:?}");
             Ok(())
         }
     }
@@ -258,7 +258,7 @@ fn cascade_delete_chat(tx: &Transaction, id: &str) -> AppResult<()> {
 
 fn cascade_delete_collection_book(tx: &Transaction, key: &str) -> AppResult<()> {
     let Some((col, book)) = key.split_once(':') else {
-        eprintln!(
+        log::warn!(
             "sync: cascade_delete_collection_book got malformed key {key:?}, expected '<col>:<book>'"
         );
         return Ok(());
@@ -348,7 +348,7 @@ fn apply_book_metadata(
         "title" | "author" | "description" | "cover_path" | "genre" | "file_path" => field,
         "pages" => "pages",
         _ => {
-            eprintln!("sync: unknown book.metadata.set field {field:?}, skipping");
+            log::warn!("sync: unknown book.metadata.set field {field:?}, skipping");
             return Ok(());
         }
     };

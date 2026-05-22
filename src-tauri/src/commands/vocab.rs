@@ -88,6 +88,8 @@ pub fn add_vocab_word(
     let now = chrono::Utc::now().timestamp_millis();
     let device = sync.self_device().to_string();
 
+    log::debug!("vocab: add_vocab_word book_id={book_id} word={word:?}");
+
     // Dedup happens inside the sync transaction so two concurrent adds
     // can't both observe "missing" and insert duplicates. There's no
     // unique index on (book_id, word) — the conn mutex serializes the

@@ -253,7 +253,7 @@ pub fn list_peers(shared_dir: &Path, own_uuid: &str) -> AppResult<Vec<Peer>> {
         let stem_parsed = match Uuid::parse_str(stem) {
             Ok(u) => u,
             Err(_) => {
-                eprintln!(
+                log::warn!(
                     "sync: skipping non-UUID peer manifest filename {}",
                     path.display()
                 );
@@ -268,7 +268,7 @@ pub fn list_peers(shared_dir: &Path, own_uuid: &str) -> AppResult<Vec<Peer>> {
         let bytes = match fs::read(&path) {
             Ok(b) => b,
             Err(e) => {
-                eprintln!(
+                log::warn!(
                     "sync: skipping unreadable peer manifest {}: {e}",
                     path.display()
                 );
@@ -278,7 +278,7 @@ pub fn list_peers(shared_dir: &Path, own_uuid: &str) -> AppResult<Vec<Peer>> {
         let mut peer: Peer = match serde_json::from_slice(&bytes) {
             Ok(p) => p,
             Err(e) => {
-                eprintln!(
+                log::warn!(
                     "sync: skipping malformed peer manifest {}: {e}",
                     path.display()
                 );
@@ -289,7 +289,7 @@ pub fn list_peers(shared_dir: &Path, own_uuid: &str) -> AppResult<Vec<Peer>> {
         // the filename stem so impersonation isn't reachable from any
         // downstream consumer.
         if peer.device_uuid != stem {
-            eprintln!(
+            log::warn!(
                 "sync: peer manifest {} declared device_uuid {:?} that doesn't match its filename; using filename",
                 path.display(),
                 peer.device_uuid,

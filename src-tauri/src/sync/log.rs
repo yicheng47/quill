@@ -146,7 +146,7 @@ impl EventLog {
     }
 
     /// Parse every event in the log. Malformed or truncated lines are
-    /// skipped with a `eprintln!` warning so a partial tail (from a crash
+    /// skipped with a `log::warn` so a partial tail (from a crash
     /// mid-write) doesn't poison the whole read.
     pub fn read_all(&self) -> AppResult<Vec<Event>> {
         read_log_file(&self.path)
@@ -181,7 +181,7 @@ pub fn read_log_file(path: &Path) -> AppResult<Vec<Event>> {
         match serde_json::from_slice::<Event>(line) {
             Ok(ev) => out.push(ev),
             Err(e) => {
-                eprintln!(
+                log::warn!(
                     "sync: skipping malformed log line {} in {}: {e}",
                     idx + 1,
                     path.display()

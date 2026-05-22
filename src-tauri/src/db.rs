@@ -96,11 +96,15 @@ impl Db {
 
         for &(version, sql) in MIGRATIONS {
             if version > current {
+                log::info!("db: applying migration {version}");
                 // ALTER TABLE migrations may fail if column already exists
                 if version == 4 || version == 5 {
                     let _ = conn.execute_batch(sql);
                 } else {
-                    conn.execute_batch(sql)?;
+                    if let Err(e) = conn.execute_batch(sql) {
+                        log::error!("db: migration {version} failed: {e}");
+                        return Err(e.into());
+                    }
                 }
                 // Advance schema_version per migration, so a failure in a later
                 // migration doesn't force successful earlier ones to re-run.
@@ -114,6 +118,23 @@ impl Db {
         }
 
         Ok(())
+    }
+
+    /// Current schema version, read from the migration runner state. Returns
+    /// `0` if the version row hasn't been seeded yet (fresh DB before any
+    /// migrations ran) or the read fails. Used by the startup banner so a
+    /// triaged log file leads with the actual on-disk version.
+    pub fn schema_version(&self) -> i64 {
+        let conn = match self.conn.lock() {
+            Ok(c) => c,
+            Err(_) => return 0,
+        };
+        conn.query_row(
+            "SELECT COALESCE(MAX(version), 0) FROM schema_version",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0)
     }
 
     /// Resolve a relative path (e.g. "books/abc.epub") to an absolute path using data_dir.
