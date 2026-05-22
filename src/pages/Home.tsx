@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useTranslation } from "react-i18next";
-import { Search, LayoutGrid, List, Plus, Upload, BookOpen, Loader, AlertCircle, AlertTriangle, X } from "lucide-react";
+import { Search, LayoutGrid, List, Plus, Upload, BookOpen, Loader, AlertCircle, X } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
@@ -35,7 +35,6 @@ export default function Home() {
   const [importing, setImporting] = useState(false);
   const [importSlow, setImportSlow] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
-  const [importWarning, setImportWarning] = useState<string | null>(null);
   const [icloudSyncing, setIcloudSyncing] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<"general" | "reading" | "ai" | "lookup" | "librarySync" | "about">("general");
@@ -166,7 +165,7 @@ export default function Home() {
           try {
             for (const filePath of books) {
               try {
-                await importBookDialog.importFile(filePath, setImportWarning);
+                await importBookDialog.importFile(filePath);
               } catch (err) {
                 console.error("Failed to import dropped book:", err);
                 setImportError(`${filePath.split("/").pop()}: ${formatError(err)}`);
@@ -223,7 +222,7 @@ export default function Home() {
       if (!selected) return;
       setImporting(true);
       try {
-        const book = await importBookDialog.importFile(selected, setImportWarning);
+        const book = await importBookDialog.importFile(selected);
         if (book) {
           refresh();
           allBooks.refresh();
@@ -385,26 +384,6 @@ export default function Home() {
           </div>
           <button
             onClick={() => setImportError(null)}
-            className="shrink-0 size-6 flex items-center justify-center rounded-lg hover:bg-bg-input cursor-pointer transition-colors"
-          >
-            <X size={14} className="text-text-muted" />
-          </button>
-        </div>
-      )}
-
-      {importWarning && (
-        <div className="fixed top-20 left-1/2 -translate-x-1/2 z-[60] max-w-[600px] bg-white dark:bg-bg-surface border border-border rounded-[14px] shadow-popover flex items-start gap-3 pl-4 pr-3 py-3">
-          <AlertTriangle size={16} className="shrink-0 mt-0.5 text-amber-500" />
-          <div className="flex-1 min-w-0">
-            <p className="text-[13px] font-medium text-text-primary tracking-[-0.08px]">
-              {t("home.importWarning")}
-            </p>
-            <p className="text-[12px] text-text-secondary mt-0.5 break-words">
-              {importWarning}
-            </p>
-          </div>
-          <button
-            onClick={() => setImportWarning(null)}
             className="shrink-0 size-6 flex items-center justify-center rounded-lg hover:bg-bg-input cursor-pointer transition-colors"
           >
             <X size={14} className="text-text-muted" />
