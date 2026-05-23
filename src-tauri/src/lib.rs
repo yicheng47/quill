@@ -14,7 +14,6 @@ use std::sync::Arc;
 
 use commands::sync::SyncState;
 use db::Db;
-use mcp::{McpServer, McpState};
 use secrets::Secrets;
 use sync::device::DeviceIdentity;
 use sync::log::EventLog;
@@ -94,6 +93,85 @@ pub(crate) fn resolve_log_dir() -> PathBuf {
             })
             .expect("HOME or XDG_DATA_HOME env var");
         base.join(identifier).join("logs")
+    }
+}
+
+/// Resolve the OS-conventional **app-data** directory for this build.
+/// Mirrors what `tauri::path::app_data_dir()` would return for the
+/// active bundle identifier (dev-suffixed in debug). Used by the
+/// `quill mcp` stdio subcommand which runs outside the Tauri runtime
+/// and has no `AppHandle` to ask.
+///
+/// Platform layout:
+/// - macOS:   `$HOME/Library/Application Support/<identifier>`
+/// - Windows: `%APPDATA%\<identifier>` (Roaming)
+/// - Linux:   `$XDG_DATA_HOME/<identifier>` or `$HOME/.local/share/<identifier>`
+pub(crate) fn resolve_app_data_dir() -> PathBuf {
+    let identifier = bundle_identifier_for_build();
+
+    #[cfg(target_os = "macos")]
+    {
+        let home = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .expect("HOME env var");
+        home.join("Library/Application Support").join(identifier)
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let base = std::env::var_os("APPDATA")
+            .map(PathBuf::from)
+            .expect("APPDATA env var");
+        base.join(identifier)
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let base = std::env::var_os("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .or_else(|| {
+                std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share"))
+            })
+            .expect("HOME or XDG_DATA_HOME env var");
+        base.join(identifier)
+    }
+}
+
+/// Entry point for the `quill mcp` subcommand. Opens the SQLite
+/// materialized view read-only and serves the MCP protocol over
+/// stdin/stdout until the client disconnects.
+///
+/// Runs entirely outside the Tauri runtime — no plugins, no windows,
+/// no event loop. Stderr is reserved for diagnostic messages so it
+/// doesn't pollute the MCP wire on stdout.
+pub fn mcp_stdio_main() {
+    let local_dir = resolve_app_data_dir();
+    let db_path = local_dir.join("quill.db");
+
+    if !db_path.exists() {
+        eprintln!(
+            "quill mcp: no library found at {} — launch the Quill app at least once to initialize it.",
+            db_path.display()
+        );
+        std::process::exit(1);
+    }
+
+    let db = match Db::open_readonly(&db_path) {
+        Ok(db) => db,
+        Err(e) => {
+            eprintln!("quill mcp: failed to open {}: {e}", db_path.display());
+            std::process::exit(1);
+        }
+    };
+
+    let state = mcp::McpState::new(db);
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("tokio runtime");
+
+    if let Err(e) = runtime.block_on(mcp::server::serve_stdio(state)) {
+        eprintln!("quill mcp: serve error: {e}");
+        std::process::exit(1);
     }
 }
 
@@ -469,13 +547,6 @@ pub fn run() {
                 }
             };
 
-            // Take a `Db` clone for the MCP server BEFORE handing the
-            // original to `app.manage`. `Db` is already cheap-clone via
-            // `Arc<Mutex<…>>` internals, so no `Arc<Db>` wrapper is
-            // needed here. See `db.rs:31-43` and the hard-constraint
-            // note in `docs/impls/30-mcp-server.md`.
-            let mcp_state = McpState::new(db.clone());
-
             app.manage(LocalDir(local_dir));
             app.manage(db);
             app.manage(secrets);
@@ -489,56 +560,11 @@ pub fn run() {
             // shutdown.
             app.manage(SyncState::new(replay_engine, watcher_handle));
 
-            // MCP server (Phase 1 — handshake only, no tools). Gated on
-            // the `mcp_enabled` setting, default false: the server must
-            // not bind a listening socket unless the user has explicitly
-            // opted in. Phase 4 adds the settings UI + start/stop
-            // commands; for now, flip it manually with
-            //   INSERT OR REPLACE INTO settings(key,value) VALUES ('mcp_enabled','true');
-            // We still `app.manage(mcp_server)` either way so the
-            // ExitRequested teardown path is uniform and Phase 4 can
-            // call `start()` on the same instance without a restart.
-            let mcp_enabled = {
-                let conn = mcp_state
-                    .db
-                    .conn
-                    .lock()
-                    .expect("mcp_enabled: settings lock poisoned");
-                conn.query_row(
-                    "SELECT value FROM settings WHERE key = ?1",
-                    rusqlite::params!["mcp_enabled"],
-                    |row| row.get::<_, String>(0),
-                )
-                .ok()
-                .map(|v| v == "true")
-                .unwrap_or(false)
-            };
-
-            let mcp_server = McpServer::new();
-            if mcp_enabled {
-                let mcp_server_for_boot = &mcp_server;
-                let state_for_boot = mcp_state.clone();
-                tauri::async_runtime::block_on(async move {
-                    match mcp_server_for_boot
-                        .start(state_for_boot, mcp::server::DEFAULT_PORT)
-                        .await
-                    {
-                        Ok(port) => {
-                            log::info!(
-                                "mcp: server listening on http://127.0.0.1:{port}/mcp"
-                            );
-                        }
-                        Err(e) => {
-                            log::error!("mcp: failed to start server: {e}");
-                        }
-                    }
-                });
-            } else {
-                log::info!(
-                    "mcp: disabled (opt-in via `mcp_enabled` setting; UI lands in Phase 4)"
-                );
-            }
-            app.manage(mcp_server);
+            // MCP server is NOT booted in-process. AI clients spawn the
+            // `quill mcp` subcommand themselves over stdio; see
+            // `main.rs` and `mcp/server.rs::serve_stdio`. The settings
+            // UI (Phase 3) only writes the client integration configs;
+            // it doesn't start/stop anything here.
 
             Ok(())
         })
@@ -631,15 +657,6 @@ pub fn run() {
         .expect("error while building tauri application");
 
     app.run(|app_handle, event| match &event {
-        // Drain the MCP server cleanly on quit so its TCP port is
-        // released before the next launch (otherwise a fresh `start`
-        // races with the kernel's TIME_WAIT). Best-effort: any error
-        // is logged inside `stop`.
-        tauri::RunEvent::ExitRequested { .. } => {
-            if let Some(server) = app_handle.try_state::<McpServer>() {
-                tauri::async_runtime::block_on(server.stop());
-            }
-        }
         #[cfg(target_os = "macos")]
         tauri::RunEvent::Opened { urls } => {
             // Files dropped on dock icon or opened via file association

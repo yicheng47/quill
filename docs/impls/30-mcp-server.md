@@ -5,9 +5,9 @@
 
 ## Context
 
-Expose Quill's reading data to any MCP-compatible AI client (Claude Code, Claude Desktop, Codex, Cursor) via a local Streamable HTTP server using the official `rmcp` Rust SDK. The MCP server runs in-process with Tauri, shares the existing SQLite materialized view (`quill.db`), and pushes Tauri events on writes so open windows refresh.
+Expose Quill's library to MCP-compatible AI clients (Claude Code, Codex) via a stdio MCP server. The MCP code lives inside the same `quill` binary; clients spawn `quill mcp` as a subprocess and exchange MCP messages over stdin/stdout. The subprocess opens the local SQLite materialized view (`quill.db`) **read-only** as a second SQLite connection, which works because the DB now runs in WAL mode (concurrent readers + one writer).
 
-This plan ships in three phases. **Phase 1** stands up the server lifecycle and MCP handshake. **Phase 2** wires the library-management read tools. **Phase 3** ships the settings UI (enable/disable + port + connection URL). Write tools and the frontend reading-state bridge are deferred to **v1.1** — the v1 surface is read-only by design (MCP is for library management, not for replacing the in-app reader).
+This plan ships in three phases. **Phase 1** stands up the stdio binary and the MCP handshake. **Phase 2** wires the library-management read tools. **Phase 3** ships the settings UI (per-client integration toggles + Copy MCP config). Write tools and the frontend reading-state bridge are deferred to **v1.1** — the v1 surface is read-only by design (MCP is for library management, not for replacing the in-app reader).
 
 ---
 
@@ -16,23 +16,23 @@ This plan ships in three phases. **Phase 1** stands up the server lifecycle and 
 These are the inputs to this plan. Do not relitigate while implementing — open a follow-up if a constraint conflicts with reality.
 
 1. **MCP scope = library management, not active reading.** Tools expose collections of saved data the user might want an AI client to help organize, search, or annotate (books, collections, highlights, bookmarks, vocab list, translations, chat history). Active-reading-session state (current position, SRS due queue) stays in-app and is intentionally NOT exposed — the in-app reader is the right surface for that.
-2. **Read-only by default.** Each of the four write tools (`add_highlight`, `add_bookmark`, `add_vocab_word`, `update_vocab_mastery`) gets its own opt-in toggle in settings. All four default to off. Read tools are always on whenever the server is on.
-3. **`search_highlights` / FTS — deferred to v1.1.** No FTS infra exists in `quill.db` today; AI clients can call `get_highlights(book_id)` and filter client-side for v1. Spec's "Out of scope" should record this.
-4. **`get_vocab_stats` — included.** `commands/vocab.rs:251` already exposes the aggregate; wiring it into MCP is a free win for library-overview queries.
-5. **MCP writes propagate to peers.** Writes go through `SyncWriter::with_tx`, hit the LWW outbox, and replay on peer devices like any other write. This is intended behavior, not a leak; do not add a filter.
+2. **stdio transport, not HTTP.** AI clients spawn `quill mcp` as a subprocess and the MCP session lives as long as the client uses it. No port to manage, no auth surface, no in-process server inside the Tauri app. This is the standard MCP shape and works whether or not the Quill desktop app is currently running.
+3. **Single binary, `mcp` subcommand.** `main.rs` dispatches on `argv[1] == "mcp"` to `quill_lib::mcp_stdio_main()`, otherwise launches the normal Tauri app. Avoids a second binary in the macOS app bundle and the packaging complexity that brings.
+4. **WAL journal mode** for `quill.db`. The stdio subprocess opens its own SQLite connection; WAL is what lets that coexist with the Tauri app's writer without serializing on the file lock. Was already safe to switch — DELETE mode was a hangover from the pre-Chunk-6 era when `quill.db` lived in iCloud.
+5. **Read-only by default.** Each of the four future write tools (`add_highlight`, `add_bookmark`, `add_vocab_word`, `update_vocab_mastery`) will get its own opt-in toggle in settings, all default to off. Lands with v1.1.
+6. **`search_highlights` / FTS — deferred to v1.1.** No FTS infra exists in `quill.db` today; AI clients can call `get_highlights(book_id)` and filter client-side for v1.
+7. **`get_vocab_stats` — included.** `commands/vocab.rs::get_vocab_stats` already exposes the aggregate; wiring it into MCP is a free win for library-overview queries.
+8. **Client integrations (v1): Claude Code + Codex CLI.** Settings UI auto-registers Quill in those two clients' config files. Custom integrations get a "Copy MCP config" escape hatch.
 
 ---
 
 ## Hard constraints (security & integrity)
 
-These come out of the impl-validation audit (settings.rs:10-23, secrets.rs:15-21, lib.rs:309). Any deviation is a revision.
-
-- **`Db` is already `Arc`-cloneable** (db.rs:31-43). The MCP server holds a `Db` clone, never an `Arc<Db>` wrapper. Take the clone before `app.manage(db)` at lib.rs:309.
-- **`SyncWriter` is `Arc`-shaped too** — write tools need a clone. Writes flow through `sync.with_tx(&db, ...)` (bookmarks.rs:52, 130) so the LWW outbox keeps working.
-- **Bind explicitly to `127.0.0.1`**, never `0.0.0.0`. MCP is localhost-only per spec; misconfigured binds expose the user's library to the LAN.
-- **MCP MUST NOT expose `settings` or `oauth` data.** `commands::settings::get_all_settings` (settings.rs:10-23, lines 18-20) merges `ai_api_key` from secrets into its return map — wrapping it as an MCP tool would leak the API key. If a future release ever wants partial settings exposure, filter via `Secrets::SENSITIVE_KEYS` at secrets.rs:15-21 (the canonical list).
+- **`Db` is already `Arc`-cloneable** (db.rs:31-43). When the stdio subprocess opens the DB, it constructs a separate `Db` instance via `Db::open_readonly`; the cheap-clone shape isn't relevant on that side because there's only one process-local consumer (the MCP handler).
+- **stdio subprocess opens read-only.** `Db::open_readonly` uses `SQLITE_OPEN_READ_ONLY`. v1 has no write tools, so the read-only flag enforces "MCP can't mutate the library" at the SQLite layer regardless of what tool code does.
+- **MCP MUST NOT expose `settings` or `oauth` data.** `commands::settings::get_all_settings` merges `ai_api_key` from secrets into its return map — wrapping it as an MCP tool would leak the API key. The `Secrets` store is a separate `Mutex<Connection>` and the stdio entry point intentionally does NOT open it.
 - **Internal sync tables are off-limits.** `_replay_state`, `_tombstones`, `_pending_publish` (migrations 010/011) are sync infra, not user data. No MCP tool may read or write them.
-- (v1 is read-only — the write-tool / frontend-bridge constraints land with the v1.1 plan.)
+- **Diagnostics on stderr only.** stdout is the MCP wire; any `eprintln!` / log line that lands on stdout corrupts the JSON-RPC stream. `mcp_stdio_main` uses `eprintln!` for startup errors before handing the streams to rmcp.
 
 ---
 
@@ -42,9 +42,9 @@ These come out of the impl-validation audit (settings.rs:10-23, secrets.rs:15-21
 
 ```
 src-tauri/src/mcp/
-  mod.rs              # public facade: McpServer, McpState, McpServerError
-  server.rs           # axum router + rmcp StreamableHttpService, CancellationToken shutdown,
-                      # QuillMcpHandler + tool_router aggregator
+  mod.rs              # public facade: re-exports McpState
+  server.rs           # QuillMcpHandler + tool_router aggregator
+                      # + ServerHandler impl + serve_stdio entry helper
   state.rs            # McpState — Db clone (v1.1 adds SyncWriter + write-tool toggles)
   tools/
     mod.rs            # forbidden-surface audit comment, submodule declarations
@@ -56,205 +56,65 @@ src-tauri/src/mcp/
     chats.rs          # get_chat_history
 ```
 
-v1.1 adds `mcp/notify.rs` (write-side fan-out) and write-tool methods on the same `QuillMcpHandler` impl blocks.
+`src/lib.rs::mcp_stdio_main()` is the binary-mode entry point. `src/main.rs` dispatches to it on `argv[1] == "mcp"`.
 
-### Server lifecycle
+v1.1 adds `mcp/notify.rs` (write-side fan-out into the running Tauri app) and write-tool methods on the same `QuillMcpHandler` impl blocks.
 
-A single `McpServer` struct owns a `Mutex<Option<RunningServer>>`. While running, `RunningServer` carries:
-- A `CancellationToken` (cloned into the `StreamableHttpService` config AND into `axum::serve(...).with_graceful_shutdown(...)`) so cancellation drains both per-session SSE channels and the axum accept loop.
-- A `JoinHandle<()>` for the axum task — `stop()` awaits this so app shutdown doesn't abandon in-flight requests.
-- The bound port (settings UI reads it back; `TcpListener` may pick a different port than requested when port `0` is passed).
+### Subprocess lifecycle
 
-State transitions, all driven from settings or app exit:
-- `start(state, port)` — `TcpListener::bind("127.0.0.1:{port}")`, build the `StreamableHttpService` against a fresh `LocalSessionManager`, mount via `axum::Router::new().nest_service("/mcp", service)`, spawn `axum::serve(listener, router).with_graceful_shutdown(cancel.cancelled())` on `tauri::async_runtime::spawn`, return the actually-bound port. If `bind` fails, return `McpServerError::Bind` and (Phase 4) persist `mcp_last_error` to settings — do NOT auto-increment the port.
-- `stop()` — `cancel.cancel()`, await the join handle, clear state. No-op if not running.
-- `restart(port)` — `stop()` then `start(port)`. Phase 4 only — Phase 1 doesn't need it.
+There's no in-process server. The lifecycle is whatever the AI client decides:
 
-`McpServer` lives in Tauri app state (`app.manage(McpServer::new())`). Settings commands toggle/configure it.
+1. Client launches; reads its MCP config; sees an entry pointing at `/path/to/quill mcp`.
+2. Client spawns the binary as a subprocess with piped stdin/stdout.
+3. The subprocess calls `resolve_app_data_dir()` → opens `local_dir/quill.db` read-only → constructs `McpState` → runs `mcp::server::serve_stdio(state)` on a current-thread tokio runtime.
+4. rmcp handles the MCP handshake + tool calls until the client closes stdin (or sends `notifications/cancelled`).
+5. `serve_stdio` returns; `mcp_stdio_main` exits.
+
+Crash recovery is the client's problem. Quill's only invariant: open the DB read-only, don't pollute stdout.
 
 ### Write-tool toggles and notification channel
 
-Deferred to v1.1 with the write tools themselves. See the v1.1 plan
-(separate doc) for the `Arc<AtomicBool>` flag layout, the
-`notify::emit_data_changed` fan-out helper, and the four per-write
-opt-in settings.
+Deferred to v1.1 with the write tools themselves. See the v1.1 plan (separate doc) for the `Arc<AtomicBool>` flag layout, the in-app notification fan-out, and the four per-write opt-in settings.
 
 ---
 
-## Phase 1 — Server infrastructure
+## Phase 1 — Stdio binary infrastructure
 
-### Step 1.1: Add dependencies
+### Step 1.1: Dependencies
 
 **File: `src-tauri/Cargo.toml`**
 
 ```toml
-rmcp = { version = "1.7", features = ["server", "transport-streamable-http-server"] }
-axum = "0.8"
-tokio-util = "0.7"   # CancellationToken for graceful shutdown
+rmcp = { version = "1.7", features = ["server", "transport-io"] }
+schemars = "1"
 ```
 
-Update existing `tokio` line to add `time`:
-```toml
-tokio = { version = "1", features = ["sync", "macros", "rt-multi-thread", "net", "io-util", "time"] }
-```
+`transport-io` pulls `tokio/io-std` transitively (for `tokio::io::stdin/stdout`). No `axum`, no HTTP server stack.
 
-`time` is required for axum interval/keepalive timers and rmcp's session manager heartbeat. The Streamable HTTP transport (`StreamableHttpService` + `LocalSessionManager`) is rmcp's current recommended transport — supersedes the older `transport-sse-server`. No `tokio-stream` needed: the service hosts its own SSE channel internally.
+### Step 1.2: Switch SQLite to WAL
 
-### Step 1.2: Create `mcp` module skeleton
+**File: `src-tauri/src/db.rs`** — change every `PRAGMA journal_mode=DELETE` to `PRAGMA journal_mode=WAL` (production path in `init_split`, plus the two migration-test seed paths so tests run on the same mode as production).
 
-**File: `src-tauri/src/mcp/mod.rs`** (new) — re-exports.
-**File: `src-tauri/src/mcp/state.rs`** (new):
+WAL is safe because `quill.db` is local-only post Chunk-6. Pre-Chunk-6 it lived in iCloud, where the `-wal`/`-shm` companion files don't sync atomically; that was the original reason DELETE was pinned.
+
+### Step 1.3: Read-only Db constructor
+
+**File: `src-tauri/src/db.rs`** — add `Db::open_readonly(db_path: &Path) -> AppResult<Self>` that uses `Connection::open_with_flags(.., SQLITE_OPEN_READ_ONLY | SQLITE_OPEN_NO_MUTEX | SQLITE_OPEN_URI)` and does NOT run migrations. The Tauri app is the sole owner of schema changes; the stdio subprocess sees whatever schema is on disk.
+
+`data_dir` is set to `db_path.parent()` as a placeholder — the v1 read tools don't touch it.
+
+### Step 1.4: stdio module + serve helper
+
+**File: `src-tauri/src/mcp/server.rs`** (rewritten from the HTTP-server version):
 
 ```rust
-pub struct McpState {
-    pub db: Db,                   // already cheaply Clone
-    pub sync_writer: SyncWriter,  // ditto
-    pub app: AppHandle,
-    pub write_highlights: Arc<AtomicBool>,
-    pub write_bookmarks: Arc<AtomicBool>,
-    pub write_vocab_add: Arc<AtomicBool>,
-    pub write_vocab_mastery: Arc<AtomicBool>,
-}
-```
+#[derive(Clone)]
+pub(crate) struct QuillMcpHandler { pub(crate) state: McpState }
 
-**File: `src-tauri/src/mcp/server.rs`** (new):
-
-```rust
-pub struct McpServer {
-    inner: Mutex<Option<RunningServer>>,
-}
-
-struct RunningServer {
-    cancel: CancellationToken,
-    join: JoinHandle<()>,
-    port: u16,
-}
-
-impl McpServer {
-    pub fn new() -> Self { /* ... */ }
-
-    pub async fn start(&self, state: McpState, port: u16) -> Result<u16, McpServerError> {
-        // Bind 127.0.0.1:{port}. NEVER 0.0.0.0.
-        let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
-        let listener = TcpListener::bind(addr).await
-            .map_err(|source| McpServerError::Bind { addr, source })?;
-        let bound_port = listener.local_addr()?.port();
-
-        let cancel = CancellationToken::new();
-        let cancel_for_service = cancel.child_token();
-
-        // `StreamableHttpServerConfig` is `#[non_exhaustive]`, so build
-        // a `Default` and mutate it rather than struct-literal.
-        let mut http_config = StreamableHttpServerConfig::default();
-        http_config.cancellation_token = cancel_for_service;
-        let state_for_factory = state.clone();
-        let service = StreamableHttpService::new(
-            move || Ok(QuillMcpHandler::new(state_for_factory.clone())),
-            Arc::new(LocalSessionManager::default()),
-            http_config,
-        );
-        let router = axum::Router::new().nest_service("/mcp", service);
-
-        let cancel_for_axum = cancel.clone();
-        let join = tauri::async_runtime::spawn(async move {
-            let _ = axum::serve(listener, router)
-                .with_graceful_shutdown(async move { cancel_for_axum.cancelled().await })
-                .await;
-        });
-        // ... store RunningServer { cancel, join, port: bound_port }
-        Ok(bound_port)
-    }
-
-    pub async fn stop(&self) { /* cancel.cancel(); join.await */ }
-}
-```
-
-The `QuillMcpHandler` implements `rmcp::handler::server::ServerHandler` and returns `ServerInfo::new(ServerCapabilities::builder().enable_tools().build())` from `get_info()`. Phase 1 leaves `tools/list` at the default (empty) impl; Phase 2 swaps in the registered tool list.
-
-### Step 1.3: Wire setup() boot
-
-**File: `src-tauri/src/lib.rs`**
-
-Inside `.setup(|app| { ... })`, before `app.manage(db)`:
-
-1. `let mcp_state = McpState::new(db.clone());` — grabs the `Db` clone for both the gating check and the per-session handler factory. **No `Arc<Db>` wrapper.**
-2. Read `mcp_enabled` directly from the `settings` table via `mcp_state.db.conn.lock()` (default `false` when missing). Phase 4 will add `mcp_port` lookup too; Phase 1 hardcodes `mcp::server::DEFAULT_PORT = 51983`.
-3. Construct `McpServer::new()`. `app.manage(server)` unconditionally so the `ExitRequested` teardown path is uniform and Phase 4 can call `start()` on the same instance without a restart.
-4. If `mcp_enabled` is true, call `server.start(state, DEFAULT_PORT)` via `tauri::async_runtime::block_on`; log bind errors with `log::error!` but do not fail setup.
-5. If `mcp_enabled` is false, `log::info!` a one-liner explaining the gate. No socket is bound.
-
-App exit hook: in `app.run(|_, event|)` match `RunEvent::ExitRequested` and call `server.stop().await` (block via `tauri::async_runtime::block_on`). `stop()` is a no-op if the server was never started, so the gating path is naturally safe.
-
-### Step 1.4: Verification (Phase 1)
-
-- `cargo build` compiles with the new deps.
-- `claude-code mcp add quill http://localhost:51983/mcp` connects, handshake OK.
-- Server stops cleanly on app exit (no orphaned port).
-- Bind failure surfaces a readable error (covered in Phase 4 UI).
-
----
-
-## Phase 2 — Read tools
-
-All read tools are pure SQLite queries that reuse the existing column shapes. Where a Tauri command already does the right SELECT, the MCP tool calls a shared helper extracted from that command. No new SQL invented; the MCP layer is a thin re-projection.
-
-### Tool surface
-
-| Tool | Args | Returns | Source |
-|------|------|---------|--------|
-| `list_books` | `filter?`, `search?` | `Vec<Book>` | books.rs:202 |
-| `get_book` | `book_id` | `Book` + progress | books.rs `get_book` |
-| `get_highlights` | `book_id` | `Vec<Highlight>` (incl. `text_content`) | bookmarks.rs:164 |
-| `get_bookmarks` | `book_id` | `Vec<Bookmark>` | bookmarks.rs:84 |
-| `get_vocab_words` | `book_id` | `Vec<VocabWord>` (incl. mastery, SRS) | vocab.rs `list_vocab_words` |
-| `get_vocab_stats` | — | aggregate counts by mastery | vocab.rs `get_vocab_stats` |
-| `get_translations` | `book_id?` | `Vec<Translation>` | translation.rs `list_translations` |
-| `get_collections` | — | `Vec<Collection>` + book counts | collections.rs `list_collections` |
-| `get_chat_history` | `book_id`, `chat_id?` | chats + messages | chats.rs |
-
-### Step 2.1: Extract shared query helpers
-
-For each existing Tauri command listed above, factor the SELECT logic into a `pub(crate) fn query_*(db: &Db, ...) -> AppResult<...>` in the same module. The Tauri command becomes a thin wrapper. The MCP tool calls the same helper.
-
-This avoids duplicating SQL, keeps the column shape canonical, and ensures schema migrations only touch one place.
-
-### Step 2.2: Implement tools
-
-rmcp 1.7 replaces the old `#[tool(tool_box)]` / `#[tool(param)]` shape with `#[tool_router]` + `Parameters<T>` argument structs. Each tool file under `src-tauri/src/mcp/tools/` adds an `impl QuillMcpHandler` block decorated with `#[tool_router(router = …, vis = pub(crate))]`, which the proc-macro expands into a `pub(crate) fn <router>() -> ToolRouter<Self>`. The handler then merges them into one router in `mcp/server.rs` (or `mcp/tools/mod.rs`). Parameters are plain `serde` + `schemars::JsonSchema` structs wrapped in `Parameters<T>`.
-
-Example sketch (highlights.rs):
-
-```rust
-use rmcp::tool_router;
-use rmcp::handler::server::wrapper::Parameters;
-use schemars::JsonSchema;
-use serde::Deserialize;
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct GetHighlightsArgs {
-    /// Book ID to fetch highlights for.
-    pub book_id: String,
-}
-
-#[tool_router(router = highlights_router, vis = pub(crate))]
 impl QuillMcpHandler {
-    #[tool(description = "List all highlights for a book, including the highlighted text content.")]
-    pub async fn get_highlights(
-        &self,
-        Parameters(GetHighlightsArgs { book_id }): Parameters<GetHighlightsArgs>,
-    ) -> Result<CallToolResult, McpError> {
-        let highlights = bookmarks::query_highlights(&self.state.db, &book_id)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
-        Ok(CallToolResult::success(vec![Content::json(&highlights)?]))
-    }
-}
-```
+    pub(crate) fn new(state: McpState) -> Self { Self { state } }
 
-Aggregation (in `mcp/tools/mod.rs` or alongside `QuillMcpHandler`):
-
-```rust
-impl QuillMcpHandler {
-    pub fn tool_router() -> ToolRouter<Self> {
+    pub(crate) fn tool_router() -> ToolRouter<Self> {
         let mut r = ToolRouter::new();
         r.merge(Self::library_router());
         r.merge(Self::highlights_router());
@@ -268,117 +128,220 @@ impl QuillMcpHandler {
 
 #[tool_handler]
 impl ServerHandler for QuillMcpHandler {
-    fn get_info(&self) -> ServerInfo { /* existing — keep `enable_tools()` */ }
+    fn get_info(&self) -> ServerInfo { /* enable_tools(), instructions, etc. */ }
+}
+
+pub(crate) async fn serve_stdio(state: McpState) -> Result<(), Box<dyn std::error::Error>> {
+    let handler = QuillMcpHandler::new(state);
+    let server = handler.serve(rmcp::transport::io::stdio()).await?;
+    let _quit = server.waiting().await?;
+    Ok(())
 }
 ```
 
-`#[tool_handler]` generates `call_tool` / `list_tools` against `Self::tool_router()`. The hand-written `get_info` stays as-is — only `tools_*` are derived.
+`#[tool_handler]` generates `call_tool` / `list_tools` against `Self::tool_router()`. The hand-written `get_info` stays as-is.
 
-### Step 2.3: Forbidden tables — enforce via review, not code
+### Step 1.5: Binary entry point
 
-There is no SQL-level enforcement; the `Db` connection sees everything. Instead, the impl plan reviewer (and PR review) checks the tool registry contains **only** the tools listed above. Add a comment block at the top of `mcp/tools/mod.rs` listing the forbidden surfaces:
+**File: `src-tauri/src/main.rs`** — dispatch on `argv[1]`:
 
 ```rust
-//! Forbidden surfaces — DO NOT ADD TOOLS THAT TOUCH:
-//! - settings (commands::settings::get_all_settings leaks ai_api_key, see settings.rs:18-20)
-//! - oauth   (commands::oauth::*)
-//! - secrets store (separate Mutex<Connection>; not reachable via Db, but DO NOT add a Secrets clone to McpState)
-//! - sync infra (_replay_state, _tombstones, _pending_publish — migrations 010/011)
-//! - device identity, sync logs
-//!
-//! If a future tool needs partial settings exposure, filter via
-//! Secrets::SENSITIVE_KEYS at secrets.rs:15-21.
+fn main() {
+    let mut args = std::env::args();
+    let _exe = args.next();
+    if args.next().as_deref() == Some("mcp") {
+        quill_lib::mcp_stdio_main();
+        return;
+    }
+    quill_lib::run()
+}
 ```
+
+**File: `src-tauri/src/lib.rs`** — add `pub fn mcp_stdio_main()` that:
+1. Calls `resolve_app_data_dir()` (new helper, mirrors `resolve_log_dir`'s platform handling but returns Application Support / APPDATA / XDG_DATA_HOME).
+2. Asserts `quill.db` exists; eprintln + exit(1) with a "launch the app first" hint if not.
+3. Opens the DB via `Db::open_readonly`.
+4. Constructs `McpState`.
+5. Builds a current-thread tokio runtime and `block_on(mcp::server::serve_stdio(state))`.
+
+Also rip out the previous in-process MCP server boot (`mcp_enabled` gating + `app.manage(mcp_server)` + `RunEvent::ExitRequested` teardown). The Tauri app no longer hosts MCP.
+
+### Step 1.6: Verification (Phase 1)
+
+- `cargo build` produces a single `target/debug/quill` binary.
+- Smoke: pipe `initialize` + `notifications/initialized` + `tools/list` JSON-RPC lines into `target/debug/quill mcp`; expect a populated `tools` array + correct `serverInfo`.
+- `quill mcp` exits cleanly when stdin closes.
+
+---
+
+## Phase 2 — Read tools
+
+All read tools are pure SQLite queries that reuse the existing column shapes. Each Tauri command exposes a `pub(crate) fn query_*(db: &Db, ...) -> AppResult<...>` helper; the Tauri command becomes a thin wrapper and the MCP tool calls the same helper. No new SQL invented.
+
+### Tool surface
+
+| Tool | Args | Returns | Source |
+|------|------|---------|--------|
+| `list_books` | `filter?`, `search?` | `Vec<Book>` (relative paths) | books.rs `query_books` |
+| `get_book` | `book_id` | `Book` + progress (relative paths) | books.rs `query_book` |
+| `get_highlights` | `book_id` | `Vec<Highlight>` (incl. `text_content`) | bookmarks.rs `query_highlights` |
+| `get_bookmarks` | `book_id` | `Vec<Bookmark>` | bookmarks.rs `query_bookmarks` |
+| `get_vocab_words` | `book_id` | `Vec<VocabWord>` (incl. mastery, SRS) | vocab.rs `query_vocab_words` |
+| `get_vocab_stats` | — | aggregate counts by mastery | vocab.rs `query_vocab_stats` |
+| `get_translations` | `book_id?` | `Vec<Translation>` | translation.rs `query_translations` |
+| `get_collections` | — | `Vec<Collection>` + book counts | collections.rs `query_collections` |
+| `get_chat_history` | `book_id`, `chat_id?` | chats + messages | chats.rs `query_chats` + `query_chat_messages` |
+
+### Step 2.1: Extract shared query helpers
+
+For each command listed above, factor the SELECT logic into a `pub(crate) fn query_*(db: &Db, ...) -> AppResult<...>` in the same module. The Tauri command becomes a thin wrapper. The MCP tool calls the same helper.
+
+For `query_books` / `query_book`: return the **relative** file path (`books/<slug>.epub`) — the Tauri wrapper resolves to absolute via `resolve_book_paths`, but MCP responses keep paths relative so they don't leak the user's home directory layout.
+
+### Step 2.2: Implement tools
+
+rmcp 1.7's pattern is `#[tool_router]` impl blocks + `Parameters<T>` argument structs (NOT the older `#[tool(tool_box)]` / `#[tool(param)]` shape). Each `mcp/tools/<file>.rs` adds an `impl QuillMcpHandler` block decorated with `#[tool_router(router = …, vis = "pub(crate)")]`; the proc-macro emits a `pub(crate) fn <name>_router() -> ToolRouter<Self>`. The aggregator in `mcp/server.rs::tool_router` merges them.
+
+Example (highlights.rs):
+
+```rust
+use rmcp::ErrorData;
+use rmcp::handler::server::wrapper::Parameters;
+use rmcp::model::{CallToolResult, Content};
+use rmcp::{tool, tool_router};
+use schemars::JsonSchema;
+use serde::Deserialize;
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetHighlightsArgs {
+    /// Book ID to fetch highlights for.
+    pub book_id: String,
+}
+
+#[tool_router(router = highlights_router, vis = "pub(crate)")]
+impl QuillMcpHandler {
+    #[tool(description = "List all highlights for a book, including the highlighted text content.")]
+    pub async fn get_highlights(
+        &self,
+        Parameters(GetHighlightsArgs { book_id }): Parameters<GetHighlightsArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let highlights = bookmarks::query_highlights(&self.state.db, &book_id)
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+        Ok(CallToolResult::success(vec![Content::json(&highlights)?]))
+    }
+}
+```
+
+**Important:** `vis` is parsed by darling and requires a string literal (`vis = "pub(crate)"`), not a bare visibility (`vis = pub(crate)` fails to parse).
+
+### Step 2.3: Forbidden surfaces — enforce via review, not code
+
+There is no SQL-level enforcement; the `Db` connection sees everything. Instead, `mcp/tools/mod.rs` carries a comment block listing the forbidden surfaces (settings, oauth, secrets store, sync infra tables, device identity, sync logs). PR review verifies the tool registry contains only the tools listed in the table above.
 
 ### Step 2.4: Verification (Phase 2)
 
-- Connect via Claude Code or `npx @modelcontextprotocol/inspector http://127.0.0.1:51983/mcp`: `list_books` returns the library.
-- `get_highlights(book_id)` returns rows with `text_content` populated.
-- `get_vocab_stats()` returns the same shape as the existing Tauri command.
+- Smoke via `printf … | target/debug/quill mcp` (or `npx @modelcontextprotocol/inspector --command /path/to/quill --args mcp`):
+  - `tools/list` returns all 9 tools.
+  - `get_highlights(book_id)` returns rows with `text_content` populated.
+  - `get_vocab_stats()` returns the same shape as the existing Tauri command.
+  - `list_books` paths are **relative** (`books/<slug>.epub`).
 - Tool registry diff against the table above is empty — no extra tools snuck in.
 
 ---
 
 ## Phase 3 — Settings UI
 
-v1 ships the minimum surface needed for the user to opt in: an enable toggle, a port input, the connection URL with a copy button, and the localhost-trust caveat. No write-tool toggles (those land with the write tools themselves in v1.1).
+Lives under the **AI Assistant** section of the existing Settings modal (NOT a standalone top-level tab). The MCP UI is a section among AI provider/model controls.
 
-### Step 3.1: Settings rows
+Pattern follows tools that "auto-register Quill with each AI client": for each supported client (Claude Code, Codex), a toggle writes/removes the Quill entry in that client's MCP config file. A "Copy MCP config" escape hatch produces a JSON snippet for clients we don't natively support.
 
-**File: `src/components/settings/McpSettings.tsx`** (new)
+### Step 3.1: Settings rows (within AI Assistant section)
 
-Follow the 73px-tall row pattern from `GeneralSettings.tsx` (1px `black/10` dividers, `flex justify-between`).
+**File: `src/components/settings/AiAssistantSettings.tsx`** (existing or new) — append a section titled "MCP Integrations" with:
 
-Rows, in order:
+1. **Section header** "MCP Integrations" + short subtitle: "Let AI clients read your library — books, highlights, bookmarks, vocab, translations, and chat history. Read-only."
+2. **Per-client toggle rows**, identical row shape to the General settings rows:
+   - **Claude Code CLI** — toggle. On = write entry to `~/.claude.json` (user-scoped) or project-scoped `.mcp.json` (decide per-platform). Subtext: "Auto-register Quill with Claude Code."
+   - **Codex CLI** — toggle. Subtext: "Auto-register Quill with Codex."
+3. **Custom MCP Server Configuration** subsection (collapsed-by-default):
+   - Description: "For any MCP client we don't ship a direct integration for. Paste this JSON snippet into the client's MCP config."
+   - "Copy MCP config" button — copies the JSON snippet (see §3.3).
+4. **Localhost-trust caveat** — full-width muted text block at the bottom of the section:
+   > Quill's MCP server runs as a local subprocess on this Mac. Any AI client running under your account can launch it and read your library. Don't enable MCP integrations on a shared machine without trusting every signed-in user.
 
-1. **Enable MCP server** — `Toggle`. Saves to `mcp_enabled`. Toggling off calls `stop_mcp_server`; on calls `start_mcp_server` and reads back the bound port.
-2. **Port** — `Input` (numeric, default `51983`). Saves to `mcp_port` on blur. Restart server on change.
-3. **Connection URL** — readonly text + copy button. Renders `http://localhost:{actual_bound_port}/mcp`. Shows `mcp_last_error` if non-empty.
-4. **Localhost-trust caveat** — copy block:
-   > Quill's MCP server only listens on `localhost` (`127.0.0.1`). Any program running on this Mac under your account can connect to it without authentication. Quill is designed for single-user, single-machine use; do not enable MCP on a shared machine without trusting every signed-in user.
-   Use `text-text-muted text-[12px] leading-5` and indent under the URL row.
-
-### Step 3.2: Settings backend commands
+### Step 3.2: Backend Tauri commands
 
 **File: `src-tauri/src/commands/mcp.rs`** (new)
 
 ```rust
 #[tauri::command]
-pub async fn mcp_start(server: State<'_, McpServer>, ...) -> AppResult<u16>;
+pub fn mcp_integration_status() -> AppResult<McpIntegrationStatus>;
+//   McpIntegrationStatus { claude_code: bool, codex: bool, binary_path: String }
 
 #[tauri::command]
-pub async fn mcp_stop(server: State<'_, McpServer>) -> AppResult<()>;
+pub fn mcp_set_integration(client: String, enabled: bool) -> AppResult<()>;
+//   client ∈ {"claude_code", "codex"}; writes/removes the Quill entry
 
 #[tauri::command]
-pub async fn mcp_status(server: State<'_, McpServer>) -> AppResult<McpStatus>;
-//   McpStatus { running: bool, port: Option<u16>, last_error: Option<String> }
+pub fn mcp_config_snippet() -> AppResult<String>;
+//   Returns the JSON snippet for manual config (used by Copy button)
 ```
 
-`mcp_start` reads the current `mcp_port` from settings (default 51983) and calls `server.start(state, port)`. On change of port via settings, the frontend issues `mcp_stop` + `mcp_start` rather than a dedicated `restart` — keeps the backend surface minimal.
+`binary_path` resolves via `std::env::current_exe()` so the registered command always points to *this build* of the Quill binary. On macOS that resolves to `<Quill.app>/Contents/MacOS/Quill` in a packaged install or `target/debug/quill` in dev.
 
-The startup-gate in `lib.rs::setup()` already reads `mcp_enabled`; nothing changes there. The new commands just give the settings UI a runtime hook.
+Config-file paths per client (resolved at write-time, created if absent, never destructive merge):
+- **Claude Code:** `~/.claude.json` — read existing JSON, set `mcpServers.quill = {"command": <binary_path>, "args": ["mcp"]}`, write back. Removing reverses (delete the key if present).
+- **Codex:** `~/.codex/config.toml` (TOML format; needs the `toml` crate) — set `[mcp_servers.quill] command = …, args = ["mcp"]`.
 
-### Step 3.3: i18n keys
+### Step 3.3: MCP config snippet
+
+```json
+{
+  "mcpServers": {
+    "quill": {
+      "command": "/path/to/Quill.app/Contents/MacOS/Quill",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+The exact path is `current_exe()` at runtime. The snippet is what `mcp_config_snippet()` returns.
+
+### Step 3.4: i18n keys
 
 **Files:** `src/i18n/en.json`, `src/i18n/zh.json`
 
-Add `settings.mcp.*` keys for: title, enable, port, url, copy, copied, localhostCaveat (multi-line), bindError, restartHint.
-
-### Step 3.4: Wire into settings modal
-
-**File: `src/components/settings/SettingsModal.tsx`** (or wherever tab list lives) — add an "MCP" tab in a natural slot in the existing list. Tab icon: `Plug` from lucide-react.
+Add `settings.ai.mcp.*` keys for: header, subtitle, claudeCodeLabel, claudeCodeSubtext, codexLabel, codexSubtext, customHeader, customSubtitle, copyConfig, copied, localhostCaveat.
 
 ### Step 3.5: Verification (Phase 3)
 
-- Toggle on/off → server starts/stops; `lsof -iTCP:51983 -sTCP:LISTEN` confirms.
-- Change port → server restarts on the new port; URL row reflects the actual bound port.
-- Bind to a port already in use → toggle stays off, error message appears below URL row, no crash.
-- Copy button copies the URL.
-- Localhost caveat is visible and reads cleanly in both EN and ZH.
-- Setting persists across app restarts: enable, quit, relaunch, observe server bound to the same port automatically.
+- Toggle Claude Code on → `~/.claude.json` gains `mcpServers.quill` entry pointing at the current binary; toggle off → entry removed; other clients in that file are untouched.
+- Toggle Codex on → `~/.codex/config.toml` gains `[mcp_servers.quill]`; toggle off removes it.
+- Copy MCP config button copies a valid snippet to the clipboard.
+- Launch Claude Code after enabling the integration → `claude mcp list` shows `quill`; `claude mcp` session can invoke `list_books`.
+- Disable each client → its config no longer has the entry; the file isn't corrupted.
 
 ---
 
 ## Figma design prompt
 
-> **MCP Settings tab** — a single settings tab inside the existing Quill settings modal. Same shell, same 73px-tall row pattern, same 1px `black/10` dividers as the General tab.
+> **AI Assistant settings tab** — extend the existing AI Assistant settings panel with an "MCP Integrations" section at the bottom. Same shell, same 73px-tall row pattern, same 1px `black/10` dividers as the General tab.
 >
-> **Structure (top to bottom):**
-> 1. **Header row** — "MCP Server" title + a small "Beta" pill on the right.
-> 2. **Enable row** — label "Enable MCP server", subtext "Lets MCP-compatible AI clients (Claude Code, Claude Desktop, Codex, Cursor) read your library — books, highlights, bookmarks, vocab, translations, and chat history.", `Toggle` on the right.
-> 3. **Port row** — label "Port", numeric `Input` on the right (max width ~140px), default value `51983`. Subtext: "Local port for the MCP server. Default: 51983."
-> 4. **Connection URL row** — label "Connection URL" + readonly text showing `http://localhost:51983/mcp` + small `Copy` button. When copied, button briefly shows `Check` + "Copied". On bind error, replace the URL line with red error text and a `RotateCw` retry button.
-> 5. **Localhost-trust caveat** — full-width muted text block (`text-text-muted text-[12px] leading-5`), indented to align with the URL field. Reads: "Quill's MCP server only listens on `localhost` (`127.0.0.1`). Any program running on this Mac under your account can connect to it without authentication. Quill is designed for single-user, single-machine use; do not enable MCP on a shared machine without trusting every signed-in user." A small `ShieldAlert` icon in the gutter on the left.
+> **MCP Integrations section structure (top to bottom):**
+> 1. **Section header** — "MCP Integrations" title + a `Plug` icon on the left in the gutter. Small "Beta" pill on the right.
+> 2. **Subtitle** — "Let AI clients read your library — books, highlights, bookmarks, vocab, translations, and chat history. Read-only."
+> 3. **Claude Code CLI row** — label "Claude Code CLI", subtext "Auto-register Quill with Claude Code.", `Toggle` on the right.
+> 4. **Codex CLI row** — label "Codex CLI", subtext "Auto-register Quill with Codex.", `Toggle` on the right.
+> 5. **Custom MCP Server subsection** — collapsible. Header "Custom MCP Server Configuration" + "Copy MCP config" button on the right. Expanded body has a short paragraph + a syntax-highlighted JSON snippet preview.
+> 6. **Localhost-trust caveat** — full-width muted text block (`text-text-muted text-[12px] leading-5`), `ShieldAlert` icon in the gutter on the left.
 >
 > **States:**
-> - Server off (rows 2–5 visible but the URL row is muted / shows "Server disabled").
-> - Server on, healthy (URL row populated, copy button enabled).
-> - Server on, bind error (URL row replaced with red error + retry).
-> - Restart in flight (URL row shows a thin progress bar across its bottom edge for ~500ms).
+> - Each integration toggle independently on/off; visual state matches.
+> - Config-write error (rare): toggle reverts + inline red error message ("Couldn't update ~/.claude.json — check file permissions.").
+> - Custom section collapsed by default; expand shows the JSON.
 >
-> **Theme:** follows app theme variables. `bg-bg-surface`, `text-text-primary`, `text-text-muted`. Caveat block uses `bg-bg-muted/40` to softly differentiate from the toggle/input rows above.
->
-> **Tab icon:** `Plug` from lucide-react.
+> **Theme:** follows app theme variables. `bg-bg-surface`, `text-text-primary`, `text-text-muted`. Caveat block uses `bg-bg-muted/40` to softly differentiate.
 
 ---
 
@@ -386,49 +349,54 @@ Add `settings.mcp.*` keys for: title, enable, port, url, copy, copied, localhost
 
 | File | Change |
 |------|--------|
-| `src-tauri/Cargo.toml` | Add `rmcp = "1.7"` (server + transport-streamable-http-server), `axum = "0.8"`, `tokio-util = "0.7"`, `schemars = "1"`; add `time` to `tokio` features |
-| `src-tauri/src/mcp/mod.rs` | New: module facade |
-| `src-tauri/src/mcp/state.rs` | New: `McpState` (Db clone) |
-| `src-tauri/src/mcp/server.rs` | New: `McpServer` lifecycle + `QuillMcpHandler` + tool_router aggregator |
-| `src-tauri/src/mcp/tools/mod.rs` | New: tool registry + forbidden-surface audit comment |
-| `src-tauri/src/mcp/tools/library.rs` | New: list_books, get_book, get_collections |
-| `src-tauri/src/mcp/tools/highlights.rs` | New: get_highlights |
-| `src-tauri/src/mcp/tools/bookmarks.rs` | New: get_bookmarks |
-| `src-tauri/src/mcp/tools/vocab.rs` | New: get_vocab_words, get_vocab_stats |
-| `src-tauri/src/mcp/tools/translations.rs` | New: get_translations |
-| `src-tauri/src/mcp/tools/chats.rs` | New: get_chat_history |
-| `src-tauri/src/commands/mcp.rs` | New: mcp_start / mcp_stop / mcp_status |
-| `src-tauri/src/commands/mod.rs` | Register `mcp` module |
-| `src-tauri/src/commands/bookmarks.rs` | Extract `query_highlights`, `query_bookmarks` helpers |
-| `src-tauri/src/commands/books.rs` | Extract `query_books`, `query_book` helpers (relative paths; Tauri wrapper resolves to absolute) |
-| `src-tauri/src/commands/vocab.rs` | Extract `query_vocab_words`, `query_vocab_stats` helpers |
-| `src-tauri/src/commands/translation.rs` | Extract `query_translations` helper |
-| `src-tauri/src/commands/chats.rs` | Extract `query_chats`, `query_chat_messages` helpers |
-| `src-tauri/src/commands/collections.rs` | Extract `query_collections` helper |
-| `src-tauri/src/lib.rs` | Boot `McpServer` in `setup()` gated on `mcp_enabled`; register MCP commands; stop server on `RunEvent::ExitRequested` |
-| `src/components/settings/McpSettings.tsx` | New: settings tab |
-| `src/components/settings/SettingsModal.tsx` | Register MCP tab |
-| `src/i18n/en.json` | Add `settings.mcp.*` keys |
-| `src/i18n/zh.json` | Add `settings.mcp.*` keys (Chinese) |
+| `src-tauri/Cargo.toml` | Add `rmcp = "1.7"` (server + transport-io), `schemars = "1"`. (No axum/tokio-util needed for stdio.) |
+| `src-tauri/src/db.rs` | Switch `journal_mode=DELETE` → `WAL` (3 sites). Add `Db::open_readonly(db_path)` for the stdio subprocess. |
+| `src-tauri/src/mcp/mod.rs` | New: module facade — re-exports `McpState`. |
+| `src-tauri/src/mcp/state.rs` | New: `McpState` (Db clone). |
+| `src-tauri/src/mcp/server.rs` | New: `QuillMcpHandler` + `tool_router` aggregator + `#[tool_handler]` ServerHandler impl + `serve_stdio` helper. |
+| `src-tauri/src/mcp/tools/mod.rs` | New: forbidden-surface audit comment + submodule declarations. |
+| `src-tauri/src/mcp/tools/library.rs` | New: list_books, get_book, get_collections. |
+| `src-tauri/src/mcp/tools/highlights.rs` | New: get_highlights. |
+| `src-tauri/src/mcp/tools/bookmarks.rs` | New: get_bookmarks. |
+| `src-tauri/src/mcp/tools/vocab.rs` | New: get_vocab_words, get_vocab_stats. |
+| `src-tauri/src/mcp/tools/translations.rs` | New: get_translations. |
+| `src-tauri/src/mcp/tools/chats.rs` | New: get_chat_history. |
+| `src-tauri/src/commands/mcp.rs` | New: mcp_integration_status / mcp_set_integration / mcp_config_snippet. |
+| `src-tauri/src/commands/mod.rs` | Register `mcp` module. |
+| `src-tauri/src/commands/bookmarks.rs` | Extract `query_highlights`, `query_bookmarks` helpers. |
+| `src-tauri/src/commands/books.rs` | Extract `query_books`, `query_book` helpers (relative paths). |
+| `src-tauri/src/commands/vocab.rs` | Extract `query_vocab_words`, `query_vocab_stats` helpers. |
+| `src-tauri/src/commands/translation.rs` | Extract `query_translations` helper. |
+| `src-tauri/src/commands/chats.rs` | Extract `query_chats`, `query_chat_messages` helpers. |
+| `src-tauri/src/commands/collections.rs` | Extract `query_collections` helper. |
+| `src-tauri/src/main.rs` | Dispatch `argv[1] == "mcp"` → `quill_lib::mcp_stdio_main()`. |
+| `src-tauri/src/lib.rs` | Add `resolve_app_data_dir` + `mcp_stdio_main`. Remove the old in-process MCP server boot + `ExitRequested` teardown. Register the new MCP Tauri commands. |
+| `src/components/settings/AiAssistantSettings.tsx` | Extend with the MCP Integrations section. |
+| `src/i18n/en.json` | Add `settings.ai.mcp.*` keys. |
+| `src/i18n/zh.json` | Add `settings.ai.mcp.*` keys (Chinese). |
 
 ---
 
 ## Verification (full)
 
-1. `cargo check` and `cargo clippy --all-targets -- -D warnings` — clean with the new deps (rmcp 1.7, axum 0.8, tokio-util, schemars, tokio `time` feature).
-2. `cargo test --workspace` — passes; the existing schema-version tests stay at 12 (no migration added in v1).
-3. Integration via MCP inspector (`npx @modelcontextprotocol/inspector http://127.0.0.1:51983/mcp`) after enabling MCP in settings:
-   - All 7 read tools listed (`list_books`, `get_book`, `get_collections`, `get_highlights`, `get_bookmarks`, `get_vocab_words`, `get_vocab_stats`, `get_translations`, `get_chat_history`).
-   - Each returns the expected JSON shape against a seeded library.
-   - File paths in `list_books` / `get_book` responses are **relative** (`books/<slug>.epub`), not absolute.
-4. Lifecycle:
-   - Toggle off → port no longer listening (`lsof -iTCP:51983 -sTCP:LISTEN`).
-   - Toggle on → bound port matches the configured `mcp_port`.
-   - Port change → old port released, new port bound (frontend issues stop+start).
-   - Bind to port-in-use → settings UI surfaces error, server stays off, no crash.
-   - App exit → port released cleanly (no orphan).
-5. Persistence: enable → quit → relaunch → server bound automatically.
-6. Security:
-   - `netstat -an | grep 51983` shows the listening socket bound to `127.0.0.1` only, never `0.0.0.0`.
-   - Tool registry diff against the Phase 2 table is empty (no settings/oauth/sync-infra surfaces snuck in — see `mcp/tools/mod.rs`).
+1. `cargo check` and `cargo clippy --all-targets -- -D warnings` — clean.
+2. `cargo test --workspace` — passes; schema-version assertions stay at 12 (no migration added in v1).
+3. `target/debug/quill mcp` smoke test:
+   - `initialize` returns serverInfo + `capabilities.tools`.
+   - `tools/list` returns all 9 tools with populated schemas.
+   - `tools/call` for `get_collections` (no args) returns the library's collections.
+   - `tools/call` for `list_books` returns books with **relative** paths.
+   - Exits cleanly when stdin closes.
+4. Settings UI:
+   - Toggling Claude Code writes `~/.claude.json::mcpServers.quill` with `command = current_exe()`, `args = ["mcp"]`. Other entries in the file are preserved.
+   - Toggling Codex writes/removes `~/.codex/config.toml::[mcp_servers.quill]`.
+   - Copy MCP config produces a valid JSON snippet matching the same shape.
+5. End-to-end with Claude Code:
+   - Enable in Quill settings → `claude mcp list` shows `quill` → invoke `list_books` from a Claude session → receives the library.
+6. Concurrency:
+   - Tauri app running + `quill mcp` subprocess running simultaneously: subprocess reads succeed, app writes succeed (WAL allows both).
+   - Forcibly killing the subprocess does NOT corrupt the WAL or block the Tauri app.
+7. Security:
+   - Subprocess refuses to mutate the DB (read-only flag).
    - `get_all_settings` style endpoints are NOT exposed; `Secrets` clone is NOT in `McpState`.
+   - Tool registry diff against the Phase 2 table is empty (no settings/oauth/sync-infra surfaces snuck in — see `mcp/tools/mod.rs`).

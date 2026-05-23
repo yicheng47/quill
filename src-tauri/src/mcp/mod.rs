@@ -1,17 +1,14 @@
 //! Model Context Protocol server for Quill.
 //!
-//! Phase 1 stands up the server lifecycle and the MCP handshake on a
-//! Streamable HTTP transport bound to `127.0.0.1`. No tools are
-//! registered yet — that arrives in Phase 2. See
-//! `docs/impls/30-mcp-server.md`.
+//! Driven over **stdio**: AI clients (Claude Code, Codex) spawn
+//! `quill mcp` as a subprocess and exchange MCP messages on
+//! stdin/stdout. The Tauri app does NOT host an MCP server in-process.
+//! Both the app and the stdio subprocess open the same SQLite file
+//! concurrently — safe because the DB runs in WAL mode and the stdio
+//! side opens read-only. See `docs/impls/30-mcp-server.md`.
 
 pub mod server;
 pub mod state;
 pub mod tools;
 
-pub use server::McpServer;
-// `McpServerError` is re-exported from `server::` for Phase 2 callers
-// (settings UI bridge) but unused inside this crate today.
-#[allow(unused_imports)]
-pub use server::McpServerError;
 pub use state::McpState;
