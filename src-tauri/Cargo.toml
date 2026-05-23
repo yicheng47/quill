@@ -37,8 +37,9 @@ reqwest = { version = "0.12", features = ["json", "stream"] }
 tokio = { version = "1", features = ["sync", "macros", "rt-multi-thread", "net", "io-util", "time"] }
 tokio-util = "0.7"
 futures = "0.3"
-rmcp = { version = "1.5", features = ["server", "transport-streamable-http-server"] }
+rmcp = { version = "1.7", features = ["server", "transport-streamable-http-server"] }
 axum = "0.8"
+schemars = "1"
 sha2 = "0.10"
 base64 = "0.22"
 rand = "0.8"

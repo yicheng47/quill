@@ -17,8 +17,7 @@ pub struct Collection {
     pub updated_at: i64,
 }
 
-#[tauri::command]
-pub fn list_collections(db: State<'_, Db>) -> AppResult<Vec<Collection>> {
+pub(crate) fn query_collections(db: &Db) -> AppResult<Vec<Collection>> {
     let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
     let mut stmt = conn.prepare(
         "SELECT c.id, c.name, c.created_at, c.updated_at, c.sort_order, COUNT(cb.book_id) as book_count
@@ -40,6 +39,11 @@ pub fn list_collections(db: State<'_, Db>) -> AppResult<Vec<Collection>> {
         })?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(collections)
+}
+
+#[tauri::command]
+pub fn list_collections(db: State<'_, Db>) -> AppResult<Vec<Collection>> {
+    query_collections(&db)
 }
 
 #[tauri::command]

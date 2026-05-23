@@ -489,12 +489,33 @@ pub fn run() {
             // shutdown.
             app.manage(SyncState::new(replay_engine, watcher_handle));
 
-            // MCP server (Phase 1 — handshake only, no tools). Boot on
-            // the default port; settings UI gating arrives in Phase 4.
-            // Bind failure is logged but does not fail `setup()`; the
-            // rest of the app is fully usable without MCP.
+            // MCP server (Phase 1 — handshake only, no tools). Gated on
+            // the `mcp_enabled` setting, default false: the server must
+            // not bind a listening socket unless the user has explicitly
+            // opted in. Phase 4 adds the settings UI + start/stop
+            // commands; for now, flip it manually with
+            //   INSERT OR REPLACE INTO settings(key,value) VALUES ('mcp_enabled','true');
+            // We still `app.manage(mcp_server)` either way so the
+            // ExitRequested teardown path is uniform and Phase 4 can
+            // call `start()` on the same instance without a restart.
+            let mcp_enabled = {
+                let conn = mcp_state
+                    .db
+                    .conn
+                    .lock()
+                    .expect("mcp_enabled: settings lock poisoned");
+                conn.query_row(
+                    "SELECT value FROM settings WHERE key = ?1",
+                    rusqlite::params!["mcp_enabled"],
+                    |row| row.get::<_, String>(0),
+                )
+                .ok()
+                .map(|v| v == "true")
+                .unwrap_or(false)
+            };
+
             let mcp_server = McpServer::new();
-            {
+            if mcp_enabled {
                 let mcp_server_for_boot = &mcp_server;
                 let state_for_boot = mcp_state.clone();
                 tauri::async_runtime::block_on(async move {
@@ -503,13 +524,19 @@ pub fn run() {
                         .await
                     {
                         Ok(port) => {
-                            eprintln!("mcp: server listening on http://127.0.0.1:{port}/mcp");
+                            log::info!(
+                                "mcp: server listening on http://127.0.0.1:{port}/mcp"
+                            );
                         }
                         Err(e) => {
-                            eprintln!("mcp: failed to start server: {e}");
+                            log::error!("mcp: failed to start server: {e}");
                         }
                     }
                 });
+            } else {
+                log::info!(
+                    "mcp: disabled (opt-in via `mcp_enabled` setting; UI lands in Phase 4)"
+                );
             }
             app.manage(mcp_server);
 

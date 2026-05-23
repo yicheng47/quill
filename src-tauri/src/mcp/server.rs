@@ -2,7 +2,9 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 
 use rmcp::handler::server::ServerHandler;
+use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::model::{Implementation, ProtocolVersion, ServerCapabilities, ServerInfo};
+use rmcp::tool_handler;
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
 use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService};
 use tauri::async_runtime::JoinHandle;
@@ -155,23 +157,43 @@ impl Default for McpServer {
     }
 }
 
-/// Phase 1 MCP server handler: completes the handshake, advertises the
-/// `tools` capability so clients know future tool calls are coming, and
-/// returns an empty list for `tools/list` and every other request.
-///
-/// The actual tool wiring lands in Phase 2 (`mcp/tools/*`).
+/// MCP server handler shared by every session. Carries the
+/// cheap-clone `McpState` so each session can read its `Db` (and, in
+/// Phase 3, `SyncWriter` + write-tool toggles). Tool methods live in
+/// `mcp/tools/*.rs` via `#[tool_router]` impl blocks; this file owns
+/// only the struct definition, the aggregator, and the `ServerHandler`
+/// trait impl.
 #[derive(Clone)]
-#[allow(dead_code)]
-struct QuillMcpHandler {
-    state: McpState,
+pub(crate) struct QuillMcpHandler {
+    pub(crate) state: McpState,
 }
 
 impl QuillMcpHandler {
-    fn new(state: McpState) -> Self {
+    pub(crate) fn new(state: McpState) -> Self {
         Self { state }
+    }
+
+    /// Aggregator merging every per-file router into one. The
+    /// `#[tool_handler]` macro on the `ServerHandler` impl below invokes
+    /// this on every `call_tool` / `list_tools`, so keep it cheap —
+    /// only fixed `with_route` inserts, no I/O.
+    ///
+    /// New tool files must add a `r.merge(Self::<name>_router());` line
+    /// here AND register themselves in the `tools/mod.rs` forbidden-
+    /// surfaces audit comment.
+    pub(crate) fn tool_router() -> ToolRouter<Self> {
+        let mut r = ToolRouter::new();
+        r.merge(Self::library_router());
+        r.merge(Self::highlights_router());
+        r.merge(Self::bookmarks_router());
+        r.merge(Self::vocab_router());
+        r.merge(Self::translations_router());
+        r.merge(Self::chats_router());
+        r
     }
 }
 
+#[tool_handler]
 impl ServerHandler for QuillMcpHandler {
     fn get_info(&self) -> ServerInfo {
         // `ServerInfo` and `Implementation` are both `#[non_exhaustive]`.
@@ -184,7 +206,10 @@ impl ServerHandler for QuillMcpHandler {
             .with_protocol_version(ProtocolVersion::LATEST)
             .with_server_info(implementation)
             .with_instructions(
-                "Quill MCP server. Phase 1: handshake only — no tools yet.",
+                "Quill MCP server. Read-only access to the local library, \
+                 highlights, bookmarks, vocabulary, translations, and the \
+                 current reading-state row. Write tools land in Phase 3 \
+                 behind opt-in per-tool toggles.",
             )
     }
 }

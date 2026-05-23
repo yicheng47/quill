@@ -80,8 +80,10 @@ pub fn remove_bookmark(
     })
 }
 
-#[tauri::command]
-pub fn list_bookmarks(book_id: String, db: State<'_, Db>) -> AppResult<Vec<Bookmark>> {
+/// Shared query helper. Same shape as `list_bookmarks` — both the Tauri
+/// command and the MCP `get_bookmarks` tool call this so the column
+/// list lives in exactly one place.
+pub(crate) fn query_bookmarks(db: &Db, book_id: &str) -> AppResult<Vec<Bookmark>> {
     let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
     let mut stmt = conn.prepare(
         "SELECT id, book_id, cfi, label, created_at, updated_at FROM bookmarks WHERE book_id = ?1 ORDER BY created_at DESC",
@@ -99,6 +101,11 @@ pub fn list_bookmarks(book_id: String, db: State<'_, Db>) -> AppResult<Vec<Bookm
         })?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(bookmarks)
+}
+
+#[tauri::command]
+pub fn list_bookmarks(book_id: String, db: State<'_, Db>) -> AppResult<Vec<Bookmark>> {
+    query_bookmarks(&db, &book_id)
 }
 
 #[tauri::command]
@@ -163,8 +170,9 @@ pub fn remove_highlight(
     })
 }
 
-#[tauri::command]
-pub fn list_highlights(book_id: String, db: State<'_, Db>) -> AppResult<Vec<Highlight>> {
+/// Shared query helper. Mirror of `list_highlights` for the MCP
+/// `get_highlights` tool — keeps the column list canonical.
+pub(crate) fn query_highlights(db: &Db, book_id: &str) -> AppResult<Vec<Highlight>> {
     let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
     let mut stmt = conn.prepare(
         "SELECT id, book_id, cfi_range, color, note, text_content, created_at, updated_at FROM highlights WHERE book_id = ?1 ORDER BY created_at DESC",
@@ -184,6 +192,11 @@ pub fn list_highlights(book_id: String, db: State<'_, Db>) -> AppResult<Vec<High
         })?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(highlights)
+}
+
+#[tauri::command]
+pub fn list_highlights(book_id: String, db: State<'_, Db>) -> AppResult<Vec<Highlight>> {
+    query_highlights(&db, &book_id)
 }
 
 #[tauri::command]

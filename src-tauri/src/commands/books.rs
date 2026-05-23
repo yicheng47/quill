@@ -204,11 +204,16 @@ pub async fn import_book(
 }
 
 
-#[tauri::command]
-pub fn list_books(
-    filter: Option<String>,
-    search: Option<String>,
-    db: State<'_, Db>,
+/// Shared query helper. Returns books with the **relative** `file_path`
+/// and `cover_path` as stored in SQLite (`books/<slug>.epub`,
+/// `covers/<id>.jpg`). The Tauri `list_books` wrapper resolves these to
+/// absolute paths for the frontend; the MCP `list_books` tool returns
+/// them as-is so the response doesn't leak this user's home directory
+/// layout to AI clients.
+pub(crate) fn query_books(
+    db: &Db,
+    filter: Option<&str>,
+    search: Option<&str>,
 ) -> AppResult<Vec<Book>> {
     let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
 
@@ -216,11 +221,11 @@ pub fn list_books(
     let mut conditions: Vec<String> = Vec::new();
     let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
 
-    if let Some(ref f) = filter {
-        match f.as_str() {
+    if let Some(f) = filter {
+        match f {
             "reading" | "finished" | "unread" => {
                 conditions.push("status = ?".to_string());
-                param_values.push(Box::new(f.clone()));
+                param_values.push(Box::new(f.to_string()));
             }
             "all" => {}
             genre => {
@@ -230,7 +235,7 @@ pub fn list_books(
         }
     }
 
-    if let Some(ref q) = search {
+    if let Some(q) = search {
         if !q.is_empty() {
             conditions.push("(LOWER(title) LIKE ? OR LOWER(author) LIKE ?)".to_string());
             let pattern = format!("%{}%", q.to_lowercase());
@@ -249,7 +254,7 @@ pub fn list_books(
     let params_refs: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|p| p.as_ref()).collect();
 
     let mut stmt = conn.prepare(&sql)?;
-    let mut books = stmt.query_map(params_refs.as_slice(), |row| {
+    let books = stmt.query_map(params_refs.as_slice(), |row| {
         Ok(Book {
             id: row.get(0)?,
             title: row.get(1)?,
@@ -265,23 +270,19 @@ pub fn list_books(
             current_cfi: row.get(11)?,
             created_at: row.get(12)?,
             updated_at: row.get(13)?,
-            available: true, // resolved by resolve_book_paths below
+            available: true, // raw shape — Tauri wrapper resolves availability
         })
     })?
     .collect::<Result<Vec<_>, _>>()?;
 
-    // Resolve relative paths to absolute for the frontend
-    for book in &mut books {
-        resolve_book_paths(book, &db);
-    }
-
     Ok(books)
 }
 
-#[tauri::command]
-pub fn get_book(id: String, db: State<'_, Db>) -> AppResult<Book> {
+/// Shared query helper for the single-book lookup. Same relative-path
+/// guarantee as `query_books`.
+pub(crate) fn query_book(db: &Db, id: &str) -> AppResult<Book> {
     let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
-    let mut book = conn.query_row(
+    let book = conn.query_row(
         "SELECT id, title, author, description, cover_path, file_path, format, genre, pages, status, progress, current_cfi, created_at, updated_at FROM books WHERE id = ?1",
         params![id],
         |row| {
@@ -300,11 +301,29 @@ pub fn get_book(id: String, db: State<'_, Db>) -> AppResult<Book> {
                 current_cfi: row.get(11)?,
                 created_at: row.get(12)?,
                 updated_at: row.get(13)?,
-                available: true, // resolved by resolve_book_paths below
+                available: true,
             })
         },
     )?;
+    Ok(book)
+}
 
+#[tauri::command]
+pub fn list_books(
+    filter: Option<String>,
+    search: Option<String>,
+    db: State<'_, Db>,
+) -> AppResult<Vec<Book>> {
+    let mut books = query_books(&db, filter.as_deref(), search.as_deref())?;
+    for book in &mut books {
+        resolve_book_paths(book, &db);
+    }
+    Ok(books)
+}
+
+#[tauri::command]
+pub fn get_book(id: String, db: State<'_, Db>) -> AppResult<Book> {
+    let mut book = query_book(&db, &id)?;
     resolve_book_paths(&mut book, &db);
     Ok(book)
 }

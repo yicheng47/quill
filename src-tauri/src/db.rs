@@ -100,11 +100,9 @@ impl Db {
                 // ALTER TABLE migrations may fail if column already exists
                 if version == 4 || version == 5 {
                     let _ = conn.execute_batch(sql);
-                } else {
-                    if let Err(e) = conn.execute_batch(sql) {
-                        log::error!("db: migration {version} failed: {e}");
-                        return Err(e.into());
-                    }
+                } else if let Err(e) = conn.execute_batch(sql) {
+                    log::error!("db: migration {version} failed: {e}");
+                    return Err(e.into());
                 }
                 // Advance schema_version per migration, so a failure in a later
                 // migration doesn't force successful earlier ones to re-run.

@@ -7,6 +7,7 @@
 
 pub mod server;
 pub mod state;
+pub mod tools;
 
 pub use server::McpServer;
 // `McpServerError` is re-exported from `server::` for Phase 2 callers

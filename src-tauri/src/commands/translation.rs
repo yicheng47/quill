@@ -209,24 +209,23 @@ pub fn remove_saved_translation(
     })
 }
 
-#[tauri::command]
-pub fn list_translations(
-    book_id: Option<String>,
-    db: State<'_, Db>,
+pub(crate) fn query_translations(
+    db: &Db,
+    book_id: Option<&str>,
 ) -> AppResult<Vec<Translation>> {
     let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
 
     let mut sql = "SELECT t.id, t.book_id, t.source_text, t.translated_text, t.target_language, t.cfi, t.created_at, t.updated_at, b.title FROM translations t LEFT JOIN books b ON t.book_id = b.id".to_string();
-    let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+    let mut sql_params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
 
-    if let Some(ref bid) = book_id {
+    if let Some(bid) = book_id {
         sql.push_str(" WHERE t.book_id = ?1");
-        params.push(Box::new(bid.clone()));
+        sql_params.push(Box::new(bid.to_string()));
     }
     sql.push_str(" ORDER BY t.created_at DESC");
 
     let mut stmt = conn.prepare(&sql)?;
-    let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+    let param_refs: Vec<&dyn rusqlite::types::ToSql> = sql_params.iter().map(|p| p.as_ref()).collect();
 
     let rows = stmt.query_map(param_refs.as_slice(), |row| {
         Ok(Translation {
@@ -244,4 +243,12 @@ pub fn list_translations(
 
     let translations: Vec<Translation> = rows.filter_map(|r| r.ok()).collect();
     Ok(translations)
+}
+
+#[tauri::command]
+pub fn list_translations(
+    book_id: Option<String>,
+    db: State<'_, Db>,
+) -> AppResult<Vec<Translation>> {
+    query_translations(&db, book_id.as_deref())
 }
