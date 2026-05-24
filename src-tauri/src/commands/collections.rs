@@ -46,21 +46,16 @@ pub fn list_collections(db: State<'_, Db>) -> AppResult<Vec<Collection>> {
     query_collections(&db)
 }
 
-#[tauri::command]
-pub fn create_collection(
-    name: String,
-    db: State<'_, Db>,
-    sync: State<'_, SyncWriter>,
+pub(crate) fn do_create_collection(
+    name: &str,
+    db: &Db,
+    sync: &SyncWriter,
 ) -> AppResult<Collection> {
     let id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().timestamp_millis();
     let device = sync.self_device().to_string();
 
-    // MAX(sort_order) lives inside the same transaction as the INSERT so
-    // two concurrent creates can't both observe the same max and mint
-    // duplicate sort_orders. The Db conn mutex serializes the entire tx,
-    // so the second writer reads the post-first-INSERT value.
-    let collection = sync.with_tx(&db, now, |tx, events| {
+    sync.with_tx(db, now, |tx, events| {
         let max_order: i32 = tx
             .query_row(
                 "SELECT COALESCE(MAX(sort_order), -1) FROM collections",
@@ -75,20 +70,48 @@ pub fn create_collection(
         )?;
         events.push(EventBody::CollectionCreate {
             id: id.clone(),
-            name: name.clone(),
+            name: name.to_string(),
             sort_order,
         });
         Ok(Collection {
             id: id.clone(),
-            name: name.clone(),
+            name: name.to_string(),
             book_count: 0,
             sort_order,
             created_at: now,
             updated_at: now,
         })
-    })?;
+    })
+}
 
-    Ok(collection)
+#[tauri::command]
+pub fn create_collection(
+    name: String,
+    db: State<'_, Db>,
+    sync: State<'_, SyncWriter>,
+) -> AppResult<Collection> {
+    do_create_collection(&name, &db, &sync)
+}
+
+pub(crate) fn do_rename_collection(
+    id: &str,
+    name: &str,
+    db: &Db,
+    sync: &SyncWriter,
+) -> AppResult<()> {
+    let now = chrono::Utc::now().timestamp_millis();
+    let device = sync.self_device().to_string();
+    sync.with_tx(db, now, |tx, events| {
+        tx.execute(
+            "UPDATE collections SET name = ?1, updated_at = ?2, updated_by_device = ?3 WHERE id = ?4",
+            params![name, now, device, id],
+        )?;
+        events.push(EventBody::CollectionRename {
+            id: id.to_string(),
+            name: name.to_string(),
+        });
+        Ok(())
+    })
 }
 
 #[tauri::command]
@@ -98,16 +121,19 @@ pub fn rename_collection(
     db: State<'_, Db>,
     sync: State<'_, SyncWriter>,
 ) -> AppResult<()> {
+    do_rename_collection(&id, &name, &db, &sync)
+}
+
+pub(crate) fn do_delete_collection(id: &str, db: &Db, sync: &SyncWriter) -> AppResult<()> {
     let now = chrono::Utc::now().timestamp_millis();
-    let device = sync.self_device().to_string();
-    sync.with_tx(&db, now, |tx, events| {
+    sync.with_tx(db, now, |tx, events| {
         tx.execute(
-            "UPDATE collections SET name = ?1, updated_at = ?2, updated_by_device = ?3 WHERE id = ?4",
-            params![name, now, device, id],
+            "DELETE FROM collection_books WHERE collection_id = ?1",
+            params![id],
         )?;
-        events.push(EventBody::CollectionRename {
-            id: id.clone(),
-            name: name.clone(),
+        tx.execute("DELETE FROM collections WHERE id = ?1", params![id])?;
+        events.push(EventBody::CollectionDelete {
+            id: id.to_string(),
         });
         Ok(())
     })
@@ -119,18 +145,7 @@ pub fn delete_collection(
     db: State<'_, Db>,
     sync: State<'_, SyncWriter>,
 ) -> AppResult<()> {
-    let now = chrono::Utc::now().timestamp_millis();
-    sync.with_tx(&db, now, |tx, events| {
-        // Mirror `cascade_delete_collection` — replay runs FK off, so the
-        // join rows have to be wiped manually here too.
-        tx.execute(
-            "DELETE FROM collection_books WHERE collection_id = ?1",
-            params![id],
-        )?;
-        tx.execute("DELETE FROM collections WHERE id = ?1", params![id])?;
-        events.push(EventBody::CollectionDelete { id: id.clone() });
-        Ok(())
-    })
+    do_delete_collection(&id, &db, &sync)
 }
 
 #[tauri::command]
@@ -157,6 +172,27 @@ pub fn reorder_collections(
     })
 }
 
+pub(crate) fn do_add_book_to_collection(
+    collection_id: &str,
+    book_id: &str,
+    db: &Db,
+    sync: &SyncWriter,
+) -> AppResult<()> {
+    let now = chrono::Utc::now().timestamp_millis();
+    let device = sync.self_device().to_string();
+    sync.with_tx(db, now, |tx, events| {
+        tx.execute(
+            "INSERT OR IGNORE INTO collection_books (collection_id, book_id, created_at, updated_at, updated_by_device) VALUES (?1, ?2, ?3, ?3, ?4)",
+            params![collection_id, book_id, now, device],
+        )?;
+        events.push(EventBody::CollectionBookAdd {
+            collection: collection_id.to_string(),
+            book: book_id.to_string(),
+        });
+        Ok(())
+    })
+}
+
 #[tauri::command]
 pub fn add_book_to_collection(
     collection_id: String,
@@ -164,16 +200,24 @@ pub fn add_book_to_collection(
     db: State<'_, Db>,
     sync: State<'_, SyncWriter>,
 ) -> AppResult<()> {
+    do_add_book_to_collection(&collection_id, &book_id, &db, &sync)
+}
+
+pub(crate) fn do_remove_book_from_collection(
+    collection_id: &str,
+    book_id: &str,
+    db: &Db,
+    sync: &SyncWriter,
+) -> AppResult<()> {
     let now = chrono::Utc::now().timestamp_millis();
-    let device = sync.self_device().to_string();
-    sync.with_tx(&db, now, |tx, events| {
+    sync.with_tx(db, now, |tx, events| {
         tx.execute(
-            "INSERT OR IGNORE INTO collection_books (collection_id, book_id, created_at, updated_at, updated_by_device) VALUES (?1, ?2, ?3, ?3, ?4)",
-            params![collection_id, book_id, now, device],
+            "DELETE FROM collection_books WHERE collection_id = ?1 AND book_id = ?2",
+            params![collection_id, book_id],
         )?;
-        events.push(EventBody::CollectionBookAdd {
-            collection: collection_id.clone(),
-            book: book_id.clone(),
+        events.push(EventBody::CollectionBookRemove {
+            collection: collection_id.to_string(),
+            book: book_id.to_string(),
         });
         Ok(())
     })
@@ -186,18 +230,7 @@ pub fn remove_book_from_collection(
     db: State<'_, Db>,
     sync: State<'_, SyncWriter>,
 ) -> AppResult<()> {
-    let now = chrono::Utc::now().timestamp_millis();
-    sync.with_tx(&db, now, |tx, events| {
-        tx.execute(
-            "DELETE FROM collection_books WHERE collection_id = ?1 AND book_id = ?2",
-            params![collection_id, book_id],
-        )?;
-        events.push(EventBody::CollectionBookRemove {
-            collection: collection_id.clone(),
-            book: book_id.clone(),
-        });
-        Ok(())
-    })
+    do_remove_book_from_collection(&collection_id, &book_id, &db, &sync)
 }
 
 #[tauri::command]

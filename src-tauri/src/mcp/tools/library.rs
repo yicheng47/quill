@@ -1,9 +1,12 @@
-//! Library tools: `list_books`, `get_book`, `get_collections`.
+//! Library tools: read (`list_books`, `get_book`, `get_collections`)
+//! and write (`add_book`, `update_book`, `delete_book`).
 //!
-//! Pure projections over shared query helpers in `commands::books` and
-//! `commands::collections`. File paths returned here stay relative
-//! (no `resolve_book_paths` call) so the response doesn't leak the
-//! user's home directory layout.
+//! Read tools are pure projections over shared query helpers. File
+//! paths returned stay relative (no `resolve_book_paths`) so the
+//! response doesn't leak the user's home directory layout.
+//!
+//! Write tools are gated behind `McpState.sync` — they return a clear
+//! error when write access is disabled.
 
 use rmcp::ErrorData;
 use rmcp::handler::server::wrapper::Parameters;
@@ -114,5 +117,128 @@ impl QuillMcpHandler {
         let collections = collections::query_collections(&self.state.db)
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
         Ok(CallToolResult::success(vec![Content::json(&collections)?]))
+    }
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct AddBookArgs {
+    /// Absolute path to an .epub or .pdf file on the local filesystem.
+    pub file_path: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct UpdateBookArgs {
+    /// Book ID (UUID).
+    pub book_id: String,
+    /// New title. Omit to leave unchanged.
+    #[serde(default)]
+    pub title: Option<String>,
+    /// New author. Omit to leave unchanged.
+    #[serde(default)]
+    pub author: Option<String>,
+    /// New genre. Omit to leave unchanged.
+    #[serde(default)]
+    pub genre: Option<String>,
+    /// New status: "unread", "reading", or "finished". Omit to leave unchanged.
+    #[serde(default)]
+    pub status: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct DeleteBookArgs {
+    /// Book ID (UUID). Permanently removes the book, its file, cover, and all associated data (highlights, bookmarks, chats, vocab).
+    pub book_id: String,
+}
+
+pub(crate) fn require_sync(
+    handler: &QuillMcpHandler,
+) -> Result<&crate::sync::writer::SyncWriter, ErrorData> {
+    handler
+        .state
+        .sync
+        .as_ref()
+        .map(|arc| arc.as_ref())
+        .ok_or_else(|| {
+            ErrorData::invalid_request(
+                "Write access is disabled. Enable it in Quill → Settings → MCP → Allow write access.",
+                None,
+            )
+        })
+}
+
+#[tool_router(router = library_write_router, vis = "pub(crate)")]
+impl QuillMcpHandler {
+    #[tool(
+        description = "Import a book from a local file path (.epub or .pdf) into the library."
+    )]
+    pub async fn add_book(
+        &self,
+        Parameters(AddBookArgs { file_path }): Parameters<AddBookArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let sync = require_sync(self)?;
+        let ext = file_path
+            .rsplit('.')
+            .next()
+            .unwrap_or("")
+            .to_lowercase();
+        let book = match ext.as_str() {
+            "epub" => books::do_import_epub(&file_path, &self.state.db, sync),
+            "pdf" => books::do_import_pdf(&file_path, &self.state.db, sync),
+            _ => {
+                return Err(ErrorData::invalid_params(
+                    format!("Unsupported format '.{ext}'. Only .epub and .pdf are supported."),
+                    None,
+                ))
+            }
+        }
+        .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+        self.state.notify("books", "created", &book.id);
+        let mcp_book: McpBook = book.into();
+        Ok(CallToolResult::success(vec![Content::json(&mcp_book)?]))
+    }
+
+    #[tool(
+        description = "Update a book's metadata. Only specified fields are changed; omitted fields stay as-is."
+    )]
+    pub async fn update_book(
+        &self,
+        Parameters(UpdateBookArgs {
+            book_id,
+            title,
+            author,
+            genre,
+            status,
+        }): Parameters<UpdateBookArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let sync = require_sync(self)?;
+        let book = books::do_update_book(
+            &book_id,
+            title.as_deref(),
+            author.as_deref(),
+            genre.as_deref(),
+            status.as_deref(),
+            &self.state.db,
+            sync,
+        )
+        .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+        self.state.notify("books", "updated", &book_id);
+        let mcp_book: McpBook = book.into();
+        Ok(CallToolResult::success(vec![Content::json(&mcp_book)?]))
+    }
+
+    #[tool(
+        description = "Permanently delete a book and all its associated data (highlights, bookmarks, chats, vocab, translations). Also removes the book file and cover image from disk."
+    )]
+    pub async fn delete_book(
+        &self,
+        Parameters(DeleteBookArgs { book_id }): Parameters<DeleteBookArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let sync = require_sync(self)?;
+        books::do_delete_book(&book_id, &self.state.db, sync)
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+        self.state.notify("books", "deleted", &book_id);
+        Ok(CallToolResult::success(vec![Content::text(format!(
+            "Book {book_id} deleted."
+        ))]))
     }
 }

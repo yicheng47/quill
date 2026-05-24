@@ -12,7 +12,7 @@ mod panic_hook;
 mod secrets;
 mod sync;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use commands::sync::SyncState;
@@ -139,8 +139,12 @@ pub(crate) fn resolve_app_data_dir() -> PathBuf {
 }
 
 /// Entry point for the `quill mcp` subcommand. Opens the SQLite
-/// materialized view read-only and serves the MCP protocol over
-/// stdin/stdout until the client disconnects.
+/// materialized view and serves the MCP protocol over stdin/stdout
+/// until the client disconnects.
+///
+/// When `mcp_write_enabled` is `"true"` in the settings table, the DB
+/// is opened read-write and a `SyncWriter` is constructed so write
+/// tools can mutate the library. Otherwise the DB stays read-only.
 ///
 /// Runs entirely outside the Tauri runtime — no plugins, no windows,
 /// no event loop. Stderr is reserved for diagnostic messages so it
@@ -157,15 +161,33 @@ pub fn mcp_stdio_main() {
         std::process::exit(1);
     }
 
-    let db = match Db::open_readonly(&db_path) {
-        Ok(db) => db,
-        Err(e) => {
-            eprintln!("quill mcp: failed to open {}: {e}", db_path.display());
-            std::process::exit(1);
-        }
+    let write_enabled = is_mcp_write_enabled(&db_path);
+
+    let (db, sync) = if write_enabled {
+        let db = match Db::open_readwrite(&db_path) {
+            Ok(db) => db,
+            Err(e) => {
+                eprintln!("quill mcp: failed to open (rw) {}: {e}", db_path.display());
+                std::process::exit(1);
+            }
+        };
+        let device = sync::device::DeviceIdentity::load_or_create(&local_dir)
+            .expect("failed to load device identity");
+        let sw = SyncWriter::new(device.device_uuid);
+        sw.set_should_queue(true);
+        (db, Some(sw))
+    } else {
+        let db = match Db::open_readonly(&db_path) {
+            Ok(db) => db,
+            Err(e) => {
+                eprintln!("quill mcp: failed to open {}: {e}", db_path.display());
+                std::process::exit(1);
+            }
+        };
+        (db, None)
     };
 
-    let state = mcp::McpState::new(db);
+    let state = mcp::McpState::new(db, sync);
 
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -176,6 +198,24 @@ pub fn mcp_stdio_main() {
         eprintln!("quill mcp: serve error: {e}");
         std::process::exit(1);
     }
+}
+
+/// Check whether `mcp_write_enabled` is `"true"` in the settings table.
+/// Opens a temporary read-only connection just for this check.
+fn is_mcp_write_enabled(db_path: &Path) -> bool {
+    let Ok(conn) = rusqlite::Connection::open_with_flags(
+        db_path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    ) else {
+        return false;
+    };
+    conn.query_row(
+        "SELECT value FROM settings WHERE key = 'mcp_write_enabled'",
+        [],
+        |row| row.get::<_, String>(0),
+    )
+    .map(|v| v == "true")
+    .unwrap_or(false)
 }
 
 /// Construct the per-device EventLog, wire it into `sync_writer`, build a
@@ -550,24 +590,20 @@ pub fn run() {
                 }
             };
 
+            // Watch the MCP sentinel file so the UI can refresh when an
+            // MCP subprocess writes to the library. The sentinel is a
+            // tiny JSON file (~80 bytes) that the MCP subprocess
+            // overwrites after each write tool invocation.
+            let mcp_notify_path = local_dir.join(".mcp-notify");
+            let app_handle = app.handle().clone();
+            mcp::notify::spawn_watcher(mcp_notify_path, app_handle);
+
             app.manage(LocalDir(local_dir));
             app.manage(db);
             app.manage(secrets);
             app.manage(device);
             app.manage(sync_writer);
-            // Engine + watcher live behind a single `SyncState` so the
-            // `sync_enable` / `sync_disable` commands can swap them at
-            // runtime. Watcher is held inside the same struct via a
-            // `Mutex<Option<WatcherHandle>>` — its `Drop` impl signals
-            // the watcher thread to stop and joins it on disable /
-            // shutdown.
             app.manage(SyncState::new(replay_engine, watcher_handle));
-
-            // MCP server is NOT booted in-process. AI clients spawn the
-            // `quill mcp` subcommand themselves over stdio; see
-            // `main.rs` and `mcp/server.rs::serve_stdio`. The settings
-            // UI (Phase 3) only writes the client integration configs;
-            // it doesn't start/stop anything here.
 
             Ok(())
         })
@@ -650,6 +686,7 @@ pub fn run() {
             commands::mcp::mcp_integration_status,
             commands::mcp::mcp_set_integration,
             commands::mcp::mcp_config_snippet,
+            commands::mcp::mcp_set_write_access,
             // Sync (Chunk 7 — replaces the legacy icloud_* commands;
             // sync_compact added in Chunk 8).
             commands::sync::sync_status,

@@ -79,6 +79,28 @@ impl Db {
         })
     }
 
+    /// Open the DB read-write without running migrations. Used by the
+    /// `quill mcp` subprocess when write tools are enabled. Like
+    /// `open_readonly`, the Tauri app owns schema evolution — this
+    /// constructor just opens the existing file with write permission.
+    pub fn open_readwrite(db_path: &Path) -> AppResult<Self> {
+        use rusqlite::OpenFlags;
+        let conn = Connection::open_with_flags(
+            db_path,
+            OpenFlags::SQLITE_OPEN_READ_WRITE
+                | OpenFlags::SQLITE_OPEN_NO_MUTEX
+                | OpenFlags::SQLITE_OPEN_URI,
+        )?;
+        let data_dir = db_path
+            .parent()
+            .unwrap_or_else(|| Path::new(""))
+            .to_path_buf();
+        Ok(Self {
+            conn: Arc::new(Mutex::new(conn)),
+            data_dir: Arc::new(Mutex::new(data_dir)),
+        })
+    }
+
     /// Open the DB with the SQLite file at `db_dir/quill.db` and binary
     /// blobs (`books/`, `covers/`) under `data_dir`.
     ///

@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useTranslation } from "react-i18next";
-import { Check, Copy, ShieldAlert } from "lucide-react";
+import { Check, Copy, ShieldAlert, PenLine } from "lucide-react";
 import Toggle from "../ui/Toggle";
 import type { SettingsProps } from "./types";
 
 interface IntegrationStatus {
   claude_code: boolean;
   codex: boolean;
+  write_enabled: boolean;
   binary_path: string;
 }
 
@@ -18,13 +19,19 @@ export default function McpSettings(_props: SettingsProps) {
   const { t } = useTranslation();
   const [status, setStatus] = useState<IntegrationStatus | null>(null);
   const [busy, setBusy] = useState<ClientId | null>(null);
+  const [writeBusy, setWriteBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [snippet, setSnippet] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
-      const next = await invoke<IntegrationStatus>("mcp_integration_status");
+      const [next, snip] = await Promise.all([
+        invoke<IntegrationStatus>("mcp_integration_status"),
+        invoke<string>("mcp_config_snippet"),
+      ]);
       setStatus(next);
+      setSnippet(snip);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -47,15 +54,27 @@ export default function McpSettings(_props: SettingsProps) {
     }
   };
 
-  const onCopy = async () => {
+  const onWriteToggle = async (next: boolean) => {
+    setWriteBusy(true);
+    setError(null);
     try {
-      const snippet = await invoke<string>("mcp_config_snippet");
-      await navigator.clipboard.writeText(snippet);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
+      await invoke("mcp_set_write_access", { enabled: next });
+      await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setWriteBusy(false);
     }
+  };
+
+  const onCopy = () => {
+    if (!snippet) return;
+    navigator.clipboard.writeText(snippet).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    }).catch((err) => {
+      setError(err instanceof Error ? err.message : String(err));
+    });
   };
 
   return (
@@ -102,6 +121,28 @@ export default function McpSettings(_props: SettingsProps) {
 
       <div className="h-px bg-black/10 mt-4" />
 
+      {/* Write access */}
+      <div className="flex items-center justify-between h-[73px]">
+        <div className="flex items-start gap-2">
+          <PenLine size={14} className="text-amber-500 shrink-0 mt-1" />
+          <div>
+            <p className="text-[14px] font-medium text-text-primary tracking-[-0.15px]">
+              {t("settings.mcp.writeAccess")}
+            </p>
+            <p className="text-[12px] text-text-muted mt-0.5">
+              {t("settings.mcp.writeAccessSub")}
+            </p>
+          </div>
+        </div>
+        <Toggle
+          checked={status?.write_enabled ?? false}
+          onChange={onWriteToggle}
+          disabled={status == null || writeBusy}
+        />
+      </div>
+
+      <div className="h-px bg-black/10" />
+
       {/* Custom MCP Server */}
       <div className="flex items-center justify-between pt-4 pb-2">
         <p className="text-[13px] font-semibold text-text-primary">
@@ -130,13 +171,13 @@ export default function McpSettings(_props: SettingsProps) {
 
       {/* Error */}
       {error && (
-        <div className="flex items-center justify-between bg-[#fef2f2] dark:bg-red-950/30 border border-[#ffc9c9] dark:border-red-800 rounded-lg px-3.5 py-2 mt-3">
-          <span className="text-[12px] text-[#e7000b] dark:text-red-400 truncate">
+        <div className="flex items-start gap-2 bg-[#fef2f2] dark:bg-red-950/30 border border-[#ffc9c9] dark:border-red-800 rounded-lg px-3.5 py-2.5 mt-3">
+          <p className="text-[12px] text-[#e7000b] dark:text-red-400 min-w-0">
             {error}
-          </span>
+          </p>
           <button
             type="button"
-            className="text-[12px] font-medium text-[#e7000b] dark:text-red-400 underline cursor-pointer ml-2 shrink-0"
+            className="text-[12px] font-medium text-[#e7000b] dark:text-red-400 underline cursor-pointer shrink-0"
             onClick={() => {
               setError(null);
               refresh();

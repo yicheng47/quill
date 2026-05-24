@@ -105,14 +105,11 @@ fn resolve_book_paths(book: &mut Book, db: &Db) {
     book.available = icloud::is_file_downloaded(std::path::Path::new(&book.file_path));
 }
 
-#[tauri::command]
-pub async fn import_book(
-    file_path: String,
-    db: State<'_, Db>,
-    sync: State<'_, SyncWriter>,
+pub(crate) fn do_import_epub(
+    file_path: &str,
+    db: &Db,
+    sync: &SyncWriter,
 ) -> AppResult<Book> {
-    log::info!("import_book: start file={file_path} format=epub");
-
     let data_dir = db
         .data_dir
         .lock()
@@ -122,22 +119,18 @@ pub async fn import_book(
     let covers_dir = data_dir.join("covers");
 
     let book_id = uuid::Uuid::new_v4().to_string();
-    let src = std::path::Path::new(&file_path);
+    let src = std::path::Path::new(file_path);
 
-    // Extract metadata before copying
     let metadata = epub::extract_metadata(src, &covers_dir, &book_id)
         .inspect_err(|e| log::error!("import_book: extract_metadata failed for {file_path}: {e}"))?;
     let pages = epub::count_chapters(src)
         .inspect_err(|e| log::error!("import_book: count_chapters failed for {file_path}: {e}"))? as i32;
 
-    // Copy epub to app data with readable filename
     let filename = book_filename(&metadata.title, &book_id, "epub");
     let dest = books_dir.join(&filename);
     fs::copy(src, &dest)?;
 
     let now = chrono::Utc::now().timestamp_millis();
-
-    // Store relative path in DB
     let rel_file_path = format!("books/{}", filename);
 
     let book = Book {
@@ -145,7 +138,7 @@ pub async fn import_book(
         title: metadata.title,
         author: metadata.author,
         description: metadata.description,
-        cover_path: metadata.cover_path, // already relative from epub.rs
+        cover_path: metadata.cover_path,
         file_path: rel_file_path,
         format: "epub".to_string(),
         genre: None,
@@ -158,8 +151,68 @@ pub async fn import_book(
         available: true,
     };
 
+    do_insert_book(&book, db, sync, now)?;
+
+    log::info!("import_book: complete id={} title={:?}", book.id, book.title);
+    Ok(book)
+}
+
+pub(crate) fn do_import_pdf(
+    file_path: &str,
+    db: &Db,
+    sync: &SyncWriter,
+) -> AppResult<Book> {
+    let data_dir = db
+        .data_dir
+        .lock()
+        .map_err(|e| AppError::Other(e.to_string()))?
+        .clone();
+    let books_dir = data_dir.join("books");
+    fs::create_dir_all(&books_dir)?;
+
+    let book_id = uuid::Uuid::new_v4().to_string();
+    let src = std::path::Path::new(file_path);
+
+    let title = src
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("Untitled")
+        .to_string();
+
+    let filename = book_filename(&title, &book_id, "pdf");
+    let dest = books_dir.join(&filename);
+    fs::copy(src, &dest)?;
+
+    let now = chrono::Utc::now().timestamp_millis();
+    let rel_file_path = format!("books/{}", filename);
+
+    let book = Book {
+        id: book_id,
+        title,
+        author: "Unknown Author".to_string(),
+        description: None,
+        cover_path: None,
+        file_path: rel_file_path,
+        format: "pdf".to_string(),
+        genre: None,
+        pages: Some(0),
+        status: "unread".to_string(),
+        progress: 0,
+        current_cfi: None,
+        created_at: now,
+        updated_at: now,
+        available: true,
+    };
+
+    do_insert_book(&book, db, sync, now)?;
+
+    log::info!("import_book: complete id={} title={:?} format=pdf", book.id, book.title);
+    Ok(book)
+}
+
+fn do_insert_book(book: &Book, db: &Db, sync: &SyncWriter, now: i64) -> AppResult<()> {
     let device = sync.self_device().to_string();
-    sync.with_tx(&db, now, |tx, events| {
+    sync.with_tx(db, now, |tx, events| {
         tx.execute(
             "INSERT INTO books (id, title, author, description, cover_path, file_path, format, genre, pages, status, progress, current_cfi, created_at, updated_at, updated_by_device)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
@@ -193,14 +246,19 @@ pub async fn import_book(
             pages: book.pages,
         }));
         Ok(())
-    })?;
+    })
+}
 
-    log::info!("import_book: complete id={} title={:?}", book.id, book.title);
-
-    // Return book with absolute paths for the frontend
-    let mut result = book;
-    resolve_book_paths(&mut result, &db);
-    Ok(result)
+#[tauri::command]
+pub async fn import_book(
+    file_path: String,
+    db: State<'_, Db>,
+    sync: State<'_, SyncWriter>,
+) -> AppResult<Book> {
+    log::info!("import_book: start file={file_path} format=epub");
+    let mut book = do_import_epub(&file_path, &db, &sync)?;
+    resolve_book_paths(&mut book, &db);
+    Ok(book)
 }
 
 
@@ -348,14 +406,7 @@ pub fn check_book_available(id: String, db: State<'_, Db>) -> AppResult<bool> {
     Ok(available)
 }
 
-#[tauri::command]
-pub fn delete_book(
-    id: String,
-    db: State<'_, Db>,
-    sync: State<'_, SyncWriter>,
-) -> AppResult<()> {
-    // Get file paths before deleting (stored as relative). Read outside the
-    // sync transaction so we hold the conn lock for the shortest time.
+pub(crate) fn do_delete_book(id: &str, db: &Db, sync: &SyncWriter) -> AppResult<()> {
     let (file_path, cover_path): (String, Option<String>) = {
         let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
         conn.query_row(
@@ -366,20 +417,24 @@ pub fn delete_book(
     };
 
     let now = chrono::Utc::now().timestamp_millis();
-    sync.with_tx(&db, now, |tx, events| {
-        // Mirror the merge engine's `cascade_delete_book`: replay runs with
-        // FK off so the same cascade has to be expressed in SQL here.
+    sync.with_tx(db, now, |tx, events| {
         tx.execute(
             "DELETE FROM chat_messages WHERE chat_id IN (SELECT id FROM chats WHERE book_id = ?1)",
             params![id],
         )?;
         tx.execute("DELETE FROM chats WHERE book_id = ?1", params![id])?;
+        tx.execute("DELETE FROM collection_books WHERE book_id = ?1", params![id])?;
+        tx.execute("DELETE FROM highlights WHERE book_id = ?1", params![id])?;
+        tx.execute("DELETE FROM bookmarks WHERE book_id = ?1", params![id])?;
+        tx.execute("DELETE FROM vocab_words WHERE book_id = ?1", params![id])?;
+        tx.execute("DELETE FROM translations WHERE book_id = ?1", params![id])?;
         tx.execute("DELETE FROM books WHERE id = ?1", params![id])?;
-        events.push(EventBody::BookDelete { id: id.clone() });
+        events.push(EventBody::BookDelete {
+            id: id.to_string(),
+        });
         Ok(())
     })?;
 
-    // Resolve to absolute for file deletion
     let abs_file = db.resolve_path(&file_path);
     let _ = fs::remove_file(&abs_file);
     if let Some(cover) = cover_path {
@@ -388,6 +443,15 @@ pub fn delete_book(
     }
 
     Ok(())
+}
+
+#[tauri::command]
+pub fn delete_book(
+    id: String,
+    db: State<'_, Db>,
+    sync: State<'_, SyncWriter>,
+) -> AppResult<()> {
+    do_delete_book(&id, &db, &sync)
 }
 
 #[tauri::command]
@@ -478,6 +542,66 @@ pub fn mark_finished(
     })
 }
 
+pub(crate) fn do_update_book(
+    id: &str,
+    title: Option<&str>,
+    author: Option<&str>,
+    genre: Option<&str>,
+    status: Option<&str>,
+    db: &Db,
+    sync: &SyncWriter,
+) -> AppResult<Book> {
+    let now = chrono::Utc::now().timestamp_millis();
+    let device = sync.self_device().to_string();
+    sync.with_tx(db, now, |tx, events| {
+        if let Some(t) = title {
+            tx.execute(
+                "UPDATE books SET title = ?1, updated_at = ?2, updated_by_device = ?3 WHERE id = ?4",
+                params![t, now, device, id],
+            )?;
+            events.push(EventBody::BookMetadataSet {
+                book: id.to_string(),
+                field: "title".into(),
+                value: serde_json::Value::String(t.to_string()),
+            });
+        }
+        if let Some(a) = author {
+            tx.execute(
+                "UPDATE books SET author = ?1, updated_at = ?2, updated_by_device = ?3 WHERE id = ?4",
+                params![a, now, device, id],
+            )?;
+            events.push(EventBody::BookMetadataSet {
+                book: id.to_string(),
+                field: "author".into(),
+                value: serde_json::Value::String(a.to_string()),
+            });
+        }
+        if let Some(g) = genre {
+            tx.execute(
+                "UPDATE books SET genre = ?1, updated_at = ?2, updated_by_device = ?3 WHERE id = ?4",
+                params![g, now, device, id],
+            )?;
+            events.push(EventBody::BookMetadataSet {
+                book: id.to_string(),
+                field: "genre".into(),
+                value: serde_json::Value::String(g.to_string()),
+            });
+        }
+        if let Some(s) = status {
+            tx.execute(
+                "UPDATE books SET status = ?1, updated_at = ?2, updated_by_device = ?3 WHERE id = ?4",
+                params![s, now, device, id],
+            )?;
+            events.push(EventBody::BookStatusSet {
+                book: id.to_string(),
+                status: s.to_string(),
+            });
+        }
+        Ok(())
+    })?;
+    query_book(db, id)
+}
+
 #[tauri::command]
 pub fn update_book_status(
     id: String,
@@ -485,19 +609,8 @@ pub fn update_book_status(
     db: State<'_, Db>,
     sync: State<'_, SyncWriter>,
 ) -> AppResult<()> {
-    let now = chrono::Utc::now().timestamp_millis();
-    let device = sync.self_device().to_string();
-    sync.with_tx(&db, now, |tx, events| {
-        tx.execute(
-            "UPDATE books SET status = ?1, updated_at = ?2, updated_by_device = ?3 WHERE id = ?4",
-            params![status, now, device, id],
-        )?;
-        events.push(EventBody::BookStatusSet {
-            book: id.clone(),
-            status: status.clone(),
-        });
-        Ok(())
-    })
+    do_update_book(&id, None, None, None, Some(&status), &db, &sync)?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -508,28 +621,8 @@ pub fn update_book_metadata(
     db: State<'_, Db>,
     sync: State<'_, SyncWriter>,
 ) -> AppResult<()> {
-    let now = chrono::Utc::now().timestamp_millis();
-    let device = sync.self_device().to_string();
-    sync.with_tx(&db, now, |tx, events| {
-        tx.execute(
-            "UPDATE books SET title = ?1, author = ?2, updated_at = ?3, updated_by_device = ?4 WHERE id = ?5",
-            params![title, author, now, device, id],
-        )?;
-        // Spec: one event per field changed. The merge engine's
-        // `apply_book_metadata` uses `<=` rather than `<` on the device
-        // tuple so two events sharing this `(now, device)` both apply.
-        events.push(EventBody::BookMetadataSet {
-            book: id.clone(),
-            field: "title".into(),
-            value: serde_json::Value::String(title.clone()),
-        });
-        events.push(EventBody::BookMetadataSet {
-            book: id.clone(),
-            field: "author".into(),
-            value: serde_json::Value::String(author.clone()),
-        });
-        Ok(())
-    })
+    do_update_book(&id, Some(&title), Some(&author), None, None, &db, &sync)?;
+    Ok(())
 }
 
 #[derive(Debug, Serialize)]

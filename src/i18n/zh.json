@@ -207,6 +207,8 @@
   "settings.mcp.customSub": "用于尚未直接支持的客户端 — 将下列 JSON 粘贴到其 MCP 配置中。",
   "settings.mcp.copyConfig": "复制 MCP 配置",
   "settings.mcp.copied": "已复制",
+  "settings.mcp.writeAccess": "允许写入权限",
+  "settings.mcp.writeAccessSub": "允许 MCP 客户端添加、修改和删除书籍与书单。",
   "settings.mcp.caveat": "Quill MCP 以本地子进程运行。本机上以你的账户运行的任何 AI 客户端都能启动它并读取你的书库。",
 
   "settings.about.title": "关于",

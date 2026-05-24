@@ -207,6 +207,8 @@
   "settings.mcp.customSub": "For clients we don't ship a direct integration for. Paste this JSON into the client's MCP config.",
   "settings.mcp.copyConfig": "Copy MCP config",
   "settings.mcp.copied": "Copied",
+  "settings.mcp.writeAccess": "Allow write access",
+  "settings.mcp.writeAccessSub": "Let MCP clients add, update, and delete books and collections.",
   "settings.mcp.caveat": "Quill MCP runs as a local subprocess. Any AI client on this Mac under your account can launch it and read your library.",
 
   "settings.about.title": "About",

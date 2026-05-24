@@ -7,6 +7,7 @@
 //! concurrently — safe because the DB runs in WAL mode and the stdio
 //! side opens read-only. See `docs/impls/30-mcp-server.md`.
 
+pub mod notify;
 pub mod server;
 pub mod state;
 pub mod tools;

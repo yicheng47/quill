@@ -7,7 +7,7 @@
 
 Expose Quill's library to MCP-compatible AI clients (Claude Code, Codex) via a stdio MCP server. The MCP code lives inside the same `quill` binary; clients spawn `quill mcp` as a subprocess and exchange MCP messages over stdin/stdout. The subprocess opens the local SQLite materialized view (`quill.db`) **read-only** as a second SQLite connection, which works because the DB now runs in WAL mode (concurrent readers + one writer).
 
-This plan ships in three phases. **Phase 1** stands up the stdio binary and the MCP handshake. **Phase 2** wires the library-management read tools. **Phase 3** ships the settings UI (per-client integration toggles + Copy MCP config). Write tools and the frontend reading-state bridge are deferred to **v1.1** — the v1 surface is read-only by design (MCP is for library management, not for replacing the in-app reader).
+This plan ships in four phases. **Phase 1** stands up the stdio binary and the MCP handshake. **Phase 2** wires the library-management read tools. **Phase 3** ships the settings UI (per-client integration toggles + Copy MCP config). **Phase 4** adds write tools for book and collection management — the MCP subprocess opens the DB read-write, creates its own `SyncWriter`, and gates every write tool behind an opt-in "Allow write access" toggle (default off).
 
 ---
 
@@ -19,7 +19,7 @@ These are the inputs to this plan. Do not relitigate while implementing — open
 2. **stdio transport, not HTTP.** AI clients spawn `quill mcp` as a subprocess and the MCP session lives as long as the client uses it. No port to manage, no auth surface, no in-process server inside the Tauri app. This is the standard MCP shape and works whether or not the Quill desktop app is currently running.
 3. **Single binary, `mcp` subcommand.** `main.rs` dispatches on `argv[1] == "mcp"` to `quill_lib::mcp_stdio_main()`, otherwise launches the normal Tauri app. Avoids a second binary in the macOS app bundle and the packaging complexity that brings.
 4. **WAL journal mode** for `quill.db`. The stdio subprocess opens its own SQLite connection; WAL is what lets that coexist with the Tauri app's writer without serializing on the file lock. Was already safe to switch — DELETE mode was a hangover from the pre-Chunk-6 era when `quill.db` lived in iCloud.
-5. **Read-only by default.** Each of the four future write tools (`add_highlight`, `add_bookmark`, `add_vocab_word`, `update_vocab_mastery`) will get its own opt-in toggle in settings, all default to off. Lands with v1.1.
+5. **Read-only by default.** Write tools (Phase 4) are gated behind a single "Allow write access" toggle in the MCP settings panel, default off. When off, the subprocess opens the DB read-only; when on, it opens read-write and creates its own `SyncWriter` so writes flow through the sync pipeline.
 6. **`search_highlights` / FTS — deferred to v1.1.** No FTS infra exists in `quill.db` today; AI clients can call `get_highlights(book_id)` and filter client-side for v1.
 7. **`get_vocab_stats` — included.** `commands/vocab.rs::get_vocab_stats` already exposes the aggregate; wiring it into MCP is a free win for library-overview queries.
 8. **Client integrations (v1): Claude Code + Codex CLI.** Settings UI auto-registers Quill in those two clients' config files. Custom integrations get a "Copy MCP config" escape hatch.
@@ -54,11 +54,10 @@ src-tauri/src/mcp/
     vocab.rs          # get_vocab_words, get_vocab_stats
     translations.rs   # get_translations
     chats.rs          # get_chat_history
+    collections.rs    # Phase 4: create/rename/delete collection, add/remove book
 ```
 
 `src/lib.rs::mcp_stdio_main()` is the binary-mode entry point. `src/main.rs` dispatches to it on `argv[1] == "mcp"`.
-
-v1.1 adds `mcp/notify.rs` (write-side fan-out into the running Tauri app) and write-tool methods on the same `QuillMcpHandler` impl blocks.
 
 ### Subprocess lifecycle
 
@@ -72,9 +71,17 @@ There's no in-process server. The lifecycle is whatever the AI client decides:
 
 Crash recovery is the client's problem. Quill's only invariant: open the DB read-only, don't pollute stdout.
 
-### Write-tool toggles and notification channel
+### Write-tool architecture (Phase 4)
 
-Deferred to v1.1 with the write tools themselves. See the v1.1 plan (separate doc) for the `Arc<AtomicBool>` flag layout, the in-app notification fan-out, and the four per-write opt-in settings.
+The MCP subprocess opens the DB read-write when the "Allow write access" setting is enabled. It constructs its own `SyncWriter` using the same `node_id` as the host Tauri app (read from the `settings` table at startup). This means MCP writes look identical to app writes from the sync engine's perspective — same device, same timeline, same `_pending_publish` pipeline.
+
+**Why same device ID:** Using a separate device ID (e.g. `mcp-<uuid>`) would cause the sync engine to treat MCP writes as remote changes, triggering unnecessary conflict resolution. The MCP subprocess is the user writing from the same machine; it should share the device identity.
+
+**SyncWriter mode:** `should_queue = true`, `log = None`. Events accumulate in `_pending_publish`; the Tauri app's `ReplayEngine::tick` drains them on its next cycle.
+
+**Write toggle:** A single `mcp_write_enabled` key in the `settings` table (default `"false"`). The MCP settings UI adds a toggle row. `mcp_stdio_main` reads this setting at startup: `"true"` → `Db::open_readwrite` + `SyncWriter`; anything else → `Db::open_readonly` + write tools return "write access disabled" errors.
+
+**Real-time UI refresh via sentinel file:** After each write transaction, the MCP subprocess overwrites `$APP_DATA/.mcp-notify` with a single-line JSON payload: `{"domain":"books","action":"created","id":"abc-123","ts":1716550000}`. The file never grows — each write replaces the previous content (~80 bytes). The Tauri app watches this file with the `notify` crate (native FSEvents on macOS). On change, it reads the payload and emits a domain-specific Tauri event (`mcp:books-changed` or `mcp:collections-changed`). `Home.tsx` listens for these events and calls the existing `refresh()` / `refreshCollectionBooks()` functions — no changes to hooks needed.
 
 ---
 
@@ -324,6 +331,129 @@ Add `settings.ai.mcp.*` keys for: header, subtitle, claudeCodeLabel, claudeCodeS
 
 ---
 
+## Phase 4 — Write tools (book & collection management)
+
+Adds 8 write tools for library management. All gated behind a single "Allow write access" toggle (default off). The MCP subprocess opens the DB read-write and creates its own `SyncWriter` when the toggle is on.
+
+### Tool surface
+
+| Tool | Args | Returns | Source helper |
+|------|------|---------|---------------|
+| `add_book` | `file_path` | `McpBook` | books.rs — new `import_book_from_path` |
+| `update_book` | `book_id`, `title?`, `author?`, `genre?`, `status?` | `McpBook` | books.rs `update_book_metadata` + `update_book_status` |
+| `delete_book` | `book_id` | confirmation | books.rs — new `delete_book_with_sync` |
+| `create_collection` | `name` | `Collection` | collections.rs `create_collection` logic |
+| `rename_collection` | `id`, `name` | confirmation | collections.rs `rename_collection` logic |
+| `delete_collection` | `id` | confirmation | collections.rs `delete_collection` logic |
+| `add_book_to_collection` | `collection_id`, `book_id` | confirmation | collections.rs `add_book_to_collection` logic |
+| `remove_book_from_collection` | `collection_id`, `book_id` | confirmation | collections.rs `remove_book_from_collection` logic |
+
+### Step 4.1: DB open mode switch
+
+**File: `src-tauri/src/db.rs`** — add `Db::open_readwrite(db_path: &Path) -> AppResult<Self>` that uses `SQLITE_OPEN_READ_WRITE | SQLITE_OPEN_NO_MUTEX | SQLITE_OPEN_URI`. Like `open_readonly`, it does NOT run migrations — the Tauri app owns schema evolution.
+
+**File: `src-tauri/src/lib.rs`** — `mcp_stdio_main` reads `mcp_write_enabled` from the settings table after opening the DB read-only. If `"true"`, re-opens read-write and constructs a `SyncWriter` using the `node_id` from settings. If false (or missing), stays read-only.
+
+### Step 4.2: McpState expansion
+
+**File: `src-tauri/src/mcp/state.rs`** — add optional `SyncWriter`:
+
+```rust
+pub struct McpState {
+    pub db: Db,
+    pub sync: Option<SyncWriter>,
+}
+```
+
+Write tools check `self.state.sync.as_ref()` and return a clear error ("write access is disabled — enable it in Quill settings") when `None`.
+
+### Step 4.3: Extract write helpers
+
+Factor the write logic out of the existing Tauri commands into `pub(crate)` helpers, same pattern as Phase 2's read helpers. Each helper takes `&Db` + `&SyncWriter` instead of Tauri `State<>` wrappers.
+
+**`books.rs`:**
+- `pub(crate) fn import_book_from_path(db: &Db, sync: &SyncWriter, file_path: &str) -> AppResult<Book>` — detects format by extension (`.epub` / `.pdf`), extracts metadata, copies file to app data, inserts DB row via `sync.with_tx`. For PDF, uses a Rust-side page counter (or defaults to 0 if unavailable — the frontend's pdf.js-based count is authoritative and will overwrite on first open).
+- `pub(crate) fn update_book_fields(db: &Db, sync: &SyncWriter, id: &str, title: Option<&str>, author: Option<&str>, genre: Option<&str>, status: Option<&str>) -> AppResult<Book>` — partial update, only touches fields that are `Some`.
+- `pub(crate) fn delete_book_with_files(db: &Db, sync: &SyncWriter, id: &str) -> AppResult<()>` — cascade deletes (chats, chat_messages, highlights, bookmarks, etc.) + removes book/cover files from disk.
+
+**`collections.rs`:**
+- Extract the bodies of `create_collection`, `rename_collection`, `delete_collection`, `add_book_to_collection`, `remove_book_from_collection` into `pub(crate)` helpers taking `&Db` + `&SyncWriter`.
+
+### Step 4.4: Implement write tool handlers
+
+**File: `src-tauri/src/mcp/tools/library.rs`** — add `add_book`, `update_book`, `delete_book` to the existing `library_router` impl block.
+
+**File: `src-tauri/src/mcp/tools/collections.rs`** (new) — `create_collection`, `rename_collection`, `delete_collection`, `add_book_to_collection`, `remove_book_from_collection` behind a `#[tool_router(router = collections_write_router, vis = "pub(crate)")]`.
+
+Each handler:
+1. Checks `self.state.sync.as_ref()` — returns error if `None`.
+2. Calls the extracted `pub(crate)` helper.
+3. Writes the sentinel notification (see §4.6).
+4. Returns the result as `CallToolResult::success(vec![Content::json(&result)?])`.
+
+### Step 4.5: Sentinel file notification
+
+**MCP subprocess side:** After each successful write transaction, overwrite `$APP_DATA/.mcp-notify` with a single-line JSON payload:
+
+```json
+{"domain":"books","action":"created","id":"abc-123","ts":1716550000}
+```
+
+The file is always overwritten (not appended) — stays ~80 bytes. Helper: `McpState::notify(domain, action, id)`.
+
+**Tauri app side (`src-tauri/src/lib.rs`):** On setup, spawn a background task that watches `$APP_DATA/.mcp-notify` using the `notify` crate (native FSEvents on macOS, inotify on Linux). On file change:
+1. Read the JSON payload.
+2. Map `domain` to a Tauri event name: `"books"` → `mcp:books-changed`, `"collections"` → `mcp:collections-changed`.
+3. Emit the event via `app_handle.emit(event_name, payload)`.
+
+**Frontend (`src/pages/Home.tsx`):** Add two `listen()` calls in a `useEffect`:
+- `mcp:books-changed` → call `refresh()` + `allBooks.refresh()`.
+- `mcp:collections-changed` → call `refreshCollectionBooks()`.
+
+No changes to hooks — the existing imperative `refresh()` pattern handles it.
+
+### Step 4.6: Settings UI — write access toggle
+
+**File: `src/components/settings/McpSettings.tsx`** — add a toggle row for "Allow write access" between the client integration toggles and the Custom MCP Server section. Subtext: "Let MCP clients add, update, and delete books and collections." Warning color or icon to signal this is a privilege escalation.
+
+**Backend:** `mcp_integration_status` grows a `write_enabled: bool` field. `mcp_set_write_access(enabled: bool)` writes `mcp_write_enabled` to the settings table.
+
+**i18n:** Add `settings.mcp.writeAccess`, `settings.mcp.writeAccessSub` keys.
+
+### Step 4.7: Register new tools conditionally
+
+The write tools are always registered in the tool router (they always appear in `tools/list`). The gate is at call time: if `McpState.sync` is `None`, the handler returns an error with a human-readable message. This way AI clients can discover the tools exist and tell the user how to enable them, rather than the tools silently disappearing.
+
+### Step 4.8: Verification (Phase 4)
+
+1. **Write toggle off (default):**
+   - `tools/list` shows all 16 tools (9 read + 7 write; `update_book` covers both metadata and status).
+   - Calling any write tool returns an error: "write access is disabled."
+   - DB is opened read-only — even a bug in tool code can't mutate.
+2. **Write toggle on:**
+   - `add_book("/path/to/book.epub")` → book appears in library, file copied to app data, cover extracted.
+   - `update_book(id, title="New Title")` → title changed, other fields untouched.
+   - `delete_book(id)` → book + cover files removed, cascaded deletes (chats, highlights, etc.).
+   - `create_collection("Sci-Fi")` → collection created with next sort_order.
+   - `add_book_to_collection(collection_id, book_id)` → association created.
+   - `remove_book_from_collection` + `delete_collection` → clean removal.
+   - `rename_collection(id, "Science Fiction")` → name updated.
+3. **Sync integration:**
+   - Write tool → `_pending_publish` row created → Tauri app's `ReplayEngine::tick` picks it up → syncs to other devices.
+   - `updated_by_device` matches the host app's `node_id`.
+4. **Real-time notification:**
+   - MCP `add_book` → `.mcp-notify` written → Tauri app's watcher fires → `mcp:books-changed` emitted → `Home.tsx` refetches books.
+   - MCP `create_collection` → `mcp:collections-changed` emitted → sidebar collections refresh.
+   - Sentinel file stays ~80 bytes after any number of writes.
+5. **Concurrency:**
+   - MCP subprocess writing while Tauri app is running: both succeed (WAL).
+   - Tauri app's next read sees MCP's writes immediately.
+6. **Security:**
+   - Write tools still cannot touch settings, oauth, secrets, or sync infra tables.
+   - `delete_book` cascade matches the Tauri app's `cascade_delete_book` exactly.
+
+---
+
 ## Figma design prompt
 
 > **AI Assistant settings tab** — extend the existing AI Assistant settings panel with an "MCP Integrations" section at the bottom. Same shell, same 73px-tall row pattern, same 1px `black/10` dividers as the General tab.
@@ -349,7 +479,7 @@ Add `settings.ai.mcp.*` keys for: header, subtitle, claudeCodeLabel, claudeCodeS
 
 | File | Change |
 |------|--------|
-| `src-tauri/Cargo.toml` | Add `rmcp = "1.7"` (server + transport-io), `schemars = "1"`. (No axum/tokio-util needed for stdio.) |
+| `src-tauri/Cargo.toml` | Add `rmcp = "1.7"` (server + transport-io), `schemars = "1"`, `notify = "7"` (Phase 4: fs watcher for sentinel). |
 | `src-tauri/src/db.rs` | Switch `journal_mode=DELETE` → `WAL` (3 sites). Add `Db::open_readonly(db_path)` for the stdio subprocess. |
 | `src-tauri/src/mcp/mod.rs` | New: module facade — re-exports `McpState`. |
 | `src-tauri/src/mcp/state.rs` | New: `McpState` (Db clone). |
@@ -371,9 +501,11 @@ Add `settings.ai.mcp.*` keys for: header, subtitle, claudeCodeLabel, claudeCodeS
 | `src-tauri/src/commands/collections.rs` | Extract `query_collections` helper. |
 | `src-tauri/src/main.rs` | Dispatch `argv[1] == "mcp"` → `quill_lib::mcp_stdio_main()`. |
 | `src-tauri/src/lib.rs` | Add `resolve_app_data_dir` + `mcp_stdio_main`. Remove the old in-process MCP server boot + `ExitRequested` teardown. Register the new MCP Tauri commands. |
-| `src/components/settings/AiAssistantSettings.tsx` | Extend with the MCP Integrations section. |
-| `src/i18n/en.json` | Add `settings.ai.mcp.*` keys. |
-| `src/i18n/zh.json` | Add `settings.ai.mcp.*` keys (Chinese). |
+| `src/components/settings/McpSettings.tsx` | MCP settings panel — client toggles, write access toggle, copy config. |
+| `src/i18n/en.json` | Add `settings.mcp.*` keys. |
+| `src/i18n/zh.json` | Add `settings.mcp.*` keys (Chinese). |
+| `src-tauri/src/mcp/tools/collections.rs` | Phase 4: collection write tools (create/rename/delete, add/remove book). |
+| `src-tauri/src/mcp/state.rs` | Phase 4: add `Option<SyncWriter>` to McpState. |
 
 ---
 
@@ -397,6 +529,14 @@ Add `settings.ai.mcp.*` keys for: header, subtitle, claudeCodeLabel, claudeCodeS
    - Tauri app running + `quill mcp` subprocess running simultaneously: subprocess reads succeed, app writes succeed (WAL allows both).
    - Forcibly killing the subprocess does NOT corrupt the WAL or block the Tauri app.
 7. Security:
-   - Subprocess refuses to mutate the DB (read-only flag).
+   - With write toggle off: subprocess opens DB read-only — mutations impossible at the SQLite layer.
+   - With write toggle on: writes go through `SyncWriter::with_tx` — same sync guarantees as the Tauri app.
    - `get_all_settings` style endpoints are NOT exposed; `Secrets` clone is NOT in `McpState`.
-   - Tool registry diff against the Phase 2 table is empty (no settings/oauth/sync-infra surfaces snuck in — see `mcp/tools/mod.rs`).
+   - Write tools cannot touch settings, oauth, secrets, or sync infra tables.
+   - Tool registry diff against the Phase 2 + Phase 4 tables is empty (no extra surfaces snuck in).
+8. Write tools (Phase 4):
+   - `add_book` with an epub → book in library, cover extracted, file copied.
+   - `update_book` with partial fields → only specified fields change.
+   - `delete_book` → cascade deletes + file cleanup.
+   - Collection CRUD round-trip: create → rename → add book → remove book → delete.
+   - All writes produce `_pending_publish` rows that the Tauri app's sync engine drains.

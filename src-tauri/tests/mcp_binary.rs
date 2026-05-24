@@ -153,6 +153,14 @@ fn quill_mcp_initialize_lists_tools_and_calls_get_collections() {
         "get_vocab_stats",
         "get_translations",
         "get_chat_history",
+        "add_book",
+        "update_book",
+        "delete_book",
+        "create_collection",
+        "rename_collection",
+        "delete_collection",
+        "add_book_to_collection",
+        "remove_book_from_collection",
     ]
     .iter()
     .copied()

@@ -42,11 +42,13 @@ impl QuillMcpHandler {
     pub(crate) fn tool_router() -> ToolRouter<Self> {
         let mut r = ToolRouter::new();
         r.merge(Self::library_router());
+        r.merge(Self::library_write_router());
         r.merge(Self::highlights_router());
         r.merge(Self::bookmarks_router());
         r.merge(Self::vocab_router());
         r.merge(Self::translations_router());
         r.merge(Self::chats_router());
+        r.merge(Self::collections_write_router());
         r
     }
 }
@@ -66,8 +68,8 @@ impl ServerHandler for QuillMcpHandler {
             .with_instructions(
                 "Quill MCP server. Read-only access to the local library, \
                  highlights, bookmarks, vocabulary, translations, and chat \
-                 history. Write tools land in v1.1 behind opt-in per-tool \
-                 toggles.",
+                 history. Write tools (add/update/delete books and collections) \
+                 are available when write access is enabled in Quill settings.",
             )
     }
 }
@@ -151,7 +153,7 @@ mod tests {
                 params![now],
             ).unwrap();
         }
-        (dir, McpState::new(db))
+        (dir, McpState::new(db, None))
     }
 
     fn text_of(result: rmcp::model::CallToolResult) -> String {
@@ -168,7 +170,7 @@ mod tests {
     }
 
     #[test]
-    fn tool_router_registers_all_nine_tools() {
+    fn tool_router_registers_all_tools() {
         let router = QuillMcpHandler::tool_router();
         let names: std::collections::BTreeSet<_> =
             router.list_all().into_iter().map(|t| t.name.to_string()).collect();
@@ -182,6 +184,14 @@ mod tests {
             "get_vocab_stats",
             "get_translations",
             "get_chat_history",
+            "add_book",
+            "update_book",
+            "delete_book",
+            "create_collection",
+            "rename_collection",
+            "delete_collection",
+            "add_book_to_collection",
+            "remove_book_from_collection",
         ]
         .iter()
         .map(|s| s.to_string())

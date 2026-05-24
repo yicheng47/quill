@@ -25,9 +25,12 @@
 
 use std::path::{Path, PathBuf};
 
+use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use tauri::State;
 
+use crate::db::Db;
 use crate::error::{AppError, AppResult};
 
 /// Snapshot returned to the settings UI. `binary_path` is the absolute
@@ -37,6 +40,7 @@ use crate::error::{AppError, AppResult};
 pub struct McpIntegrationStatus {
     pub claude_code: bool,
     pub codex: bool,
+    pub write_enabled: bool,
     pub binary_path: String,
 }
 
@@ -221,16 +225,27 @@ pub(crate) fn codex_write_at(
 // --- Tauri commands -------------------------------------------------
 
 #[tauri::command]
-pub fn mcp_integration_status() -> AppResult<McpIntegrationStatus> {
+pub fn mcp_integration_status(db: State<'_, Db>) -> AppResult<McpIntegrationStatus> {
     let claude_code = claude_code_path()
         .and_then(|p| claude_code_is_enabled_at(&p))
         .unwrap_or(false);
     let codex = codex_path()
         .and_then(|p| codex_is_enabled_at(&p))
         .unwrap_or(false);
+    let write_enabled = {
+        let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
+        conn.query_row(
+            "SELECT value FROM settings WHERE key = 'mcp_write_enabled'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .map(|v| v == "true")
+        .unwrap_or(false)
+    };
     Ok(McpIntegrationStatus {
         claude_code,
         codex,
+        write_enabled,
         binary_path: current_binary_path()?.to_string_lossy().into_owned(),
     })
 }
@@ -242,6 +257,17 @@ pub fn mcp_set_integration(client: String, enabled: bool) -> AppResult<()> {
         Client::ClaudeCode => claude_code_write_at(&claude_code_path()?, enabled, &bin),
         Client::Codex => codex_write_at(&codex_path()?, enabled, &bin),
     }
+}
+
+#[tauri::command]
+pub fn mcp_set_write_access(enabled: bool, db: State<'_, Db>) -> AppResult<()> {
+    let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
+    conn.execute(
+        "INSERT INTO settings (key, value) VALUES ('mcp_write_enabled', ?1)
+         ON CONFLICT(key) DO UPDATE SET value = ?1",
+        params![if enabled { "true" } else { "false" }],
+    )?;
+    Ok(())
 }
 
 #[tauri::command]
