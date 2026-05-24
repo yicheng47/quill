@@ -153,7 +153,7 @@ pub struct DeleteBookArgs {
 pub(crate) fn require_sync(
     handler: &QuillMcpHandler,
 ) -> Result<&crate::sync::writer::SyncWriter, ErrorData> {
-    handler
+    let sync = handler
         .state
         .sync
         .as_ref()
@@ -163,7 +163,36 @@ pub(crate) fn require_sync(
                 "Write access is disabled. Enable it in Quill → Settings → MCP → Allow write access.",
                 None,
             )
+        })?;
+
+    // Re-check the setting from SQLite so toggling write access off in
+    // the Quill UI takes effect immediately, without restarting the
+    // MCP subprocess.
+    let still_enabled = handler
+        .state
+        .db
+        .conn
+        .lock()
+        .ok()
+        .and_then(|conn| {
+            conn.query_row(
+                "SELECT value FROM settings WHERE key = 'mcp_write_enabled'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .ok()
         })
+        .map(|v| v == "true")
+        .unwrap_or(false);
+
+    if !still_enabled {
+        return Err(ErrorData::invalid_request(
+            "Write access was revoked. Re-enable it in Quill → Settings → MCP → Allow write access.",
+            None,
+        ));
+    }
+
+    Ok(sync)
 }
 
 #[tool_router(router = library_write_router, vis = "pub(crate)")]
