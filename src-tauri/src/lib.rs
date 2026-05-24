@@ -204,7 +204,7 @@ pub fn mcp_stdio_main() {
         (db, None)
     };
 
-    let state = mcp::McpState::new(db, sync);
+    let state = mcp::McpState::new(db, sync, Some(&local_dir));
 
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()

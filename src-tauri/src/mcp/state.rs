@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::db::Db;
@@ -22,15 +22,14 @@ pub struct McpState {
 }
 
 impl McpState {
-    pub fn new(db: Db, sync: Option<SyncWriter>) -> Self {
-        let notify_path = if sync.is_some() {
-            db.data_dir
-                .lock()
-                .ok()
-                .map(|d| d.join(".mcp-notify"))
-        } else {
-            None
-        };
+    /// `notify_dir` is the **local** app-data directory — NOT the iCloud
+    /// blob dir. The Tauri app watches `notify_dir/.mcp-notify`; if the
+    /// sentinel were placed under the iCloud dir (which `db.data_dir`
+    /// points to after migration), the watcher would never fire.
+    pub fn new(db: Db, sync: Option<SyncWriter>, notify_dir: Option<&Path>) -> Self {
+        let notify_path = sync
+            .as_ref()
+            .and_then(|_| notify_dir.map(|d| d.join(".mcp-notify")));
         Self {
             db,
             sync: sync.map(Arc::new),

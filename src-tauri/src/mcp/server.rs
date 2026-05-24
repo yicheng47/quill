@@ -153,7 +153,7 @@ mod tests {
                 params![now],
             ).unwrap();
         }
-        (dir, McpState::new(db, None))
+        (dir, McpState::new(db, None, None))
     }
 
     fn text_of(result: rmcp::model::CallToolResult) -> String {
