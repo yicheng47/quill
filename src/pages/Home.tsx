@@ -155,6 +155,7 @@ export default function Home() {
     const unlistenBooks = listen("mcp:books-changed", async () => {
       refreshRef.current();
       allBooksRefreshRef.current();
+      collectionsRefreshRef.current();
       await backfillMissingCovers();
       refreshRef.current();
       allBooksRefreshRef.current();
