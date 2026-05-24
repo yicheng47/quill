@@ -1,6 +1,8 @@
+use std::fs;
+use std::path::Path;
+
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
-use std::fs;
 use tauri::State;
 
 use crate::db::Db;
@@ -9,6 +11,49 @@ use crate::error::{AppError, AppResult};
 use crate::icloud;
 use crate::sync::events::{BookImportPayload, EventBody};
 use crate::sync::writer::SyncWriter;
+
+fn pdf_obj_to_string(obj: &lopdf::Object) -> Option<String> {
+    let bytes = obj.as_str().ok().or_else(|| obj.as_name().ok())?;
+    let s = String::from_utf8_lossy(bytes).to_string();
+    if s.trim().is_empty() { None } else { Some(s) }
+}
+
+fn extract_pdf_metadata(path: &Path) -> (String, String, i32) {
+    let fallback_title = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("Untitled")
+        .to_string();
+
+    let Ok(doc) = lopdf::Document::load(path) else {
+        return (fallback_title, "Unknown Author".into(), 0);
+    };
+
+    let pages = doc.get_pages().len() as i32;
+
+    let info = doc
+        .trailer
+        .get(b"Info")
+        .ok()
+        .and_then(|r| r.as_reference().ok())
+        .and_then(|id| doc.get_object(id).ok())
+        .and_then(|o| o.as_dict().ok().cloned());
+
+    let title = info
+        .as_ref()
+        .and_then(|d| d.get(b"Title").ok())
+        .and_then(pdf_obj_to_string)
+        .unwrap_or(fallback_title);
+
+    let author = info
+        .as_ref()
+        .and_then(|d| d.get(b"Author").ok())
+        .and_then(pdf_obj_to_string)
+        .unwrap_or_else(|| "Unknown Author".into());
+
+    (title, author, pages)
+}
+
 
 /// Sanitize a book title into a safe filename slug.
 /// Keeps alphanumeric, spaces (→ hyphens), and common punctuation, then truncates.
@@ -173,11 +218,7 @@ pub(crate) fn do_import_pdf(
     let book_id = uuid::Uuid::new_v4().to_string();
     let src = std::path::Path::new(file_path);
 
-    let title = src
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("Untitled")
-        .to_string();
+    let (title, author, pages) = extract_pdf_metadata(src);
 
     let filename = book_filename(&title, &book_id, "pdf");
     let dest = books_dir.join(&filename);
@@ -189,13 +230,13 @@ pub(crate) fn do_import_pdf(
     let book = Book {
         id: book_id,
         title,
-        author: "Unknown Author".to_string(),
+        author,
         description: None,
         cover_path: None,
         file_path: rel_file_path,
         format: "pdf".to_string(),
         genre: None,
-        pages: Some(0),
+        pages: Some(pages),
         status: "unread".to_string(),
         progress: 0,
         current_cfi: None,
@@ -255,8 +296,16 @@ pub async fn import_book(
     db: State<'_, Db>,
     sync: State<'_, SyncWriter>,
 ) -> AppResult<Book> {
-    log::info!("import_book: start file={file_path} format=epub");
-    let mut book = do_import_epub(&file_path, &db, &sync)?;
+    let ext = file_path
+        .rsplit('.')
+        .next()
+        .unwrap_or("")
+        .to_lowercase();
+    log::info!("import_book: start file={file_path} format={ext}");
+    let mut book = match ext.as_str() {
+        "pdf" => do_import_pdf(&file_path, &db, &sync)?,
+        _ => do_import_epub(&file_path, &db, &sync)?,
+    };
     resolve_book_paths(&mut book, &db);
     Ok(book)
 }
@@ -404,6 +453,28 @@ pub fn check_book_available(id: String, db: State<'_, Db>) -> AppResult<bool> {
     }
 
     Ok(available)
+}
+
+#[tauri::command]
+pub fn save_book_cover(book_id: String, cover_data: Vec<u8>, db: State<'_, Db>) -> AppResult<()> {
+    let data_dir = db
+        .data_dir
+        .lock()
+        .map_err(|e| AppError::Other(e.to_string()))?
+        .clone();
+    let covers_dir = data_dir.join("covers");
+    fs::create_dir_all(&covers_dir)?;
+
+    let cover_file = covers_dir.join(format!("{book_id}.png"));
+    fs::write(&cover_file, &cover_data)?;
+
+    let rel_cover = format!("covers/{book_id}.png");
+    let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
+    conn.execute(
+        "UPDATE books SET cover_path = ?1 WHERE id = ?2",
+        params![rel_cover, book_id],
+    )?;
+    Ok(())
 }
 
 pub(crate) fn do_delete_book(id: &str, db: &Db, sync: &SyncWriter) -> AppResult<()> {

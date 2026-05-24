@@ -198,6 +198,56 @@ export async function extractPdfMetadata(filePath: string): Promise<PdfMetadata>
   }
 }
 
+/**
+ * Render page 1 of a PDF to a PNG Uint8Array. Used for cover backfill
+ * after MCP or Rust-side imports that don't have access to pdf.js.
+ */
+export async function extractPdfCover(filePath: string): Promise<Uint8Array | null> {
+  const url = convertFileSrc(filePath);
+  const response = await fetch(url);
+  if (!response.ok) return null;
+  const buffer = await response.arrayBuffer();
+
+  const pdfjsUrl = new URL("/foliate-js/vendor/pdfjs/pdf.mjs", window.location.origin).href;
+  const pdfjs = await import(/* @vite-ignore */ pdfjsUrl);
+
+  const workerUrl = new URL("/foliate-js/vendor/pdfjs/pdf.worker.mjs", window.location.origin).href;
+  const worker = new Worker(workerUrl, { type: "module" });
+  if (pdfjs.GlobalWorkerOptions) {
+    pdfjs.GlobalWorkerOptions.workerPort = worker;
+  }
+
+  const cMapUrl = new URL("/foliate-js/vendor/pdfjs/cmaps/", window.location.origin).href;
+  const standardFontDataUrl = new URL("/foliate-js/vendor/pdfjs/standard_fonts/", window.location.origin).href;
+
+  try {
+    const loadingTask = pdfjs.getDocument({
+      data: new Uint8Array(buffer),
+      cMapUrl,
+      cMapPacked: true,
+      standardFontDataUrl,
+      isEvalSupported: false,
+    });
+    const pdf = await loadingTask.promise;
+    const page = await pdf.getPage(1);
+    const viewport = page.getViewport({ scale: 1 });
+    const canvas = document.createElement("canvas");
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    await page.render({ canvasContext: ctx, viewport }).promise;
+    const blob: Blob | null = await new Promise((resolve) =>
+      canvas.toBlob((b) => resolve(b), "image/png"),
+    );
+    pdf.destroy?.();
+    if (!blob) return null;
+    return new Uint8Array(await blob.arrayBuffer());
+  } finally {
+    worker.terminate();
+  }
+}
+
 /** Derive a title from a filename: strip extension, replace separators, title-case. */
 export function filenameToTitle(filePath: string): string {
   const name = filePath.split("/").pop()?.split("\\").pop() || "Untitled";

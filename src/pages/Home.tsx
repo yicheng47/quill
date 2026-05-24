@@ -13,7 +13,7 @@ import TranslationsContent from "../components/TranslationsContent";
 import SettingsModal from "../components/SettingsModal";
 import Button from "../components/ui/Button";
 import Input from "../components/ui/Input";
-import { useBooks, importBookDialog } from "../hooks/useBooks";
+import { useBooks, importBookDialog, backfillMissingCovers } from "../hooks/useBooks";
 import { useCollections } from "../hooks/useCollections";
 
 function formatError(err: unknown): string {
@@ -152,7 +152,10 @@ export default function Home() {
 
   // Refresh when MCP subprocess writes to the library
   useEffect(() => {
-    const unlistenBooks = listen("mcp:books-changed", () => {
+    const unlistenBooks = listen("mcp:books-changed", async () => {
+      refreshRef.current();
+      allBooksRefreshRef.current();
+      await backfillMissingCovers();
       refreshRef.current();
       allBooksRefreshRef.current();
     });
