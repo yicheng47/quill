@@ -456,7 +456,12 @@ pub fn check_book_available(id: String, db: State<'_, Db>) -> AppResult<bool> {
 }
 
 #[tauri::command]
-pub fn save_book_cover(book_id: String, cover_data: Vec<u8>, db: State<'_, Db>) -> AppResult<()> {
+pub fn save_book_cover(
+    book_id: String,
+    cover_data: Vec<u8>,
+    db: State<'_, Db>,
+    sync: State<'_, SyncWriter>,
+) -> AppResult<()> {
     let data_dir = db
         .data_dir
         .lock()
@@ -469,12 +474,20 @@ pub fn save_book_cover(book_id: String, cover_data: Vec<u8>, db: State<'_, Db>) 
     fs::write(&cover_file, &cover_data)?;
 
     let rel_cover = format!("covers/{book_id}.png");
-    let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
-    conn.execute(
-        "UPDATE books SET cover_path = ?1 WHERE id = ?2",
-        params![rel_cover, book_id],
-    )?;
-    Ok(())
+    let now = chrono::Utc::now().timestamp_millis();
+    let device = sync.self_device().to_string();
+    sync.with_tx(&db, now, |tx, events| {
+        tx.execute(
+            "UPDATE books SET cover_path = ?1, updated_at = ?2, updated_by_device = ?3 WHERE id = ?4",
+            params![rel_cover, now, device, book_id],
+        )?;
+        events.push(EventBody::BookMetadataSet {
+            book: book_id.clone(),
+            field: "cover_path".into(),
+            value: serde_json::Value::String(rel_cover.clone()),
+        });
+        Ok(())
+    })
 }
 
 pub(crate) fn do_delete_book(id: &str, db: &Db, sync: &SyncWriter) -> AppResult<()> {

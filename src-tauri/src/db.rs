@@ -44,6 +44,13 @@ impl Clone for Db {
 }
 
 impl Db {
+    /// Override the data_dir after construction. Used by `mcp_stdio_main`
+    /// to point at the iCloud ubiquity container when the user has
+    /// migrated, so blob paths (books/, covers/) resolve correctly.
+    pub fn set_data_dir(&mut self, dir: &Path) {
+        *self.data_dir.lock().expect("data_dir mutex") = dir.to_path_buf();
+    }
+
     /// Open the DB with both the SQLite file and the binaries dir at
     /// `app_data_dir`. Used by tests, fresh installs, and any caller
     /// where the materialized view and the binary blobs live together.
@@ -91,6 +98,7 @@ impl Db {
                 | OpenFlags::SQLITE_OPEN_NO_MUTEX
                 | OpenFlags::SQLITE_OPEN_URI,
         )?;
+        conn.execute_batch("PRAGMA foreign_keys = ON;")?;
         let data_dir = db_path
             .parent()
             .unwrap_or_else(|| Path::new(""))

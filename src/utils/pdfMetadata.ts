@@ -201,27 +201,32 @@ export async function extractPdfMetadata(filePath: string): Promise<PdfMetadata>
 /**
  * Render page 1 of a PDF to a PNG Uint8Array. Used for cover backfill
  * after MCP or Rust-side imports that don't have access to pdf.js.
+ * Times out after PDF_METADATA_TIMEOUT_MS to avoid hanging the import.
  */
 export async function extractPdfCover(filePath: string): Promise<Uint8Array | null> {
-  const url = convertFileSrc(filePath);
-  const response = await fetch(url);
-  if (!response.ok) return null;
-  const buffer = await response.arrayBuffer();
+  let worker: Worker | undefined;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let loadingTask: any = null;
 
-  const pdfjsUrl = new URL("/foliate-js/vendor/pdfjs/pdf.mjs", window.location.origin).href;
-  const pdfjs = await import(/* @vite-ignore */ pdfjsUrl);
+  const work = async (): Promise<Uint8Array | null> => {
+    const url = convertFileSrc(filePath);
+    const response = await fetch(url);
+    if (!response.ok) return null;
+    const buffer = await response.arrayBuffer();
 
-  const workerUrl = new URL("/foliate-js/vendor/pdfjs/pdf.worker.mjs", window.location.origin).href;
-  const worker = new Worker(workerUrl, { type: "module" });
-  if (pdfjs.GlobalWorkerOptions) {
-    pdfjs.GlobalWorkerOptions.workerPort = worker;
-  }
+    const pdfjsUrl = new URL("/foliate-js/vendor/pdfjs/pdf.mjs", window.location.origin).href;
+    const pdfjs = await import(/* @vite-ignore */ pdfjsUrl);
 
-  const cMapUrl = new URL("/foliate-js/vendor/pdfjs/cmaps/", window.location.origin).href;
-  const standardFontDataUrl = new URL("/foliate-js/vendor/pdfjs/standard_fonts/", window.location.origin).href;
+    const workerUrl = new URL("/foliate-js/vendor/pdfjs/pdf.worker.mjs", window.location.origin).href;
+    worker = new Worker(workerUrl, { type: "module" });
+    if (pdfjs.GlobalWorkerOptions) {
+      pdfjs.GlobalWorkerOptions.workerPort = worker;
+    }
 
-  try {
-    const loadingTask = pdfjs.getDocument({
+    const cMapUrl = new URL("/foliate-js/vendor/pdfjs/cmaps/", window.location.origin).href;
+    const standardFontDataUrl = new URL("/foliate-js/vendor/pdfjs/standard_fonts/", window.location.origin).href;
+
+    loadingTask = pdfjs.getDocument({
       data: new Uint8Array(buffer),
       cMapUrl,
       cMapPacked: true,
@@ -243,8 +248,17 @@ export async function extractPdfCover(filePath: string): Promise<Uint8Array | nu
     pdf.destroy?.();
     if (!blob) return null;
     return new Uint8Array(await blob.arrayBuffer());
+  };
+
+  const timeout = new Promise<null>((resolve) =>
+    setTimeout(() => resolve(null), PDF_METADATA_TIMEOUT_MS),
+  );
+
+  try {
+    return await Promise.race([work(), timeout]);
   } finally {
-    worker.terminate();
+    try { loadingTask?.destroy?.()?.catch?.(() => {}); } catch { /* ignore */ }
+    worker?.terminate();
   }
 }
 
