@@ -44,11 +44,69 @@ impl Clone for Db {
 }
 
 impl Db {
+    /// Override the data_dir after construction. Used by `mcp_stdio_main`
+    /// to point at the iCloud ubiquity container when the user has
+    /// migrated, so blob paths (books/, covers/) resolve correctly.
+    pub fn set_data_dir(&mut self, dir: &Path) {
+        *self.data_dir.lock().expect("data_dir mutex") = dir.to_path_buf();
+    }
+
     /// Open the DB with both the SQLite file and the binaries dir at
     /// `app_data_dir`. Used by tests, fresh installs, and any caller
     /// where the materialized view and the binary blobs live together.
     pub fn init(app_data_dir: &Path) -> AppResult<Self> {
         Self::init_split(app_data_dir, app_data_dir)
+    }
+
+    /// Open the SQLite file read-only without running migrations. Used
+    /// by the `quill mcp` stdio subcommand — it's a second process
+    /// reading the DB the Tauri app already owns; we must NOT attempt
+    /// to write or migrate. WAL mode (set by `init_split`) lets this
+    /// reader coexist with the writer in the main app.
+    ///
+    /// `data_dir` is set to the DB file's parent because the query
+    /// helpers used by MCP tools don't touch it (only the Tauri
+    /// command wrappers do, via `resolve_book_paths`). If a future
+    /// tool needs binary blob resolution, this needs revisiting.
+    pub fn open_readonly(db_path: &Path) -> AppResult<Self> {
+        use rusqlite::OpenFlags;
+        let conn = Connection::open_with_flags(
+            db_path,
+            OpenFlags::SQLITE_OPEN_READ_ONLY
+                | OpenFlags::SQLITE_OPEN_NO_MUTEX
+                | OpenFlags::SQLITE_OPEN_URI,
+        )?;
+        let dummy_data_dir = db_path
+            .parent()
+            .unwrap_or_else(|| Path::new(""))
+            .to_path_buf();
+        Ok(Self {
+            conn: Arc::new(Mutex::new(conn)),
+            data_dir: Arc::new(Mutex::new(dummy_data_dir)),
+        })
+    }
+
+    /// Open the DB read-write without running migrations. Used by the
+    /// `quill mcp` subprocess when write tools are enabled. Like
+    /// `open_readonly`, the Tauri app owns schema evolution — this
+    /// constructor just opens the existing file with write permission.
+    pub fn open_readwrite(db_path: &Path) -> AppResult<Self> {
+        use rusqlite::OpenFlags;
+        let conn = Connection::open_with_flags(
+            db_path,
+            OpenFlags::SQLITE_OPEN_READ_WRITE
+                | OpenFlags::SQLITE_OPEN_NO_MUTEX
+                | OpenFlags::SQLITE_OPEN_URI,
+        )?;
+        conn.execute_batch("PRAGMA foreign_keys = ON;")?;
+        let data_dir = db_path
+            .parent()
+            .unwrap_or_else(|| Path::new(""))
+            .to_path_buf();
+        Ok(Self {
+            conn: Arc::new(Mutex::new(conn)),
+            data_dir: Arc::new(Mutex::new(data_dir)),
+        })
     }
 
     /// Open the DB with the SQLite file at `db_dir/quill.db` and binary
@@ -70,7 +128,14 @@ impl Db {
         let db_path = db_dir.join("quill.db");
         let conn = Connection::open(&db_path)?;
 
-        conn.execute_batch("PRAGMA journal_mode=DELETE; PRAGMA foreign_keys=ON;")?;
+        // WAL is safe here because quill.db lives in the OS app-data dir
+        // (local-only), not iCloud. Pre-Chunk-6 we ran DELETE so iCloud
+        // file-sync wouldn't see torn `-wal`/`-shm` companion files.
+        // Post-Chunk-6 the only iCloud-resident state is binary blobs +
+        // event logs; the SQLite file is fully local, so WAL is the
+        // right default — it gives the stdio MCP subprocess concurrent
+        // read access without blocking the Tauri app's writes.
+        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
 
         Self::run_migrations(&conn)?;
 
@@ -100,11 +165,9 @@ impl Db {
                 // ALTER TABLE migrations may fail if column already exists
                 if version == 4 || version == 5 {
                     let _ = conn.execute_batch(sql);
-                } else {
-                    if let Err(e) = conn.execute_batch(sql) {
-                        log::error!("db: migration {version} failed: {e}");
-                        return Err(e.into());
-                    }
+                } else if let Err(e) = conn.execute_batch(sql) {
+                    log::error!("db: migration {version} failed: {e}");
+                    return Err(e.into());
                 }
                 // Advance schema_version per migration, so a failure in a later
                 // migration doesn't force successful earlier ones to re-run.
@@ -352,7 +415,7 @@ mod tests {
 
     fn seed_v8(dir: &TempDir) -> Connection {
         let conn = Connection::open(dir.path().join("quill.db")).unwrap();
-        conn.execute_batch("PRAGMA journal_mode=DELETE; PRAGMA foreign_keys=ON;").unwrap();
+        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;").unwrap();
         Db::run_migrations_up_to(&conn, 8).unwrap();
         conn
     }
@@ -624,7 +687,7 @@ mod tests {
     fn test_migration_011_backfills_updated_by_device_and_creates_outbox() {
         let dir = TempDir::new().unwrap();
         let conn = Connection::open(dir.path().join("quill.db")).unwrap();
-        conn.execute_batch("PRAGMA journal_mode=DELETE; PRAGMA foreign_keys=ON;").unwrap();
+        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;").unwrap();
         Db::run_migrations_up_to(&conn, 10).unwrap();
 
         let ts = chrono::Utc::now().timestamp_millis();

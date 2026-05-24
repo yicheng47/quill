@@ -165,8 +165,7 @@ pub fn remove_vocab_word(
     })
 }
 
-#[tauri::command]
-pub fn list_vocab_words(book_id: String, db: State<'_, Db>) -> AppResult<Vec<VocabWord>> {
+pub(crate) fn query_vocab_words(db: &Db, book_id: &str) -> AppResult<Vec<VocabWord>> {
     let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
     let mut stmt = conn.prepare(&format!(
         "SELECT {} FROM vocab_words WHERE book_id = ?1 ORDER BY created_at DESC",
@@ -176,6 +175,11 @@ pub fn list_vocab_words(book_id: String, db: State<'_, Db>) -> AppResult<Vec<Voc
         .query_map(params![book_id], row_to_vocab)?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(words)
+}
+
+#[tauri::command]
+pub fn list_vocab_words(book_id: String, db: State<'_, Db>) -> AppResult<Vec<VocabWord>> {
+    query_vocab_words(&db, &book_id)
 }
 
 #[tauri::command]
@@ -242,8 +246,7 @@ pub fn update_vocab_mastery(
     })
 }
 
-#[tauri::command]
-pub fn list_vocab_due_for_review(db: State<'_, Db>) -> AppResult<Vec<VocabWord>> {
+pub(crate) fn query_vocab_due(db: &Db) -> AppResult<Vec<VocabWord>> {
     let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
     let now_ms = chrono::Utc::now().timestamp_millis();
     let mut stmt = conn.prepare(&format!(
@@ -257,7 +260,11 @@ pub fn list_vocab_due_for_review(db: State<'_, Db>) -> AppResult<Vec<VocabWord>>
 }
 
 #[tauri::command]
-pub fn get_vocab_stats(db: State<'_, Db>) -> AppResult<VocabStats> {
+pub fn list_vocab_due_for_review(db: State<'_, Db>) -> AppResult<Vec<VocabWord>> {
+    query_vocab_due(&db)
+}
+
+pub(crate) fn query_vocab_stats(db: &Db) -> AppResult<VocabStats> {
     let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
     let now_ms = chrono::Utc::now().timestamp_millis();
     let total: i64 = conn.query_row("SELECT COUNT(*) FROM vocab_words", [], |r| r.get(0))?;
@@ -288,4 +295,9 @@ pub fn get_vocab_stats(db: State<'_, Db>) -> AppResult<VocabStats> {
         mastered_count,
         due_for_review,
     })
+}
+
+#[tauri::command]
+pub fn get_vocab_stats(db: State<'_, Db>) -> AppResult<VocabStats> {
+    query_vocab_stats(&db)
 }

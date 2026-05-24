@@ -54,68 +54,50 @@ async function pickFile(): Promise<string | null> {
 }
 
 async function importFile(filePath: string): Promise<Book> {
-  if (!filePath.toLowerCase().endsWith(".pdf")) {
-    return invoke<Book>("import_book", { filePath });
-  }
-
-  // Hard runtime requirement: the vendored pdf.js (v5.5.207) uses
-  // `Promise.withResolvers` and `URL.parse`, both Safari 17.4+ APIs. Without
-  // them, the reader (public/foliate-js/pdf.js) also can't open the file, so
-  // letting the import succeed with filename-only metadata would leave the
-  // user with a book they can't read. Block at the door instead. (Note:
-  // hangs on 14.4+ are a separate problem — handled by the timeout in
-  // extractPdfMetadata, not this guard.)
-  if (typeof (Promise as unknown as { withResolvers?: unknown }).withResolvers !== "function") {
-    throw new Error(
-      "This Mac can't open PDFs — the PDF engine needs Safari 17.4+ (macOS 14.4 Sonoma or newer). EPUB files still work.",
-    );
-  }
-
-  // PDF: stage → extract metadata from the staged copy → commit.
-  // Staging into $APPDATA/books/ avoids fetching arbitrary user paths via
-  // the asset protocol, which can fail on some Macs (TCC, scope, encoding).
-  const staged = await invoke<{ book_id: string; abs_path: string }>("stage_pdf_import", {
-    sourcePath: filePath,
-  });
-  try {
-    const { extractPdfMetadata, filenameToTitle } = await import("../utils/pdfMetadata");
-    let meta;
+  const book = await invoke<Book>("import_book", { filePath });
+  if (book.format === "pdf" && !book.cover_path) {
     try {
-      meta = await extractPdfMetadata(staged.abs_path);
+      await backfillPdfCover(book);
+      book.cover_path = `covers/${book.id}.png`;
     } catch (err) {
-      // Metadata extraction failed (PDF.js error, missing CMaps, malformed
-      // PDF, etc.). Don't block the import — fall back to filename-based
-      // metadata so the user still gets their book. Console-only; the user
-      // can't act on this and the import still succeeds, so surfacing a
-      // toast reads as an error (#222).
-      console.warn("PDF metadata extraction failed, importing with filename only:", err);
-      meta = {
-        title: filenameToTitle(filePath),
-        author: null,
-        description: null,
-        pages: 0,
-        coverData: null as Uint8Array | null,
-      };
+      console.warn("PDF cover backfill failed:", err);
     }
-    return await invoke<Book>("commit_pdf_import", {
-      bookId: staged.book_id,
-      title: meta.title,
-      author: meta.author,
-      description: meta.description,
-      pages: meta.pages,
-      coverData: meta.coverData ? Array.from(meta.coverData) : null,
+  }
+  return book;
+}
+
+async function backfillPdfCover(book: Book): Promise<void> {
+  const { extractPdfCover } = await import("../utils/pdfMetadata");
+  const coverData = await extractPdfCover(book.file_path);
+  if (coverData) {
+    await invoke("save_book_cover", {
+      bookId: book.id,
+      coverData: Array.from(coverData),
     });
-  } catch (err) {
-    try {
-      await invoke("cancel_pdf_import", { bookId: staged.book_id });
-    } catch {
-      // Ignore rollback failure — original error is more useful
-    }
-    throw err;
   }
 }
 
 export const importBookDialog = { pickFile, importFile };
+
+export async function backfillMissingCovers(): Promise<void> {
+  const books = await invoke<Book[]>("list_books", { filter: null, search: null });
+  const missing = books.filter((b) => b.format === "pdf" && !b.cover_path);
+  if (missing.length === 0) return;
+  const { extractPdfCover } = await import("../utils/pdfMetadata");
+  for (const book of missing) {
+    try {
+      const coverData = await extractPdfCover(book.file_path);
+      if (coverData) {
+        await invoke("save_book_cover", {
+          bookId: book.id,
+          coverData: Array.from(coverData),
+        });
+      }
+    } catch (err) {
+      console.warn(`Cover backfill failed for ${book.id}:`, err);
+    }
+  }
+}
 
 export async function getBook(id: string): Promise<Book> {
   return invoke<Book>("get_book", { id });

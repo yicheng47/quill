@@ -13,7 +13,7 @@ import TranslationsContent from "../components/TranslationsContent";
 import SettingsModal from "../components/SettingsModal";
 import Button from "../components/ui/Button";
 import Input from "../components/ui/Input";
-import { useBooks, importBookDialog } from "../hooks/useBooks";
+import { useBooks, importBookDialog, backfillMissingCovers } from "../hooks/useBooks";
 import { useCollections } from "../hooks/useCollections";
 
 function formatError(err: unknown): string {
@@ -111,8 +111,10 @@ export default function Home() {
   // Keep stable refs for refresh functions so the drag-drop effect doesn't re-register
   const refreshRef = useRef(refresh);
   const allBooksRefreshRef = useRef(allBooks.refresh);
+  const collectionsRefreshRef = useRef(collections.refresh);
   useEffect(() => { refreshRef.current = refresh; }, [refresh]);
   useEffect(() => { allBooksRefreshRef.current = allBooks.refresh; }, [allBooks.refresh]);
+  useEffect(() => { collectionsRefreshRef.current = collections.refresh; }, [collections.refresh]);
 
   // Auto-dismiss import error after 10s
   useEffect(() => {
@@ -145,6 +147,26 @@ export default function Home() {
     return () => {
       unlistenStart.then((fn) => fn());
       unlistenDone.then((fn) => fn());
+    };
+  }, []);
+
+  // Refresh when MCP subprocess writes to the library
+  useEffect(() => {
+    const unlistenBooks = listen("mcp:books-changed", async () => {
+      refreshRef.current();
+      allBooksRefreshRef.current();
+      await backfillMissingCovers();
+      refreshRef.current();
+      allBooksRefreshRef.current();
+    });
+    const unlistenCollections = listen("mcp:collections-changed", () => {
+      collectionsRefreshRef.current();
+      refreshRef.current();
+      allBooksRefreshRef.current();
+    });
+    return () => {
+      unlistenBooks.then((fn) => fn());
+      unlistenCollections.then((fn) => fn());
     };
   }, []);
 

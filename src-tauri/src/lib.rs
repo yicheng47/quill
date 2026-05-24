@@ -1,14 +1,18 @@
 mod ai;
 mod commands;
-mod db;
+// `pub` so `tests/mcp_binary.rs` can call `Db::init` to seed a DB at
+// the temp HOME path the binary will read from. Otherwise integration
+// tests would need to hand-roll the full migration suite.
+pub mod db;
 mod epub;
 mod error;
 mod icloud;
+mod mcp;
 mod panic_hook;
 mod secrets;
 mod sync;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use commands::sync::SyncState;
@@ -93,6 +97,144 @@ pub(crate) fn resolve_log_dir() -> PathBuf {
             .expect("HOME or XDG_DATA_HOME env var");
         base.join(identifier).join("logs")
     }
+}
+
+/// Resolve the OS-conventional **app-data** directory for this build.
+/// Mirrors what `tauri::path::app_data_dir()` would return for the
+/// active bundle identifier (dev-suffixed in debug). Used by the
+/// `quill mcp` stdio subcommand which runs outside the Tauri runtime
+/// and has no `AppHandle` to ask.
+///
+/// Platform layout:
+/// - macOS:   `$HOME/Library/Application Support/<identifier>`
+/// - Windows: `%APPDATA%\<identifier>` (Roaming)
+/// - Linux:   `$XDG_DATA_HOME/<identifier>` or `$HOME/.local/share/<identifier>`
+pub(crate) fn resolve_app_data_dir() -> PathBuf {
+    let identifier = bundle_identifier_for_build();
+
+    #[cfg(target_os = "macos")]
+    {
+        let home = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .expect("HOME env var");
+        home.join("Library/Application Support").join(identifier)
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let base = std::env::var_os("APPDATA")
+            .map(PathBuf::from)
+            .expect("APPDATA env var");
+        base.join(identifier)
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let base = std::env::var_os("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .or_else(|| {
+                std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share"))
+            })
+            .expect("HOME or XDG_DATA_HOME env var");
+        base.join(identifier)
+    }
+}
+
+/// Entry point for the `quill mcp` subcommand. Opens the SQLite
+/// materialized view and serves the MCP protocol over stdin/stdout
+/// until the client disconnects.
+///
+/// When `mcp_write_enabled` is `"true"` in the settings table, the DB
+/// is opened read-write and a `SyncWriter` is constructed so write
+/// tools can mutate the library. Otherwise the DB stays read-only.
+///
+/// Runs entirely outside the Tauri runtime — no plugins, no windows,
+/// no event loop. Stderr is reserved for diagnostic messages so it
+/// doesn't pollute the MCP wire on stdout.
+pub fn mcp_stdio_main() {
+    let local_dir = resolve_app_data_dir();
+    let db_path = local_dir.join("quill.db");
+
+    if !db_path.exists() {
+        eprintln!(
+            "quill mcp: no library found at {} — launch the Quill app at least once to initialize it.",
+            db_path.display()
+        );
+        std::process::exit(1);
+    }
+
+    let write_enabled = is_mcp_write_enabled(&db_path);
+
+    // Resolve the data_dir the same way the Tauri app does: if the
+    // user has migrated to iCloud sync, blobs (books/, covers/) live
+    // under the ubiquity container, not the local app-data dir.
+    let data_dir = if sync::migration::is_migration_complete(&local_dir) {
+        sync::migration::recorded_data_dir(&local_dir)
+            .or_else(icloud::icloud_data_dir_deterministic)
+            .unwrap_or_else(|| local_dir.clone())
+    } else {
+        local_dir.clone()
+    };
+
+    let (db, sync) = if write_enabled {
+        let db = match Db::open_readwrite(&db_path) {
+            Ok(mut db) => {
+                db.set_data_dir(&data_dir);
+                db
+            }
+            Err(e) => {
+                eprintln!("quill mcp: failed to open (rw) {}: {e}", db_path.display());
+                std::process::exit(1);
+            }
+        };
+        let device = sync::device::DeviceIdentity::load_or_create(&local_dir)
+            .expect("failed to load device identity");
+        let sw = SyncWriter::new(device.device_uuid);
+        if sync::migration::is_migration_complete(&local_dir) {
+            sw.set_should_queue(true);
+        }
+        (db, Some(sw))
+    } else {
+        let db = match Db::open_readonly(&db_path) {
+            Ok(mut db) => {
+                db.set_data_dir(&data_dir);
+                db
+            }
+            Err(e) => {
+                eprintln!("quill mcp: failed to open {}: {e}", db_path.display());
+                std::process::exit(1);
+            }
+        };
+        (db, None)
+    };
+
+    let state = mcp::McpState::new(db, sync, Some(&local_dir));
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("tokio runtime");
+
+    if let Err(e) = runtime.block_on(mcp::server::serve_stdio(state)) {
+        eprintln!("quill mcp: serve error: {e}");
+        std::process::exit(1);
+    }
+}
+
+/// Check whether `mcp_write_enabled` is `"true"` in the settings table.
+/// Opens a temporary read-only connection just for this check.
+fn is_mcp_write_enabled(db_path: &Path) -> bool {
+    let Ok(conn) = rusqlite::Connection::open_with_flags(
+        db_path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    ) else {
+        return false;
+    };
+    conn.query_row(
+        "SELECT value FROM settings WHERE key = 'mcp_write_enabled'",
+        [],
+        |row| row.get::<_, String>(0),
+    )
+    .map(|v| v == "true")
+    .unwrap_or(false)
 }
 
 /// Construct the per-device EventLog, wire it into `sync_writer`, build a
@@ -467,17 +609,19 @@ pub fn run() {
                 }
             };
 
+            // Watch the MCP sentinel file so the UI can refresh when an
+            // MCP subprocess writes to the library. The sentinel is a
+            // tiny JSON file (~80 bytes) that the MCP subprocess
+            // overwrites after each write tool invocation.
+            let mcp_notify_path = local_dir.join(".mcp-notify");
+            let app_handle = app.handle().clone();
+            mcp::notify::spawn_watcher(mcp_notify_path, app_handle);
+
             app.manage(LocalDir(local_dir));
             app.manage(db);
             app.manage(secrets);
             app.manage(device);
             app.manage(sync_writer);
-            // Engine + watcher live behind a single `SyncState` so the
-            // `sync_enable` / `sync_disable` commands can swap them at
-            // runtime. Watcher is held inside the same struct via a
-            // `Mutex<Option<WatcherHandle>>` — its `Drop` impl signals
-            // the watcher thread to stop and joins it on disable /
-            // shutdown.
             app.manage(SyncState::new(replay_engine, watcher_handle));
 
             Ok(())
@@ -500,6 +644,7 @@ pub fn run() {
             commands::books::update_book_pages,
             commands::books::check_book_available,
             commands::books::update_book_metadata,
+            commands::books::save_book_cover,
             // Settings
             commands::settings::get_all_settings,
             commands::settings::get_setting,
@@ -557,6 +702,11 @@ pub fn run() {
             commands::translation::save_translation,
             commands::translation::remove_saved_translation,
             commands::translation::list_translations,
+            // MCP client integrations
+            commands::mcp::mcp_integration_status,
+            commands::mcp::mcp_set_integration,
+            commands::mcp::mcp_config_snippet,
+            commands::mcp::mcp_set_write_access,
             // Sync (Chunk 7 — replaces the legacy icloud_* commands;
             // sync_compact added in Chunk 8).
             commands::sync::sync_status,

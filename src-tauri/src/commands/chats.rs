@@ -128,8 +128,7 @@ pub fn create_chat(
     Ok(chat)
 }
 
-#[tauri::command]
-pub fn list_chats(book_id: String, db: State<'_, Db>) -> AppResult<Vec<Chat>> {
+pub(crate) fn query_chats(db: &Db, book_id: &str) -> AppResult<Vec<Chat>> {
     let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
     let mut stmt = conn.prepare(
         "SELECT id, book_id, title, model, pinned, metadata, created_at, updated_at
@@ -140,6 +139,11 @@ pub fn list_chats(book_id: String, db: State<'_, Db>) -> AppResult<Vec<Chat>> {
         .query_map(params![book_id], row_to_chat)?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(chats)
+}
+
+#[tauri::command]
+pub fn list_chats(book_id: String, db: State<'_, Db>) -> AppResult<Vec<Chat>> {
+    query_chats(&db, &book_id)
 }
 
 #[tauri::command]
@@ -213,8 +217,7 @@ pub fn rename_chat(
     })
 }
 
-#[tauri::command]
-pub fn list_chat_messages(chat_id: String, db: State<'_, Db>) -> AppResult<Vec<ChatMsg>> {
+pub(crate) fn query_chat_messages(db: &Db, chat_id: &str) -> AppResult<Vec<ChatMsg>> {
     let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
     let mut stmt = conn.prepare(
         "SELECT id, chat_id, role, content, context, metadata, created_at, updated_at
@@ -225,6 +228,11 @@ pub fn list_chat_messages(chat_id: String, db: State<'_, Db>) -> AppResult<Vec<C
         .query_map(params![chat_id], row_to_msg)?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(msgs)
+}
+
+#[tauri::command]
+pub fn list_chat_messages(chat_id: String, db: State<'_, Db>) -> AppResult<Vec<ChatMsg>> {
+    query_chat_messages(&db, &chat_id)
 }
 
 #[tauri::command]

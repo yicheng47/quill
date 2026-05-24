@@ -34,14 +34,21 @@ uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 thiserror = "1"
 reqwest = { version = "0.12", features = ["json", "stream"] }
-tokio = { version = "1", features = ["sync", "macros", "rt-multi-thread", "net", "io-util"] }
+tokio = { version = "1", features = ["sync", "macros", "rt-multi-thread", "net", "io-util", "time"] }
 futures = "0.3"
+rmcp = { version = "1.7", features = ["server", "transport-io"] }
+schemars = "1"
+# Codex MCP config lives in ~/.codex/config.toml; toml_edit preserves
+# user-authored comments + formatting on round-trip writes (unlike the
+# plain `toml` crate).
+toml_edit = "0.22"
 sha2 = "0.10"
 base64 = "0.22"
 rand = "0.8"
 ulid = { version = "1", features = ["serde"] }
 notify = "6"
 gethostname = "0.5"
+lopdf = "0.40.0"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
