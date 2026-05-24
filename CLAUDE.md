@@ -26,7 +26,13 @@ src-tauri/              # Rust backend
   migrations/           # SQL schema files (versioned)
 docs/
   features/             # Feature specs (product-level)
+    archive/            # Shipped feature specs
   impls/                # Implementation plans (code-level, with Figma design prompts)
+    archive/            # Shipped implementation plans
+  guide/                # Implementation guides
+    archive/            # Completed guides
+  roadmap/              # Milestone plans
+    archive/            # Completed milestones
 ```
 
 ## Workflow
