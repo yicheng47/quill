@@ -188,7 +188,9 @@ pub fn mcp_stdio_main() {
         let device = sync::device::DeviceIdentity::load_or_create(&local_dir)
             .expect("failed to load device identity");
         let sw = SyncWriter::new(device.device_uuid);
-        sw.set_should_queue(true);
+        if sync::migration::is_migration_complete(&local_dir) {
+            sw.set_should_queue(true);
+        }
         (db, Some(sw))
     } else {
         let db = match Db::open_readonly(&db_path) {

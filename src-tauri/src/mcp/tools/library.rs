@@ -160,7 +160,9 @@ pub(crate) fn require_sync(
         .map(|arc| arc.as_ref())
         .ok_or_else(|| {
             ErrorData::invalid_request(
-                "Write access is disabled. Enable it in Quill → Settings → MCP → Allow write access.",
+                "Write access was not enabled when this MCP session started. \
+                 Enable it in Quill → Settings → MCP → Allow write access, \
+                 then restart the MCP client so a new session picks up the change.",
                 None,
             )
         })?;
