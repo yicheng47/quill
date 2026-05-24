@@ -38,6 +38,10 @@ tokio = { version = "1", features = ["sync", "macros", "rt-multi-thread", "net",
 futures = "0.3"
 rmcp = { version = "1.7", features = ["server", "transport-io"] }
 schemars = "1"
+# Codex MCP config lives in ~/.codex/config.toml; toml_edit preserves
+# user-authored comments + formatting on round-trip writes (unlike the
+# plain `toml` crate).
+toml_edit = "0.22"
 sha2 = "0.10"
 base64 = "0.22"
 rand = "0.8"

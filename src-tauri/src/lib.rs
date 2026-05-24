@@ -1,6 +1,9 @@
 mod ai;
 mod commands;
-mod db;
+// `pub` so `tests/mcp_binary.rs` can call `Db::init` to seed a DB at
+// the temp HOME path the binary will read from. Otherwise integration
+// tests would need to hand-roll the full migration suite.
+pub mod db;
 mod epub;
 mod error;
 mod icloud;
@@ -643,6 +646,10 @@ pub fn run() {
             commands::translation::save_translation,
             commands::translation::remove_saved_translation,
             commands::translation::list_translations,
+            // MCP client integrations
+            commands::mcp::mcp_integration_status,
+            commands::mcp::mcp_set_integration,
+            commands::mcp::mcp_config_snippet,
             // Sync (Chunk 7 — replaces the legacy icloud_* commands;
             // sync_compact added in Chunk 8).
             commands::sync::sync_status,
