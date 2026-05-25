@@ -31,7 +31,10 @@ export function useBooks(filter?: string, search?: string) {
         filter: filter || null,
         search: search || null,
       });
-      setBooks(result);
+      setBooks(result.map((b) => ({
+        ...b,
+        cover_path: b.cover_path === "none" ? null : b.cover_path,
+      })));
     } catch (err) {
       console.error("Failed to load books:", err);
     } finally {
@@ -82,25 +85,24 @@ export const importBookDialog = { pickFile, importFile };
 const BACKFILL_BATCH_SIZE = 3;
 const BACKFILL_DELAY_MS = 1000;
 let backfillRunning = false;
-const backfillTried = new Set<string>();
+
+function needsCover(b: Book): boolean {
+  return b.format === "pdf" && !b.cover_path;
+}
 
 export async function backfillMissingCovers(): Promise<void> {
   if (backfillRunning) return;
   backfillRunning = true;
   try {
     const books = await invoke<Book[]>("list_books", { filter: null, search: null });
-    const missing = books.filter(
-      (b) => b.format === "pdf" && !b.cover_path && !backfillTried.has(b.id),
-    );
+    const missing = books.filter(needsCover);
     if (missing.length === 0) {
-      backfillTried.clear();
       backfillRunning = false;
       return;
     }
     const batch = missing.slice(0, BACKFILL_BATCH_SIZE);
     const { extractPdfCover } = await import("../utils/pdfMetadata");
     for (const book of batch) {
-      backfillTried.add(book.id);
       try {
         const coverData = await extractPdfCover(book.file_path);
         if (coverData) {
@@ -108,9 +110,12 @@ export async function backfillMissingCovers(): Promise<void> {
             bookId: book.id,
             coverData: Array.from(coverData),
           });
+        } else {
+          await invoke("mark_cover_unavailable", { bookId: book.id });
         }
       } catch (err) {
         console.warn(`Cover backfill failed for ${book.id}:`, err);
+        await invoke("mark_cover_unavailable", { bookId: book.id }).catch(() => {});
       }
     }
     if (missing.length > BACKFILL_BATCH_SIZE) {
@@ -119,7 +124,6 @@ export async function backfillMissingCovers(): Promise<void> {
         backfillMissingCovers();
       }, BACKFILL_DELAY_MS);
     } else {
-      backfillTried.clear();
       backfillRunning = false;
     }
   } catch {
@@ -128,7 +132,9 @@ export async function backfillMissingCovers(): Promise<void> {
 }
 
 export async function getBook(id: string): Promise<Book> {
-  return invoke<Book>("get_book", { id });
+  const b = await invoke<Book>("get_book", { id });
+  if (b.cover_path === "none") b.cover_path = null;
+  return b;
 }
 
 export async function deleteBook(id: string): Promise<void> {

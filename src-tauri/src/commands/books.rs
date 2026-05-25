@@ -490,6 +490,19 @@ pub fn save_book_cover(
     })
 }
 
+#[tauri::command]
+pub fn mark_cover_unavailable(
+    book_id: String,
+    db: State<'_, Db>,
+) -> AppResult<()> {
+    let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
+    conn.execute(
+        "UPDATE books SET cover_path = 'none' WHERE id = ?1 AND cover_path IS NULL",
+        params![book_id],
+    )?;
+    Ok(())
+}
+
 pub(crate) fn do_delete_book(id: &str, db: &Db, sync: &SyncWriter) -> AppResult<()> {
     let (file_path, cover_path): (String, Option<String>) = {
         let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;

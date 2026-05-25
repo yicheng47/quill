@@ -682,6 +682,7 @@ pub fn run() {
             commands::books::check_book_available,
             commands::books::update_book_metadata,
             commands::books::save_book_cover,
+            commands::books::mark_cover_unavailable,
             // Settings
             commands::settings::get_all_settings,
             commands::settings::get_setting,
