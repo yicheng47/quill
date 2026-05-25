@@ -153,7 +153,7 @@ impl Db {
         // event logs; the SQLite file is fully local, so WAL is the
         // right default — it gives the stdio MCP subprocess concurrent
         // read access without blocking the Tauri app's writes.
-        conn.execute_batch("PRAGMA journal_mode=WAL;")?;
+        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=OFF;")?;
 
         Self::run_migrations(&conn)?;
 

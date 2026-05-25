@@ -392,16 +392,25 @@ impl ReplayEngine {
                 .lock()
                 .map_err(|e| AppError::Other(format!("db conn mutex: {e}")))?;
             let tx = conn.transaction()?;
-            let outcome = snap.apply_peer(&tx, device)?;
-            tx.commit()?;
-            drop(conn);
-            if matches!(
-                outcome,
-                super::snapshot::ApplyOutcome::Applied
-                    | super::snapshot::ApplyOutcome::HeaderOnly
-            ) {
-                snapshots_applied += 1;
+            match snap.apply_peer(&tx, device) {
+                Ok(outcome) => {
+                    tx.commit()?;
+                    if matches!(
+                        outcome,
+                        super::snapshot::ApplyOutcome::Applied
+                            | super::snapshot::ApplyOutcome::HeaderOnly
+                    ) {
+                        snapshots_applied += 1;
+                    }
+                }
+                Err(e) => {
+                    ::log::warn!(
+                        "sync: skipping snapshot for peer {device} (will retry next tick): {e}"
+                    );
+                    let _ = tx.rollback();
+                }
             }
+            drop(conn);
         }
 
         // Read watermarks through the reader — no write lock needed.
