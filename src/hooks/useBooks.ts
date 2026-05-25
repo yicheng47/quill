@@ -70,8 +70,8 @@ async function importPdfStaged(filePath: string): Promise<Book> {
     { sourcePath: filePath },
   );
   try {
-    const { extractPdfMetadata } = await import("../utils/pdfMetadata");
-    const meta = await extractPdfMetadata(abs_path);
+    const { extractPdfMetadata, filenameToTitle } = await import("../utils/pdfMetadata");
+    const meta = await extractPdfMetadata(abs_path, filenameToTitle(filePath));
     const book = await invoke<Book>("commit_pdf_import", {
       bookId: book_id,
       title: meta.title,

@@ -31,7 +31,7 @@ const PDF_METADATA_TIMEOUT_MS = 5_000;
  * Each step is labeled so a thrown error names the exact failing step —
  * Safari/JavaScriptCore otherwise refuses to give a useful stack.
  */
-export async function extractPdfMetadata(filePath: string): Promise<PdfMetadata> {
+export async function extractPdfMetadata(filePath: string, fallbackTitle?: string): Promise<PdfMetadata> {
   let step = "init";
   // Hoisted so the timeout path can cancel pdf.js even if we never reach
   // the inner await — destroy() releases the worker and the cmap/font fetches.
@@ -119,7 +119,7 @@ export async function extractPdfMetadata(filePath: string): Promise<PdfMetadata>
       return null;
     };
 
-    const title = getMeta("dc:title") || info.Title || filenameToTitle(filePath);
+    const title = getMeta("dc:title") || info.Title || fallbackTitle || filenameToTitle(filePath);
     const author = getMeta("dc:creator") || info.Author || null;
     const description = getMeta("dc:description") || info.Subject || null;
 

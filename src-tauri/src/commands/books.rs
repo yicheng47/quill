@@ -887,8 +887,23 @@ pub async fn cancel_pdf_import(book_id: String, db: State<'_, Db>) -> AppResult<
         .lock()
         .map_err(|e| AppError::Other(e.to_string()))?
         .clone();
-    let staged = data_dir.join("books").join(format!("{}.pdf", book_id));
+    let books_dir = data_dir.join("books");
+    // Remove the staged UUID-named file.
+    let staged = books_dir.join(format!("{}.pdf", book_id));
     let _ = fs::remove_file(&staged);
+    // Also remove any renamed (slugged) file from a partial commit.
+    if let Ok(entries) = fs::read_dir(&books_dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            if name_str.contains(&book_id[..8]) && name_str.ends_with(".pdf") {
+                let _ = fs::remove_file(entry.path());
+            }
+        }
+    }
+    // Remove cover if it was written before the failure.
+    let cover = data_dir.join("covers").join(format!("{}.png", book_id));
+    let _ = fs::remove_file(&cover);
     Ok(())
 }
 
