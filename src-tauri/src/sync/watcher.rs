@@ -57,6 +57,10 @@ pub struct WatcherHandle {
 }
 
 impl WatcherHandle {
+    pub fn request_stop(&self) {
+        self.stop.store(true, Ordering::SeqCst);
+    }
+
     /// Test-only: wait up to `timeout` for the watcher thread to be
     /// idle (i.e. no pending fs event). Used by tests that want to
     /// assert "the tick has run" without flaky sleeps.
@@ -68,7 +72,7 @@ impl WatcherHandle {
 
 impl Drop for WatcherHandle {
     fn drop(&mut self) {
-        self.stop.store(true, Ordering::SeqCst);
+        self.request_stop();
         if let Some(handle) = self.join.take() {
             // Best-effort; if the thread panicked we don't care during
             // shutdown.

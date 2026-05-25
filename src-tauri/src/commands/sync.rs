@@ -381,26 +381,28 @@ pub fn sync_disable(
     sync_writer: State<'_, SyncWriter>,
     sync_state: State<'_, SyncState>,
 ) -> AppResult<()> {
-    // Stop the watcher first so no new fs-triggered ticks can start
-    // while we cancel + wait + copy-back.
-    {
+    let engine = sync_state.engine_snapshot()?;
+
+    // Stop new watcher ticks first, then cancel any tick already in
+    // flight before joining the watcher thread.
+    let old_watcher = {
         let mut g = sync_state
             .watcher
             .lock()
             .map_err(|e| AppError::Other(format!("watcher mutex: {e}")))?;
-        *g = None;
-    }
-
-    // Cancel any in-flight tick and wait for it to finish before
-    // copy-back. Without this, a background tick could import a peer
-    // book after copy-back runs, leaving a DB row whose blob was never
-    // copied to local.
-    if let Some(engine) = sync_state.engine_snapshot()? {
+        if let Some(watcher) = g.as_ref() {
+            watcher.request_stop();
+        }
+        g.take()
+    };
+    let had_watcher = old_watcher.is_some();
+    if let Some(engine) = engine.as_ref() {
         engine.cancel();
     }
+    drop(old_watcher);
     replay::tick_mutex_wait();
 
-    // ---- Phase 1: fallible binary copy-back with no state change ----
+    // ---- Phase 1: fallible binary copy-back with no durable state change ----
     // If this fails (e.g. iCloud-evicted files, disk full), return an
     // error without touching any session or marker state. The user
     // sees "disable failed, please retry" and the system is still in
@@ -411,9 +413,31 @@ pub fn sync_disable(
 
     let ubiquity_dir = sync::migration::recorded_data_dir(&local.0)
         .or_else(icloud::icloud_data_dir_deterministic);
-    if let Some(ub) = ubiquity_dir.as_ref() {
-        copy_dir_contents(&ub.join("books"), &local.0.join("books"))?;
-        copy_dir_contents(&ub.join("covers"), &local.0.join("covers"))?;
+    let copy_result = if let Some(ub) = ubiquity_dir.as_ref() {
+        copy_dir_contents(&ub.join("books"), &local.0.join("books"))
+            .and_then(|_| copy_dir_contents(&ub.join("covers"), &local.0.join("covers")))
+    } else {
+        Ok(())
+    };
+    if let Err(e) = copy_result {
+        if had_watcher {
+            if let (Some(ub), Some(engine)) = (ubiquity_dir.as_ref(), engine.as_ref()) {
+                match watcher::spawn(ub.clone(), db.inner().clone(), Arc::clone(engine)) {
+                    Ok(watcher) => match sync_state.watcher.lock() {
+                        Ok(mut g) => *g = Some(watcher),
+                        Err(lock_err) => {
+                            log::error!("sync_disable: failed to restore watcher: {lock_err}");
+                        }
+                    },
+                    Err(restart_err) => {
+                        log::error!(
+                            "sync_disable: failed to restore watcher after copy-back error: {restart_err}"
+                        );
+                    }
+                }
+            }
+        }
+        return Err(e);
     }
 
     // ---- Phase 2: teardown + marker removal ----
@@ -421,10 +445,7 @@ pub fn sync_disable(
     // fallible copy-back above succeeded, so we're committed to
     // turning sync off.
 
-    // Watcher already dropped above. Drop the engine — the Arc may
-    // still be held by a background thread, but `cancel()` already
-    // signalled it to stop and `set_log(None)` below prevents new
-    // outbox flushes.
+    // Watcher already dropped above. Drop the engine.
     {
         let mut g = sync_state
             .engine
