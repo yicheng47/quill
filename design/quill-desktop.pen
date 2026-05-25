@@ -82,6 +82,39 @@
                   "fontSize": 18,
                   "fontWeight": "600",
                   "letterSpacing": 0.5
+                },
+                {
+                  "type": "frame",
+                  "id": "Q46sD",
+                  "name": "Sync indicator",
+                  "fill": "#7C3AED14",
+                  "cornerRadius": 6,
+                  "gap": 6,
+                  "padding": [
+                    4,
+                    8
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon_font",
+                      "id": "Mnb7P",
+                      "width": 12,
+                      "height": 12,
+                      "iconFontName": "refresh-cw",
+                      "iconFontFamily": "lucide",
+                      "fill": "$accent"
+                    },
+                    {
+                      "type": "text",
+                      "id": "VcNkG",
+                      "fill": "$accent",
+                      "content": "47/500",
+                      "fontFamily": "Inter",
+                      "fontSize": 11,
+                      "fontWeight": "500"
+                    }
+                  ]
                 }
               ]
             },
@@ -1373,10 +1406,27 @@
                           "width": "fill_container",
                           "height": 286,
                           "fill": {
-                            "type": "image",
+                            "type": "gradient",
+                            "gradientType": "linear",
                             "enabled": true,
-                            "url": "images/generated-1775988320372.png",
-                            "mode": "fill"
+                            "rotation": 180,
+                            "size": {
+                              "height": 1
+                            },
+                            "colors": [
+                              {
+                                "color": "#1a1a2e",
+                                "position": 0
+                              },
+                              {
+                                "color": "#16213e",
+                                "position": 0.5
+                              },
+                              {
+                                "color": "#0f3460",
+                                "position": 1
+                              }
+                            ]
                           },
                           "cornerRadius": 8,
                           "effect": {
@@ -1390,7 +1440,22 @@
                             "blur": 6,
                             "spread": -1
                           },
-                          "layout": "none"
+                          "layout": "vertical",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "aivKv",
+                              "name": "Cover content",
+                              "width": "fill_container",
+                              "height": "fill_container",
+                              "layout": "vertical",
+                              "padding": [
+                                16,
+                                14
+                              ],
+                              "justifyContent": "end"
+                            }
+                          ]
                         },
                         {
                           "type": "text",
@@ -1435,10 +1500,27 @@
                           "width": "fill_container",
                           "height": 286,
                           "fill": {
-                            "type": "image",
+                            "type": "gradient",
+                            "gradientType": "linear",
                             "enabled": true,
-                            "url": "images/generated-1775452511015.png",
-                            "mode": "fill"
+                            "rotation": 180,
+                            "size": {
+                              "height": 1
+                            },
+                            "colors": [
+                              {
+                                "color": "#2d132c",
+                                "position": 0
+                              },
+                              {
+                                "color": "#801336",
+                                "position": 0.5
+                              },
+                              {
+                                "color": "#c72c41",
+                                "position": 1
+                              }
+                            ]
                           },
                           "cornerRadius": 8,
                           "effect": {
@@ -1452,7 +1534,22 @@
                             "blur": 6,
                             "spread": -1
                           },
-                          "layout": "none"
+                          "layout": "vertical",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "n4AU8e",
+                              "name": "Cover content",
+                              "width": "fill_container",
+                              "height": "fill_container",
+                              "layout": "vertical",
+                              "padding": [
+                                16,
+                                14
+                              ],
+                              "justifyContent": "end"
+                            }
+                          ]
                         },
                         {
                           "type": "text",
@@ -1497,10 +1594,27 @@
                           "width": "fill_container",
                           "height": 286,
                           "fill": {
-                            "type": "image",
+                            "type": "gradient",
+                            "gradientType": "linear",
                             "enabled": true,
-                            "url": "images/generated-1775988346070.png",
-                            "mode": "fill"
+                            "rotation": 180,
+                            "size": {
+                              "height": 1
+                            },
+                            "colors": [
+                              {
+                                "color": "#0d1b2a",
+                                "position": 0
+                              },
+                              {
+                                "color": "#1b263b",
+                                "position": 0.5
+                              },
+                              {
+                                "color": "#415a77",
+                                "position": 1
+                              }
+                            ]
                           },
                           "cornerRadius": 8,
                           "effect": {
@@ -1514,7 +1628,22 @@
                             "blur": 6,
                             "spread": -1
                           },
-                          "layout": "none"
+                          "layout": "vertical",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "V1udG",
+                              "name": "Cover content",
+                              "width": "fill_container",
+                              "height": "fill_container",
+                              "layout": "vertical",
+                              "padding": [
+                                16,
+                                14
+                              ],
+                              "justifyContent": "end"
+                            }
+                          ]
                         },
                         {
                           "type": "text",
@@ -1559,10 +1688,27 @@
                           "width": "fill_container",
                           "height": 286,
                           "fill": {
-                            "type": "image",
+                            "type": "gradient",
+                            "gradientType": "linear",
                             "enabled": true,
-                            "url": "images/generated-1775988365458.png",
-                            "mode": "fill"
+                            "rotation": 180,
+                            "size": {
+                              "height": 1
+                            },
+                            "colors": [
+                              {
+                                "color": "#1b4332",
+                                "position": 0
+                              },
+                              {
+                                "color": "#2d6a4f",
+                                "position": 0.5
+                              },
+                              {
+                                "color": "#40916c",
+                                "position": 1
+                              }
+                            ]
                           },
                           "cornerRadius": 8,
                           "effect": {
@@ -1576,7 +1722,22 @@
                             "blur": 6,
                             "spread": -1
                           },
-                          "layout": "none"
+                          "layout": "vertical",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "E5QVSj",
+                              "name": "Cover content",
+                              "width": "fill_container",
+                              "height": "fill_container",
+                              "layout": "vertical",
+                              "padding": [
+                                16,
+                                14
+                              ],
+                              "justifyContent": "end"
+                            }
+                          ]
                         },
                         {
                           "type": "text",
@@ -1621,10 +1782,27 @@
                           "width": "fill_container",
                           "height": 286,
                           "fill": {
-                            "type": "image",
+                            "type": "gradient",
+                            "gradientType": "linear",
                             "enabled": true,
-                            "url": "images/generated-1775988544992.png",
-                            "mode": "fill"
+                            "rotation": 180,
+                            "size": {
+                              "height": 1
+                            },
+                            "colors": [
+                              {
+                                "color": "#3d0066",
+                                "position": 0
+                              },
+                              {
+                                "color": "#240046",
+                                "position": 0.5
+                              },
+                              {
+                                "color": "#7b2cbf",
+                                "position": 1
+                              }
+                            ]
                           },
                           "cornerRadius": 8,
                           "effect": {
@@ -1638,7 +1816,22 @@
                             "blur": 6,
                             "spread": -1
                           },
-                          "layout": "none"
+                          "layout": "vertical",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "aDnFp",
+                              "name": "Cover content",
+                              "width": "fill_container",
+                              "height": "fill_container",
+                              "layout": "vertical",
+                              "padding": [
+                                16,
+                                14
+                              ],
+                              "justifyContent": "end"
+                            }
+                          ]
                         },
                         {
                           "type": "text",
@@ -1692,10 +1885,27 @@
                           "width": "fill_container",
                           "height": 286,
                           "fill": {
-                            "type": "image",
+                            "type": "gradient",
+                            "gradientType": "linear",
                             "enabled": true,
-                            "url": "images/generated-1775988568293.png",
-                            "mode": "fill"
+                            "rotation": 180,
+                            "size": {
+                              "height": 1
+                            },
+                            "colors": [
+                              {
+                                "color": "#4a1942",
+                                "position": 0
+                              },
+                              {
+                                "color": "#6b2737",
+                                "position": 0.5
+                              },
+                              {
+                                "color": "#c44536",
+                                "position": 1
+                              }
+                            ]
                           },
                           "cornerRadius": 8,
                           "effect": {
@@ -1709,7 +1919,22 @@
                             "blur": 6,
                             "spread": -1
                           },
-                          "layout": "none"
+                          "layout": "vertical",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "tH2nw",
+                              "name": "Cover content",
+                              "width": "fill_container",
+                              "height": "fill_container",
+                              "layout": "vertical",
+                              "padding": [
+                                16,
+                                14
+                              ],
+                              "justifyContent": "end"
+                            }
+                          ]
                         },
                         {
                           "type": "text",
@@ -1754,10 +1979,27 @@
                           "width": "fill_container",
                           "height": 286,
                           "fill": {
-                            "type": "image",
+                            "type": "gradient",
+                            "gradientType": "linear",
                             "enabled": true,
-                            "url": "images/generated-1775988594959.png",
-                            "mode": "fill"
+                            "rotation": 180,
+                            "size": {
+                              "height": 1
+                            },
+                            "colors": [
+                              {
+                                "color": "#003049",
+                                "position": 0
+                              },
+                              {
+                                "color": "#d62828",
+                                "position": 0.5
+                              },
+                              {
+                                "color": "#f77f00",
+                                "position": 1
+                              }
+                            ]
                           },
                           "cornerRadius": 8,
                           "effect": {
@@ -1771,7 +2013,22 @@
                             "blur": 6,
                             "spread": -1
                           },
-                          "layout": "none"
+                          "layout": "vertical",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "i0cEmK",
+                              "name": "Cover content",
+                              "width": "fill_container",
+                              "height": "fill_container",
+                              "layout": "vertical",
+                              "padding": [
+                                16,
+                                14
+                              ],
+                              "justifyContent": "end"
+                            }
+                          ]
                         },
                         {
                           "type": "text",
@@ -1816,10 +2073,27 @@
                           "width": "fill_container",
                           "height": 286,
                           "fill": {
-                            "type": "image",
+                            "type": "gradient",
+                            "gradientType": "linear",
                             "enabled": true,
-                            "url": "images/generated-1775988612700.png",
-                            "mode": "fill"
+                            "rotation": 180,
+                            "size": {
+                              "height": 1
+                            },
+                            "colors": [
+                              {
+                                "color": "#2b2d42",
+                                "position": 0
+                              },
+                              {
+                                "color": "#8d99ae",
+                                "position": 0.5
+                              },
+                              {
+                                "color": "#edf2f4",
+                                "position": 1
+                              }
+                            ]
                           },
                           "cornerRadius": 8,
                           "effect": {
@@ -1833,7 +2107,22 @@
                             "blur": 6,
                             "spread": -1
                           },
-                          "layout": "none"
+                          "layout": "vertical",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "ZWdwo",
+                              "name": "Cover content",
+                              "width": "fill_container",
+                              "height": "fill_container",
+                              "layout": "vertical",
+                              "padding": [
+                                16,
+                                14
+                              ],
+                              "justifyContent": "end"
+                            }
+                          ]
                         },
                         {
                           "type": "text",
@@ -1878,10 +2167,27 @@
                           "width": "fill_container",
                           "height": 286,
                           "fill": {
-                            "type": "image",
+                            "type": "gradient",
+                            "gradientType": "linear",
                             "enabled": true,
-                            "url": "images/generated-1775988637338.png",
-                            "mode": "fill"
+                            "rotation": 180,
+                            "size": {
+                              "height": 1
+                            },
+                            "colors": [
+                              {
+                                "color": "#14213d",
+                                "position": 0
+                              },
+                              {
+                                "color": "#264653",
+                                "position": 0.5
+                              },
+                              {
+                                "color": "#2a9d8f",
+                                "position": 1
+                              }
+                            ]
                           },
                           "cornerRadius": 8,
                           "effect": {
@@ -1895,7 +2201,22 @@
                             "blur": 6,
                             "spread": -1
                           },
-                          "layout": "none"
+                          "layout": "vertical",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "v0Xg6",
+                              "name": "Cover content",
+                              "width": "fill_container",
+                              "height": "fill_container",
+                              "layout": "vertical",
+                              "padding": [
+                                16,
+                                14
+                              ],
+                              "justifyContent": "end"
+                            }
+                          ]
                         },
                         {
                           "type": "text",
@@ -1940,10 +2261,27 @@
                           "width": "fill_container",
                           "height": 286,
                           "fill": {
-                            "type": "image",
+                            "type": "gradient",
+                            "gradientType": "linear",
                             "enabled": true,
-                            "url": "images/generated-1775988663579.png",
-                            "mode": "fill"
+                            "rotation": 180,
+                            "size": {
+                              "height": 1
+                            },
+                            "colors": [
+                              {
+                                "color": "#582f0e",
+                                "position": 0
+                              },
+                              {
+                                "color": "#7f4f24",
+                                "position": 0.5
+                              },
+                              {
+                                "color": "#936639",
+                                "position": 1
+                              }
+                            ]
                           },
                           "cornerRadius": 8,
                           "effect": {
@@ -1957,7 +2295,22 @@
                             "blur": 6,
                             "spread": -1
                           },
-                          "layout": "none"
+                          "layout": "vertical",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "PoCKD",
+                              "name": "Cover content",
+                              "width": "fill_container",
+                              "height": "fill_container",
+                              "layout": "vertical",
+                              "padding": [
+                                16,
+                                14
+                              ],
+                              "justifyContent": "end"
+                            }
+                          ]
                         },
                         {
                           "type": "text",

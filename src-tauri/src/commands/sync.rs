@@ -448,14 +448,16 @@ pub fn sync_disable(
 
 #[tauri::command]
 pub fn sync_now(
+    app: tauri::AppHandle,
     db: State<'_, Db>,
     sync_state: State<'_, SyncState>,
 ) -> AppResult<SyncNowResult> {
     let engine = sync_state
         .engine_snapshot()?
         .ok_or_else(|| AppError::Other("sync is not enabled on this device".into()))?;
-    let report = engine.tick(&db)?;
-    Ok(report.into())
+    let result = engine.tick_with_progress(&db, Some(&app));
+    let _ = tauri::Emitter::emit(&app, "sync-initial-tick-done", ());
+    Ok(result?.into())
 }
 
 /// Manually trigger a compaction of the device's own log. Folds the
@@ -504,6 +506,22 @@ pub fn sync_remove_peer(
 /// rollback can't actually restore old behavior — return a clear
 /// error rather than pretend. If a real user needs this we'll layer
 /// it back as a tagged-release recovery tool.
+#[cfg(debug_assertions)]
+#[tauri::command]
+pub fn simulate_sync_progress(app: tauri::AppHandle) -> AppResult<()> {
+    use tauri::Emitter;
+    std::thread::spawn(move || {
+        let total = 100;
+        let _ = app.emit("sync-progress", serde_json::json!({ "applied": 0, "total": total }));
+        for i in 1..=total {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            let _ = app.emit("sync-progress", serde_json::json!({ "applied": i, "total": total }));
+        }
+        let _ = app.emit("sync-initial-tick-done", ());
+    });
+    Ok(())
+}
+
 #[tauri::command]
 pub fn sync_revert_to_legacy() -> AppResult<()> {
     Err(AppError::Other(

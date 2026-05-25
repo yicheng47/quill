@@ -33,6 +33,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use rusqlite::{params, Connection};
+use tauri::Emitter;
 
 use crate::db::Db;
 use crate::error::{AppError, AppResult};
@@ -129,6 +130,12 @@ pub struct ReplayReport {
     pub peers_seen: usize,
 }
 
+#[derive(Clone, serde::Serialize)]
+struct SyncProgress {
+    applied: usize,
+    total: usize,
+}
+
 pub struct ReplayEngine {
     pub shared_dir: PathBuf,
     pub self_device: String,
@@ -155,11 +162,26 @@ impl ReplayEngine {
     /// previously serialized every UI write (`import_book` etc.)
     /// behind the watcher's tick.
     pub fn tick(&self, db: &Db) -> AppResult<ReplayReport> {
+        self.tick_with_progress(db, None)
+    }
+
+    /// Like `tick` but emits `sync-progress` events via the provided
+    /// AppHandle so the frontend can show a progress indicator during
+    /// the initial sync. Watcher ticks pass `None` (silent).
+    pub fn tick_with_progress(
+        &self,
+        db: &Db,
+        app_handle: Option<&tauri::AppHandle>,
+    ) -> AppResult<ReplayReport> {
         let _guard = TICK_MUTEX
             .lock()
             .map_err(|e| AppError::Other(format!("replay tick mutex poisoned: {e}")))?;
 
         let started = std::time::Instant::now();
+
+        if let Some(handle) = app_handle {
+            let _ = handle.emit("sync-progress", SyncProgress { applied: 0, total: 0 });
+        }
 
         // Phase 0 — drain the outbox into the device log. Manages its
         // own per-row locking; the slow `log.append` runs without
@@ -183,7 +205,7 @@ impl ReplayEngine {
         // behind the watcher tick. The PRAGMA wrap also lives inside
         // `apply_in_tx` so any error path still restores FK = ON.
         let (snapshots_applied, events_applied) =
-            self.apply_in_tx(db, &peers).inspect_err(|e| {
+            self.apply_in_tx(db, &peers, app_handle).inspect_err(|e| {
                 ::log::error!("sync: batch apply failed: {e}");
             })?;
 
@@ -273,6 +295,7 @@ impl ReplayEngine {
         &self,
         db: &Db,
         peers: &BTreeMap<String, PeerFiles>,
+        app_handle: Option<&tauri::AppHandle>,
     ) -> AppResult<(usize, usize)> {
         // -- Phase A — read everything from disk. No SQL lock held. --
         // Paths that previously timed out are skipped for STALL_BACKOFF
@@ -379,8 +402,13 @@ impl ReplayEngine {
 
         all_events.sort_by(|a, b| (a.ts, &a.device).cmp(&(b.ts, &b.device)));
 
-        if all_events.is_empty() {
+        let total_events = all_events.len();
+        if total_events == 0 {
             return Ok((snapshots_applied, 0));
+        }
+
+        if let Some(handle) = app_handle {
+            let _ = handle.emit("sync-progress", SyncProgress { applied: 0, total: total_events });
         }
 
         // -- Phase C — apply events one at a time. --
@@ -402,6 +430,12 @@ impl ReplayEngine {
                     bump_event_watermark(&tx, &ev.device, &ev.id)?;
                     tx.commit()?;
                     events_applied += 1;
+                    if let Some(handle) = app_handle {
+                        let _ = handle.emit("sync-progress", SyncProgress {
+                            applied: events_applied,
+                            total: total_events,
+                        });
+                    }
                 }
                 Err(e) => {
                     ::log::warn!(
