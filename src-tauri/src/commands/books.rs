@@ -139,7 +139,9 @@ fn resolve_book_paths(book: &mut Book, db: &Db) {
             .to_string();
     }
     if let Some(ref cover) = book.cover_path {
-        if !std::path::Path::new(cover).is_absolute() {
+        if cover == "none" {
+            book.cover_path = None;
+        } else if !std::path::Path::new(cover).is_absolute() {
             book.cover_path = Some(
                 db.resolve_path(cover)
                     .to_string_lossy()
@@ -536,8 +538,10 @@ pub(crate) fn do_delete_book(id: &str, db: &Db, sync: &SyncWriter) -> AppResult<
     let abs_file = db.resolve_path(&file_path);
     let _ = fs::remove_file(&abs_file);
     if let Some(cover) = cover_path {
-        let abs_cover = db.resolve_path(&cover);
-        let _ = fs::remove_file(&abs_cover);
+        if cover != "none" {
+            let abs_cover = db.resolve_path(&cover);
+            let _ = fs::remove_file(&abs_cover);
+        }
     }
 
     Ok(())

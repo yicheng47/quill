@@ -69,7 +69,7 @@ impl From<books::Book> for McpBook {
             title: b.title,
             author: b.author,
             description: b.description,
-            cover_path: b.cover_path,
+            cover_path: b.cover_path.filter(|c| c != "none"),
             file_path: b.file_path,
             format: b.format,
             genre: b.genre,
