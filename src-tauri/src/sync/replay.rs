@@ -26,7 +26,7 @@
 //! scheduler decides which one runs first, but both produce the same end
 //! state because every operation is idempotent.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -67,6 +67,18 @@ static FLUSH_OUTBOX_MUTEX: Mutex<()> = Mutex::new(());
 /// (e.g. iCloud file materialization in progress).
 static STALLED_PATHS: Mutex<Option<HashMap<PathBuf, Instant>>> = Mutex::new(None);
 
+/// Paths that currently have a reader thread blocked on `fs::read`.
+/// Checked before spawning a new reader — if the previous thread is
+/// still alive (timed out but not yet returned), we skip instead of
+/// accumulating another blocked OS thread.
+///
+/// The spawned thread clears its entry via `on_thread_done` when
+/// `fs::read` returns, regardless of success or error. On timeout the
+/// entry stays set, preventing a duplicate thread until the original
+/// completes. Combined with `STALLED_PATHS` backoff, this bounds
+/// blocked threads to at most one per path.
+static IN_FLIGHT: Mutex<Option<HashSet<PathBuf>>> = Mutex::new(None);
+
 const STALL_BACKOFF: std::time::Duration = std::time::Duration::from_secs(120);
 
 fn is_stalled(path: &Path) -> bool {
@@ -87,6 +99,24 @@ fn clear_stalled(path: &Path) {
     let mut guard = STALLED_PATHS.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(map) = guard.as_mut() {
         map.remove(path);
+    }
+}
+
+fn is_in_flight(path: &Path) -> bool {
+    let guard = IN_FLIGHT.lock().unwrap_or_else(|e| e.into_inner());
+    guard.as_ref().is_some_and(|set| set.contains(path))
+}
+
+fn mark_in_flight(path: &Path) {
+    let mut guard = IN_FLIGHT.lock().unwrap_or_else(|e| e.into_inner());
+    let set = guard.get_or_insert_with(HashSet::new);
+    set.insert(path.to_path_buf());
+}
+
+fn clear_in_flight(path: &Path) {
+    let mut guard = IN_FLIGHT.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(set) = guard.as_mut() {
+        set.remove(path);
     }
 }
 
@@ -231,8 +261,10 @@ impl ReplayEngine {
     ///
     /// - **Phase A — read** (no lock): deserialize peer snapshots
     ///   and log files from disk.
-    /// - **Phase B — snapshots** (one tx per snapshot): apply each
-    ///   peer snapshot, read watermarks, build filtered event list.
+    /// - **Phase B — snapshots** (one write tx per peer, then read
+    ///   watermarks via reader): apply each peer snapshot in its own
+    ///   short-lived write tx, then read watermarks through
+    ///   `db.reader()` to filter the event list.
     /// - **Phase C — events** (one tx per event): apply events one
     ///   at a time, advancing watermarks after each. Idempotent
     ///   events + per-event watermark means a crash mid-replay
@@ -244,23 +276,36 @@ impl ReplayEngine {
     ) -> AppResult<(usize, usize)> {
         // -- Phase A — read everything from disk. No SQL lock held. --
         // Paths that previously timed out are skipped for STALL_BACKOFF
-        // (2 min) to avoid spawning another blocked reader thread.
+        // (2 min) to avoid spawning another blocked reader thread. Paths
+        // with a reader thread still blocked from a prior tick are also
+        // skipped (IN_FLIGHT) — at most one OS thread per path.
         let read_timeout = std::time::Duration::from_secs(30);
         let mut snapshots: Vec<(String, Snapshot)> = Vec::new();
         for (device, files) in peers {
             let Some(snap_path) = &files.snap_path else {
                 continue;
             };
-            if is_stalled(snap_path) {
-                ::log::debug!("sync: skipping stalled snapshot {}", snap_path.display());
+            if is_stalled(snap_path) || is_in_flight(snap_path) {
+                ::log::debug!("sync: skipping stalled/in-flight snapshot {}", snap_path.display());
                 continue;
             }
+            mark_in_flight(snap_path);
+            let snap_path_owned = snap_path.to_path_buf();
             match Snapshot::read_from_with_timeout(
                 snap_path, read_timeout, mark_stalled, clear_stalled,
+                move || clear_in_flight(&snap_path_owned),
             ) {
                 Ok(Some(s)) => snapshots.push((device.clone(), s)),
-                Ok(None) => {} // evicted or timed out — skip
+                Ok(None) => {
+                    if !is_stalled(snap_path) {
+                        // No thread was spawned (evicted/missing) — clear now.
+                        clear_in_flight(snap_path);
+                    }
+                    // If stalled: thread timed out and is still blocked.
+                    // on_thread_done will clear in-flight when fs::read returns.
+                }
                 Err(e) => {
+                    clear_in_flight(snap_path);
                     ::log::warn!(
                         "sync: skipping malformed snapshot {}: {e}",
                         snap_path.display()
@@ -273,38 +318,54 @@ impl ReplayEngine {
             let Some(log_path) = &files.log_path else {
                 continue;
             };
-            if is_stalled(log_path) {
-                ::log::debug!("sync: skipping stalled log {}", log_path.display());
+            if is_stalled(log_path) || is_in_flight(log_path) {
+                ::log::debug!("sync: skipping stalled/in-flight log {}", log_path.display());
                 continue;
             }
+            mark_in_flight(log_path);
+            let log_path_owned = log_path.to_path_buf();
             let events = log::read_log_file_with_timeout(
                 log_path, read_timeout, mark_stalled, clear_stalled,
+                move || clear_in_flight(&log_path_owned),
             )?;
+            if events.is_empty() {
+                // No thread was spawned (evicted/missing) or read returned
+                // empty — clear in-flight. If a thread timed out, on_stall
+                // already fired and the thread's on_thread_done will clear
+                // in-flight when fs::read eventually returns.
+                if !is_stalled(log_path) {
+                    clear_in_flight(log_path);
+                }
+            }
             peer_logs.push((device.clone(), events));
         }
 
-        // -- Phase B — apply snapshots, collect filtered events. --
+        // -- Phase B — apply snapshots (one write tx per peer). --
         let mut snapshots_applied = 0usize;
-        let mut all_events: Vec<Event> = Vec::new();
-        {
+        for (device, snap) in &snapshots {
             let mut conn = db
                 .conn
                 .lock()
                 .map_err(|e| AppError::Other(format!("db conn mutex: {e}")))?;
-
             let tx = conn.transaction()?;
-            for (device, snap) in &snapshots {
-                let outcome = snap.apply_peer(&tx, device)?;
-                if matches!(
-                    outcome,
-                    super::snapshot::ApplyOutcome::Applied
-                        | super::snapshot::ApplyOutcome::HeaderOnly
-                ) {
-                    snapshots_applied += 1;
-                }
+            let outcome = snap.apply_peer(&tx, device)?;
+            tx.commit()?;
+            drop(conn);
+            if matches!(
+                outcome,
+                super::snapshot::ApplyOutcome::Applied
+                    | super::snapshot::ApplyOutcome::HeaderOnly
+            ) {
+                snapshots_applied += 1;
             }
+        }
+
+        // Read watermarks through the reader — no write lock needed.
+        let mut all_events: Vec<Event> = Vec::new();
+        {
+            let reader = db.reader();
             for (device, events) in &peer_logs {
-                let last_id = read_last_event_id(&tx, device)?;
+                let last_id = read_last_event_id(&reader, device)?;
                 for ev in events {
                     if let Some(w) = last_id.as_deref() {
                         if ev.id.as_str() <= w {
@@ -314,9 +375,7 @@ impl ReplayEngine {
                     all_events.push(ev.clone());
                 }
             }
-            tx.commit()?;
         }
-        // conn released.
 
         all_events.sort_by(|a, b| (a.ts, &a.device).cmp(&(b.ts, &b.device)));
 
@@ -480,8 +539,8 @@ fn discover_peers(shared_dir: &Path) -> AppResult<BTreeMap<String, PeerFiles>> {
 // Watermark + outbox SQL.
 // ---------------------------------------------------------------------------
 
-fn read_last_event_id(tx: &rusqlite::Transaction, peer: &str) -> AppResult<Option<String>> {
-    let v: Option<Option<String>> = tx
+fn read_last_event_id(conn: &Connection, peer: &str) -> AppResult<Option<String>> {
+    let v: Option<Option<String>> = conn
         .query_row(
             "SELECT last_event_id FROM _replay_state WHERE peer_device = ?1",
             params![peer],
@@ -1009,6 +1068,154 @@ mod tests {
             parsed.last_seen >= before,
             "last_seen ({}) should be >= pre-tick ts ({before})",
             parsed.last_seen
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // iCloud placeholder discovery
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn discover_peers_recognizes_icloud_placeholders() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let shared = dir.path().join("shared");
+        let logs = shared.join("logs");
+        fs::create_dir_all(&logs).unwrap();
+
+        // Real file for peer-A.
+        fs::write(logs.join("peer-A.jsonl"), b"").unwrap();
+
+        // iCloud placeholders only for peer-B (evicted by iCloud daemon).
+        fs::write(logs.join(".peer-B.jsonl.icloud"), b"").unwrap();
+        fs::write(logs.join(".peer-B.snapshot.json.icloud"), b"").unwrap();
+
+        let peers = discover_peers(&shared).unwrap();
+
+        assert!(peers.contains_key("peer-A"), "real file should be discovered");
+        assert_eq!(peers["peer-A"].log_path.as_deref(), Some(logs.join("peer-A.jsonl").as_path()));
+
+        assert!(peers.contains_key("peer-B"), "placeholder should be discovered");
+        assert_eq!(
+            peers["peer-B"].log_path.as_deref(),
+            Some(logs.join("peer-B.jsonl").as_path()),
+            "placeholder should derive the real (non-.icloud) path",
+        );
+        assert_eq!(
+            peers["peer-B"].snap_path.as_deref(),
+            Some(logs.join("peer-B.snapshot.json").as_path()),
+        );
+    }
+
+    #[test]
+    fn discover_peers_real_file_wins_over_placeholder() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let shared = dir.path().join("shared");
+        let logs = shared.join("logs");
+        fs::create_dir_all(&logs).unwrap();
+
+        // Both real file and placeholder exist (transient state during
+        // iCloud download — daemon materializes the file then removes
+        // the placeholder).
+        fs::write(logs.join("peer-A.jsonl"), b"").unwrap();
+        fs::write(logs.join(".peer-A.jsonl.icloud"), b"").unwrap();
+
+        let peers = discover_peers(&shared).unwrap();
+        assert_eq!(peers.len(), 1);
+        assert!(peers.contains_key("peer-A"));
+        // The real path should be set (both the real-file branch and
+        // the placeholder branch produce the same path, but the
+        // real-file branch uses direct assignment while the placeholder
+        // branch uses get_or_insert, so neither clobbers the other).
+        assert_eq!(
+            peers["peer-A"].log_path.as_deref(),
+            Some(logs.join("peer-A.jsonl").as_path()),
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Stall + in-flight tracking
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn stall_tracking_marks_and_clears() {
+        let path = PathBuf::from("/tmp/quill-test-stall-tracking.jsonl");
+        assert!(!is_stalled(&path));
+        mark_stalled(&path);
+        assert!(is_stalled(&path));
+        clear_stalled(&path);
+        assert!(!is_stalled(&path));
+    }
+
+    #[test]
+    fn in_flight_tracking_marks_and_clears() {
+        let path = PathBuf::from("/tmp/quill-test-in-flight-tracking.jsonl");
+        assert!(!is_in_flight(&path));
+        mark_in_flight(&path);
+        assert!(is_in_flight(&path));
+        clear_in_flight(&path);
+        assert!(!is_in_flight(&path));
+    }
+
+    #[test]
+    fn tick_skips_stalled_peer_log() {
+        let env = setup("self");
+        write_peer_log(&env.shared, "peer-A", &[ev(1000, "peer-A", import("b1"))]);
+
+        // Mark peer-A's log as stalled. The path must match what
+        // discover_peers returns.
+        let stalled_path = env.shared.join("logs/peer-A.jsonl");
+        mark_stalled(&stalled_path);
+
+        let report = env.engine.tick(&env.db).unwrap();
+        assert_eq!(
+            report.events_applied, 0,
+            "stalled peer log should be skipped",
+        );
+        let n_books: i64 = env
+            .conn()
+            .query_row("SELECT COUNT(*) FROM books", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n_books, 0, "no events applied → no books");
+
+        // Clear stall — next tick picks it up.
+        clear_stalled(&stalled_path);
+        let report = env.engine.tick(&env.db).unwrap();
+        assert_eq!(report.events_applied, 1);
+    }
+
+    #[test]
+    fn tick_skips_in_flight_peer_log() {
+        let env = setup("self");
+        write_peer_log(&env.shared, "peer-A", &[ev(1000, "peer-A", import("b1"))]);
+
+        let in_flight_path = env.shared.join("logs/peer-A.jsonl");
+        mark_in_flight(&in_flight_path);
+
+        let report = env.engine.tick(&env.db).unwrap();
+        assert_eq!(
+            report.events_applied, 0,
+            "in-flight peer log should be skipped",
+        );
+
+        clear_in_flight(&in_flight_path);
+        let report = env.engine.tick(&env.db).unwrap();
+        assert_eq!(report.events_applied, 1);
+    }
+
+    #[test]
+    fn successful_read_clears_in_flight() {
+        let env = setup("self");
+        write_peer_log(&env.shared, "peer-A", &[ev(1000, "peer-A", import("b1"))]);
+
+        let log_path = env.shared.join("logs/peer-A.jsonl");
+        // Tick reads the file successfully → on_thread_done clears in-flight.
+        let report = env.engine.tick(&env.db).unwrap();
+        assert_eq!(report.events_applied, 1);
+        // Give the reader thread time to call on_thread_done.
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        assert!(
+            !is_in_flight(&log_path),
+            "in-flight should be cleared after successful read",
         );
     }
 

@@ -196,11 +196,17 @@ pub fn read_log_file(path: &Path) -> AppResult<Vec<Event>> {
 /// Callers pass `on_stall` / `on_success` callbacks so the replay
 /// engine can track which paths have stalled and skip them on
 /// subsequent ticks (preventing blocked-thread accumulation).
+///
+/// `on_thread_done` runs inside the spawned thread when `fs::read`
+/// completes (success or error). Used by the replay engine to clear
+/// the path's in-flight flag so a subsequent tick knows no reader
+/// thread is still blocked on this path.
 pub fn read_log_file_with_timeout(
     path: &Path,
     timeout: std::time::Duration,
     on_stall: impl FnOnce(&Path),
     on_success: impl FnOnce(&Path),
+    on_thread_done: impl FnOnce() + Send + 'static,
 ) -> AppResult<Vec<Event>> {
     use crate::icloud;
     if !path.exists() {
@@ -217,7 +223,9 @@ pub fn read_log_file_with_timeout(
     let path_buf = path.to_path_buf();
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        let _ = tx.send(fs::read(&path_buf));
+        let result = fs::read(&path_buf);
+        on_thread_done();
+        let _ = tx.send(result);
     });
     match rx.recv_timeout(timeout) {
         Ok(Ok(bytes)) => {

@@ -339,12 +339,15 @@ impl Snapshot {
     /// exceeds `timeout`.
     ///
     /// `on_stall` / `on_success` callbacks let the caller track stalled
-    /// paths and skip them on subsequent ticks.
+    /// paths and skip them on subsequent ticks. `on_thread_done` runs
+    /// inside the spawned thread when `fs::read` completes — used for
+    /// in-flight tracking.
     pub fn read_from_with_timeout(
         path: &Path,
         timeout: std::time::Duration,
         on_stall: impl FnOnce(&Path),
         on_success: impl FnOnce(&Path),
+        on_thread_done: impl FnOnce() + Send + 'static,
     ) -> AppResult<Option<Self>> {
         use crate::icloud;
         if !path.exists() {
@@ -360,7 +363,9 @@ impl Snapshot {
         let path_buf = path.to_path_buf();
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            let _ = tx.send(fs::read(&path_buf));
+            let result = fs::read(&path_buf);
+            on_thread_done();
+            let _ = tx.send(result);
         });
         match rx.recv_timeout(timeout) {
             Ok(Ok(bytes)) => {
