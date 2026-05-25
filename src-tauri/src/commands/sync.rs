@@ -353,13 +353,21 @@ pub fn sync_enable(
         *g = Some(watcher_handle);
     }
 
-    // Fire an initial tick now that the engine is fully wired. Uses
-    // tick_with_progress so the sidebar shows the progress indicator.
-    let result = engine.tick_with_progress(&db, Some(&app));
-    let _ = tauri::Emitter::emit(&app, "sync-initial-tick-done", ());
-    if let Err(e) = result {
-        log::warn!("sync_enable: initial tick failed: {e}");
-    }
+    // Fire the initial tick on a background thread so sync_enable
+    // returns immediately — the UI stays responsive while the tick
+    // applies peer snapshots and events. Same pattern as boot_sync_engine.
+    let bg_db = db.inner().clone();
+    let bg_handle = app.clone();
+    std::thread::Builder::new()
+        .name("sync-enable-tick".into())
+        .spawn(move || {
+            let result = engine.tick_with_progress(&bg_db, Some(&bg_handle));
+            let _ = tauri::Emitter::emit(&bg_handle, "sync-initial-tick-done", ());
+            if let Err(e) = result {
+                log::warn!("sync_enable: initial tick failed: {e}");
+            }
+        })
+        .ok();
 
     Ok(())
 }
