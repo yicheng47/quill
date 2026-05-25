@@ -144,9 +144,15 @@ export default function Home() {
       refreshRef.current();
       allBooksRefreshRef.current();
     });
+    const unlistenTick = listen("sync-initial-tick-done", () => {
+      refreshRef.current();
+      allBooksRefreshRef.current();
+      collectionsRefreshRef.current();
+    });
     return () => {
       unlistenStart.then((fn) => fn());
       unlistenDone.then((fn) => fn());
+      unlistenTick.then((fn) => fn());
     };
   }, []);
 

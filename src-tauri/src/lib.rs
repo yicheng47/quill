@@ -251,6 +251,7 @@ fn boot_sync_engine(
     device_uuid: &str,
     db: &Db,
     sync_writer: &SyncWriter,
+    app_handle: &tauri::AppHandle,
 ) -> error::AppResult<(Option<Arc<ReplayEngine>>, Option<WatcherHandle>)> {
     let log_path = shared_dir
         .join("logs")
@@ -280,11 +281,16 @@ fn boot_sync_engine(
             // mutex serializes this against any fs-triggered ticks.
             let bg_engine = Arc::clone(&engine);
             let bg_db = db.clone();
+            let bg_handle = app_handle.clone();
             std::thread::Builder::new()
                 .name("sync-initial-tick".into())
                 .spawn(move || {
-                    if let Err(e) = bg_engine.tick(&bg_db) {
-                        log::warn!("sync: initial replay tick failed: {e}");
+                    match bg_engine.tick(&bg_db) {
+                        Ok(report) if report.events_applied > 0 || report.snapshots_applied > 0 => {
+                            let _ = bg_handle.emit("sync-initial-tick-done", ());
+                        }
+                        Err(e) => log::warn!("sync: initial replay tick failed: {e}"),
+                        _ => {}
                     }
                 })
                 .ok();
@@ -620,7 +626,7 @@ pub fn run() {
             .then(|| ubiquity_dir.clone().filter(|p| p.exists()))
             .flatten()
             {
-                Some(ub) => match boot_sync_engine(ub, &device.device_uuid, &db, &sync_writer) {
+                Some(ub) => match boot_sync_engine(ub, &device.device_uuid, &db, &sync_writer, app.handle()) {
                     Ok(pair) => {
                         log::info!("sync: engine booted (replay + watcher active)");
                         pair
