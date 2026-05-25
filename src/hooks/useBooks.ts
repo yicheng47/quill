@@ -80,6 +80,7 @@ async function backfillPdfCover(book: Book): Promise<void> {
 export const importBookDialog = { pickFile, importFile };
 
 const BACKFILL_BATCH_SIZE = 3;
+const BACKFILL_DELAY_MS = 1000;
 let backfillRunning = false;
 
 export async function backfillMissingCovers(): Promise<void> {
@@ -103,6 +104,13 @@ export async function backfillMissingCovers(): Promise<void> {
       } catch (err) {
         console.warn(`Cover backfill failed for ${book.id}:`, err);
       }
+    }
+    if (missing.length > BACKFILL_BATCH_SIZE) {
+      setTimeout(() => {
+        backfillRunning = false;
+        backfillMissingCovers();
+      }, BACKFILL_DELAY_MS);
+      return;
     }
   } finally {
     backfillRunning = false;

@@ -265,4 +265,5 @@ CREATE INDEX IF NOT EXISTS idx_translations_book ON translations(book_id);
 
 COMMIT;
 
-PRAGMA foreign_keys = ON;
+-- FK enforcement intentionally left OFF — the app handles all
+-- cascading deletes explicitly. See merge.rs module docstring.

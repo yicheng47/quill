@@ -221,6 +221,7 @@ fn cascade_delete_book(tx: &Transaction, id: &str, ts: i64) -> AppResult<()> {
         params![id],
     )?;
     tx.execute("DELETE FROM translations WHERE book_id = ?1", params![id])?;
+    tx.execute("DELETE FROM book_settings WHERE book_id = ?1", params![id])?;
     let chat_ids: Vec<String> = {
         let mut stmt = tx.prepare("SELECT id FROM chats WHERE book_id = ?1")?;
         let collected: Vec<String> = stmt

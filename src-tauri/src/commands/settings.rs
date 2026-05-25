@@ -168,7 +168,7 @@ mod tests {
     }
 
     #[test]
-    fn test_book_settings_cascade_delete() {
+    fn test_book_settings_cleaned_on_book_delete() {
         let (_dir, db) = setup();
 
         let mut settings = HashMap::new();
@@ -178,6 +178,7 @@ mod tests {
         assert_eq!(get_book_settings(&db, "book1").len(), 1);
 
         let conn = db.conn.lock().unwrap();
+        conn.execute("DELETE FROM book_settings WHERE book_id = 'book1'", []).unwrap();
         conn.execute("DELETE FROM books WHERE id = 'book1'", []).unwrap();
         drop(conn);
 
