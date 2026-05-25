@@ -82,20 +82,25 @@ export const importBookDialog = { pickFile, importFile };
 const BACKFILL_BATCH_SIZE = 3;
 const BACKFILL_DELAY_MS = 1000;
 let backfillRunning = false;
+const backfillTried = new Set<string>();
 
 export async function backfillMissingCovers(): Promise<void> {
   if (backfillRunning) return;
   backfillRunning = true;
   try {
     const books = await invoke<Book[]>("list_books", { filter: null, search: null });
-    const missing = books.filter((b) => b.format === "pdf" && !b.cover_path);
+    const missing = books.filter(
+      (b) => b.format === "pdf" && !b.cover_path && !backfillTried.has(b.id),
+    );
     if (missing.length === 0) {
+      backfillTried.clear();
       backfillRunning = false;
       return;
     }
     const batch = missing.slice(0, BACKFILL_BATCH_SIZE);
     const { extractPdfCover } = await import("../utils/pdfMetadata");
     for (const book of batch) {
+      backfillTried.add(book.id);
       try {
         const coverData = await extractPdfCover(book.file_path);
         if (coverData) {
@@ -114,6 +119,7 @@ export async function backfillMissingCovers(): Promise<void> {
         backfillMissingCovers();
       }, BACKFILL_DELAY_MS);
     } else {
+      backfillTried.clear();
       backfillRunning = false;
     }
   } catch {
