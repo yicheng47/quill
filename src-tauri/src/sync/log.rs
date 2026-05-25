@@ -184,15 +184,31 @@ pub fn read_log_file(path: &Path) -> AppResult<Vec<Event>> {
     parse_log_bytes(&bytes, path)
 }
 
-/// Like `read_log_file` but aborts if the read takes longer than
-/// `timeout`. iCloud-evicted peer log files block `fs::read` until
-/// the download completes — on cold caches that's unbounded. Returns
-/// an empty vec on timeout so the tick skips the peer and retries
-/// next time.
+/// Like `read_log_file` but skips iCloud-evicted files and applies a
+/// timeout to the read. Returns an empty vec when the file is evicted
+/// or the read exceeds `timeout`, so the tick skips the peer and
+/// retries next time.
+///
+/// **Thread safety**: before spawning a read thread, checks for the
+/// `.foo.icloud` placeholder. If the file is evicted, triggers a
+/// background download and returns immediately — no thread spawned,
+/// no accumulation of blocked OS threads across repeated ticks.
 pub fn read_log_file_with_timeout(
     path: &Path,
     timeout: std::time::Duration,
 ) -> AppResult<Vec<Event>> {
+    use crate::icloud;
+    if !path.exists() {
+        if icloud::has_icloud_placeholder(path) {
+            log::info!(
+                "sync: peer log {} is iCloud-evicted — triggering download, skipping this tick",
+                path.display(),
+            );
+            icloud::trigger_download_file(path);
+            return Ok(Vec::new());
+        }
+        return Ok(Vec::new());
+    }
     let path_buf = path.to_path_buf();
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {

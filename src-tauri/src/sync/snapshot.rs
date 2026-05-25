@@ -334,6 +334,48 @@ impl Snapshot {
             .map_err(|e| AppError::Other(format!("snapshot parse: {e}")))
     }
 
+    /// Like `read_from` but skips iCloud-evicted files and applies a
+    /// timeout. Returns `None` when the file is evicted or the read
+    /// exceeds `timeout`.
+    pub fn read_from_with_timeout(
+        path: &Path,
+        timeout: std::time::Duration,
+    ) -> AppResult<Option<Self>> {
+        use crate::icloud;
+        if !path.exists() {
+            if icloud::has_icloud_placeholder(path) {
+                log::info!(
+                    "sync: peer snapshot {} is iCloud-evicted — triggering download, skipping",
+                    path.display(),
+                );
+                icloud::trigger_download_file(path);
+            }
+            return Ok(None);
+        }
+        let path_buf = path.to_path_buf();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(fs::read(&path_buf));
+        });
+        match rx.recv_timeout(timeout) {
+            Ok(Ok(bytes)) => {
+                let snap: Self = serde_json::from_slice(&bytes)
+                    .map_err(|e| AppError::Other(format!("snapshot parse: {e}")))?;
+                Ok(Some(snap))
+            }
+            Ok(Err(e)) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Ok(Err(e)) => Err(AppError::Io(e)),
+            Err(_) => {
+                log::warn!(
+                    "sync: timed out reading peer snapshot {} after {}s — skipping",
+                    path.display(),
+                    timeout.as_secs(),
+                );
+                Ok(None)
+            }
+        }
+    }
+
     /// Apply this snapshot into local SQLite. Idempotent under repeated
     /// application; tombstones in `state.tombstones` are written first so
     /// the entity rows that follow can short-circuit on the local-tombstone

@@ -211,13 +211,15 @@ impl ReplayEngine {
         peers: &BTreeMap<String, PeerFiles>,
     ) -> AppResult<(usize, usize)> {
         // -- Phase A — read everything from disk. No SQL lock held. --
+        let read_timeout = std::time::Duration::from_secs(30);
         let mut snapshots: Vec<(String, Snapshot)> = Vec::new();
         for (device, files) in peers {
             let Some(snap_path) = &files.snap_path else {
                 continue;
             };
-            match Snapshot::read_from(snap_path) {
-                Ok(s) => snapshots.push((device.clone(), s)),
+            match Snapshot::read_from_with_timeout(snap_path, read_timeout) {
+                Ok(Some(s)) => snapshots.push((device.clone(), s)),
+                Ok(None) => {} // evicted or timed out — skip
                 Err(e) => {
                     ::log::warn!(
                         "sync: skipping malformed snapshot {}: {e}",
@@ -227,7 +229,6 @@ impl ReplayEngine {
             }
         }
         let mut peer_logs: Vec<(String, Vec<Event>)> = Vec::new();
-        let read_timeout = std::time::Duration::from_secs(30);
         for (device, files) in peers {
             let Some(log_path) = &files.log_path else {
                 continue;
