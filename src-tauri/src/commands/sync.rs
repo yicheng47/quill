@@ -595,9 +595,16 @@ fn count_pending_for_peer(shared_dir: &Path, peer: &str, watermark: Option<&str>
     if !log_path.exists() || icloud::has_icloud_placeholder(&log_path) {
         return 0;
     }
-    let bytes = match fs::read(&log_path) {
-        Ok(b) => b,
-        Err(_) => return 0,
+    let bytes = {
+        let path = log_path.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(fs::read(&path));
+        });
+        match rx.recv_timeout(std::time::Duration::from_secs(2)) {
+            Ok(Ok(b)) => b,
+            _ => return 0,
+        }
     };
     let mut count = 0i64;
     for line in bytes.split(|&b| b == b'\n') {
