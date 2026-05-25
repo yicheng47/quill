@@ -455,9 +455,9 @@ pub fn sync_now(
     let engine = sync_state
         .engine_snapshot()?
         .ok_or_else(|| AppError::Other("sync is not enabled on this device".into()))?;
-    let report = engine.tick_with_progress(&db, Some(&app))?;
+    let result = engine.tick_with_progress(&db, Some(&app));
     let _ = tauri::Emitter::emit(&app, "sync-initial-tick-done", ());
-    Ok(report.into())
+    Ok(result?.into())
 }
 
 /// Manually trigger a compaction of the device's own log. Folds the
