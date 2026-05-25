@@ -448,13 +448,15 @@ pub fn sync_disable(
 
 #[tauri::command]
 pub fn sync_now(
+    app: tauri::AppHandle,
     db: State<'_, Db>,
     sync_state: State<'_, SyncState>,
 ) -> AppResult<SyncNowResult> {
     let engine = sync_state
         .engine_snapshot()?
         .ok_or_else(|| AppError::Other("sync is not enabled on this device".into()))?;
-    let report = engine.tick(&db)?;
+    let report = engine.tick_with_progress(&db, Some(&app))?;
+    let _ = tauri::Emitter::emit(&app, "sync-initial-tick-done", ());
     Ok(report.into())
 }
 
