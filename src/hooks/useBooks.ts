@@ -79,23 +79,33 @@ async function backfillPdfCover(book: Book): Promise<void> {
 
 export const importBookDialog = { pickFile, importFile };
 
+const BACKFILL_BATCH_SIZE = 3;
+let backfillRunning = false;
+
 export async function backfillMissingCovers(): Promise<void> {
-  const books = await invoke<Book[]>("list_books", { filter: null, search: null });
-  const missing = books.filter((b) => b.format === "pdf" && !b.cover_path);
-  if (missing.length === 0) return;
-  const { extractPdfCover } = await import("../utils/pdfMetadata");
-  for (const book of missing) {
-    try {
-      const coverData = await extractPdfCover(book.file_path);
-      if (coverData) {
-        await invoke("save_book_cover", {
-          bookId: book.id,
-          coverData: Array.from(coverData),
-        });
+  if (backfillRunning) return;
+  backfillRunning = true;
+  try {
+    const books = await invoke<Book[]>("list_books", { filter: null, search: null });
+    const missing = books.filter((b) => b.format === "pdf" && !b.cover_path);
+    if (missing.length === 0) return;
+    const batch = missing.slice(0, BACKFILL_BATCH_SIZE);
+    const { extractPdfCover } = await import("../utils/pdfMetadata");
+    for (const book of batch) {
+      try {
+        const coverData = await extractPdfCover(book.file_path);
+        if (coverData) {
+          await invoke("save_book_cover", {
+            bookId: book.id,
+            coverData: Array.from(coverData),
+          });
+        }
+      } catch (err) {
+        console.warn(`Cover backfill failed for ${book.id}:`, err);
       }
-    } catch (err) {
-      console.warn(`Cover backfill failed for ${book.id}:`, err);
     }
+  } finally {
+    backfillRunning = false;
   }
 }
 

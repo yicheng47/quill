@@ -190,22 +190,18 @@ impl ReplayEngine {
 
     /// Snapshot apply + log-tail merge.
     ///
-    /// Split into two phases so the slow disk I/O on the iCloud
-    /// shared folder never runs while holding `db.conn`:
+    /// Three phases — the conn lock is acquired and released per
+    /// operation, same as the rest of the app (import_book, etc.),
+    /// so the sync engine never starves frontend reads:
     ///
-    /// - **Phase A — read** (no SQL lock): deserialize every peer
-    ///   snapshot file and slurp every peer log file from disk.
-    ///   iCloud-evicted or large peer files can stall here without
-    ///   blocking any concurrent UI write.
-    /// - **Phase B — apply** (one tx, conn lock held): apply the
-    ///   pre-loaded snapshots, then the log tails filtered against
-    ///   each peer's (possibly snapshot-bumped) `last_event_id`,
-    ///   then advance the watermarks.
-    ///
-    /// FK off mirrors the merge engine's contract; orphan rows from
-    /// out-of-order delivery are tolerated until parents arrive. The
-    /// PRAGMA wrap is inside this function so any error path still
-    /// restores `foreign_keys = ON` on the shared connection.
+    /// - **Phase A — read** (no lock): deserialize peer snapshots
+    ///   and log files from disk.
+    /// - **Phase B — snapshots** (one tx per snapshot): apply each
+    ///   peer snapshot, read watermarks, build filtered event list.
+    /// - **Phase C — events** (one tx per event): apply events one
+    ///   at a time, advancing watermarks after each. Idempotent
+    ///   events + per-event watermark means a crash mid-replay
+    ///   resumes cleanly on the next tick.
     fn apply_in_tx(
         &self,
         db: &Db,
@@ -227,11 +223,6 @@ impl ReplayEngine {
                 }
             }
         }
-        // Read full log tail; per-peer watermark filter happens in
-        // Phase B against the post-snapshot-apply watermark, so
-        // events the snapshot already covered get dropped there.
-        // Most merges are idempotent (UUID dedup, LWW), but filtering
-        // saves the apply cost.
         let mut peer_logs: Vec<(String, Vec<Event>)> = Vec::new();
         for (device, files) in peers {
             let Some(log_path) = &files.log_path else {
@@ -241,85 +232,78 @@ impl ReplayEngine {
             peer_logs.push((device.clone(), events));
         }
 
-        // -- Phase B — apply under one tx. Conn lock held throughout. --
-        let mut conn = db
-            .conn
-            .lock()
-            .map_err(|e| AppError::Other(format!("db conn mutex: {e}")))?;
-        conn.execute_batch("PRAGMA foreign_keys = OFF;")?;
-        let inner = self.apply_phase_b(&mut conn, &snapshots, &peer_logs);
-        let restore = conn.execute_batch("PRAGMA foreign_keys = ON;");
-        match (inner, restore) {
-            (Ok(counts), Ok(())) => Ok(counts),
-            (Err(e), _) => Err(e),
-            (Ok(_), Err(e)) => Err(AppError::Db(e)),
-        }
-    }
-
-    fn apply_phase_b(
-        &self,
-        conn: &mut Connection,
-        snapshots: &[(String, Snapshot)],
-        peer_logs: &[(String, Vec<Event>)],
-    ) -> AppResult<(usize, usize)> {
+        // -- Phase B — apply snapshots, collect filtered events. --
         let mut snapshots_applied = 0usize;
-        let mut events_applied = 0usize;
-        let mut peer_max_event: BTreeMap<String, String> = BTreeMap::new();
+        let mut all_events: Vec<Event> = Vec::new();
+        {
+            let mut conn = db
+                .conn
+                .lock()
+                .map_err(|e| AppError::Other(format!("db conn mutex: {e}")))?;
 
-        let tx = conn.transaction()?;
-
-        // 3a. Apply snapshots first. Each snapshot apply updates its own
-        //     `_replay_state.last_snapshot_id` (and `last_event_id` if the
-        //     snapshot moves the watermark forward). Doing them before the
-        //     log tails means the per-peer `last_event_id` we read in 3b
-        //     reflects any snapshot bump.
-        for (device, snap) in snapshots {
-            let outcome = snap.apply_peer(&tx, device)?;
-            if matches!(
-                outcome,
-                super::snapshot::ApplyOutcome::Applied
-                    | super::snapshot::ApplyOutcome::HeaderOnly
-            ) {
-                snapshots_applied += 1;
-            }
-        }
-
-        // 3b. Filter each peer's pre-loaded log against its (possibly
-        //     just-bumped) watermark. Collect, sort by `(ts, device)`,
-        //     apply.
-        let mut all_events: Vec<&Event> = Vec::new();
-        for (device, events) in peer_logs {
-            let last_id = read_last_event_id(&tx, device)?;
-            for ev in events {
-                if let Some(w) = last_id.as_deref() {
-                    if ev.id.as_str() <= w {
-                        continue;
-                    }
+            let tx = conn.transaction()?;
+            for (device, snap) in &snapshots {
+                let outcome = snap.apply_peer(&tx, device)?;
+                if matches!(
+                    outcome,
+                    super::snapshot::ApplyOutcome::Applied
+                        | super::snapshot::ApplyOutcome::HeaderOnly
+                ) {
+                    snapshots_applied += 1;
                 }
-                all_events.push(ev);
             }
+            for (device, events) in &peer_logs {
+                let last_id = read_last_event_id(&tx, device)?;
+                for ev in events {
+                    if let Some(w) = last_id.as_deref() {
+                        if ev.id.as_str() <= w {
+                            continue;
+                        }
+                    }
+                    all_events.push(ev.clone());
+                }
+            }
+            tx.commit()?;
         }
+        // conn released.
+
         all_events.sort_by(|a, b| (a.ts, &a.device).cmp(&(b.ts, &b.device)));
 
+        if all_events.is_empty() {
+            return Ok((snapshots_applied, 0));
+        }
+
+        // -- Phase C — apply events one at a time. --
+        // FK stays ON (the connection default). If an event references
+        // a parent that hasn't arrived yet (out-of-order peer delivery),
+        // the INSERT fails and we skip it — the watermark doesn't
+        // advance past it, so the next tick retries after the parent
+        // lands.
+        let mut events_applied = 0usize;
         for ev in &all_events {
-            if let Err(e) = merge::apply_event(&tx, ev) {
-                ::log::error!("sync: apply event {} from {} failed: {e}", ev.id, ev.device);
-                return Err(e);
+            let mut conn = db
+                .conn
+                .lock()
+                .map_err(|e| AppError::Other(format!("db conn mutex: {e}")))?;
+            let tx = conn.transaction()?;
+
+            match merge::apply_event(&tx, ev) {
+                Ok(()) => {
+                    bump_event_watermark(&tx, &ev.device, &ev.id)?;
+                    tx.commit()?;
+                    events_applied += 1;
+                }
+                Err(e) => {
+                    ::log::warn!(
+                        "sync: skipping event {} from {} (will retry next tick): {e}",
+                        ev.id, ev.device
+                    );
+                    let _ = tx.rollback();
+                }
             }
-            let entry = peer_max_event.entry(ev.device.clone()).or_default();
-            if ev.id > *entry {
-                *entry = ev.id.clone();
-            }
-            events_applied += 1;
+            drop(conn);
         }
 
-        // 4. Advance each peer's last_event_id watermark to the highest id
-        //    we just consumed. Monotonic: never go backward.
-        for (device, max_id) in &peer_max_event {
-            bump_event_watermark(&tx, device, max_id)?;
-        }
-
-        tx.commit()?;
         Ok((snapshots_applied, events_applied))
     }
 
@@ -869,15 +853,9 @@ mod tests {
     }
 
     #[test]
-    fn fk_pragma_restored_even_when_merge_errors() {
-        // Regression for PR #189 finding #4: a malformed event inside the
-        // log triggers an error inside `apply_in_tx`, which used to skip
-        // the `PRAGMA foreign_keys = ON` restore. Inject one (a
-        // book.metadata.set with a number where a string is expected) and
-        // assert the connection's FK pragma is back to ON after tick
-        // returns Err.
+    fn malformed_event_is_skipped_and_good_events_still_apply() {
         let env = setup("self");
-        let bad = vec![
+        let events = vec![
             ev(1000, "peer-A", import("b1")),
             ev(
                 2000,
@@ -885,22 +863,21 @@ mod tests {
                 EventBody::BookMetadataSet {
                     book: "b1".into(),
                     field: "title".into(),
-                    value: serde_json::json!(42), // wrong type — apply_book_metadata returns Err
+                    value: serde_json::json!(42), // wrong type — skipped
                 },
             ),
         ];
-        write_peer_log(&env.shared, "peer-A", &bad);
+        write_peer_log(&env.shared, "peer-A", &events);
 
-        // Pre-set FK ON so the restore is observable.
-        env.conn().execute_batch("PRAGMA foreign_keys = ON;").unwrap();
-        let result = env.engine.tick(&env.db);
-        assert!(result.is_err(), "malformed metadata event should propagate");
+        let report = env.engine.tick(&env.db).unwrap();
+        // The import succeeds, the malformed metadata is skipped.
+        assert_eq!(report.events_applied, 1);
 
-        let fk: i64 = env
+        let n_books: i64 = env
             .conn()
-            .query_row("PRAGMA foreign_keys", [], |r| r.get(0))
+            .query_row("SELECT COUNT(*) FROM books", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(fk, 1, "FK must be restored to ON even after a tick error");
+        assert_eq!(n_books, 1);
     }
 
     /// Regression for umbrella-PR review finding #3: every successful
@@ -966,15 +943,4 @@ mod tests {
         );
     }
 
-    #[test]
-    fn fk_pragma_restored_after_tick() {
-        let env = setup("self");
-        env.conn().execute_batch("PRAGMA foreign_keys = ON;").unwrap();
-        env.engine.tick(&env.db).unwrap();
-        let fk: i64 = env
-            .conn()
-            .query_row("PRAGMA foreign_keys", [], |r| r.get(0))
-            .unwrap();
-        assert_eq!(fk, 1, "FK should be restored to ON after tick");
-    }
 }

@@ -248,10 +248,7 @@ impl Snapshot {
     /// override `truncated_before` on the returned struct).
     pub fn from_events(device: &str, events: &[Event]) -> AppResult<Self> {
         let mut conn = Connection::open_in_memory()?;
-        // Match the FK posture of the replay engine — see merge.rs module
-        // doc for why FK is off during apply.
         Db::run_migrations_on(&conn)?;
-        conn.execute_batch("PRAGMA foreign_keys = OFF;")?;
         {
             let tx = conn.transaction()?;
             for ev in events {
@@ -573,7 +570,6 @@ pub fn compact_own_log(
 
         let mut conn = Connection::open_in_memory()?;
         Db::run_migrations_on(&conn)?;
-        conn.execute_batch("PRAGMA foreign_keys = OFF;")?;
         {
             let tx = conn.transaction()?;
             if let Some(s) = &prior {
@@ -1116,7 +1112,6 @@ mod tests {
     fn open_db() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
         Db::run_migrations_on(&conn).unwrap();
-        conn.execute_batch("PRAGMA foreign_keys=OFF;").unwrap();
         conn
     }
 
