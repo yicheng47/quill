@@ -553,10 +553,7 @@ fn publish_bootstrap_snapshot(
 }
 
 fn read_watermarks(db: &Db) -> AppResult<Vec<(String, Option<String>)>> {
-    let conn = db
-        .conn
-        .lock()
-        .map_err(|e| AppError::Other(format!("db conn mutex: {e}")))?;
+    let conn = db.reader();
     let mut stmt = conn.prepare(
         "SELECT peer_device, last_event_id FROM _replay_state",
     )?;
@@ -567,10 +564,7 @@ fn read_watermarks(db: &Db) -> AppResult<Vec<(String, Option<String>)>> {
 }
 
 fn count_local_outbox(db: &Db) -> AppResult<i64> {
-    let conn = db
-        .conn
-        .lock()
-        .map_err(|e| AppError::Other(format!("db conn mutex: {e}")))?;
+    let conn = db.reader();
     let n: i64 = conn
         .query_row("SELECT COUNT(*) FROM _pending_publish", [], |r| r.get(0))
         .unwrap_or(0);
@@ -578,10 +572,7 @@ fn count_local_outbox(db: &Db) -> AppResult<i64> {
 }
 
 fn read_last_replay_at(db: &Db) -> AppResult<Option<i64>> {
-    let conn = db
-        .conn
-        .lock()
-        .map_err(|e| AppError::Other(format!("db conn mutex: {e}")))?;
+    let conn = db.reader();
     let v: Option<i64> = conn
         .query_row(
             "SELECT MAX(updated_at) FROM _replay_state",
@@ -599,7 +590,11 @@ fn read_last_replay_at(db: &Db) -> AppResult<Option<i64>> {
 /// field. Returns 0 on any read/parse error — the count is purely
 /// for the settings UI's "pending" pill.
 fn count_pending_for_peer(shared_dir: &Path, peer: &str, watermark: Option<&str>) -> i64 {
+    use crate::icloud;
     let log_path = shared_dir.join("logs").join(format!("{peer}.jsonl"));
+    if !log_path.exists() || icloud::has_icloud_placeholder(&log_path) {
+        return 0;
+    }
     let bytes = match fs::read(&log_path) {
         Ok(b) => b,
         Err(_) => return 0,
