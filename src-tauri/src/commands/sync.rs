@@ -381,6 +381,16 @@ pub fn sync_disable(
     sync_writer: State<'_, SyncWriter>,
     sync_state: State<'_, SyncState>,
 ) -> AppResult<()> {
+    // Stop the watcher first so no new fs-triggered ticks can start
+    // while we cancel + wait + copy-back.
+    {
+        let mut g = sync_state
+            .watcher
+            .lock()
+            .map_err(|e| AppError::Other(format!("watcher mutex: {e}")))?;
+        *g = None;
+    }
+
     // Cancel any in-flight tick and wait for it to finish before
     // copy-back. Without this, a background tick could import a peer
     // book after copy-back runs, leaving a DB row whose blob was never
@@ -388,11 +398,7 @@ pub fn sync_disable(
     if let Some(engine) = sync_state.engine_snapshot()? {
         engine.cancel();
     }
-    // Acquire TICK_MUTEX to ensure the cancelled tick has exited.
-    // Drop immediately — we just need the synchronization point.
-    {
-        let _wait = replay::tick_mutex_wait();
-    }
+    replay::tick_mutex_wait();
 
     // ---- Phase 1: fallible binary copy-back with no state change ----
     // If this fails (e.g. iCloud-evicted files, disk full), return an
@@ -415,20 +421,10 @@ pub fn sync_disable(
     // fallible copy-back above succeeded, so we're committed to
     // turning sync off.
 
-    // Drop the watcher first. Drop signals stop + joins the thread —
-    // no further fs events will trigger ticks while we mutate state.
-    {
-        let mut g = sync_state
-            .watcher
-            .lock()
-            .map_err(|e| AppError::Other(format!("watcher mutex: {e}")))?;
-        *g = None;
-    }
-    // Drop the engine. The Arc may still be held by a tick in flight
-    // (sync_now / sync_enable background thread), but `cancel()` above
-    // signals it to stop and `set_log(None)` below stops new outbox
-    // flushes from finding a log handle; the in-flight tick finishes
-    // its captured Arc and that's the end of it.
+    // Watcher already dropped above. Drop the engine — the Arc may
+    // still be held by a background thread, but `cancel()` already
+    // signalled it to stop and `set_log(None)` below prevents new
+    // outbox flushes.
     {
         let mut g = sync_state
             .engine
