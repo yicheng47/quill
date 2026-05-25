@@ -166,7 +166,7 @@ pub fn sync_status(
     let migration_complete = sync::migration::is_migration_complete(&local.0);
     let shared_dir = sync::migration::recorded_data_dir(&local.0)
         .or_else(icloud::icloud_data_dir_deterministic);
-    let available = icloud::icloud_data_dir().is_some();
+    let available = icloud::icloud_data_dir_fast().is_some();
     let enabled = sync_state.engine_snapshot()?.is_some();
 
     // Peer list + per-peer pending events. Both are cheap reads off
@@ -219,6 +219,7 @@ pub fn sync_status(
 
 #[tauri::command]
 pub fn sync_enable(
+    app: tauri::AppHandle,
     local: State<'_, LocalDir>,
     db: State<'_, Db>,
     device: State<'_, DeviceIdentity>,
@@ -352,11 +353,11 @@ pub fn sync_enable(
         *g = Some(watcher_handle);
     }
 
-    // Fire an initial tick now that the engine is fully wired. Failure
-    // is non-fatal — the watcher will retry on the next event, and a
-    // fresh-enable session doesn't have leftover outbox rows or peer
-    // tails that would get stuck pending.
-    if let Err(e) = engine.tick(&db) {
+    // Fire an initial tick now that the engine is fully wired. Uses
+    // tick_with_progress so the sidebar shows the progress indicator.
+    let result = engine.tick_with_progress(&db, Some(&app));
+    let _ = tauri::Emitter::emit(&app, "sync-initial-tick-done", ());
+    if let Err(e) = result {
         log::warn!("sync_enable: initial tick failed: {e}");
     }
 
