@@ -23,7 +23,6 @@ use sync::log::EventLog;
 use sync::replay::ReplayEngine;
 use sync::watcher::WatcherHandle;
 use sync::writer::SyncWriter;
-#[cfg(target_os = "macos")]
 use tauri::Emitter;
 use tauri::Manager;
 
