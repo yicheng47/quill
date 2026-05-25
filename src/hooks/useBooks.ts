@@ -57,26 +57,33 @@ async function pickFile(): Promise<string | null> {
 }
 
 async function importFile(filePath: string): Promise<Book> {
-  const book = await invoke<Book>("import_book", { filePath });
-  if (book.format === "pdf" && !book.cover_path) {
-    try {
-      await backfillPdfCover(book);
-      book.cover_path = `covers/${book.id}.png`;
-    } catch (err) {
-      console.warn("PDF cover backfill failed:", err);
-    }
+  const ext = filePath.split(".").pop()?.toLowerCase();
+  if (ext === "pdf") {
+    return importPdfStaged(filePath);
   }
-  return book;
+  return invoke<Book>("import_book", { filePath });
 }
 
-async function backfillPdfCover(book: Book): Promise<void> {
-  const { extractPdfCover } = await import("../utils/pdfMetadata");
-  const coverData = await extractPdfCover(book.file_path);
-  if (coverData) {
-    await invoke("save_book_cover", {
-      bookId: book.id,
-      coverData: Array.from(coverData),
+async function importPdfStaged(filePath: string): Promise<Book> {
+  const { book_id, abs_path } = await invoke<{ book_id: string; abs_path: string }>(
+    "stage_pdf_import",
+    { sourcePath: filePath },
+  );
+  try {
+    const { extractPdfMetadata, filenameToTitle } = await import("../utils/pdfMetadata");
+    const meta = await extractPdfMetadata(abs_path, filenameToTitle(filePath));
+    const book = await invoke<Book>("commit_pdf_import", {
+      bookId: book_id,
+      title: meta.title,
+      author: meta.author,
+      description: meta.description,
+      pages: meta.pages,
+      coverData: meta.coverData ? Array.from(meta.coverData) : null,
     });
+    return book;
+  } catch (err) {
+    await invoke("cancel_pdf_import", { bookId: book_id }).catch(() => {});
+    throw err;
   }
 }
 
