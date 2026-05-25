@@ -19,19 +19,11 @@ Create a new versioned release for Quill.
    - Check if `public/foliate-js` submodule has changes. If so, commit and push the submodule, then stage the updated reference.
    - Stage everything and commit with message `chore: bump version to v{version}`.
 
-3. If the working tree is already clean, just bump version files as above and commit.
+3. Push the version bump commit directly to main: `git push`
 
-4. Create a feature branch: `git checkout -b release/v{version}`
+4. Tag: `git tag -a v{version} -m "v{version}"`
 
-5. Push the branch: `git push -u origin release/v{version}`
-
-6. Create a PR: `gh pr create --title "chore: release v{version}" --body "..."` with a summary of changes.
-
-7. Merge the PR immediately — version bump commits don't need to wait for CI: `gh pr merge <pr-number> --squash --delete-branch`
-
-9. Pull main and tag: `git checkout main && git pull && git tag -a v{version} -m "v{version}"`
-
-10. Push the tag: `git push origin v{version}`
+5. Push the tag: `git push origin v{version}`
 
 11. Wait for the release workflow to complete: `gh run list --workflow=release.yml --limit 1 --json status,conclusion,databaseId`
 
