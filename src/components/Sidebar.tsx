@@ -180,12 +180,14 @@ export default function Sidebar({ activeFilter, onFilterChange, books, collectio
         <span className="text-[18px] font-semibold tracking-[0.5px] text-text-primary" style={{ fontFamily: "Georgia, 'Times New Roman', serif" }}>
           Quill
         </span>
-        {syncProgress && syncProgress.total > 0 ? (
+        {syncProgress ? (
           <span className="ml-auto shrink-0 flex items-center gap-1.5 rounded-md bg-accent/10 px-2 py-1">
             <RefreshCw size={12} className="text-accent animate-spin" />
-            <span className="text-[11px] font-medium text-accent">
-              {syncProgress.applied}/{syncProgress.total}
-            </span>
+            {syncProgress.total > 0 && (
+              <span className="text-[11px] font-medium text-accent">
+                {syncProgress.applied}/{syncProgress.total}
+              </span>
+            )}
           </span>
         ) : icloudSyncing ? (
           <span title={t("sidebar.icloudSyncing")} className="ml-auto shrink-0">

@@ -179,6 +179,10 @@ impl ReplayEngine {
 
         let started = std::time::Instant::now();
 
+        if let Some(handle) = app_handle {
+            let _ = handle.emit("sync-progress", SyncProgress { applied: 0, total: 0 });
+        }
+
         // Phase 0 — drain the outbox into the device log. Manages its
         // own per-row locking; the slow `log.append` runs without
         // holding `db.conn`. Failures surface to the caller; peers
