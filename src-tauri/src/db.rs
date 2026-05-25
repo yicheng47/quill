@@ -98,7 +98,7 @@ impl Db {
                 | OpenFlags::SQLITE_OPEN_NO_MUTEX
                 | OpenFlags::SQLITE_OPEN_URI,
         )?;
-        conn.execute_batch("PRAGMA foreign_keys = ON;")?;
+        conn.execute_batch("PRAGMA journal_mode=WAL;")?;
         let data_dir = db_path
             .parent()
             .unwrap_or_else(|| Path::new(""))
@@ -135,7 +135,7 @@ impl Db {
         // event logs; the SQLite file is fully local, so WAL is the
         // right default — it gives the stdio MCP subprocess concurrent
         // read access without blocking the Tauri app's writes.
-        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
+        conn.execute_batch("PRAGMA journal_mode=WAL;")?;
 
         Self::run_migrations(&conn)?;
 

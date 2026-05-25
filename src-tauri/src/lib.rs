@@ -23,7 +23,6 @@ use sync::log::EventLog;
 use sync::replay::ReplayEngine;
 use sync::watcher::WatcherHandle;
 use sync::writer::SyncWriter;
-#[cfg(target_os = "macos")]
 use tauri::Emitter;
 use tauri::Manager;
 
@@ -238,9 +237,10 @@ fn is_mcp_write_enabled(db_path: &Path) -> bool {
 }
 
 /// Construct the per-device EventLog, wire it into `sync_writer`, build a
-/// `ReplayEngine`, run one initial tick to converge with peer logs, and
-/// spawn the fs watcher. Returns the engine + watcher handle so the
-/// caller can store them in app state for the lifetime of the process.
+/// `ReplayEngine`, spawn the fs watcher, and kick off the initial
+/// convergence tick on a background thread. Returns immediately so
+/// `setup()` is never blocked by slow iCloud I/O (evicted peer logs,
+/// `NSFileCoordinator` stalls, large outbox drains).
 ///
 /// Pulled out of `setup` so the launch flow stays readable. Errors
 /// short-circuit and the caller falls back to "sync inactive this
@@ -250,6 +250,7 @@ fn boot_sync_engine(
     device_uuid: &str,
     db: &Db,
     sync_writer: &SyncWriter,
+    app_handle: &tauri::AppHandle,
 ) -> error::AppResult<(Option<Arc<ReplayEngine>>, Option<WatcherHandle>)> {
     let log_path = shared_dir
         .join("logs")
@@ -264,20 +265,36 @@ fn boot_sync_engine(
         log,
     ));
 
-    // Initial tick — drains any leftover outbox, applies peer snapshots
-    // and log tails since last launch. Failure here is non-fatal; the
-    // watcher's first event will retry.
-    if let Err(e) = engine.tick(db) {
-        log::warn!("sync: initial replay tick failed: {e}");
-    }
-
     // If watcher spawn fails, roll back the writer so new writes fall
     // into queue-only mode instead of draining to a log with no engine
     // or watcher behind it. Without this, the caller drops `engine`
     // but the writer still has `Some(log)` — writes keep publishing
     // events that no process is replaying and no one is watching for.
     match sync::watcher::spawn(shared_dir, db.clone(), Arc::clone(&engine)) {
-        Ok(watcher) => Ok((Some(engine), Some(watcher))),
+        Ok(watcher) => {
+            // Initial tick — drains any leftover outbox, applies peer
+            // snapshots and log tails since last launch. Runs on a
+            // background thread so setup() returns immediately; reading
+            // iCloud-evicted peer files can block for seconds/minutes and
+            // would otherwise white-screen the app. The watcher's tick
+            // mutex serializes this against any fs-triggered ticks.
+            let bg_engine = Arc::clone(&engine);
+            let bg_db = db.clone();
+            let bg_handle = app_handle.clone();
+            std::thread::Builder::new()
+                .name("sync-initial-tick".into())
+                .spawn(move || {
+                    match bg_engine.tick(&bg_db) {
+                        Ok(report) if report.events_applied > 0 || report.snapshots_applied > 0 => {
+                            let _ = bg_handle.emit("sync-initial-tick-done", ());
+                        }
+                        Err(e) => log::warn!("sync: initial replay tick failed: {e}"),
+                        _ => {}
+                    }
+                })
+                .ok();
+            Ok((Some(engine), Some(watcher)))
+        }
         Err(e) => {
             sync_writer.set_log(None);
             Err(e)
@@ -439,14 +456,18 @@ pub fn run() {
             // app starts fresh instead of booting the sync engine into
             // an empty database — which blocks setup() reading iCloud
             // peer files that may be evicted/slow.
-            if sync::migration::is_migration_complete(&local_dir)
-                && !local_dir.join("quill.db").exists()
-            {
-                log::warn!(
-                    "sync: .migration_complete present but quill.db missing — \
-                     clearing stale marker to start fresh"
-                );
-                let _ = std::fs::remove_file(local_dir.join(".migration_complete"));
+            if !local_dir.join("quill.db").exists() {
+                let had_migration = sync::migration::is_migration_complete(&local_dir);
+                let had_legacy = icloud::is_icloud_enabled(&local_dir);
+                if had_migration || had_legacy {
+                    log::warn!(
+                        "sync: quill.db missing but sync markers survived \
+                         (migration={had_migration}, legacy={had_legacy}) — \
+                         clearing stale markers to start fresh"
+                    );
+                    let _ = std::fs::remove_file(local_dir.join(".migration_complete"));
+                    let _ = std::fs::remove_file(local_dir.join(".icloud_enabled"));
+                }
             }
 
             let icloud_was_enabled = icloud::is_icloud_enabled(&local_dir);
@@ -604,7 +625,7 @@ pub fn run() {
             .then(|| ubiquity_dir.clone().filter(|p| p.exists()))
             .flatten()
             {
-                Some(ub) => match boot_sync_engine(ub, &device.device_uuid, &db, &sync_writer) {
+                Some(ub) => match boot_sync_engine(ub, &device.device_uuid, &db, &sync_writer, app.handle()) {
                     Ok(pair) => {
                         log::info!("sync: engine booted (replay + watcher active)");
                         pair
@@ -661,6 +682,7 @@ pub fn run() {
             commands::books::check_book_available,
             commands::books::update_book_metadata,
             commands::books::save_book_cover,
+            commands::books::mark_cover_unavailable,
             // Settings
             commands::settings::get_all_settings,
             commands::settings::get_setting,

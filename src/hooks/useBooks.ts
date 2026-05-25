@@ -31,7 +31,10 @@ export function useBooks(filter?: string, search?: string) {
         filter: filter || null,
         search: search || null,
       });
-      setBooks(result);
+      setBooks(result.map((b) => ({
+        ...b,
+        cover_path: b.cover_path === "none" ? null : b.cover_path,
+      })));
     } catch (err) {
       console.error("Failed to load books:", err);
     } finally {
@@ -79,28 +82,59 @@ async function backfillPdfCover(book: Book): Promise<void> {
 
 export const importBookDialog = { pickFile, importFile };
 
+const BACKFILL_BATCH_SIZE = 3;
+const BACKFILL_DELAY_MS = 1000;
+let backfillRunning = false;
+
+function needsCover(b: Book): boolean {
+  return b.format === "pdf" && !b.cover_path;
+}
+
 export async function backfillMissingCovers(): Promise<void> {
-  const books = await invoke<Book[]>("list_books", { filter: null, search: null });
-  const missing = books.filter((b) => b.format === "pdf" && !b.cover_path);
-  if (missing.length === 0) return;
-  const { extractPdfCover } = await import("../utils/pdfMetadata");
-  for (const book of missing) {
-    try {
-      const coverData = await extractPdfCover(book.file_path);
-      if (coverData) {
-        await invoke("save_book_cover", {
-          bookId: book.id,
-          coverData: Array.from(coverData),
-        });
-      }
-    } catch (err) {
-      console.warn(`Cover backfill failed for ${book.id}:`, err);
+  if (backfillRunning) return;
+  backfillRunning = true;
+  try {
+    const books = await invoke<Book[]>("list_books", { filter: null, search: null });
+    const missing = books.filter(needsCover);
+    if (missing.length === 0) {
+      backfillRunning = false;
+      return;
     }
+    const batch = missing.slice(0, BACKFILL_BATCH_SIZE);
+    const { extractPdfCover } = await import("../utils/pdfMetadata");
+    for (const book of batch) {
+      try {
+        const coverData = await extractPdfCover(book.file_path);
+        if (coverData) {
+          await invoke("save_book_cover", {
+            bookId: book.id,
+            coverData: Array.from(coverData),
+          });
+        } else {
+          await invoke("mark_cover_unavailable", { bookId: book.id });
+        }
+      } catch (err) {
+        console.warn(`Cover backfill failed for ${book.id}:`, err);
+        await invoke("mark_cover_unavailable", { bookId: book.id }).catch(() => {});
+      }
+    }
+    if (missing.length > BACKFILL_BATCH_SIZE) {
+      setTimeout(() => {
+        backfillRunning = false;
+        backfillMissingCovers();
+      }, BACKFILL_DELAY_MS);
+    } else {
+      backfillRunning = false;
+    }
+  } catch {
+    backfillRunning = false;
   }
 }
 
 export async function getBook(id: string): Promise<Book> {
-  return invoke<Book>("get_book", { id });
+  const b = await invoke<Book>("get_book", { id });
+  if (b.cover_path === "none") b.cover_path = null;
+  return b;
 }
 
 export async function deleteBook(id: string): Promise<void> {

@@ -12,16 +12,15 @@
 //!    `(event.ts, event.device)`. Strict-less-than wins; equality means we've
 //!    already applied this exact write. The compare lives in the `WHERE`
 //!    clause so SQLite skips the row in one statement.
-//! 3. **Deletes** drop the row plus all FK-children manually (the replay
-//!    engine runs with `PRAGMA foreign_keys = OFF` so cascades don't fire),
+//! 3. **Deletes** drop the row plus all children manually (explicit
+//!    cascading — the app does not rely on `ON DELETE CASCADE`),
 //!    then `INSERT OR IGNORE` a tombstone keyed `(entity, id)`.
 //!
-//! Foreign keys are deliberately off during apply because cross-device
-//! ordering can deliver a child event before its parent (e.g. a clock-skewed
-//! `highlight.add` arriving before `book.import`). Letting the orphan land
-//! and then catching up when the parent appears is safer than failing the
-//! whole replay tick. The UI joins through parents, so orphans are invisible
-//! until the parent shows up.
+//! Foreign keys are off at the connection level (the app never enables
+//! `PRAGMA foreign_keys`). All cascading deletes are explicit. This
+//! means cross-device ordering can safely deliver a child event before
+//! its parent — the orphan row lands and becomes visible once the
+//! parent arrives on a later tick.
 
 use rusqlite::{params, Transaction};
 use serde_json::Value;
@@ -222,6 +221,7 @@ fn cascade_delete_book(tx: &Transaction, id: &str, ts: i64) -> AppResult<()> {
         params![id],
     )?;
     tx.execute("DELETE FROM translations WHERE book_id = ?1", params![id])?;
+    tx.execute("DELETE FROM book_settings WHERE book_id = ?1", params![id])?;
     let chat_ids: Vec<String> = {
         let mut stmt = tx.prepare("SELECT id FROM chats WHERE book_id = ?1")?;
         let collected: Vec<String> = stmt

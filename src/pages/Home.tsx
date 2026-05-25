@@ -144,21 +144,34 @@ export default function Home() {
       refreshRef.current();
       allBooksRefreshRef.current();
     });
-    return () => {
-      unlistenStart.then((fn) => fn());
-      unlistenDone.then((fn) => fn());
-    };
-  }, []);
-
-  // Refresh when MCP subprocess writes to the library
-  useEffect(() => {
-    const unlistenBooks = listen("mcp:books-changed", async () => {
+    const unlistenTick = listen("sync-initial-tick-done", () => {
       refreshRef.current();
       allBooksRefreshRef.current();
       collectionsRefreshRef.current();
-      await backfillMissingCovers();
-      refreshRef.current();
-      allBooksRefreshRef.current();
+    });
+    return () => {
+      unlistenStart.then((fn) => fn());
+      unlistenDone.then((fn) => fn());
+      unlistenTick.then((fn) => fn());
+    };
+  }, []);
+
+  // Refresh when MCP subprocess writes to the library.
+  // Debounced: bulk MCP imports fire hundreds of events in quick
+  // succession; without the delay each one triggers a full book list
+  // reload + PDF cover backfill, which can OOM/freeze the webview.
+  useEffect(() => {
+    let mcpDebounce: ReturnType<typeof setTimeout> | null = null;
+    const unlistenBooks = listen("mcp:books-changed", () => {
+      if (mcpDebounce) clearTimeout(mcpDebounce);
+      mcpDebounce = setTimeout(async () => {
+        refreshRef.current();
+        allBooksRefreshRef.current();
+        collectionsRefreshRef.current();
+        await backfillMissingCovers();
+        refreshRef.current();
+        allBooksRefreshRef.current();
+      }, 500);
     });
     const unlistenCollections = listen("mcp:collections-changed", () => {
       collectionsRefreshRef.current();
@@ -166,6 +179,7 @@ export default function Home() {
       allBooksRefreshRef.current();
     });
     return () => {
+      if (mcpDebounce) clearTimeout(mcpDebounce);
       unlistenBooks.then((fn) => fn());
       unlistenCollections.then((fn) => fn());
     };
