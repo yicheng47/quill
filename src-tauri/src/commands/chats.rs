@@ -153,7 +153,7 @@ pub fn list_all_chats(db: State<'_, Db>) -> AppResult<Vec<Chat>> {
         "SELECT c.id, c.book_id, c.title, c.model, c.pinned, c.metadata, c.created_at, c.updated_at,
                 b.title,
                 (SELECT COUNT(*) FROM chat_messages WHERE chat_id = c.id),
-                (SELECT content FROM chat_messages WHERE chat_id = c.id ORDER BY created_at DESC LIMIT 1)
+                (SELECT content FROM chat_messages WHERE chat_id = c.id ORDER BY created_at DESC, rowid DESC LIMIT 1)
          FROM chats c LEFT JOIN books b ON c.book_id = b.id
          ORDER BY c.pinned DESC, c.updated_at DESC",
     )?;
@@ -445,7 +445,7 @@ mod tests {
             "SELECT c.id, c.book_id, c.title, c.model, c.pinned, c.metadata, c.created_at, c.updated_at,
                     b.title,
                     (SELECT COUNT(*) FROM chat_messages WHERE chat_id = c.id),
-                    (SELECT content FROM chat_messages WHERE chat_id = c.id ORDER BY created_at DESC LIMIT 1)
+                    (SELECT content FROM chat_messages WHERE chat_id = c.id ORDER BY created_at DESC, rowid DESC LIMIT 1)
              FROM chats c LEFT JOIN books b ON c.book_id = b.id
              ORDER BY c.updated_at DESC",
         ).unwrap();
