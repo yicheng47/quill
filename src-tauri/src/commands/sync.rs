@@ -504,6 +504,22 @@ pub fn sync_remove_peer(
 /// rollback can't actually restore old behavior — return a clear
 /// error rather than pretend. If a real user needs this we'll layer
 /// it back as a tagged-release recovery tool.
+#[cfg(debug_assertions)]
+#[tauri::command]
+pub fn simulate_sync_progress(app: tauri::AppHandle) -> AppResult<()> {
+    use tauri::Emitter;
+    std::thread::spawn(move || {
+        let total = 100;
+        let _ = app.emit("sync-progress", serde_json::json!({ "applied": 0, "total": total }));
+        for i in 1..=total {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            let _ = app.emit("sync-progress", serde_json::json!({ "applied": i, "total": total }));
+        }
+        let _ = app.emit("sync-initial-tick-done", ());
+    });
+    Ok(())
+}
+
 #[tauri::command]
 pub fn sync_revert_to_legacy() -> AppResult<()> {
     Err(AppError::Other(

@@ -284,7 +284,7 @@ fn boot_sync_engine(
             std::thread::Builder::new()
                 .name("sync-initial-tick".into())
                 .spawn(move || {
-                    match bg_engine.tick(&bg_db) {
+                    match bg_engine.tick_with_progress(&bg_db, Some(&bg_handle)) {
                         Ok(report) if report.events_applied > 0 || report.snapshots_applied > 0 => {
                             let _ = bg_handle.emit("sync-initial-tick-done", ());
                         }
@@ -753,6 +753,8 @@ pub fn run() {
             commands::sync::sync_now,
             commands::sync::sync_compact,
             commands::sync::sync_revert_to_legacy,
+            #[cfg(debug_assertions)]
+            commands::sync::simulate_sync_progress,
             commands::sync::sync_remove_peer,
         ])
         .build(tauri::generate_context!())

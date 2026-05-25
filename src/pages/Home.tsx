@@ -36,6 +36,7 @@ export default function Home() {
   const [importSlow, setImportSlow] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
   const [icloudSyncing, setIcloudSyncing] = useState(false);
+  const [syncProgress, setSyncProgress] = useState<{ applied: number; total: number } | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<"general" | "reading" | "ai" | "lookup" | "librarySync" | "about">("general");
   const [userName, setUserName] = useState("");
@@ -145,14 +146,19 @@ export default function Home() {
       allBooksRefreshRef.current();
     });
     const unlistenTick = listen("sync-initial-tick-done", () => {
+      setSyncProgress(null);
       refreshRef.current();
       allBooksRefreshRef.current();
       collectionsRefreshRef.current();
+    });
+    const unlistenProgress = listen<{ applied: number; total: number }>("sync-progress", (e) => {
+      setSyncProgress(e.payload);
     });
     return () => {
       unlistenStart.then((fn) => fn());
       unlistenDone.then((fn) => fn());
       unlistenTick.then((fn) => fn());
+      unlistenProgress.then((fn) => fn());
     };
   }, []);
 
@@ -295,6 +301,7 @@ export default function Home() {
         userName={userName}
         onOpenSettings={() => setSettingsOpen(true)}
         icloudSyncing={icloudSyncing}
+        syncProgress={syncProgress}
       />
 
       {activeFilter === "vocab" ? (
