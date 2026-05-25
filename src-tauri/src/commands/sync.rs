@@ -32,7 +32,7 @@ use crate::icloud;
 use crate::sync::device::DeviceIdentity;
 use crate::sync::log::EventLog;
 use crate::sync::peers;
-use crate::sync::replay::{ReplayEngine, ReplayReport};
+use crate::sync::replay::{self as replay, ReplayEngine, ReplayReport};
 use crate::sync::snapshot::{self, CompactReport, Snapshot};
 // `Snapshot` is referenced from the `publish_bootstrap_snapshot` helper.
 use crate::sync::watcher::{self, WatcherHandle};
@@ -166,7 +166,8 @@ pub fn sync_status(
     let migration_complete = sync::migration::is_migration_complete(&local.0);
     let shared_dir = sync::migration::recorded_data_dir(&local.0)
         .or_else(icloud::icloud_data_dir_deterministic);
-    let available = icloud::icloud_data_dir_fast().is_some();
+    let available = icloud::icloud_data_dir_fast().is_some()
+        || icloud::is_icloud_available();
     let enabled = sync_state.engine_snapshot()?.is_some();
 
     // Peer list + per-peer pending events. Both are cheap reads off
@@ -380,6 +381,19 @@ pub fn sync_disable(
     sync_writer: State<'_, SyncWriter>,
     sync_state: State<'_, SyncState>,
 ) -> AppResult<()> {
+    // Cancel any in-flight tick and wait for it to finish before
+    // copy-back. Without this, a background tick could import a peer
+    // book after copy-back runs, leaving a DB row whose blob was never
+    // copied to local.
+    if let Some(engine) = sync_state.engine_snapshot()? {
+        engine.cancel();
+    }
+    // Acquire TICK_MUTEX to ensure the cancelled tick has exited.
+    // Drop immediately — we just need the synchronization point.
+    {
+        let _wait = replay::tick_mutex_wait();
+    }
+
     // ---- Phase 1: fallible binary copy-back with no state change ----
     // If this fails (e.g. iCloud-evicted files, disk full), return an
     // error without touching any session or marker state. The user
@@ -400,12 +414,6 @@ pub fn sync_disable(
     // Every step from here is non-fatal or explicitly logged. The
     // fallible copy-back above succeeded, so we're committed to
     // turning sync off.
-
-    // Cancel any in-flight tick so it stops after the current event
-    // instead of replaying the entire backlog.
-    if let Some(engine) = sync_state.engine_snapshot()? {
-        engine.cancel();
-    }
 
     // Drop the watcher first. Drop signals stop + joins the thread —
     // no further fs events will trigger ticks while we mutate state.

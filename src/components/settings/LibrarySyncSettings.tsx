@@ -327,7 +327,7 @@ export default function LibrarySyncSettings(_props: SettingsProps) {
                 <button
                   type="button"
                   onClick={syncing ? () => invoke("sync_cancel") : onSyncNow}
-                  disabled={busy || !engineRunning}
+                  disabled={(!syncing && busy) || !engineRunning}
                   title={!engineRunning ? t("settings.librarySync.paused") : undefined}
                   className="text-[13px] font-medium text-[#7c3aed] hover:underline disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                 >

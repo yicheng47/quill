@@ -113,6 +113,21 @@ pub fn icloud_data_dir_deterministic() -> Option<PathBuf> {
     None
 }
 
+/// Fast check for whether this Mac has iCloud set up. Looks for
+/// `~/Library/Mobile Documents` — present on any Mac signed into
+/// iCloud, absent otherwise. No daemon query.
+#[cfg(target_os = "macos")]
+pub fn is_icloud_available() -> bool {
+    std::env::var_os("HOME")
+        .map(|h| PathBuf::from(h).join("Library/Mobile Documents").is_dir())
+        .unwrap_or(false)
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn is_icloud_available() -> bool {
+    false
+}
+
 /// Check if iCloud sync is enabled by looking for the marker file in the local app dir.
 pub fn is_icloud_enabled(local_dir: &Path) -> bool {
     local_dir.join(MARKER_FILE).exists()

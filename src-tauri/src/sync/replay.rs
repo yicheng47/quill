@@ -49,6 +49,12 @@ use super::snapshot::{self, Snapshot};
 /// because every operation is idempotent — but they'd duplicate I/O work.
 static TICK_MUTEX: Mutex<()> = Mutex::new(());
 
+/// Acquire and immediately release TICK_MUTEX. Used by `sync_disable`
+/// to wait for a cancelled tick to finish before starting copy-back.
+pub fn tick_mutex_wait() {
+    let _guard = TICK_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+}
+
 /// Process-wide lock that serializes `flush_outbox` callers so the
 /// outbox drain stays exactly-once. Without it, `SyncWriter::with_tx`'s
 /// background flush worker and a concurrent watcher tick could both
