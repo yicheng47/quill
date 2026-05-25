@@ -307,6 +307,7 @@
   "settings.librarySync.lastSeen": "Last seen {{time}}",
   "settings.librarySync.lastSyncAt": "Last sync {{time}}",
   "settings.librarySync.syncNow": "Sync now",
+  "settings.librarySync.cancelSync": "Cancel sync",
   "settings.librarySync.compact": "Compact log",
   "settings.librarySync.keysNote": "API keys and tokens are stored locally and never synced.",
   "settings.librarySync.simultaneityNote": "Avoid editing on multiple devices simultaneously for best results.",

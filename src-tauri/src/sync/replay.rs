@@ -142,6 +142,10 @@ pub struct ReplayEngine {
     /// Own log handle, shared with `SyncWriter`. `tick()` writes here when
     /// flushing the outbox.
     pub own_log: Arc<EventLog>,
+    /// Set to `true` by `cancel()` to abort an in-flight tick early.
+    /// Checked between events in Phase C so a `sync_disable` doesn't
+    /// have to wait for a long replay to finish.
+    cancelled: std::sync::atomic::AtomicBool,
 }
 
 impl ReplayEngine {
@@ -150,7 +154,17 @@ impl ReplayEngine {
             shared_dir,
             self_device,
             own_log,
+            cancelled: std::sync::atomic::AtomicBool::new(false),
         }
+    }
+
+    /// Signal any in-flight tick to stop after the current event.
+    pub fn cancel(&self) {
+        self.cancelled.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    fn is_cancelled(&self) -> bool {
+        self.cancelled.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// Run a single replay pass.
@@ -177,6 +191,7 @@ impl ReplayEngine {
             .lock()
             .map_err(|e| AppError::Other(format!("replay tick mutex poisoned: {e}")))?;
 
+        self.cancelled.store(false, std::sync::atomic::Ordering::SeqCst);
         let started = std::time::Instant::now();
 
         if let Some(handle) = app_handle {
@@ -419,6 +434,10 @@ impl ReplayEngine {
         // lands.
         let mut events_applied = 0usize;
         for ev in &all_events {
+            if self.is_cancelled() {
+                ::log::info!("sync: tick cancelled after {events_applied}/{total_events} events");
+                break;
+            }
             let mut conn = db
                 .conn
                 .lock()

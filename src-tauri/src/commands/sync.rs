@@ -401,6 +401,12 @@ pub fn sync_disable(
     // fallible copy-back above succeeded, so we're committed to
     // turning sync off.
 
+    // Cancel any in-flight tick so it stops after the current event
+    // instead of replaying the entire backlog.
+    if let Some(engine) = sync_state.engine_snapshot()? {
+        engine.cancel();
+    }
+
     // Drop the watcher first. Drop signals stop + joins the thread —
     // no further fs events will trigger ticks while we mutate state.
     {
@@ -411,8 +417,9 @@ pub fn sync_disable(
         *g = None;
     }
     // Drop the engine. The Arc may still be held by a tick in flight
-    // (sync_now), but `set_log(None)` below stops new outbox flushes
-    // from finding a log handle; the in-flight tick finishes against
+    // (sync_now / sync_enable background thread), but `cancel()` above
+    // signals it to stop and `set_log(None)` below stops new outbox
+    // flushes from finding a log handle; the in-flight tick finishes
     // its captured Arc and that's the end of it.
     {
         let mut g = sync_state
@@ -452,6 +459,18 @@ pub fn sync_disable(
     let legacy_marker = local.0.join(".icloud_enabled");
     let _ = fs::remove_file(&legacy_marker);
 
+    Ok(())
+}
+
+#[tauri::command]
+pub fn sync_cancel(
+    app: tauri::AppHandle,
+    sync_state: State<'_, SyncState>,
+) -> AppResult<()> {
+    if let Some(engine) = sync_state.engine_snapshot()? {
+        engine.cancel();
+    }
+    let _ = tauri::Emitter::emit(&app, "sync-initial-tick-done", ());
     Ok(())
 }
 

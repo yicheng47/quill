@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { Loader2, Monitor, Smartphone, Laptop, Trash2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import Button from "../ui/Button";
@@ -77,6 +78,16 @@ export default function LibrarySyncSettings(_props: SettingsProps) {
   // Tick once a minute so "Last seen 2m ago" stays fresh while the modal
   // is open. Cheap; the component re-renders are bounded.
   const [now, setNow] = useState(Date.now());
+  const [syncing, setSyncing] = useState(false);
+
+  useEffect(() => {
+    const unProgress = listen<{ applied: number; total: number }>("sync-progress", () => setSyncing(true));
+    const unDone = listen("sync-initial-tick-done", () => setSyncing(false));
+    return () => {
+      unProgress.then((fn) => fn());
+      unDone.then((fn) => fn());
+    };
+  }, []);
 
   const refresh = useCallback(async () => {
     try {
@@ -315,12 +326,12 @@ export default function LibrarySyncSettings(_props: SettingsProps) {
               <div className="flex items-center gap-4">
                 <button
                   type="button"
-                  onClick={onSyncNow}
+                  onClick={syncing ? () => invoke("sync_cancel") : onSyncNow}
                   disabled={busy || !engineRunning}
                   title={!engineRunning ? t("settings.librarySync.paused") : undefined}
                   className="text-[13px] font-medium text-[#7c3aed] hover:underline disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                 >
-                  {t("settings.librarySync.syncNow")}
+                  {syncing ? t("settings.librarySync.cancelSync") : t("settings.librarySync.syncNow")}
                 </button>
                 <button
                   type="button"

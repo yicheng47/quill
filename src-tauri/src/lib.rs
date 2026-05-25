@@ -749,6 +749,7 @@ pub fn run() {
             commands::sync::sync_enable,
             commands::sync::sync_disable,
             commands::sync::sync_now,
+            commands::sync::sync_cancel,
             commands::sync::sync_compact,
             commands::sync::sync_revert_to_legacy,
             #[cfg(debug_assertions)]
