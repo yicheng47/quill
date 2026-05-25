@@ -139,7 +139,9 @@ fn resolve_book_paths(book: &mut Book, db: &Db) {
             .to_string();
     }
     if let Some(ref cover) = book.cover_path {
-        if cover != "none" && !std::path::Path::new(cover).is_absolute() {
+        if cover == "none" {
+            book.cover_path = None;
+        } else if !std::path::Path::new(cover).is_absolute() {
             book.cover_path = Some(
                 db.resolve_path(cover)
                     .to_string_lossy()
