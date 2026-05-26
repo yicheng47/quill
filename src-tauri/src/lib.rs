@@ -166,7 +166,7 @@ pub fn mcp_stdio_main() {
     // under the ubiquity container, not the local app-data dir.
     let data_dir = if sync::migration::is_sync_enabled(&local_dir) {
         sync::migration::recorded_data_dir(&local_dir)
-            .or_else(icloud::icloud_data_dir_deterministic)
+            .or_else(icloud::icloud_data_dir)
             .unwrap_or_else(|| local_dir.clone())
     } else {
         local_dir.clone()
@@ -424,7 +424,7 @@ pub fn run() {
             // Resolve the iCloud Documents path when sync is enabled.
             let ubiquity_dir = if sync::migration::is_sync_enabled(&local_dir) {
                 sync::migration::recorded_data_dir(&local_dir)
-                    .or_else(icloud::icloud_data_dir_deterministic)
+                    .or_else(icloud::icloud_data_dir)
             } else {
                 None
             };

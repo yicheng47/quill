@@ -574,8 +574,7 @@ mod tests {
     #[test]
     #[ignore = "manual smoke test against the real iCloud ubiquity container"]
     fn coordinated_append_smoke_on_real_icloud_path() {
-        let shared_dir = crate::icloud::icloud_data_dir_fast()
-            .or_else(crate::icloud::icloud_data_dir)
+        let shared_dir = crate::icloud::icloud_data_dir()
             .expect("expected a local iCloud Documents container");
         let logs_dir = shared_dir.join("logs");
         std::fs::create_dir_all(&logs_dir).unwrap();

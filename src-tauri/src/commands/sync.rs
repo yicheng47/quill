@@ -149,8 +149,8 @@ pub fn sync_status(
 ) -> AppResult<SyncStatus> {
     let sync_enabled = sync::migration::is_sync_enabled(&local.0);
     let shared_dir = sync::migration::recorded_data_dir(&local.0)
-        .or_else(icloud::icloud_data_dir_deterministic);
-    let available = icloud::icloud_data_dir_fast().is_some()
+        .or_else(icloud::icloud_data_dir);
+    let available = icloud::icloud_data_dir().is_some_and(|p| p.exists())
         || icloud::is_icloud_available();
     let enabled = sync_state.engine_snapshot()?.is_some();
 
@@ -389,7 +389,7 @@ pub fn sync_disable(
     // which then silently re-enabled on the next launch.
 
     let ubiquity_dir = sync::migration::recorded_data_dir(&local.0)
-        .or_else(icloud::icloud_data_dir_deterministic);
+        .or_else(icloud::icloud_data_dir);
     let copy_result = if let Some(ub) = ubiquity_dir.as_ref() {
         copy_dir_contents(&ub.join("books"), &local.0.join("books"))
             .and_then(|_| copy_dir_contents(&ub.join("covers"), &local.0.join("covers")))
@@ -523,7 +523,7 @@ pub fn sync_remove_peer(
     device: State<'_, DeviceIdentity>,
 ) -> AppResult<()> {
     let shared_dir = sync::migration::recorded_data_dir(&local.0)
-        .or_else(icloud::icloud_data_dir_deterministic)
+        .or_else(icloud::icloud_data_dir)
         .ok_or_else(|| AppError::Other("iCloud shared folder is not available".into()))?;
     peers::delete_peer(&shared_dir, &device_uuid, &device.device_uuid)
 }
