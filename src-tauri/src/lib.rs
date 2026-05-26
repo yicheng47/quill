@@ -473,33 +473,12 @@ pub fn run() {
                 sync_writer.set_should_queue(true);
             }
 
-            // Boot the sync engine on a background thread when sync is
-            // on. The `.exists()` gate ensures we don't create files at
-            // a deterministic path outside a real ubiquity container.
-            let should_boot = sync::migration::is_sync_enabled(&local_dir)
-                .then(|| ubiquity_dir.filter(|p| p.exists()))
-                .flatten();
-            let (replay_engine, watcher_handle) = match should_boot {
-                Some(ub) => match boot_sync_engine(ub, &device.device_uuid, &db, &sync_writer, app.handle()) {
-                    Ok(pair) => {
-                        log::info!("sync: engine booted (replay + watcher active)");
-                        pair
-                    }
-                    Err(e) => {
-                        log::error!("sync: failed to boot sync engine: {e}");
-                        (None, None)
-                    }
-                },
-                None => {
-                    if sync::migration::is_sync_enabled(&local_dir) {
-                        log::warn!(
-                            "sync: skipping engine boot — iCloud container not reachable \
-                             this launch; outbox preserved for the next launch"
-                        );
-                    }
-                    (None, None)
-                }
-            };
+            // Register managed state immediately so setup() returns fast
+            // and the webview can render. The sync engine boots on a
+            // background thread — EventLog::open, watcher::spawn, and the
+            // initial tick all touch iCloud paths that can stall for
+            // seconds when files are evicted. Running them here would
+            // white-screen the app.
 
             // Watch the MCP sentinel file so the UI can refresh when an
             // MCP subprocess writes to the library. The sentinel is a
@@ -509,12 +488,58 @@ pub fn run() {
             let app_handle = app.handle().clone();
             mcp::notify::spawn_watcher(mcp_notify_path, app_handle);
 
-            app.manage(LocalDir(local_dir));
+            app.manage(LocalDir(local_dir.clone()));
             app.manage(db);
             app.manage(secrets);
             app.manage(device);
             app.manage(sync_writer);
-            app.manage(SyncState::new(replay_engine, watcher_handle));
+            app.manage(SyncState::new(None, None));
+
+            // Boot the sync engine on a background thread. Everything
+            // that touches iCloud paths (EventLog::open, watcher::spawn,
+            // initial tick) runs here so setup() is never blocked by
+            // bird/NSFileCoordinator stalls or evicted-file downloads.
+            //
+            // The SyncWriter is already in queue-only mode (if sync is
+            // enabled), so any writes the user makes before the engine
+            // finishes booting are safely queued in _pending_publish
+            // and drained on the first successful tick.
+            let should_boot = sync::migration::is_sync_enabled(&local_dir)
+                .then(|| ubiquity_dir.clone().filter(|p| p.exists()))
+                .flatten();
+            if let Some(ub) = should_boot {
+                let bg_handle = app.handle().clone();
+                std::thread::Builder::new()
+                    .name("sync-boot".into())
+                    .spawn(move || {
+                        let bg_db: tauri::State<Db> = bg_handle.state();
+                        let bg_writer: tauri::State<SyncWriter> = bg_handle.state();
+                        let bg_device: tauri::State<DeviceIdentity> = bg_handle.state();
+                        let bg_sync: tauri::State<SyncState> = bg_handle.state();
+                        match boot_sync_engine(
+                            ub, &bg_device.device_uuid, &bg_db, &bg_writer, &bg_handle,
+                        ) {
+                            Ok((engine, watcher)) => {
+                                log::info!("sync: engine booted (replay + watcher active)");
+                                if let Some(e) = engine {
+                                    *bg_sync.engine.lock().unwrap() = Some(e);
+                                }
+                                if let Some(w) = watcher {
+                                    *bg_sync.watcher.lock().unwrap() = Some(w);
+                                }
+                            }
+                            Err(e) => {
+                                log::error!("sync: failed to boot sync engine: {e}");
+                            }
+                        }
+                    })
+                    .ok();
+            } else if sync::migration::is_sync_enabled(&local_dir) {
+                log::warn!(
+                    "sync: skipping engine boot — iCloud container not reachable \
+                     this launch; outbox preserved for the next launch"
+                );
+            }
 
             Ok(())
         })
