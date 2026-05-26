@@ -422,6 +422,10 @@ pub fn run() {
             };
             std::fs::create_dir_all(&local_dir).expect("failed to create app data dir");
 
+            // Clean up stale legacy markers.
+            let _ = std::fs::remove_file(local_dir.join(".migration_complete"));
+            let _ = std::fs::remove_file(local_dir.join(".icloud_enabled"));
+
             // Self-heal: if .icloud_setting survived but quill.db
             // was deleted (e.g. user cleared app data via Finder, which
             // skips hidden dot-files), remove the stale marker so the

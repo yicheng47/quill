@@ -140,7 +140,7 @@ impl SyncWriter {
 
     /// Toggle whether `with_tx` writes its events vec into
     /// `_pending_publish`. `true` is set by lib.rs whenever
-    /// `.migration_complete` exists, regardless of whether the iCloud
+    /// `.icloud_setting` exists, regardless of whether the iCloud
     /// container is reachable this launch. The decoupling from `log` is
     /// what enables the queue-only mode: events accumulate durably in
     /// SQL even when the engine can't boot, and the next reachable
