@@ -3,13 +3,18 @@ import { useTranslation } from "react-i18next";
 import { Library, BookOpen, CheckCircle2, FolderClosed, BookA, Plus, MessageSquare, Globe, Pencil, Trash2, GripVertical, RefreshCw } from "lucide-react";
 import Button from "./ui/Button";
 import QuillLogo from "./QuillLogo";
-import type { Book } from "../hooks/useBooks";
 import type { Collection } from "../hooks/useCollections";
+
+interface BookCounts {
+  all: number;
+  reading: number;
+  finished: number;
+}
 
 interface SidebarProps {
   activeFilter: string;
   onFilterChange: (filter: string) => void;
-  books: Book[];
+  bookCounts: BookCounts;
   collections: {
     collections: Collection[];
     create: (name: string) => Promise<Collection>;
@@ -36,7 +41,7 @@ function getStoredWidth(): number {
   return SIDEBAR_DEFAULT;
 }
 
-export default function Sidebar({ activeFilter, onFilterChange, books, collections: collectionsHook, userName, onOpenSettings, syncProgress }: SidebarProps) {
+export default function Sidebar({ activeFilter, onFilterChange, bookCounts, collections: collectionsHook, userName, onOpenSettings, syncProgress }: SidebarProps) {
   const { t } = useTranslation();
   const [sidebarWidth, setSidebarWidth] = useState(getStoredWidth);
   const resizingRef = useRef(false);
@@ -104,9 +109,9 @@ export default function Sidebar({ activeFilter, onFilterChange, books, collectio
   const displayCollections = dragId ? dragOrder.map((id) => collections.find((c) => c.id === id)!).filter(Boolean) : collections;
 
   const getCount = (filterId: string) => {
-    if (filterId === "all") return books.length;
-    if (filterId === "reading") return books.filter((b) => b.status === "reading").length;
-    if (filterId === "finished") return books.filter((b) => b.status === "finished").length;
+    if (filterId === "all") return bookCounts.all;
+    if (filterId === "reading") return bookCounts.reading;
+    if (filterId === "finished") return bookCounts.finished;
     return 0;
   };
 

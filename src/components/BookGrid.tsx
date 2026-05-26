@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
+import { Loader2 } from "lucide-react";
 import type { Book } from "../hooks/useBooks";
 import { openReaderWindow } from "../utils/openReaderWindow";
 import { deleteBook, markFinished, updateBookStatus } from "../hooks/useBooks";
@@ -29,11 +30,14 @@ function CoverImage({ src, alt, title }: { src: string; alt: string; title: stri
 
 interface BookGridProps {
   books: Book[];
+  hasMore?: boolean;
+  loadMore?: () => void;
+  loadingMore?: boolean;
   activeCollectionId?: string;
   onBooksChanged?: () => void;
 }
 
-export default function BookGrid({ books, activeCollectionId, onBooksChanged }: BookGridProps) {
+export default function BookGrid({ books, hasMore, loadMore, loadingMore, activeCollectionId, onBooksChanged }: BookGridProps) {
   const { t } = useTranslation();
   const [contextMenu, setContextMenu] = useState<{
     x: number;
@@ -134,6 +138,28 @@ export default function BookGrid({ books, activeCollectionId, onBooksChanged }: 
           }}
         />
       )}
+
+      {hasMore && <LoadMoreSentinel loadMore={loadMore} loadingMore={loadingMore} />}
     </>
+  );
+}
+
+function LoadMoreSentinel({ loadMore, loadingMore }: { loadMore?: () => void; loadingMore?: boolean }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || !loadMore) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => { if (entry.isIntersecting) loadMore(); },
+      { rootMargin: "200px" },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [loadMore]);
+
+  return (
+    <div ref={ref} className="flex justify-center py-4">
+      {loadingMore && <Loader2 size={20} className="text-text-muted animate-spin" />}
+    </div>
   );
 }

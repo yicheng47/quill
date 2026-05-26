@@ -317,26 +317,48 @@ pub async fn import_book(
 /// absolute paths for the frontend; the MCP `list_books` tool returns
 /// them as-is so the response doesn't leak this user's home directory
 /// layout to AI clients.
+/// Paginated response for `list_books`.
+#[derive(Debug, serde::Serialize)]
+pub struct BookPage {
+    pub books: Vec<Book>,
+    pub next_cursor: Option<String>,
+    pub total: usize,
+}
+
 pub(crate) fn query_books(
     db: &Db,
     filter: Option<&str>,
     search: Option<&str>,
-) -> AppResult<Vec<Book>> {
+    collection_id: Option<&str>,
+    cursor: Option<&str>,
+    limit: usize,
+) -> AppResult<BookPage> {
     let conn = db.reader();
 
-    let mut sql = "SELECT id, title, author, description, cover_path, file_path, format, genre, pages, status, progress, current_cfi, created_at, updated_at FROM books".to_string();
+    let use_collection = collection_id.is_some();
+    let from_clause = if use_collection {
+        "books INNER JOIN collection_books cb ON cb.book_id = books.id"
+    } else {
+        "books"
+    };
+
     let mut conditions: Vec<String> = Vec::new();
     let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+
+    if let Some(cid) = collection_id {
+        conditions.push("cb.collection_id = ?".to_string());
+        param_values.push(Box::new(cid.to_string()));
+    }
 
     if let Some(f) = filter {
         match f {
             "reading" | "finished" | "unread" => {
-                conditions.push("status = ?".to_string());
+                conditions.push("books.status = ?".to_string());
                 param_values.push(Box::new(f.to_string()));
             }
             "all" => {}
             genre => {
-                conditions.push("genre = ?".to_string());
+                conditions.push("books.genre = ?".to_string());
                 param_values.push(Box::new(genre.to_string()));
             }
         }
@@ -344,24 +366,85 @@ pub(crate) fn query_books(
 
     if let Some(q) = search {
         if !q.is_empty() {
-            conditions.push("(LOWER(title) LIKE ? OR LOWER(author) LIKE ?)".to_string());
+            conditions.push("(LOWER(books.title) LIKE ? OR LOWER(books.author) LIKE ?)".to_string());
             let pattern = format!("%{}%", q.to_lowercase());
             param_values.push(Box::new(pattern.clone()));
             param_values.push(Box::new(pattern));
         }
     }
 
-    if !conditions.is_empty() {
-        sql.push_str(" WHERE ");
-        sql.push_str(&conditions.join(" AND "));
+    // Cursor: "updated_at:id" — books older than cursor position.
+    if let Some(c) = cursor {
+        if let Some((ts_str, cid)) = c.split_once(':') {
+            if let Ok(ts) = ts_str.parse::<i64>() {
+                conditions.push(
+                    "(books.updated_at < ? OR (books.updated_at = ? AND books.id > ?))".to_string(),
+                );
+                param_values.push(Box::new(ts));
+                param_values.push(Box::new(ts));
+                param_values.push(Box::new(cid.to_string()));
+            }
+        }
     }
 
-    sql.push_str(" ORDER BY updated_at DESC");
+    let where_clause = if conditions.is_empty() {
+        String::new()
+    } else {
+        format!(" WHERE {}", conditions.join(" AND "))
+    };
+
+    // Count conditions = same as main conditions but without cursor.
+    let count_where = {
+        let mut cc: Vec<String> = Vec::new();
+        if let Some(cid) = collection_id {
+            cc.push("cb.collection_id = ?".to_string());
+            let _ = cid;
+        }
+        if let Some(f) = filter {
+            match f {
+                "reading" | "finished" | "unread" => cc.push("books.status = ?".to_string()),
+                "all" => {}
+                _ => cc.push("books.genre = ?".to_string()),
+            }
+        }
+        if search.is_some_and(|q| !q.is_empty()) {
+            cc.push("(LOWER(books.title) LIKE ? OR LOWER(books.author) LIKE ?)".to_string());
+        }
+        if cc.is_empty() { String::new() } else { format!(" WHERE {}", cc.join(" AND ")) }
+    };
+    let count_sql = format!("SELECT COUNT(*) FROM {from_clause}{count_where}");
+    let mut count_params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+    if let Some(cid) = collection_id {
+        count_params.push(Box::new(cid.to_string()));
+    }
+    if let Some(f) = filter {
+        match f {
+            "reading" | "finished" | "unread" | "all" => {
+                if f != "all" { count_params.push(Box::new(f.to_string())); }
+            }
+            _ => { count_params.push(Box::new(f.to_string())); }
+        }
+    }
+    if let Some(q) = search {
+        if !q.is_empty() {
+            let pattern = format!("%{}%", q.to_lowercase());
+            count_params.push(Box::new(pattern.clone()));
+            count_params.push(Box::new(pattern));
+        }
+    }
+    let count_refs: Vec<&dyn rusqlite::types::ToSql> = count_params.iter().map(|p| p.as_ref()).collect();
+    let total: usize = conn.query_row(&count_sql, count_refs.as_slice(), |r| r.get(0))?;
+
+    // Main query with cursor + limit.
+    let sql = format!(
+        "SELECT books.id, books.title, books.author, books.description, books.cover_path, books.file_path, books.format, books.genre, books.pages, books.status, books.progress, books.current_cfi, books.created_at, books.updated_at FROM {from_clause}{where_clause} ORDER BY books.updated_at DESC, books.id ASC LIMIT ?",
+    );
+    param_values.push(Box::new((limit + 1) as i64));
 
     let params_refs: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|p| p.as_ref()).collect();
 
     let mut stmt = conn.prepare(&sql)?;
-    let books = stmt.query_map(params_refs.as_slice(), |row| {
+    let mut books: Vec<Book> = stmt.query_map(params_refs.as_slice(), |row| {
         Ok(Book {
             id: row.get(0)?,
             title: row.get(1)?,
@@ -377,12 +460,20 @@ pub(crate) fn query_books(
             current_cfi: row.get(11)?,
             created_at: row.get(12)?,
             updated_at: row.get(13)?,
-            available: true, // raw shape — Tauri wrapper resolves availability
+            available: true,
         })
     })?
     .collect::<Result<Vec<_>, _>>()?;
 
-    Ok(books)
+    let next_cursor = if books.len() > limit {
+        books.truncate(limit);
+        let last = &books[limit - 1];
+        Some(format!("{}:{}", last.updated_at, last.id))
+    } else {
+        None
+    };
+
+    Ok(BookPage { books, next_cursor, total })
 }
 
 /// Shared query helper for the single-book lookup. Same relative-path
@@ -415,17 +506,50 @@ pub(crate) fn query_book(db: &Db, id: &str) -> AppResult<Book> {
     Ok(book)
 }
 
+const DEFAULT_PAGE_SIZE: usize = 20;
+
 #[tauri::command]
 pub fn list_books(
     filter: Option<String>,
     search: Option<String>,
+    collection_id: Option<String>,
+    cursor: Option<String>,
+    limit: Option<usize>,
     db: State<'_, Db>,
-) -> AppResult<Vec<Book>> {
-    let mut books = query_books(&db, filter.as_deref(), search.as_deref())?;
-    for book in &mut books {
+) -> AppResult<BookPage> {
+    let page_size = limit.unwrap_or(DEFAULT_PAGE_SIZE);
+    let mut page = query_books(
+        &db,
+        filter.as_deref(),
+        search.as_deref(),
+        collection_id.as_deref(),
+        cursor.as_deref(),
+        page_size,
+    )?;
+    for book in &mut page.books {
         resolve_book_paths(book, &db);
     }
-    Ok(books)
+    Ok(page)
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct BookCounts {
+    pub all: usize,
+    pub reading: usize,
+    pub finished: usize,
+}
+
+#[tauri::command]
+pub fn get_book_counts(db: State<'_, Db>) -> AppResult<BookCounts> {
+    let conn = db.reader();
+    let all: usize = conn.query_row("SELECT COUNT(*) FROM books", [], |r| r.get(0))?;
+    let reading: usize = conn.query_row(
+        "SELECT COUNT(*) FROM books WHERE status = 'reading'", [], |r| r.get(0),
+    )?;
+    let finished: usize = conn.query_row(
+        "SELECT COUNT(*) FROM books WHERE status = 'finished'", [], |r| r.get(0),
+    )?;
+    Ok(BookCounts { all, reading, finished })
 }
 
 #[tauri::command]
@@ -1262,5 +1386,134 @@ mod tests {
 
         assert_eq!(book.format, "pdf");
         assert_eq!(book.id, "b1");
+    }
+
+    // -----------------------------------------------------------------------
+    // Pagination
+    // -----------------------------------------------------------------------
+
+    fn insert_book_with_ts(db: &Db, id: &str, status: &str, updated_at: i64) {
+        let conn = db.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO books (id, title, author, file_path, format, status, progress, created_at, updated_at)
+             VALUES (?1, ?2, 'Author', 'books/test.epub', 'epub', ?3, 0, ?4, ?4)",
+            params![id, format!("Book {id}"), status, updated_at],
+        ).unwrap();
+    }
+
+    #[test]
+    fn pagination_returns_first_page() {
+        let (_dir, db) = setup();
+        for i in 0..5 {
+            insert_book_with_ts(&db, &format!("b{i}"), "reading", 1000 + i);
+        }
+        let page = query_books(&db, None, None, None, None, 3).unwrap();
+        assert_eq!(page.books.len(), 3);
+        assert_eq!(page.total, 5);
+        assert!(page.next_cursor.is_some());
+    }
+
+    #[test]
+    fn pagination_cursor_returns_next_page() {
+        let (_dir, db) = setup();
+        for i in 0..5 {
+            insert_book_with_ts(&db, &format!("b{i}"), "reading", 1000 + i);
+        }
+        let page1 = query_books(&db, None, None, None, None, 3).unwrap();
+        let page2 = query_books(&db, None, None, None, page1.next_cursor.as_deref(), 3).unwrap();
+        assert_eq!(page2.books.len(), 2);
+        assert_eq!(page2.total, 5);
+        assert!(page2.next_cursor.is_none());
+    }
+
+    #[test]
+    fn pagination_no_more_pages() {
+        let (_dir, db) = setup();
+        for i in 0..3 {
+            insert_book_with_ts(&db, &format!("b{i}"), "reading", 1000 + i);
+        }
+        let page = query_books(&db, None, None, None, None, 5).unwrap();
+        assert_eq!(page.books.len(), 3);
+        assert!(page.next_cursor.is_none());
+    }
+
+    #[test]
+    fn pagination_filter_by_status() {
+        let (_dir, db) = setup();
+        insert_book_with_ts(&db, "b1", "reading", 1000);
+        insert_book_with_ts(&db, "b2", "finished", 1001);
+        insert_book_with_ts(&db, "b3", "reading", 1002);
+        let page = query_books(&db, Some("reading"), None, None, None, 10).unwrap();
+        assert_eq!(page.books.len(), 2);
+        assert_eq!(page.total, 2);
+    }
+
+    #[test]
+    fn pagination_search() {
+        let (_dir, db) = setup();
+        insert_book_with_ts(&db, "b1", "reading", 1000);
+        insert_book_with_ts(&db, "b2", "reading", 1001);
+        let page = query_books(&db, None, Some("Book b1"), None, None, 10).unwrap();
+        assert_eq!(page.books.len(), 1);
+        assert_eq!(page.books[0].id, "b1");
+    }
+
+    #[test]
+    fn pagination_collection_filter() {
+        let (_dir, db) = setup();
+        insert_book_with_ts(&db, "b1", "reading", 1000);
+        insert_book_with_ts(&db, "b2", "reading", 1001);
+        insert_book_with_ts(&db, "b3", "reading", 1002);
+        let conn = db.conn.lock().unwrap();
+        let now = chrono::Utc::now().timestamp_millis();
+        conn.execute(
+            "INSERT INTO collections (id, name, sort_order, created_at, updated_at, updated_by_device)
+             VALUES ('c1', 'Fiction', 0, ?1, ?1, 'dev')",
+            params![now],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO collection_books (collection_id, book_id, created_at, updated_at, updated_by_device)
+             VALUES ('c1', 'b1', ?1, ?1, 'dev')",
+            params![now],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO collection_books (collection_id, book_id, created_at, updated_at, updated_by_device)
+             VALUES ('c1', 'b3', ?1, ?1, 'dev')",
+            params![now],
+        ).unwrap();
+        drop(conn);
+        let page = query_books(&db, None, None, Some("c1"), None, 10).unwrap();
+        assert_eq!(page.books.len(), 2);
+        assert_eq!(page.total, 2);
+    }
+
+    #[test]
+    fn pagination_collection_with_cursor() {
+        let (_dir, db) = setup();
+        for i in 0..5 {
+            insert_book_with_ts(&db, &format!("b{i}"), "reading", 1000 + i);
+        }
+        let conn = db.conn.lock().unwrap();
+        let now = chrono::Utc::now().timestamp_millis();
+        conn.execute(
+            "INSERT INTO collections (id, name, sort_order, created_at, updated_at, updated_by_device)
+             VALUES ('c1', 'All Five', 0, ?1, ?1, 'dev')",
+            params![now],
+        ).unwrap();
+        for i in 0..5 {
+            conn.execute(
+                "INSERT INTO collection_books (collection_id, book_id, created_at, updated_at, updated_by_device)
+                 VALUES ('c1', ?1, ?2, ?2, 'dev')",
+                params![format!("b{i}"), now],
+            ).unwrap();
+        }
+        drop(conn);
+        let page1 = query_books(&db, None, None, Some("c1"), None, 3).unwrap();
+        assert_eq!(page1.books.len(), 3);
+        assert_eq!(page1.total, 5);
+        assert!(page1.next_cursor.is_some());
+        let page2 = query_books(&db, None, None, Some("c1"), page1.next_cursor.as_deref(), 3).unwrap();
+        assert_eq!(page2.books.len(), 2);
+        assert!(page2.next_cursor.is_none());
     }
 }

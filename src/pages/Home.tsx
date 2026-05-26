@@ -81,39 +81,31 @@ export default function Home() {
     return () => document.removeEventListener("keydown", handler);
   }, []);
 
-  // For collection filters, we need to fetch the book IDs in the collection
-  // then filter client-side
   const isCollectionFilter = activeFilter.startsWith("collection:");
   const statusFilter = !isCollectionFilter && activeFilter !== "all" ? activeFilter : undefined;
+  const collectionId = isCollectionFilter ? activeFilter.replace("collection:", "") : undefined;
   const searchParam = searchQuery || undefined;
 
-  const { books, loading, refresh } = useBooks(statusFilter, searchParam);
-  const allBooks = useBooks();
+  const { books, loading, hasMore, loadMore, loadingMore, refresh } = useBooks(statusFilter, searchParam, collectionId);
 
-  // Collection-filtered books
-  const [collectionBookIds, setCollectionBookIds] = useState<string[]>([]);
-  const refreshCollectionBooks = useCallback(() => {
-    if (!isCollectionFilter) return;
-    const collectionId = activeFilter.replace("collection:", "");
-    invoke<string[]>("list_books_in_collection", { collectionId })
-      .then(setCollectionBookIds)
-      .catch(() => setCollectionBookIds([]));
-  }, [activeFilter, isCollectionFilter]);
-
-  useEffect(() => {
-    if (!isCollectionFilter) {
-      setCollectionBookIds([]);
-      return;
+  // Book counts for sidebar badges — lightweight, no book data loaded.
+  const [bookCounts, setBookCounts] = useState({ all: 0, reading: 0, finished: 0 });
+  const refreshCounts = useCallback(async () => {
+    try {
+      const counts = await invoke<{ all: number; reading: number; finished: number }>("get_book_counts");
+      setBookCounts(counts);
+    } catch (err) {
+      console.error("Failed to load book counts:", err);
     }
-    refreshCollectionBooks();
-  }, [activeFilter, isCollectionFilter, refreshCollectionBooks]);
+  }, []);
+  useEffect(() => { refreshCounts(); }, [refreshCounts]);
 
   // Keep stable refs for refresh functions so the drag-drop effect doesn't re-register
   const refreshRef = useRef(refresh);
-  const allBooksRefreshRef = useRef(allBooks.refresh);
+  const countsRefreshRef = useRef(refreshCounts);
   const collectionsRefreshRef = useRef(collections.refresh);
   useEffect(() => { refreshRef.current = refresh; }, [refresh]);
-  useEffect(() => { allBooksRefreshRef.current = allBooks.refresh; }, [allBooks.refresh]);
+  useEffect(() => { countsRefreshRef.current = refreshCounts; }, [refreshCounts]);
   useEffect(() => { collectionsRefreshRef.current = collections.refresh; }, [collections.refresh]);
 
   // Auto-dismiss import error after 10s
@@ -140,7 +132,7 @@ export default function Home() {
     const unlistenTick = listen("sync-initial-tick-done", () => {
       setSyncProgress(null);
       refreshRef.current();
-      allBooksRefreshRef.current();
+      countsRefreshRef.current();
       collectionsRefreshRef.current();
     });
     const unlistenProgress = listen<{ applied: number; total: number }>("sync-progress", (e) => {
@@ -162,17 +154,17 @@ export default function Home() {
       if (mcpDebounce) clearTimeout(mcpDebounce);
       mcpDebounce = setTimeout(async () => {
         refreshRef.current();
-        allBooksRefreshRef.current();
+        countsRefreshRef.current();
         collectionsRefreshRef.current();
         await backfillMissingCovers();
         refreshRef.current();
-        allBooksRefreshRef.current();
+        countsRefreshRef.current();
       }, 500);
     });
     const unlistenCollections = listen("mcp:collections-changed", () => {
       collectionsRefreshRef.current();
       refreshRef.current();
-      allBooksRefreshRef.current();
+      countsRefreshRef.current();
     });
     return () => {
       if (mcpDebounce) clearTimeout(mcpDebounce);
@@ -205,7 +197,7 @@ export default function Home() {
               }
             }
             refreshRef.current();
-            allBooksRefreshRef.current();
+            countsRefreshRef.current();
           } finally {
             setImporting(false);
           }
@@ -236,7 +228,7 @@ export default function Home() {
           }
         }
         refreshRef.current();
-        allBooksRefreshRef.current();
+        countsRefreshRef.current();
       } finally {
         setImporting(false);
       }
@@ -244,9 +236,7 @@ export default function Home() {
     return () => { unlisten.then((fn) => fn()); };
   }, []);
 
-  const displayBooks = isCollectionFilter
-    ? allBooks.books.filter((b) => collectionBookIds.includes(b.id))
-    : books;
+  const displayBooks = books;
 
   const handleImport = async () => {
     let selected: string | null = null;
@@ -258,7 +248,7 @@ export default function Home() {
         const book = await importBookDialog.importFile(selected);
         if (book) {
           refresh();
-          allBooks.refresh();
+          refreshCounts();
         }
       } finally {
         setImporting(false);
@@ -286,7 +276,7 @@ export default function Home() {
       <Sidebar
         activeFilter={activeFilter}
         onFilterChange={setActiveFilter}
-        books={allBooks.books}
+        bookCounts={bookCounts}
         collections={collections}
         userName={userName}
         onOpenSettings={() => setSettingsOpen(true)}
@@ -358,9 +348,9 @@ export default function Home() {
                 )}
               </div>
             ) : viewMode === "grid" ? (
-              <BookGrid books={displayBooks} activeCollectionId={isCollectionFilter ? activeFilter.replace("collection:", "") : undefined} onBooksChanged={() => { refresh(); allBooks.refresh(); collections.refresh(); refreshCollectionBooks(); }} />
+              <BookGrid books={displayBooks} hasMore={hasMore} loadMore={loadMore} loadingMore={loadingMore} activeCollectionId={isCollectionFilter ? activeFilter.replace("collection:", "") : undefined} onBooksChanged={() => { refresh(); refreshCounts(); collections.refresh();}} />
             ) : (
-              <BookList books={displayBooks} activeCollectionId={isCollectionFilter ? activeFilter.replace("collection:", "") : undefined} onBooksChanged={() => { refresh(); allBooks.refresh(); collections.refresh(); refreshCollectionBooks(); }} />
+              <BookList books={displayBooks} hasMore={hasMore} loadMore={loadMore} loadingMore={loadingMore} activeCollectionId={isCollectionFilter ? activeFilter.replace("collection:", "") : undefined} onBooksChanged={() => { refresh(); refreshCounts(); collections.refresh();}} />
             )}
           </div>
 
