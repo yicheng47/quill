@@ -318,14 +318,23 @@ pub async fn import_book(
 /// absolute paths for the frontend; the MCP `list_books` tool returns
 /// them as-is so the response doesn't leak this user's home directory
 /// layout to AI clients.
+/// Paginated response for `list_books`.
+#[derive(Debug, serde::Serialize)]
+pub struct BookPage {
+    pub books: Vec<Book>,
+    pub next_cursor: Option<String>,
+    pub total: usize,
+}
+
 pub(crate) fn query_books(
     db: &Db,
     filter: Option<&str>,
     search: Option<&str>,
-) -> AppResult<Vec<Book>> {
+    cursor: Option<&str>,
+    limit: usize,
+) -> AppResult<BookPage> {
     let conn = db.reader();
 
-    let mut sql = "SELECT id, title, author, description, cover_path, file_path, format, genre, pages, status, progress, current_cfi, created_at, updated_at FROM books".to_string();
     let mut conditions: Vec<String> = Vec::new();
     let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
 
@@ -352,17 +361,92 @@ pub(crate) fn query_books(
         }
     }
 
-    if !conditions.is_empty() {
-        sql.push_str(" WHERE ");
-        sql.push_str(&conditions.join(" AND "));
+    // Cursor: "updated_at:id" — books older than cursor position.
+    if let Some(c) = cursor {
+        if let Some((ts_str, cid)) = c.split_once(':') {
+            if let Ok(ts) = ts_str.parse::<i64>() {
+                conditions.push(
+                    "(updated_at < ? OR (updated_at = ? AND id > ?))".to_string(),
+                );
+                param_values.push(Box::new(ts));
+                param_values.push(Box::new(ts));
+                param_values.push(Box::new(cid.to_string()));
+            }
+        }
     }
 
-    sql.push_str(" ORDER BY updated_at DESC");
+    let where_clause = if conditions.is_empty() {
+        String::new()
+    } else {
+        format!(" WHERE {}", conditions.join(" AND "))
+    };
+
+    // Total count (without cursor/limit).
+    let count_sql = format!("SELECT COUNT(*) FROM books{}", {
+        let mut count_conditions: Vec<String> = Vec::new();
+        let mut count_params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+        if let Some(f) = filter {
+            match f {
+                "reading" | "finished" | "unread" => {
+                    count_conditions.push("status = ?".to_string());
+                    count_params.push(Box::new(f.to_string()));
+                }
+                "all" => {}
+                genre => {
+                    count_conditions.push("genre = ?".to_string());
+                    count_params.push(Box::new(genre.to_string()));
+                }
+            }
+        }
+        if let Some(q) = search {
+            if !q.is_empty() {
+                count_conditions.push("(LOWER(title) LIKE ? OR LOWER(author) LIKE ?)".to_string());
+                let pattern = format!("%{}%", q.to_lowercase());
+                count_params.push(Box::new(pattern.clone()));
+                count_params.push(Box::new(pattern));
+            }
+        }
+        if count_conditions.is_empty() {
+            String::new()
+        } else {
+            format!(" WHERE {}", count_conditions.join(" AND "))
+        }
+    });
+
+    // Build count params separately (without cursor).
+    let mut count_param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+    if let Some(f) = filter {
+        match f {
+            "reading" | "finished" | "unread" => {
+                count_param_values.push(Box::new(f.to_string()));
+            }
+            "all" => {}
+            _genre => {
+                count_param_values.push(Box::new(f.to_string()));
+            }
+        }
+    }
+    if let Some(q) = search {
+        if !q.is_empty() {
+            let pattern = format!("%{}%", q.to_lowercase());
+            count_param_values.push(Box::new(pattern.clone()));
+            count_param_values.push(Box::new(pattern));
+        }
+    }
+    let count_refs: Vec<&dyn rusqlite::types::ToSql> = count_param_values.iter().map(|p| p.as_ref()).collect();
+    let total: usize = conn.query_row(&count_sql, count_refs.as_slice(), |r| r.get(0))?;
+
+    // Main query with cursor + limit.
+    let sql = format!(
+        "SELECT id, title, author, description, cover_path, file_path, format, genre, pages, status, progress, current_cfi, created_at, updated_at FROM books{} ORDER BY updated_at DESC, id ASC LIMIT ?",
+        where_clause,
+    );
+    param_values.push(Box::new((limit + 1) as i64));
 
     let params_refs: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|p| p.as_ref()).collect();
 
     let mut stmt = conn.prepare(&sql)?;
-    let books = stmt.query_map(params_refs.as_slice(), |row| {
+    let mut books: Vec<Book> = stmt.query_map(params_refs.as_slice(), |row| {
         Ok(Book {
             id: row.get(0)?,
             title: row.get(1)?,
@@ -378,12 +462,20 @@ pub(crate) fn query_books(
             current_cfi: row.get(11)?,
             created_at: row.get(12)?,
             updated_at: row.get(13)?,
-            available: true, // raw shape — Tauri wrapper resolves availability
+            available: true,
         })
     })?
     .collect::<Result<Vec<_>, _>>()?;
 
-    Ok(books)
+    let next_cursor = if books.len() > limit {
+        books.truncate(limit);
+        let last = &books[limit - 1];
+        Some(format!("{}:{}", last.updated_at, last.id))
+    } else {
+        None
+    };
+
+    Ok(BookPage { books, next_cursor, total })
 }
 
 /// Shared query helper for the single-book lookup. Same relative-path
@@ -416,17 +508,48 @@ pub(crate) fn query_book(db: &Db, id: &str) -> AppResult<Book> {
     Ok(book)
 }
 
+const DEFAULT_PAGE_SIZE: usize = 20;
+
 #[tauri::command]
 pub fn list_books(
     filter: Option<String>,
     search: Option<String>,
+    cursor: Option<String>,
+    limit: Option<usize>,
     db: State<'_, Db>,
-) -> AppResult<Vec<Book>> {
-    let mut books = query_books(&db, filter.as_deref(), search.as_deref())?;
-    for book in &mut books {
+) -> AppResult<BookPage> {
+    let page_size = limit.unwrap_or(DEFAULT_PAGE_SIZE);
+    let mut page = query_books(
+        &db,
+        filter.as_deref(),
+        search.as_deref(),
+        cursor.as_deref(),
+        page_size,
+    )?;
+    for book in &mut page.books {
         resolve_book_paths(book, &db);
     }
-    Ok(books)
+    Ok(page)
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct BookCounts {
+    pub all: usize,
+    pub reading: usize,
+    pub finished: usize,
+}
+
+#[tauri::command]
+pub fn get_book_counts(db: State<'_, Db>) -> AppResult<BookCounts> {
+    let conn = db.reader();
+    let all: usize = conn.query_row("SELECT COUNT(*) FROM books", [], |r| r.get(0))?;
+    let reading: usize = conn.query_row(
+        "SELECT COUNT(*) FROM books WHERE status = 'reading'", [], |r| r.get(0),
+    )?;
+    let finished: usize = conn.query_row(
+        "SELECT COUNT(*) FROM books WHERE status = 'finished'", [], |r| r.get(0),
+    )?;
+    Ok(BookCounts { all, reading, finished })
 }
 
 #[tauri::command]

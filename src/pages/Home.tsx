@@ -87,7 +87,7 @@ export default function Home() {
   const statusFilter = !isCollectionFilter && activeFilter !== "all" ? activeFilter : undefined;
   const searchParam = searchQuery || undefined;
 
-  const { books, loading, refresh } = useBooks(statusFilter, searchParam);
+  const { books, loading, hasMore, loadMore, refresh } = useBooks(statusFilter, searchParam);
   const allBooks = useBooks();
 
   // Collection-filtered books

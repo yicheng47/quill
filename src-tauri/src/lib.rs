@@ -592,6 +592,7 @@ pub fn run() {
             commands::books::cancel_pdf_import,
             commands::books::list_books,
             commands::books::get_book,
+            commands::books::get_book_counts,
             commands::books::delete_book,
             commands::books::update_reading_progress,
             commands::books::mark_finished,

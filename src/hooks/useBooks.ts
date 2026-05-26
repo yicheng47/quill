@@ -20,21 +20,36 @@ export interface Book {
   available: boolean;
 }
 
+interface BookPage {
+  books: Book[];
+  next_cursor: string | null;
+  total: number;
+}
+
 export function useBooks(filter?: string, search?: string) {
   const [books, setBooks] = useState<Book[]>([]);
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [cursor, setCursor] = useState<string | null>(null);
+  const [hasMore, setHasMore] = useState(false);
 
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const result = await invoke<Book[]>("list_books", {
+      const page = await invoke<BookPage>("list_books", {
         filter: filter || null,
         search: search || null,
+        cursor: null,
+        limit: null,
       });
-      setBooks(result.map((b) => ({
+      setBooks(page.books.map((b) => ({
         ...b,
         cover_path: b.cover_path === "none" ? null : b.cover_path,
       })));
+      setTotal(page.total);
+      setCursor(page.next_cursor);
+      setHasMore(page.next_cursor !== null);
     } catch (err) {
       console.error("Failed to load books:", err);
     } finally {
@@ -42,11 +57,37 @@ export function useBooks(filter?: string, search?: string) {
     }
   }, [filter, search]);
 
+  const loadMore = useCallback(async () => {
+    if (!cursor || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const page = await invoke<BookPage>("list_books", {
+        filter: filter || null,
+        search: search || null,
+        cursor,
+        limit: null,
+      });
+      setBooks((prev) => [
+        ...prev,
+        ...page.books.map((b) => ({
+          ...b,
+          cover_path: b.cover_path === "none" ? null : b.cover_path,
+        })),
+      ]);
+      setCursor(page.next_cursor);
+      setHasMore(page.next_cursor !== null);
+    } catch (err) {
+      console.error("Failed to load more books:", err);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [cursor, filter, search, loadingMore]);
+
   useEffect(() => {
     refresh();
   }, [refresh]);
 
-  return { books, loading, refresh };
+  return { books, total, loading, loadingMore, hasMore, loadMore, refresh };
 }
 
 async function pickFile(): Promise<string | null> {
@@ -101,8 +142,8 @@ export async function backfillMissingCovers(): Promise<void> {
   if (backfillRunning) return;
   backfillRunning = true;
   try {
-    const books = await invoke<Book[]>("list_books", { filter: null, search: null });
-    const missing = books.filter(needsCover);
+    const page = await invoke<BookPage>("list_books", { filter: null, search: null, cursor: null, limit: 1000 });
+    const missing = page.books.filter(needsCover);
     if (missing.length === 0) {
       backfillRunning = false;
       return;
