@@ -35,7 +35,6 @@ export default function Home() {
   const [importing, setImporting] = useState(false);
   const [importSlow, setImportSlow] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
-  const [icloudSyncing, setIcloudSyncing] = useState(false);
   const [syncProgress, setSyncProgress] = useState<{ applied: number; total: number } | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<"general" | "reading" | "ai" | "lookup" | "librarySync" | "about">("general");
@@ -137,14 +136,7 @@ export default function Home() {
     return () => clearTimeout(timer);
   }, [importing]);
 
-  // iCloud background sync indicator + refresh books when sync finishes
   useEffect(() => {
-    const unlistenStart = listen("icloud-sync-start", () => setIcloudSyncing(true));
-    const unlistenDone = listen("icloud-sync-done", () => {
-      setIcloudSyncing(false);
-      refreshRef.current();
-      allBooksRefreshRef.current();
-    });
     const unlistenTick = listen("sync-initial-tick-done", () => {
       setSyncProgress(null);
       refreshRef.current();
@@ -155,8 +147,6 @@ export default function Home() {
       setSyncProgress(e.payload);
     });
     return () => {
-      unlistenStart.then((fn) => fn());
-      unlistenDone.then((fn) => fn());
       unlistenTick.then((fn) => fn());
       unlistenProgress.then((fn) => fn());
     };
@@ -300,7 +290,6 @@ export default function Home() {
         collections={collections}
         userName={userName}
         onOpenSettings={() => setSettingsOpen(true)}
-        icloudSyncing={icloudSyncing}
         syncProgress={syncProgress}
       />
 

@@ -1,32 +1,19 @@
 //! iCloud helpers — container-path resolution + file-presence checks.
 //!
-//! Post-Chunk 7 this module no longer ships the DB through iCloud (the
-//! per-device event log replaces that). What remains:
-//!
 //! - **Path helpers** (`icloud_data_dir*`, `get_icloud_container_url`)
-//!   used by the new sync code (`sync::peers`, `sync::migration`,
-//!   `commands::sync`) to resolve the ubiquity Documents directory.
+//!   used by the sync code to resolve the ubiquity Documents directory.
 //! - **Eviction handling** (`is_file_downloaded`,
 //!   `icloud_placeholder_path`, `has_icloud_placeholder`,
-//!   `trigger_download_file`, `ensure_downloaded`) for book and cover
-//!   binaries that live in iCloud Documents and may be evicted.
-//! - **Legacy marker** (`is_icloud_enabled`) so launch-time can detect
-//!   users upgrading from the file-sync model and trigger
-//!   `sync::migration::run_migration`. The marker is no longer
-//!   *written* anywhere — `sync_enable` writes `.migration_complete`
-//!   directly. Once we're confident every legacy user has migrated we
-//!   can drop the legacy marker check and this last carve-out.
+//!   `trigger_download_file`) for book and cover binaries that live in
+//!   iCloud Documents and may be evicted.
 
 use std::path::{Path, PathBuf};
-
-use crate::error::AppResult;
 
 #[cfg(target_os = "macos")]
 use objc2_foundation::{NSFileManager, NSString};
 
 #[cfg(target_os = "macos")]
 const ICLOUD_CONTAINER_ID: &str = "iCloud.com.wycstudios.quill";
-const MARKER_FILE: &str = ".icloud_enabled";
 
 /// Get the iCloud ubiquity container URL for this app.
 /// Returns `None` if iCloud is unavailable (not signed in, no entitlement).
@@ -60,13 +47,7 @@ pub fn icloud_data_dir() -> Option<PathBuf> {
 /// (e.g. user signed out of iCloud since enabling sync). Callers should fall
 /// back to the local directory in that case.
 ///
-/// Sync engine callers prefer `icloud_data_dir_deterministic` so blob path
-/// resolution stays stable across launches even when the container hasn't
-/// materialized yet — `_fast` is kept for the legacy `icloud::*` flows that
-/// genuinely need the existence check (Chunk 9 cleanup will delete both
-/// once the file-sync code is gone).
 #[cfg(target_os = "macos")]
-#[allow(dead_code)] // used by tests + legacy flows; cleanup tracked in Chunk 9
 pub fn icloud_data_dir_fast() -> Option<PathBuf> {
     let home = std::env::var_os("HOME")?;
     let folder_name = ICLOUD_CONTAINER_ID.replace('.', "~");
@@ -126,33 +107,6 @@ pub fn is_icloud_available() -> bool {
 #[cfg(not(target_os = "macos"))]
 pub fn is_icloud_available() -> bool {
     false
-}
-
-/// Check if iCloud sync is enabled by looking for the marker file in the local app dir.
-pub fn is_icloud_enabled(local_dir: &Path) -> bool {
-    local_dir.join(MARKER_FILE).exists()
-}
-
-/// Flush the WAL to the main database file for safe iCloud sync.
-/// Trigger iCloud to download evicted files. Best-effort — errors are logged but don't block.
-#[cfg(target_os = "macos")]
-pub fn ensure_downloaded(icloud_dir: &Path) -> AppResult<()> {
-    use objc2_foundation::NSURL;
-    let fm = NSFileManager::defaultManager();
-    for name in &["quill.db", "books", "covers"] {
-        let path = icloud_dir.join(name);
-        let path_str = NSString::from_str(&path.to_string_lossy());
-        let url = NSURL::fileURLWithPath(&path_str);
-        if let Err(e) = fm.startDownloadingUbiquitousItemAtURL_error(&url) {
-            log::warn!("iCloud: failed to trigger download for {}: {}", name, e);
-        }
-    }
-    Ok(())
-}
-
-#[cfg(not(target_os = "macos"))]
-pub fn ensure_downloaded(_icloud_dir: &Path) -> AppResult<()> {
-    Ok(())
 }
 
 /// Check whether a file is locally available (not an iCloud placeholder).
@@ -317,21 +271,6 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let file = dir.path().join("book.epub");
         assert!(!has_icloud_placeholder(&file));
-    }
-
-    // --- is_icloud_enabled ---
-
-    #[test]
-    fn test_is_icloud_enabled_false_by_default() {
-        let dir = TempDir::new().unwrap();
-        assert!(!is_icloud_enabled(dir.path()));
-    }
-
-    #[test]
-    fn test_is_icloud_enabled_true_with_marker() {
-        let dir = TempDir::new().unwrap();
-        fs::write(dir.path().join(".icloud_enabled"), "").unwrap();
-        assert!(is_icloud_enabled(dir.path()));
     }
 
 }

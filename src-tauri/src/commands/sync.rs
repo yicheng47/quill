@@ -1,23 +1,11 @@
 //! Sync commands exposed to the frontend.
 //!
-//! Surface area for the per-device event-log sync (issue #185):
-//!
-//! - `sync_status` — read-only snapshot for the settings UI, including
-//!   the peer manifest list.
-//! - `sync_enable` — first-time enable: ensure iCloud subdirs, move
-//!   local binaries into the ubiquity container, stamp the migration
-//!   marker, publish the device manifest, open the EventLog, and boot
-//!   the replay engine + watcher in this process. Idempotent — calling
-//!   it while sync is already on is a cheap no-op.
-//! - `sync_disable` — stop the engine + watcher, stop publishing,
-//!   copy binaries back to local, remove markers and own manifest.
-//!   Symmetric with the today's `icloud_disable` UX.
-//! - `sync_now` — manual replay tick (Chunk 6 shipped this; the
-//!   `SyncState` indirection is the only code change here).
-//! - `sync_revert_to_legacy` — placeholder for the 30-day grace-window
-//!   rollback to the legacy file-sync model. Stubbed in v1 because the
-//!   legacy implementation has been removed; tracked for v1.1 if a real
-//!   user actually needs it.
+//! - `sync_status` — read-only snapshot for the settings UI.
+//! - `sync_enable` — move binaries to iCloud, stamp marker, boot engine.
+//! - `sync_disable` — stop engine, copy binaries back, remove marker.
+//! - `sync_now` — manual replay tick.
+//! - `sync_compact` — trigger log compaction.
+//! - `sync_remove_peer` — remove a peer's log/snapshot/manifest.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -88,11 +76,10 @@ pub struct SyncStatus {
     /// True when this Mac currently has access to an iCloud container.
     /// `enabled` requires `available` but not the other way around —
     /// a migrated user with iCloud temporarily down has `enabled =
-    /// false, available = false, migration_complete = true`.
+    /// false, available = false, sync_enabled = true`.
     pub available: bool,
-    /// True once the legacy file-sync migration has run successfully.
-    /// Used by the UI to decide whether to show the migration banner.
-    pub migration_complete: bool,
+    /// True when the user has enabled iCloud sync via the settings toggle.
+    pub sync_enabled: bool,
     pub shared_dir: Option<String>,
     pub device_uuid: String,
     pub device_name: String,
@@ -163,7 +150,7 @@ pub fn sync_status(
     device: State<'_, DeviceIdentity>,
     sync_state: State<'_, SyncState>,
 ) -> AppResult<SyncStatus> {
-    let migration_complete = sync::migration::is_migration_complete(&local.0);
+    let sync_enabled = sync::migration::is_sync_enabled(&local.0);
     let shared_dir = sync::migration::recorded_data_dir(&local.0)
         .or_else(icloud::icloud_data_dir_deterministic);
     let available = icloud::icloud_data_dir_fast().is_some()
@@ -208,7 +195,7 @@ pub fn sync_status(
     Ok(SyncStatus {
         enabled,
         available,
-        migration_complete,
+        sync_enabled,
         shared_dir: shared_dir.map(|p| p.to_string_lossy().into_owned()),
         device_uuid: device.device_uuid.clone(),
         device_name: peers::device_name(),
@@ -241,7 +228,6 @@ pub fn sync_enable(
 
     let icloud_dir = icloud::icloud_data_dir()
         .ok_or_else(|| AppError::Other("iCloud is not available".into()))?;
-    icloud::ensure_downloaded(&icloud_dir)?;
 
     fs::create_dir_all(icloud_dir.join("logs"))?;
     fs::create_dir_all(icloud_dir.join("devices"))?;
@@ -300,7 +286,7 @@ pub fn sync_enable(
         chrono::Utc::now().timestamp_millis(),
     )?;
 
-    sync::migration::write_marker(&local.0, Some(&icloud_dir))?;
+    sync::migration::write_sync_settings(&local.0, Some(&icloud_dir))?;
 
     {
         let mut data_dir = db
@@ -479,10 +465,7 @@ pub fn sync_disable(
         }
     }
 
-    // Remove markers. Both legacy (`.icloud_enabled`) and new (`.migration_complete`).
-    sync::migration::remove_marker(&local.0)?;
-    let legacy_marker = local.0.join(".icloud_enabled");
-    let _ = fs::remove_file(&legacy_marker);
+    sync::migration::remove_sync_settings(&local.0)?;
 
     Ok(())
 }
@@ -573,15 +556,6 @@ pub fn simulate_sync_progress(app: tauri::AppHandle) -> AppResult<()> {
         let _ = app.emit("sync-initial-tick-done", ());
     });
     Ok(())
-}
-
-#[tauri::command]
-pub fn sync_revert_to_legacy() -> AppResult<()> {
-    Err(AppError::Other(
-        "Reverting to legacy iCloud file-sync is not supported in this version. \
-         To stop syncing, use the Sync toggle above."
-            .into(),
-    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -1023,12 +997,6 @@ mod tests {
             count_pending_for_peer(tmp.path(), "peer-A", Some("01HZA00000000000000000A003")),
             0
         );
-    }
-
-    #[test]
-    fn sync_revert_to_legacy_returns_error_in_v1() {
-        let result = sync_revert_to_legacy();
-        assert!(result.is_err());
     }
 
     /// Regression for PR #193's review finding: enabling sync on a

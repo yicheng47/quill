@@ -19,7 +19,7 @@ interface PeerInfo {
 interface SyncStatus {
   enabled: boolean;
   available: boolean;
-  migration_complete: boolean;
+  sync_enabled: boolean;
   shared_dir: string | null;
   device_uuid: string;
   device_name: string;
@@ -69,7 +69,7 @@ export default function LibrarySyncSettings(_props: SettingsProps) {
   // Tracks the toggle action that returned an error so the Retry
   // button can re-invoke it. Without this, after a failed enable
   // that committed the marker, the next toggle click would open the
-  // Disable flow (because `migration_complete` is now true), leaving
+  // Disable flow (because `sync_enabled` is now true), leaving
   // the user with no UI path to finish the half-completed enable.
   const [lastFailedAction, setLastFailedAction] = useState<"enable" | "disable" | null>(null);
   // Peer the user clicked the trash icon on; opens a confirmation
@@ -107,10 +107,10 @@ export default function LibrarySyncSettings(_props: SettingsProps) {
   const onToggleClick = () => {
     if (!status) return;
     // Action mirrors the rendered toggle, which reflects persisted
-    // intent (`migration_complete`) not runtime state (`enabled`).
+    // intent (`sync_enabled`) not runtime state (`enabled`).
     // Using `enabled` here meant a queue-only/offline session showed
     // the toggle as on but opened the Enable flow on click.
-    setConfirm(status.migration_complete ? "disable" : "enable");
+    setConfirm(status.sync_enabled ? "disable" : "enable");
   };
 
   const runToggle = async (action: "enable" | "disable") => {
@@ -205,7 +205,7 @@ export default function LibrarySyncSettings(_props: SettingsProps) {
   };
 
   // Two orthogonal states surfaced by the backend:
-  //  - `migration_complete` is the user's durable intent ("sync is on
+  //  - `sync_enabled` is the user's durable intent ("sync is on
   //    for this install"). This drives the Toggle and the visibility
   //    of the "Other devices" / actions sections — if the user said
   //    they want sync, those affordances should stay put even when
@@ -217,7 +217,7 @@ export default function LibrarySyncSettings(_props: SettingsProps) {
   // Splitting the two keeps a user with sync on but iCloud temporarily
   // offline from seeing the toggle flip itself off — and from being
   // re-offered `sync_enable` as if they never turned it on.
-  const syncOn = status?.migration_complete ?? false;
+  const syncOn = status?.sync_enabled ?? false;
   const engineRunning = status?.enabled ?? false;
   const available = status?.available ?? false;
   const peers = status?.peers ?? [];
