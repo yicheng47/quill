@@ -140,11 +140,12 @@ fn resolve_book_paths(book: &mut Book, db: &Db) {
     }
     if let Some(ref cover) = book.cover_path {
         if cover != "none" && !std::path::Path::new(cover).is_absolute() {
-            book.cover_path = Some(
-                db.resolve_path(cover)
-                    .to_string_lossy()
-                    .to_string(),
-            );
+            let local_cover = db.resolve_cover_path(cover);
+            if local_cover.exists() {
+                book.cover_path = Some(local_cover.to_string_lossy().to_string());
+            } else {
+                book.cover_path = Some("none".to_string());
+            }
         }
     }
     book.available = icloud::is_file_downloaded(std::path::Path::new(&book.file_path));
@@ -478,6 +479,19 @@ pub fn save_book_cover(
 
     let cover_file = covers_dir.join(format!("{book_id}.png"));
     fs::write(&cover_file, &cover_data)?;
+
+    // Also write to local covers dir so the frontend can render
+    // without hitting iCloud paths.
+    let local_dir = db
+        .local_dir
+        .lock()
+        .map_err(|e| AppError::Other(e.to_string()))?
+        .clone();
+    let local_covers = local_dir.join("covers");
+    if local_covers != covers_dir {
+        let _ = fs::create_dir_all(&local_covers);
+        let _ = fs::write(local_covers.join(format!("{book_id}.png")), &cover_data);
+    }
 
     let rel_cover = format!("covers/{book_id}.png");
     let now = chrono::Utc::now().timestamp_millis();

@@ -38,6 +38,9 @@ pub struct Db {
     /// Read-only connection — used by frontend query commands.
     pub read_conn: Arc<Mutex<Connection>>,
     pub data_dir: Arc<Mutex<PathBuf>>,
+    /// Local app data dir — covers are always read from here so the
+    /// frontend never hits iCloud paths during rendering.
+    pub local_dir: Arc<Mutex<PathBuf>>,
 }
 
 impl Clone for Db {
@@ -46,6 +49,7 @@ impl Clone for Db {
             conn: Arc::clone(&self.conn),
             read_conn: Arc::clone(&self.read_conn),
             data_dir: Arc::clone(&self.data_dir),
+            local_dir: Arc::clone(&self.local_dir),
         }
     }
 }
@@ -98,6 +102,7 @@ impl Db {
         Ok(Self {
             read_conn: conn.clone(),
             conn,
+            local_dir: Arc::new(Mutex::new(dummy_data_dir.clone())),
             data_dir: Arc::new(Mutex::new(dummy_data_dir)),
         })
     }
@@ -123,6 +128,7 @@ impl Db {
         Ok(Self {
             read_conn: conn.clone(),
             conn,
+            local_dir: Arc::new(Mutex::new(data_dir.clone())),
             data_dir: Arc::new(Mutex::new(data_dir)),
         })
     }
@@ -175,6 +181,7 @@ impl Db {
             conn: Arc::new(Mutex::new(conn)),
             read_conn: Arc::new(Mutex::new(read_conn)),
             data_dir: Arc::new(Mutex::new(data_dir.to_path_buf())),
+            local_dir: Arc::new(Mutex::new(db_dir.to_path_buf())),
         })
     }
 
@@ -238,6 +245,18 @@ impl Db {
             path.to_path_buf()
         } else {
             self.data_dir.lock().unwrap().join(relative)
+        }
+    }
+
+    /// Resolve a cover path against the local dir. Covers are always
+    /// served from local storage so the frontend never hits iCloud
+    /// paths during rendering.
+    pub fn resolve_cover_path(&self, relative: &str) -> PathBuf {
+        let path = Path::new(relative);
+        if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            self.local_dir.lock().unwrap().join(relative)
         }
     }
 

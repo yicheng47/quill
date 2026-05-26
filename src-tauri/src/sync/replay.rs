@@ -711,6 +711,7 @@ mod tests {
             read_conn: conn.clone(),
             conn,
             data_dir: Arc::new(Mutex::new(dir.path().to_path_buf())),
+            local_dir: Arc::new(Mutex::new(dir.path().to_path_buf())),
         };
 
         let own_log_path = logs.join(format!("{self_device}.jsonl"));
