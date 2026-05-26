@@ -218,7 +218,8 @@ pub fn sync_enable(
     // off" and the user can retry with a clean slate.
 
     let icloud_dir = icloud::icloud_data_dir()
-        .ok_or_else(|| AppError::Other("iCloud is not available".into()))?;
+        .filter(|p| p.parent().is_some_and(|parent| parent.exists()))
+        .ok_or_else(|| AppError::Other("iCloud is not available — sign in to iCloud and try again".into()))?;
 
     fs::create_dir_all(icloud_dir.join("logs"))?;
     fs::create_dir_all(icloud_dir.join("devices"))?;

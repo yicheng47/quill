@@ -264,18 +264,25 @@ fn boot_sync_engine(
         Arc::clone(&engine),
     )?;
 
-    // Re-check the marker before installing. If the user disabled sync
-    // while we were blocked on iCloud I/O, don't resurrect the engine.
-    let local_dir: tauri::State<LocalDir> = app_handle.state();
-    if !sync::migration::is_sync_enabled(&local_dir.0) {
-        log::warn!("sync: boot finished but sync was disabled during boot — discarding engine");
-        drop(watcher);
-        return Ok(());
+    // Atomic check-and-install: hold the engine mutex across both the
+    // marker recheck and the state writes. sync_disable also locks
+    // engine before clearing, so this prevents the race where disable
+    // slips in between the check and the install.
+    {
+        let local_dir: tauri::State<LocalDir> = app_handle.state();
+        let mut engine_guard = sync_state.engine.lock()
+            .map_err(|e| error::AppError::Other(format!("engine mutex: {e}")))?;
+        if !sync::migration::is_sync_enabled(&local_dir.0) {
+            log::warn!("sync: boot finished but sync was disabled during boot — discarding engine");
+            drop(watcher);
+            return Ok(());
+        }
+        let mut watcher_guard = sync_state.watcher.lock()
+            .map_err(|e| error::AppError::Other(format!("watcher mutex: {e}")))?;
+        *engine_guard = Some(Arc::clone(&engine));
+        *watcher_guard = Some(watcher);
+        sync_writer.set_log(Some(log));
     }
-
-    *sync_state.engine.lock().map_err(|e| error::AppError::Other(format!("engine mutex: {e}")))? = Some(Arc::clone(&engine));
-    *sync_state.watcher.lock().map_err(|e| error::AppError::Other(format!("watcher mutex: {e}")))? = Some(watcher);
-    sync_writer.set_log(Some(log));
 
     let bg_engine = Arc::clone(&engine);
     let bg_db = db.clone();
