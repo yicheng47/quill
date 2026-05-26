@@ -21,7 +21,6 @@ use secrets::Secrets;
 use sync::device::DeviceIdentity;
 use sync::log::EventLog;
 use sync::replay::ReplayEngine;
-use sync::watcher::WatcherHandle;
 use sync::writer::SyncWriter;
 use tauri::Emitter;
 use tauri::Manager;
@@ -167,7 +166,7 @@ pub fn mcp_stdio_main() {
     // under the ubiquity container, not the local app-data dir.
     let data_dir = if sync::migration::is_sync_enabled(&local_dir) {
         sync::migration::recorded_data_dir(&local_dir)
-            .or_else(icloud::icloud_data_dir_deterministic)
+            .or_else(icloud::icloud_data_dir)
             .unwrap_or_else(|| local_dir.clone())
     } else {
         local_dir.clone()
@@ -236,67 +235,99 @@ fn is_mcp_write_enabled(db_path: &Path) -> bool {
     .unwrap_or(false)
 }
 
-/// Construct the per-device EventLog, wire it into `sync_writer`, build a
-/// `ReplayEngine`, spawn the fs watcher, and kick off the initial
-/// convergence tick on a background thread. Returns immediately so
-/// `setup()` is never blocked by slow iCloud I/O (evicted peer logs,
-/// `NSFileCoordinator` stalls, large outbox drains).
+
+/// Boot the sync engine: open EventLog, create ReplayEngine, spawn
+/// watcher, wire the SyncWriter, and kick off the initial replay tick.
 ///
-/// Pulled out of `setup` so the launch flow stays readable. Errors
-/// short-circuit and the caller falls back to "sync inactive this
-/// session" (the local DB is still functional).
+/// All iCloud I/O lives here (EventLog::open, watcher::spawn, initial
+/// tick). Called from a background thread so setup() is never blocked.
 fn boot_sync_engine(
     shared_dir: PathBuf,
     device_uuid: &str,
     db: &Db,
     sync_writer: &SyncWriter,
+    sync_state: &SyncState,
     app_handle: &tauri::AppHandle,
-) -> error::AppResult<(Option<Arc<ReplayEngine>>, Option<WatcherHandle>)> {
-    let log_path = shared_dir
-        .join("logs")
-        .join(format!("{device_uuid}.jsonl"));
-    // Coordinator on iCloud paths only — see `EventLog::open` doc.
+) -> error::AppResult<()> {
+    let log_path = shared_dir.join("logs").join(format!("{device_uuid}.jsonl"));
     let log = Arc::new(EventLog::open(&log_path, device_uuid, true)?);
-    sync_writer.set_log(Some(Arc::clone(&log)));
 
     let engine = Arc::new(ReplayEngine::new(
         shared_dir.clone(),
         device_uuid.to_string(),
-        log,
+        Arc::clone(&log),
     ));
 
-    // If watcher spawn fails, roll back the writer so new writes fall
-    // into queue-only mode instead of draining to a log with no engine
-    // or watcher behind it. Without this, the caller drops `engine`
-    // but the writer still has `Some(log)` — writes keep publishing
-    // events that no process is replaying and no one is watching for.
-    match sync::watcher::spawn(shared_dir, db.clone(), Arc::clone(&engine)) {
-        Ok(watcher) => {
-            // Initial tick — drains any leftover outbox, applies peer
-            // snapshots and log tails since last launch. Runs on a
-            // background thread so setup() returns immediately; reading
-            // iCloud-evicted peer files can block for seconds/minutes and
-            // would otherwise white-screen the app. The watcher's tick
-            // mutex serializes this against any fs-triggered ticks.
-            let bg_engine = Arc::clone(&engine);
-            let bg_db = db.clone();
-            let bg_handle = app_handle.clone();
-            std::thread::Builder::new()
-                .name("sync-initial-tick".into())
-                .spawn(move || {
-                    let result = bg_engine.tick_with_progress(&bg_db, Some(&bg_handle));
-                    let _ = bg_handle.emit("sync-initial-tick-done", ());
-                    if let Err(e) = result {
-                        log::warn!("sync: initial replay tick failed: {e}");
-                    }
-                })
-                .ok();
-            Ok((Some(engine), Some(watcher)))
+    let watcher = sync::watcher::spawn(
+        shared_dir,
+        db.clone(),
+        Arc::clone(&engine),
+    )?;
+
+    // Atomic check-and-install: hold the engine mutex across both the
+    // marker recheck and the state writes. sync_disable also locks
+    // engine before clearing, so this prevents the race where disable
+    // slips in between the check and the install.
+    {
+        let local_dir: tauri::State<LocalDir> = app_handle.state();
+        let mut engine_guard = sync_state.engine.lock()
+            .map_err(|e| error::AppError::Other(format!("engine mutex: {e}")))?;
+        if !sync::migration::is_sync_enabled(&local_dir.0) {
+            log::warn!("sync: boot finished but sync was disabled during boot — discarding engine");
+            drop(watcher);
+            return Ok(());
         }
-        Err(e) => {
-            sync_writer.set_log(None);
-            Err(e)
+        let mut watcher_guard = sync_state.watcher.lock()
+            .map_err(|e| error::AppError::Other(format!("watcher mutex: {e}")))?;
+        *engine_guard = Some(Arc::clone(&engine));
+        *watcher_guard = Some(watcher);
+        sync_writer.set_log(Some(log));
+    }
+
+    let bg_engine = Arc::clone(&engine);
+    let bg_db = db.clone();
+    let bg_handle = app_handle.clone();
+    let bg_data_dir = db.data_dir.lock()
+        .map(|d| d.clone())
+        .unwrap_or_default();
+    std::thread::Builder::new()
+        .name("sync-initial-tick".into())
+        .spawn(move || {
+            let result = bg_engine.tick_with_progress(&bg_db, Some(&bg_handle));
+            if let Err(e) = result {
+                log::warn!("sync: initial replay tick failed: {e}");
+            }
+            trigger_cover_downloads(&bg_data_dir);
+            let _ = bg_handle.emit("sync-initial-tick-done", ());
+        })
+        .ok();
+
+    Ok(())
+}
+
+/// Trigger iCloud downloads for all evicted cover images so the
+/// library grid renders cover art immediately after sync. Covers
+/// are small (few KB each) — downloading eagerly is fine. Book
+/// EPUBs stay lazy (downloaded on access).
+fn trigger_cover_downloads(data_dir: &Path) {
+    let covers_dir = data_dir.join("covers");
+    let entries = match std::fs::read_dir(&covers_dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    let mut triggered = 0usize;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if name_str.starts_with('.') && name_str.ends_with(".icloud") {
+            let real_name = &name_str[1..name_str.len() - 7];
+            let real_path = covers_dir.join(real_name);
+            icloud::trigger_download_file(&real_path);
+            triggered += 1;
         }
+    }
+    if triggered > 0 {
+        log::info!("sync: triggered download for {triggered} evicted cover(s)");
     }
 }
 
@@ -439,7 +470,7 @@ pub fn run() {
             // Resolve the iCloud Documents path when sync is enabled.
             let ubiquity_dir = if sync::migration::is_sync_enabled(&local_dir) {
                 sync::migration::recorded_data_dir(&local_dir)
-                    .or_else(icloud::icloud_data_dir_deterministic)
+                    .or_else(icloud::icloud_data_dir)
             } else {
                 None
             };
@@ -473,33 +504,12 @@ pub fn run() {
                 sync_writer.set_should_queue(true);
             }
 
-            // Boot the sync engine on a background thread when sync is
-            // on. The `.exists()` gate ensures we don't create files at
-            // a deterministic path outside a real ubiquity container.
-            let should_boot = sync::migration::is_sync_enabled(&local_dir)
-                .then(|| ubiquity_dir.filter(|p| p.exists()))
-                .flatten();
-            let (replay_engine, watcher_handle) = match should_boot {
-                Some(ub) => match boot_sync_engine(ub, &device.device_uuid, &db, &sync_writer, app.handle()) {
-                    Ok(pair) => {
-                        log::info!("sync: engine booted (replay + watcher active)");
-                        pair
-                    }
-                    Err(e) => {
-                        log::error!("sync: failed to boot sync engine: {e}");
-                        (None, None)
-                    }
-                },
-                None => {
-                    if sync::migration::is_sync_enabled(&local_dir) {
-                        log::warn!(
-                            "sync: skipping engine boot — iCloud container not reachable \
-                             this launch; outbox preserved for the next launch"
-                        );
-                    }
-                    (None, None)
-                }
-            };
+            // Register managed state immediately so setup() returns fast
+            // and the webview can render. The sync engine boots on a
+            // background thread — EventLog::open, watcher::spawn, and the
+            // initial tick all touch iCloud paths that can stall for
+            // seconds when files are evicted. Running them here would
+            // white-screen the app.
 
             // Watch the MCP sentinel file so the UI can refresh when an
             // MCP subprocess writes to the library. The sentinel is a
@@ -509,12 +519,53 @@ pub fn run() {
             let app_handle = app.handle().clone();
             mcp::notify::spawn_watcher(mcp_notify_path, app_handle);
 
-            app.manage(LocalDir(local_dir));
+            app.manage(LocalDir(local_dir.clone()));
             app.manage(db);
             app.manage(secrets);
             app.manage(device);
             app.manage(sync_writer);
-            app.manage(SyncState::new(replay_engine, watcher_handle));
+            app.manage(SyncState::new(None, None));
+
+            // Boot the sync engine on a background thread. Everything
+            // that touches iCloud paths (EventLog::open, watcher::spawn,
+            // initial tick) runs here so setup() is never blocked by
+            // bird/NSFileCoordinator stalls or evicted-file downloads.
+            //
+            // The SyncWriter is already in queue-only mode (if sync is
+            // enabled), so any writes the user makes before the engine
+            // finishes booting are safely queued in _pending_publish
+            // and drained on the first successful tick.
+            let should_boot = sync::migration::is_sync_enabled(&local_dir)
+                .then(|| ubiquity_dir.clone().filter(|p| p.exists()))
+                .flatten();
+            if let Some(ub) = should_boot {
+                let bg_handle = app.handle().clone();
+                std::thread::Builder::new()
+                    .name("sync-boot".into())
+                    .spawn(move || {
+                        let bg_db: tauri::State<Db> = bg_handle.state();
+                        let bg_writer: tauri::State<SyncWriter> = bg_handle.state();
+                        let bg_device: tauri::State<DeviceIdentity> = bg_handle.state();
+                        let bg_sync: tauri::State<SyncState> = bg_handle.state();
+                        match boot_sync_engine(
+                            ub, &bg_device.device_uuid, &bg_db, &bg_writer, &bg_sync, &bg_handle,
+                        ) {
+                            Ok(()) => {
+                                log::info!("sync: engine booted (replay + watcher active)");
+                                let _ = bg_handle.emit("sync-status-changed", ());
+                            }
+                            Err(e) => {
+                                log::error!("sync: failed to boot sync engine: {e}");
+                            }
+                        }
+                    })
+                    .ok();
+            } else if sync::migration::is_sync_enabled(&local_dir) {
+                log::warn!(
+                    "sync: skipping engine boot — iCloud container not reachable \
+                     this launch; outbox preserved for the next launch"
+                );
+            }
 
             Ok(())
         })
@@ -607,8 +658,6 @@ pub fn run() {
             commands::sync::sync_now,
             commands::sync::sync_cancel,
             commands::sync::sync_compact,
-            #[cfg(debug_assertions)]
-            commands::sync::simulate_sync_progress,
             commands::sync::sync_remove_peer,
         ])
         .build(tauri::generate_context!())

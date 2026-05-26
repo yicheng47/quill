@@ -576,10 +576,9 @@ mod tests {
     }
 
     /// Companion to `queue_only_mode_writes_outbox_without_a_log`: when
-    /// the log later becomes available (next launch's
-    /// `boot_sync_engine`), the accumulated outbox must drain on the
-    /// first `with_tx` call. This is the publish-retry guarantee end
-    /// to end.
+    /// the log later becomes available (next launch's sync boot), the
+    /// accumulated outbox must drain on the first `with_tx` call. This
+    /// is the publish-retry guarantee end to end.
     #[test]
     fn queue_only_outbox_drains_when_log_becomes_available() {
         let (dir, db) = setup_db();

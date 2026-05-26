@@ -439,10 +439,10 @@ pub fn get_book(id: String, db: State<'_, Db>) -> AppResult<Book> {
 #[tauri::command]
 pub fn check_book_available(id: String, db: State<'_, Db>) -> AppResult<bool> {
     let conn = db.reader();
-    let file_path: String = conn.query_row(
-        "SELECT file_path FROM books WHERE id = ?1",
+    let (file_path, cover_path): (String, Option<String>) = conn.query_row(
+        "SELECT file_path, cover_path FROM books WHERE id = ?1",
         params![id],
-        |row| row.get(0),
+        |row| Ok((row.get(0)?, row.get(1)?)),
     )?;
 
     let abs_path = db.resolve_path(&file_path);
@@ -450,6 +450,12 @@ pub fn check_book_available(id: String, db: State<'_, Db>) -> AppResult<bool> {
 
     if !available {
         icloud::trigger_download_file(&abs_path);
+    }
+    if let Some(cover) = cover_path {
+        let cover_abs = db.resolve_path(&cover);
+        if !icloud::is_file_downloaded(&cover_abs) {
+            icloud::trigger_download_file(&cover_abs);
+        }
     }
 
     Ok(available)

@@ -80,15 +80,6 @@ export default function LibrarySyncSettings(_props: SettingsProps) {
   const [now, setNow] = useState(Date.now());
   const [syncing, setSyncing] = useState(false);
 
-  useEffect(() => {
-    const unProgress = listen<{ applied: number; total: number }>("sync-progress", () => setSyncing(true));
-    const unDone = listen("sync-initial-tick-done", () => setSyncing(false));
-    return () => {
-      unProgress.then((fn) => fn());
-      unDone.then((fn) => fn());
-    };
-  }, []);
-
   const refresh = useCallback(async () => {
     try {
       const next = await invoke<SyncStatus>("sync_status");
@@ -97,6 +88,20 @@ export default function LibrarySyncSettings(_props: SettingsProps) {
       setError(err instanceof Error ? err.message : String(err));
     }
   }, []);
+
+  useEffect(() => {
+    const unProgress = listen<{ applied: number; total: number }>("sync-progress", () => setSyncing(true));
+    const unDone = listen("sync-initial-tick-done", () => {
+      setSyncing(false);
+      refresh();
+    });
+    const unStatusChanged = listen("sync-status-changed", () => refresh());
+    return () => {
+      unProgress.then((fn) => fn());
+      unDone.then((fn) => fn());
+      unStatusChanged.then((fn) => fn());
+    };
+  }, [refresh]);
 
   useEffect(() => {
     refresh();

@@ -1,7 +1,7 @@
 //! iCloud helpers — container-path resolution + file-presence checks.
 //!
-//! - **Path helpers** (`icloud_data_dir*`, `get_icloud_container_url`)
-//!   used by the sync code to resolve the ubiquity Documents directory.
+//! - **Path helper** (`icloud_data_dir`) resolves the ubiquity
+//!   Documents directory using a deterministic path — no daemon query.
 //! - **Eviction handling** (`is_file_downloaded`,
 //!   `icloud_placeholder_path`, `has_icloud_placeholder`,
 //!   `trigger_download_file`) for book and cover binaries that live in
@@ -15,70 +15,14 @@ use objc2_foundation::{NSFileManager, NSString};
 #[cfg(target_os = "macos")]
 const ICLOUD_CONTAINER_ID: &str = "iCloud.com.wycstudios.quill";
 
-/// Get the iCloud ubiquity container URL for this app.
-/// Returns `None` if iCloud is unavailable (not signed in, no entitlement).
+/// Returns the iCloud Documents directory using the deterministic path
+/// `~/Library/Mobile Documents/<container>/Documents`. No daemon query.
+///
+/// Returns `None` if `$HOME` is unset (non-macOS always returns None).
+/// Does NOT check whether the directory exists — callers that need an
+/// existence gate should check `path.exists()` themselves.
 #[cfg(target_os = "macos")]
-pub fn get_icloud_container_url() -> Option<PathBuf> {
-    let fm = NSFileManager::defaultManager();
-    let container_id = NSString::from_str(ICLOUD_CONTAINER_ID);
-    let url = fm.URLForUbiquityContainerIdentifier(Some(&container_id))?;
-    let path = url.path()?;
-    Some(PathBuf::from(path.to_string()))
-}
-
-#[cfg(not(target_os = "macos"))]
-pub fn get_icloud_container_url() -> Option<PathBuf> {
-    None
-}
-
-/// Returns the iCloud Documents directory (container/Documents/).
 pub fn icloud_data_dir() -> Option<PathBuf> {
-    get_icloud_container_url().map(|p| p.join("Documents"))
-}
-
-/// Returns the iCloud Documents directory using a hardcoded path derived from
-/// the container identifier — does NOT call `URLForUbiquityContainerIdentifier`,
-/// which is the slowest call on cold start (queries the iCloud daemon).
-///
-/// The path layout is deterministic: `~/Library/Mobile Documents/<container>/Documents`,
-/// where `<container>` is the identifier with dots replaced by tildes.
-///
-/// Returns `None` if `$HOME` is unset or the directory doesn't exist on disk
-/// (e.g. user signed out of iCloud since enabling sync). Callers should fall
-/// back to the local directory in that case.
-///
-#[cfg(target_os = "macos")]
-pub fn icloud_data_dir_fast() -> Option<PathBuf> {
-    let home = std::env::var_os("HOME")?;
-    let folder_name = ICLOUD_CONTAINER_ID.replace('.', "~");
-    let path = PathBuf::from(home)
-        .join("Library/Mobile Documents")
-        .join(folder_name)
-        .join("Documents");
-    if path.is_dir() {
-        Some(path)
-    } else {
-        None
-    }
-}
-
-#[cfg(not(target_os = "macos"))]
-#[allow(dead_code)] // parallels the macOS variant; only the macOS build actually calls it
-pub fn icloud_data_dir_fast() -> Option<PathBuf> {
-    None
-}
-
-/// Like `icloud_data_dir_fast` but returns the deterministic path
-/// **without** checking that it currently exists on disk. Used by the
-/// post-migration data_dir resolver so blob path resolution stays
-/// stable across launches even when the iCloud daemon hasn't yet
-/// materialized the container (cold boot, sleep wake, signed-out
-/// account). If the path doesn't exist at runtime, downstream IO will
-/// fail with a clear error — much better than silently flipping
-/// data_dir between local and ubiquity launch-to-launch (which would
-/// orphan blobs imported during the unavailable window).
-#[cfg(target_os = "macos")]
-pub fn icloud_data_dir_deterministic() -> Option<PathBuf> {
     let home = std::env::var_os("HOME")?;
     let folder_name = ICLOUD_CONTAINER_ID.replace('.', "~");
     Some(
@@ -90,7 +34,7 @@ pub fn icloud_data_dir_deterministic() -> Option<PathBuf> {
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn icloud_data_dir_deterministic() -> Option<PathBuf> {
+pub fn icloud_data_dir() -> Option<PathBuf> {
     None
 }
 
@@ -182,65 +126,22 @@ mod tests {
         assert!(!is_file_downloaded(&file));
     }
 
-    // --- icloud_data_dir_fast / deterministic ---
+    // --- icloud_data_dir ---
 
-    /// `icloud_data_dir_deterministic` returns the path even when the
-    /// directory doesn't exist. Critical for the post-migration
-    /// data_dir resolver: blob path resolution must stay stable across
-    /// launches even when iCloud is signed out / not reachable, so we
-    /// can't gate the path on `is_dir`.
     #[cfg(target_os = "macos")]
     #[test]
-    fn test_icloud_data_dir_deterministic_returns_path_without_existence_check() {
+    fn test_icloud_data_dir_returns_deterministic_path() {
         let tmp = TempDir::new().unwrap();
-        // Set HOME to a directory that does NOT contain Library/Mobile
-        // Documents/... — `icloud_data_dir_fast` would return None,
-        // but the deterministic variant must still hand back the
-        // computed path.
         let prev = std::env::var_os("HOME");
         std::env::set_var("HOME", tmp.path());
-        let fast = icloud_data_dir_fast();
-        let deterministic = icloud_data_dir_deterministic();
+        let result = icloud_data_dir();
         if let Some(home) = prev {
             std::env::set_var("HOME", home);
         }
-
-        assert_eq!(fast, None, "fast variant requires the dir to exist");
         let expected = tmp
             .path()
             .join("Library/Mobile Documents/iCloud~com~wycstudios~quill/Documents");
-        assert_eq!(deterministic, Some(expected));
-    }
-
-    /// macOS-only — the non-macOS variant of `icloud_data_dir_fast`
-    /// returns `None` unconditionally, so this `$HOME`-rewrite test
-    /// only applies where the macOS body actually parses `$HOME`.
-    /// Without the cfg gate this test fails on Linux CI even though
-    /// the runtime behaviour is correct.
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn test_icloud_data_dir_fast_path_format() {
-        // The fast path should be derived from $HOME + the container ID with
-        // dots replaced by tildes. We can't assert it returns Some without an
-        // actual iCloud directory present, but we CAN verify the derivation
-        // matches what the system NSFileManager API would produce by checking
-        // a temporary $HOME with a stub directory.
-        let tmp = TempDir::new().unwrap();
-        let stub = tmp
-            .path()
-            .join("Library/Mobile Documents/iCloud~com~wycstudios~quill/Documents");
-        fs::create_dir_all(&stub).unwrap();
-
-        // SAFETY: tests run single-threaded by default for this crate's
-        // env-mutating tests; we restore HOME after the assertion.
-        let prev = std::env::var_os("HOME");
-        std::env::set_var("HOME", tmp.path());
-        let resolved = icloud_data_dir_fast();
-        if let Some(home) = prev {
-            std::env::set_var("HOME", home);
-        }
-
-        assert_eq!(resolved, Some(stub));
+        assert_eq!(result, Some(expected));
     }
 
     // --- icloud_placeholder_path ---
