@@ -528,11 +528,6 @@ pub fn sync_remove_peer(
     peers::delete_peer(&shared_dir, &device_uuid, &device.device_uuid)
 }
 
-/// Placeholder for the 30-day grace-window rollback to legacy file-sync.
-/// The legacy implementation has been removed in this chunk, so the
-/// rollback can't actually restore old behavior — return a clear
-/// error rather than pretend. If a real user needs this we'll layer
-/// it back as a tagged-release recovery tool.
 // ---------------------------------------------------------------------------
 // Helpers — kept private to this module since they're only used here.
 // ---------------------------------------------------------------------------
