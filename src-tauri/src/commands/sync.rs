@@ -9,7 +9,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
 use tauri::State;
@@ -37,14 +37,6 @@ pub struct SyncState {
     /// `WatcherHandle` is dropped on `sync_disable`; the `Drop` impl
     /// signals the watcher thread to stop and joins it.
     pub watcher: Mutex<Option<WatcherHandle>>,
-    /// Serializes lifecycle transitions that compare/update
-    /// `generation` with engine/watcher install or teardown.
-    lifecycle: Mutex<()>,
-    /// Monotonic counter incremented by `sync_disable` (and `sync_enable`).
-    /// The async boot thread captures the generation at spawn time and
-    /// only installs the engine if the generation hasn't changed — so a
-    /// disable that races with a slow boot wins cleanly.
-    pub generation: std::sync::atomic::AtomicU64,
 }
 
 impl SyncState {
@@ -52,27 +44,7 @@ impl SyncState {
         Self {
             engine: Mutex::new(engine),
             watcher: Mutex::new(watcher),
-            lifecycle: Mutex::new(()),
-            generation: std::sync::atomic::AtomicU64::new(0),
         }
-    }
-
-    pub fn lifecycle_guard(&self) -> AppResult<MutexGuard<'_, ()>> {
-        self.lifecycle
-            .lock()
-            .map_err(|e| AppError::Other(format!("sync lifecycle mutex: {e}")))
-    }
-
-    /// Bump the generation. Called by sync_disable / sync_enable so
-    /// an in-flight async boot recognizes it's stale.
-    pub fn bump_generation(&self) -> u64 {
-        self.generation
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
-            + 1
-    }
-
-    pub fn current_generation(&self) -> u64 {
-        self.generation.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// Lock-free read for `sync_now` and `sync_status`. Holding the
@@ -239,15 +211,9 @@ pub fn sync_enable(
     sync_writer: State<'_, SyncWriter>,
     sync_state: State<'_, SyncState>,
 ) -> AppResult<()> {
-    {
-        let _lifecycle = sync_state.lifecycle_guard()?;
-        // Idempotent — already on means already on.
-        if sync_state.engine_snapshot()?.is_some() {
-            return Ok(());
-        }
-        // Invalidate any launch-time async boot that is still preparing
-        // while this explicit enable takes ownership of the runtime engine.
-        sync_state.bump_generation();
+    // Idempotent — already on means already on.
+    if sync_state.engine_snapshot()?.is_some() {
+        return Ok(());
     }
 
     // ---- Phase 1: fallible preparation with no durable state writes ----
@@ -398,26 +364,19 @@ pub fn sync_disable(
     sync_writer: State<'_, SyncWriter>,
     sync_state: State<'_, SyncState>,
 ) -> AppResult<()> {
-    let (engine, old_watcher) = {
-        let _lifecycle = sync_state.lifecycle_guard()?;
-        // Disable wins over any in-flight launch boot before that boot can
-        // publish, spawn a watcher, or install an engine.
-        sync_state.bump_generation();
-        let engine = sync_state.engine_snapshot()?;
+    let engine = sync_state.engine_snapshot()?;
 
-        // Stop new watcher ticks first, then cancel any tick already in
-        // flight before joining the watcher thread.
-        let old_watcher = {
-            let mut g = sync_state
-                .watcher
-                .lock()
-                .map_err(|e| AppError::Other(format!("watcher mutex: {e}")))?;
-            if let Some(watcher) = g.as_ref() {
-                watcher.request_stop();
-            }
-            g.take()
-        };
-        (engine, old_watcher)
+    // Stop new watcher ticks first, then cancel any tick already in
+    // flight before joining the watcher thread.
+    let old_watcher = {
+        let mut g = sync_state
+            .watcher
+            .lock()
+            .map_err(|e| AppError::Other(format!("watcher mutex: {e}")))?;
+        if let Some(watcher) = g.as_ref() {
+            watcher.request_stop();
+        }
+        g.take()
     };
     let had_watcher = old_watcher.is_some();
     if let Some(engine) = engine.as_ref() {
@@ -580,22 +539,6 @@ pub fn sync_remove_peer(
 /// rollback can't actually restore old behavior — return a clear
 /// error rather than pretend. If a real user needs this we'll layer
 /// it back as a tagged-release recovery tool.
-#[cfg(debug_assertions)]
-#[tauri::command]
-pub fn simulate_sync_progress(app: tauri::AppHandle) -> AppResult<()> {
-    use tauri::Emitter;
-    std::thread::spawn(move || {
-        let total = 100;
-        let _ = app.emit("sync-progress", serde_json::json!({ "applied": 0, "total": total }));
-        for i in 1..=total {
-            std::thread::sleep(std::time::Duration::from_millis(50));
-            let _ = app.emit("sync-progress", serde_json::json!({ "applied": i, "total": total }));
-        }
-        let _ = app.emit("sync-initial-tick-done", ());
-    });
-    Ok(())
-}
-
 // ---------------------------------------------------------------------------
 // Helpers — kept private to this module since they're only used here.
 // ---------------------------------------------------------------------------

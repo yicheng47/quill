@@ -235,26 +235,21 @@ fn is_mcp_write_enabled(db_path: &Path) -> bool {
     .unwrap_or(false)
 }
 
-struct PreparedSyncEngine {
-    shared_dir: PathBuf,
-    log: Arc<EventLog>,
-    engine: Arc<ReplayEngine>,
-}
 
-/// Open the per-device EventLog and build a ReplayEngine. This is the slow
-/// iCloud-touching preparation step, but it deliberately does not wire the
-/// writer, spawn the watcher, or start replay. The async boot thread does
-/// those live side effects only after checking the SyncState generation.
+/// Boot the sync engine: open EventLog, create ReplayEngine, spawn
+/// watcher, wire the SyncWriter, and kick off the initial replay tick.
 ///
-/// Pulled out of `setup` so the launch flow stays readable. Errors
-/// short-circuit and the caller falls back to "sync inactive this
-/// session" (the local DB is still functional).
-fn prepare_sync_engine(
+/// All iCloud I/O lives here (EventLog::open, watcher::spawn, initial
+/// tick). Called from a background thread so setup() is never blocked.
+fn boot_sync_engine(
     shared_dir: PathBuf,
     device_uuid: &str,
-) -> error::AppResult<PreparedSyncEngine> {
+    db: &Db,
+    sync_writer: &SyncWriter,
+    sync_state: &SyncState,
+    app_handle: &tauri::AppHandle,
+) -> error::AppResult<()> {
     let log_path = shared_dir.join("logs").join(format!("{device_uuid}.jsonl"));
-    // Coordinator on iCloud paths only — see `EventLog::open` doc.
     let log = Arc::new(EventLog::open(&log_path, device_uuid, true)?);
 
     let engine = Arc::new(ReplayEngine::new(
@@ -263,73 +258,31 @@ fn prepare_sync_engine(
         Arc::clone(&log),
     ));
 
-    Ok(PreparedSyncEngine {
+    let watcher = sync::watcher::spawn(
         shared_dir,
-        log,
-        engine,
-    })
-}
+        db.clone(),
+        Arc::clone(&engine),
+    )?;
 
-fn spawn_initial_sync_tick(engine: Arc<ReplayEngine>, db: Db, app_handle: tauri::AppHandle) {
+    *sync_state.engine.lock().map_err(|e| error::AppError::Other(format!("engine mutex: {e}")))? = Some(Arc::clone(&engine));
+    *sync_state.watcher.lock().map_err(|e| error::AppError::Other(format!("watcher mutex: {e}")))? = Some(watcher);
+    sync_writer.set_log(Some(log));
+
+    let bg_engine = Arc::clone(&engine);
+    let bg_db = db.clone();
+    let bg_handle = app_handle.clone();
     std::thread::Builder::new()
         .name("sync-initial-tick".into())
         .spawn(move || {
-            let result = engine.tick_with_progress(&db, Some(&app_handle));
-            let _ = app_handle.emit("sync-initial-tick-done", ());
+            let result = bg_engine.tick_with_progress(&bg_db, Some(&bg_handle));
+            let _ = bg_handle.emit("sync-initial-tick-done", ());
             if let Err(e) = result {
                 log::warn!("sync: initial replay tick failed: {e}");
             }
         })
         .ok();
-}
 
-fn install_prepared_sync_engine(
-    prepared: PreparedSyncEngine,
-    expected_generation: u64,
-    db: &Db,
-    sync_writer: &SyncWriter,
-    sync_state: &SyncState,
-    app_handle: &tauri::AppHandle,
-) -> error::AppResult<bool> {
-    let _lifecycle = sync_state.lifecycle_guard()?;
-    if sync_state.current_generation() != expected_generation {
-        log::warn!(
-            "sync: boot completed but generation changed \
-             (sync was toggled during boot) — discarding engine"
-        );
-        return Ok(false);
-    }
-
-    let watcher = sync::watcher::spawn(
-        prepared.shared_dir,
-        db.clone(),
-        Arc::clone(&prepared.engine),
-    )?;
-
-    if sync_state.current_generation() != expected_generation {
-        log::warn!(
-            "sync: watcher started but generation changed \
-             (sync was toggled during boot) — discarding engine"
-        );
-        drop(watcher);
-        return Ok(false);
-    }
-
-    let mut engine_guard = sync_state
-        .engine
-        .lock()
-        .map_err(|e| error::AppError::Other(format!("engine mutex: {e}")))?;
-    let mut watcher_guard = sync_state
-        .watcher
-        .lock()
-        .map_err(|e| error::AppError::Other(format!("watcher mutex: {e}")))?;
-
-    *engine_guard = Some(Arc::clone(&prepared.engine));
-    *watcher_guard = Some(watcher);
-    sync_writer.set_log(Some(Arc::clone(&prepared.log)));
-
-    spawn_initial_sync_tick(Arc::clone(&prepared.engine), db.clone(), app_handle.clone());
-    Ok(true)
+    Ok(())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -541,10 +494,6 @@ pub fn run() {
                 .flatten();
             if let Some(ub) = should_boot {
                 let bg_handle = app.handle().clone();
-                let boot_generation = {
-                    let sync_state: tauri::State<SyncState> = app.state();
-                    sync_state.current_generation()
-                };
                 std::thread::Builder::new()
                     .name("sync-boot".into())
                     .spawn(move || {
@@ -552,21 +501,13 @@ pub fn run() {
                         let bg_writer: tauri::State<SyncWriter> = bg_handle.state();
                         let bg_device: tauri::State<DeviceIdentity> = bg_handle.state();
                         let bg_sync: tauri::State<SyncState> = bg_handle.state();
-                        match prepare_sync_engine(ub, &bg_device.device_uuid).and_then(|prepared| {
-                            install_prepared_sync_engine(
-                                prepared,
-                                boot_generation,
-                                &bg_db,
-                                &bg_writer,
-                                &bg_sync,
-                                &bg_handle,
-                            )
-                        }) {
-                            Ok(true) => {
+                        match boot_sync_engine(
+                            ub, &bg_device.device_uuid, &bg_db, &bg_writer, &bg_sync, &bg_handle,
+                        ) {
+                            Ok(()) => {
                                 log::info!("sync: engine booted (replay + watcher active)");
                                 let _ = bg_handle.emit("sync-status-changed", ());
                             }
-                            Ok(false) => {}
                             Err(e) => {
                                 log::error!("sync: failed to boot sync engine: {e}");
                             }
@@ -671,8 +612,6 @@ pub fn run() {
             commands::sync::sync_now,
             commands::sync::sync_cancel,
             commands::sync::sync_compact,
-            #[cfg(debug_assertions)]
-            commands::sync::simulate_sync_progress,
             commands::sync::sync_remove_peer,
         ])
         .build(tauri::generate_context!())
