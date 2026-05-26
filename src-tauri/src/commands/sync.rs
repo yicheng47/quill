@@ -9,7 +9,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use serde::Serialize;
 use tauri::State;
@@ -37,6 +37,9 @@ pub struct SyncState {
     /// `WatcherHandle` is dropped on `sync_disable`; the `Drop` impl
     /// signals the watcher thread to stop and joins it.
     pub watcher: Mutex<Option<WatcherHandle>>,
+    /// Serializes lifecycle transitions that compare/update
+    /// `generation` with engine/watcher install or teardown.
+    lifecycle: Mutex<()>,
     /// Monotonic counter incremented by `sync_disable` (and `sync_enable`).
     /// The async boot thread captures the generation at spawn time and
     /// only installs the engine if the generation hasn't changed — so a
@@ -45,21 +48,27 @@ pub struct SyncState {
 }
 
 impl SyncState {
-    pub fn new(
-        engine: Option<Arc<ReplayEngine>>,
-        watcher: Option<WatcherHandle>,
-    ) -> Self {
+    pub fn new(engine: Option<Arc<ReplayEngine>>, watcher: Option<WatcherHandle>) -> Self {
         Self {
             engine: Mutex::new(engine),
             watcher: Mutex::new(watcher),
+            lifecycle: Mutex::new(()),
             generation: std::sync::atomic::AtomicU64::new(0),
         }
+    }
+
+    pub fn lifecycle_guard(&self) -> AppResult<MutexGuard<'_, ()>> {
+        self.lifecycle
+            .lock()
+            .map_err(|e| AppError::Other(format!("sync lifecycle mutex: {e}")))
     }
 
     /// Bump the generation. Called by sync_disable / sync_enable so
     /// an in-flight async boot recognizes it's stale.
     pub fn bump_generation(&self) -> u64 {
-        self.generation.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1
+        self.generation
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+            + 1
     }
 
     pub fn current_generation(&self) -> u64 {
@@ -230,9 +239,15 @@ pub fn sync_enable(
     sync_writer: State<'_, SyncWriter>,
     sync_state: State<'_, SyncState>,
 ) -> AppResult<()> {
-    // Idempotent — already on means already on.
-    if sync_state.engine_snapshot()?.is_some() {
-        return Ok(());
+    {
+        let _lifecycle = sync_state.lifecycle_guard()?;
+        // Idempotent — already on means already on.
+        if sync_state.engine_snapshot()?.is_some() {
+            return Ok(());
+        }
+        // Invalidate any launch-time async boot that is still preparing
+        // while this explicit enable takes ownership of the runtime engine.
+        sync_state.bump_generation();
     }
 
     // ---- Phase 1: fallible preparation with no durable state writes ----
@@ -358,7 +373,7 @@ pub fn sync_enable(
 
     // Fire the initial tick on a background thread so sync_enable
     // returns immediately — the UI stays responsive while the tick
-    // applies peer snapshots and events. Same pattern as boot_sync_engine.
+    // applies peer snapshots and events. Same pattern as startup boot.
     let bg_db = db.inner().clone();
     let bg_handle = app.clone();
     std::thread::Builder::new()
@@ -383,19 +398,26 @@ pub fn sync_disable(
     sync_writer: State<'_, SyncWriter>,
     sync_state: State<'_, SyncState>,
 ) -> AppResult<()> {
-    let engine = sync_state.engine_snapshot()?;
+    let (engine, old_watcher) = {
+        let _lifecycle = sync_state.lifecycle_guard()?;
+        // Disable wins over any in-flight launch boot before that boot can
+        // publish, spawn a watcher, or install an engine.
+        sync_state.bump_generation();
+        let engine = sync_state.engine_snapshot()?;
 
-    // Stop new watcher ticks first, then cancel any tick already in
-    // flight before joining the watcher thread.
-    let old_watcher = {
-        let mut g = sync_state
-            .watcher
-            .lock()
-            .map_err(|e| AppError::Other(format!("watcher mutex: {e}")))?;
-        if let Some(watcher) = g.as_ref() {
-            watcher.request_stop();
-        }
-        g.take()
+        // Stop new watcher ticks first, then cancel any tick already in
+        // flight before joining the watcher thread.
+        let old_watcher = {
+            let mut g = sync_state
+                .watcher
+                .lock()
+                .map_err(|e| AppError::Other(format!("watcher mutex: {e}")))?;
+            if let Some(watcher) = g.as_ref() {
+                watcher.request_stop();
+            }
+            g.take()
+        };
+        (engine, old_watcher)
     };
     let had_watcher = old_watcher.is_some();
     if let Some(engine) = engine.as_ref() {
@@ -447,8 +469,7 @@ pub fn sync_disable(
     // fallible copy-back above succeeded, so we're committed to
     // turning sync off.
 
-    // Watcher already dropped above. Drop the engine + bump generation
-    // so any in-flight async boot thread knows it's stale.
+    // Watcher already dropped above. Drop the engine.
     {
         let mut g = sync_state
             .engine
@@ -456,7 +477,6 @@ pub fn sync_disable(
             .map_err(|e| AppError::Other(format!("engine mutex: {e}")))?;
         *g = None;
     }
-    sync_state.bump_generation();
 
     // Stop publishing. Future `with_tx` calls neither queue into
     // `_pending_publish` nor try to drain it.

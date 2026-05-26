@@ -21,7 +21,6 @@ use secrets::Secrets;
 use sync::device::DeviceIdentity;
 use sync::log::EventLog;
 use sync::replay::ReplayEngine;
-use sync::watcher::WatcherHandle;
 use sync::writer::SyncWriter;
 use tauri::Emitter;
 use tauri::Manager;
@@ -236,68 +235,101 @@ fn is_mcp_write_enabled(db_path: &Path) -> bool {
     .unwrap_or(false)
 }
 
-/// Construct the per-device EventLog, wire it into `sync_writer`, build a
-/// `ReplayEngine`, spawn the fs watcher, and kick off the initial
-/// convergence tick on a background thread. Returns immediately so
-/// `setup()` is never blocked by slow iCloud I/O (evicted peer logs,
-/// `NSFileCoordinator` stalls, large outbox drains).
+struct PreparedSyncEngine {
+    shared_dir: PathBuf,
+    log: Arc<EventLog>,
+    engine: Arc<ReplayEngine>,
+}
+
+/// Open the per-device EventLog and build a ReplayEngine. This is the slow
+/// iCloud-touching preparation step, but it deliberately does not wire the
+/// writer, spawn the watcher, or start replay. The async boot thread does
+/// those live side effects only after checking the SyncState generation.
 ///
 /// Pulled out of `setup` so the launch flow stays readable. Errors
 /// short-circuit and the caller falls back to "sync inactive this
 /// session" (the local DB is still functional).
-fn boot_sync_engine(
+fn prepare_sync_engine(
     shared_dir: PathBuf,
     device_uuid: &str,
-    db: &Db,
-    sync_writer: &SyncWriter,
-    app_handle: &tauri::AppHandle,
-) -> error::AppResult<(Option<Arc<ReplayEngine>>, Option<WatcherHandle>)> {
-    let log_path = shared_dir
-        .join("logs")
-        .join(format!("{device_uuid}.jsonl"));
+) -> error::AppResult<PreparedSyncEngine> {
+    let log_path = shared_dir.join("logs").join(format!("{device_uuid}.jsonl"));
     // Coordinator on iCloud paths only — see `EventLog::open` doc.
     let log = Arc::new(EventLog::open(&log_path, device_uuid, true)?);
-    sync_writer.set_log(Some(Arc::clone(&log)));
 
     let engine = Arc::new(ReplayEngine::new(
         shared_dir.clone(),
         device_uuid.to_string(),
-        log,
+        Arc::clone(&log),
     ));
 
-    // If watcher spawn fails, roll back the writer so new writes fall
-    // into queue-only mode instead of draining to a log with no engine
-    // or watcher behind it. Without this, the caller drops `engine`
-    // but the writer still has `Some(log)` — writes keep publishing
-    // events that no process is replaying and no one is watching for.
-    match sync::watcher::spawn(shared_dir, db.clone(), Arc::clone(&engine)) {
-        Ok(watcher) => {
-            // Initial tick — drains any leftover outbox, applies peer
-            // snapshots and log tails since last launch. Runs on a
-            // background thread so setup() returns immediately; reading
-            // iCloud-evicted peer files can block for seconds/minutes and
-            // would otherwise white-screen the app. The watcher's tick
-            // mutex serializes this against any fs-triggered ticks.
-            let bg_engine = Arc::clone(&engine);
-            let bg_db = db.clone();
-            let bg_handle = app_handle.clone();
-            std::thread::Builder::new()
-                .name("sync-initial-tick".into())
-                .spawn(move || {
-                    let result = bg_engine.tick_with_progress(&bg_db, Some(&bg_handle));
-                    let _ = bg_handle.emit("sync-initial-tick-done", ());
-                    if let Err(e) = result {
-                        log::warn!("sync: initial replay tick failed: {e}");
-                    }
-                })
-                .ok();
-            Ok((Some(engine), Some(watcher)))
-        }
-        Err(e) => {
-            sync_writer.set_log(None);
-            Err(e)
-        }
+    Ok(PreparedSyncEngine {
+        shared_dir,
+        log,
+        engine,
+    })
+}
+
+fn spawn_initial_sync_tick(engine: Arc<ReplayEngine>, db: Db, app_handle: tauri::AppHandle) {
+    std::thread::Builder::new()
+        .name("sync-initial-tick".into())
+        .spawn(move || {
+            let result = engine.tick_with_progress(&db, Some(&app_handle));
+            let _ = app_handle.emit("sync-initial-tick-done", ());
+            if let Err(e) = result {
+                log::warn!("sync: initial replay tick failed: {e}");
+            }
+        })
+        .ok();
+}
+
+fn install_prepared_sync_engine(
+    prepared: PreparedSyncEngine,
+    expected_generation: u64,
+    db: &Db,
+    sync_writer: &SyncWriter,
+    sync_state: &SyncState,
+    app_handle: &tauri::AppHandle,
+) -> error::AppResult<bool> {
+    let _lifecycle = sync_state.lifecycle_guard()?;
+    if sync_state.current_generation() != expected_generation {
+        log::warn!(
+            "sync: boot completed but generation changed \
+             (sync was toggled during boot) — discarding engine"
+        );
+        return Ok(false);
     }
+
+    let watcher = sync::watcher::spawn(
+        prepared.shared_dir,
+        db.clone(),
+        Arc::clone(&prepared.engine),
+    )?;
+
+    if sync_state.current_generation() != expected_generation {
+        log::warn!(
+            "sync: watcher started but generation changed \
+             (sync was toggled during boot) — discarding engine"
+        );
+        drop(watcher);
+        return Ok(false);
+    }
+
+    let mut engine_guard = sync_state
+        .engine
+        .lock()
+        .map_err(|e| error::AppError::Other(format!("engine mutex: {e}")))?;
+    let mut watcher_guard = sync_state
+        .watcher
+        .lock()
+        .map_err(|e| error::AppError::Other(format!("watcher mutex: {e}")))?;
+
+    *engine_guard = Some(Arc::clone(&prepared.engine));
+    *watcher_guard = Some(watcher);
+    sync_writer.set_log(Some(Arc::clone(&prepared.log)));
+
+    spawn_initial_sync_tick(Arc::clone(&prepared.engine), db.clone(), app_handle.clone());
+    Ok(true)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -509,6 +541,10 @@ pub fn run() {
                 .flatten();
             if let Some(ub) = should_boot {
                 let bg_handle = app.handle().clone();
+                let boot_generation = {
+                    let sync_state: tauri::State<SyncState> = app.state();
+                    sync_state.current_generation()
+                };
                 std::thread::Builder::new()
                     .name("sync-boot".into())
                     .spawn(move || {
@@ -516,28 +552,21 @@ pub fn run() {
                         let bg_writer: tauri::State<SyncWriter> = bg_handle.state();
                         let bg_device: tauri::State<DeviceIdentity> = bg_handle.state();
                         let bg_sync: tauri::State<SyncState> = bg_handle.state();
-                        let gen = bg_sync.current_generation();
-                        match boot_sync_engine(
-                            ub, &bg_device.device_uuid, &bg_db, &bg_writer, &bg_handle,
-                        ) {
-                            Ok((engine, watcher)) => {
-                                if bg_sync.current_generation() != gen {
-                                    log::warn!(
-                                        "sync: boot completed but generation changed \
-                                         (sync was toggled during boot) — discarding engine"
-                                    );
-                                    bg_writer.set_log(None);
-                                    return;
-                                }
+                        match prepare_sync_engine(ub, &bg_device.device_uuid).and_then(|prepared| {
+                            install_prepared_sync_engine(
+                                prepared,
+                                boot_generation,
+                                &bg_db,
+                                &bg_writer,
+                                &bg_sync,
+                                &bg_handle,
+                            )
+                        }) {
+                            Ok(true) => {
                                 log::info!("sync: engine booted (replay + watcher active)");
-                                if let Some(e) = engine {
-                                    *bg_sync.engine.lock().unwrap() = Some(e);
-                                }
-                                if let Some(w) = watcher {
-                                    *bg_sync.watcher.lock().unwrap() = Some(w);
-                                }
                                 let _ = bg_handle.emit("sync-status-changed", ());
                             }
+                            Ok(false) => {}
                             Err(e) => {
                                 log::error!("sync: failed to boot sync engine: {e}");
                             }
