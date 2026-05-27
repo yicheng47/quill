@@ -214,8 +214,16 @@ impl SyncWriter {
         let Ok(guard) = self.cover_tx.lock() else { return };
         let Some(tx) = guard.as_ref() else { return };
 
+        let mut queued = 0usize;
         for (id, bytes) in rows {
-            let _ = tx.send((covers_dir.join(format!("{id}.img")), bytes));
+            let path = covers_dir.join(format!("{id}.img"));
+            if !path.exists() {
+                let _ = tx.send((path, bytes));
+                queued += 1;
+            }
+        }
+        if queued > 0 {
+            log::info!("sync: queued {queued} cover file(s) for backfill");
         }
     }
 

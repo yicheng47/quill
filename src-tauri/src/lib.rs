@@ -297,10 +297,8 @@ fn boot_sync_engine(
             if let Err(e) = result {
                 log::warn!("sync: initial replay tick failed: {e}");
             }
-            if needs_cover_backfill {
-                let bg_writer: tauri::State<SyncWriter> = bg_handle.state();
-                bg_writer.backfill_cover_files(&bg_db);
-            }
+            let bg_writer: tauri::State<SyncWriter> = bg_handle.state();
+            bg_writer.backfill_cover_files(&bg_db);
             let _ = bg_handle.emit("sync-initial-tick-done", ());
         })
         .ok();
@@ -462,15 +460,11 @@ pub fn run() {
                 .expect("failed to initialize database");
 
             if needs_cover_backfill {
-                let backfill_conn = db.conn.clone();
-                let backfill_dir = data_dir.clone();
+                let backfill_db = db.clone();
                 std::thread::Builder::new()
                     .name("cover-backfill".into())
                     .spawn(move || {
-                        let conn = backfill_conn.lock().expect("backfill conn mutex");
-                        if let Err(e) = Db::backfill_cover_data(&conn, &backfill_dir) {
-                            log::warn!("cover backfill failed: {e}");
-                        }
+                        backfill_db.backfill_cover_data();
                     })
                     .ok();
             }

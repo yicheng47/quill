@@ -159,13 +159,18 @@ impl Db {
         // read access without blocking the Tauri app's writes.
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=OFF;")?;
 
-        let version_before = Self::current_schema_version(&conn);
         Self::run_migrations(&conn)?;
 
         // One-time migration: convert absolute paths to relative
         Self::migrate_to_relative_paths(&conn, data_dir)?;
 
-        let needs_cover_backfill = version_before < 13;
+        let needs_cover_backfill: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM books WHERE cover_path IS NOT NULL AND cover_path != 'none' AND cover_data IS NULL)",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(false);
 
         // Separate read connection so frontend queries never contend
         // with sync engine writes. WAL mode allows concurrent readers
@@ -183,15 +188,6 @@ impl Db {
             read_conn: Arc::new(Mutex::new(read_conn)),
             data_dir: Arc::new(Mutex::new(data_dir.to_path_buf())),
         }, needs_cover_backfill))
-    }
-
-    fn current_schema_version(conn: &Connection) -> i64 {
-        conn.query_row(
-            "SELECT COALESCE(MAX(version), 0) FROM schema_version",
-            [],
-            |r| r.get(0),
-        )
-        .unwrap_or(0)
     }
 
     fn run_migrations(conn: &Connection) -> AppResult<()> {
@@ -302,45 +298,69 @@ impl Db {
     }
 
     /// One-time backfill: read existing cover files from disk into the
-    /// `cover_data` BLOB column. Only needed when upgrading from schema <13.
-    /// Rows that already have `cover_data` or whose `cover_path` is NULL /
-    /// `'none'` are skipped.
-    pub fn backfill_cover_data(conn: &Connection, data_dir: &Path) -> AppResult<()> {
-        let mut stmt = conn.prepare(
-            "SELECT id, cover_path FROM books
-             WHERE cover_data IS NULL
-               AND cover_path IS NOT NULL
-               AND cover_path != 'none'",
-        )?;
-        let rows: Vec<(String, String)> = stmt
-            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
-            .collect::<Result<Vec<_>, _>>()?;
-        drop(stmt);
+    /// `cover_data` BLOB column. Three-phase to avoid holding the DB
+    /// lock during file I/O:
+    /// 1. Quick read-conn query to find candidates
+    /// 2. Read files from disk (no lock held)
+    /// 3. Brief write-conn lock to store each cover
+    pub fn backfill_cover_data(&self) {
+        let data_dir = match self.data_dir.lock() {
+            Ok(d) => d.clone(),
+            Err(_) => return,
+        };
+
+        // Phase 1: find candidates via read conn
+        let rows: Vec<(String, String)> = {
+            let Ok(conn) = self.read_conn.lock() else { return };
+            let Ok(mut stmt) = conn.prepare(
+                "SELECT id, cover_path FROM books
+                 WHERE cover_data IS NULL
+                   AND cover_path IS NOT NULL
+                   AND cover_path != 'none'",
+            ) else { return };
+            stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+                .into_iter()
+                .flatten()
+                .flatten()
+                .collect()
+        };
 
         if rows.is_empty() {
-            return Ok(());
+            return;
         }
 
         log::info!("db: backfilling cover_data for {} books", rows.len());
-        for (id, cover_path) in &rows {
-            let abs = if Path::new(cover_path).is_absolute() {
-                PathBuf::from(cover_path)
-            } else {
-                data_dir.join(cover_path)
-            };
-            match fs::read(&abs) {
-                Ok(bytes) => {
-                    conn.execute(
-                        "UPDATE books SET cover_data = ?1 WHERE id = ?2",
-                        params![bytes, id],
-                    )?;
+
+        // Phase 2: read files (no lock held)
+        let loaded: Vec<(String, Vec<u8>)> = rows
+            .into_iter()
+            .filter_map(|(id, cover_path)| {
+                let abs = if Path::new(&cover_path).is_absolute() {
+                    PathBuf::from(&cover_path)
+                } else {
+                    data_dir.join(&cover_path)
+                };
+                match fs::read(&abs) {
+                    Ok(bytes) => Some((id, bytes)),
+                    Err(e) => {
+                        log::warn!("db: backfill cover_data failed for {id}: {e}");
+                        None
+                    }
                 }
-                Err(e) => {
-                    log::warn!("db: backfill cover_data failed for {id}: {e}");
-                }
+            })
+            .collect();
+
+        // Phase 3: brief write lock per cover
+        for (id, bytes) in &loaded {
+            if let Ok(conn) = self.conn.lock() {
+                let _ = conn.execute(
+                    "UPDATE books SET cover_data = ?1 WHERE id = ?2",
+                    params![bytes, id],
+                );
             }
         }
-        Ok(())
+
+        log::info!("db: backfilled {} cover(s)", loaded.len());
     }
 
     /// Migrate existing absolute paths in the books table to relative paths.
