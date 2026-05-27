@@ -145,7 +145,6 @@ impl Db {
         fs::create_dir_all(db_dir)?;
         fs::create_dir_all(data_dir)?;
         fs::create_dir_all(data_dir.join("books"))?;
-        fs::create_dir_all(data_dir.join("covers"))?;
 
         let db_path = db_dir.join("quill.db");
         let conn = Connection::open(&db_path)?;
@@ -398,9 +397,8 @@ mod tests {
         assert!(db_dir.path().join("quill.db").exists());
         assert!(!data_dir.path().join("quill.db").exists());
 
-        // books/ + covers/ subdirs were created in data_dir (NOT db_dir).
+        // books/ subdir was created in data_dir (NOT db_dir).
         assert!(data_dir.path().join("books").exists());
-        assert!(data_dir.path().join("covers").exists());
         assert!(!db_dir.path().join("books").exists());
 
         // resolve_path uses data_dir as the base.

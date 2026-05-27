@@ -1244,31 +1244,26 @@ mod tests {
 
     #[test]
     fn test_import_pdf_with_cover() {
-        let (dir, db) = setup();
+        let (_dir, db) = setup();
         let book_id = "cover-test";
-        let cover_data = b"fake png data";
-
-        let cover_file = dir.path().join("covers").join(format!("{}.png", book_id));
-        fs::write(&cover_file, cover_data).unwrap();
+        let cover_bytes = b"\x89PNG fake png data";
 
         let conn = db.conn.lock().unwrap();
         let now = chrono::Utc::now().timestamp_millis();
-        let cover_path = format!("covers/{}.png", book_id);
 
         conn.execute(
-            "INSERT INTO books (id, title, author, file_path, format, cover_path, status, progress, created_at, updated_at)
+            "INSERT INTO books (id, title, author, file_path, format, cover_data, status, progress, created_at, updated_at)
              VALUES (?1, 'PDF With Cover', 'Author', 'books/test.pdf', 'pdf', ?2, 'unread', 0, ?3, ?3)",
-            params![book_id, cover_path, now],
+            params![book_id, cover_bytes.as_slice(), now],
         ).unwrap();
 
-        let db_cover: Option<String> = conn.query_row(
-            "SELECT cover_path FROM books WHERE id = ?1",
+        let db_cover: Option<Vec<u8>> = conn.query_row(
+            "SELECT cover_data FROM books WHERE id = ?1",
             params![book_id],
             |r| r.get(0),
         ).unwrap();
 
-        assert_eq!(db_cover, Some(cover_path));
-        assert!(cover_file.exists());
+        assert_eq!(db_cover.as_deref(), Some(cover_bytes.as_slice()));
     }
 
     #[test]
@@ -1337,50 +1332,37 @@ mod tests {
     fn test_import_pdf_with_all_metadata() {
         let (dir, db) = setup();
 
-        // Create source PDF
         let src = dir.path().join("academic-paper.pdf");
         fs::write(&src, b"%PDF-1.7 fake").unwrap();
 
         let book_id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now().timestamp_millis();
         let rel_path = format!("books/{}.pdf", book_id);
-        let cover_rel = format!("covers/{}.png", book_id);
+        let cover_bytes = b"\x89PNG fake cover";
 
-        // Copy file
         let dest = dir.path().join("books").join(format!("{}.pdf", book_id));
         fs::copy(&src, &dest).unwrap();
 
-        // Write cover
-        let cover_file = dir.path().join("covers").join(format!("{}.png", book_id));
-        fs::write(&cover_file, b"PNG fake").unwrap();
-
         let conn = db.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO books (id, title, author, description, cover_path, file_path, format, pages, status, progress, created_at, updated_at)
-             VALUES (?1, 'Deep Learning', 'Ian Goodfellow, Yoshua Bengio', 'A comprehensive textbook', ?2, ?3, 'pdf', 800, 'unread', 0, ?4, ?4)",
-            params![book_id, cover_rel, rel_path, now],
+            "INSERT INTO books (id, title, author, description, file_path, format, pages, status, progress, created_at, updated_at, cover_data)
+             VALUES (?1, 'Deep Learning', 'Ian Goodfellow, Yoshua Bengio', 'A comprehensive textbook', ?2, 'pdf', 800, 'unread', 0, ?3, ?3, ?4)",
+            params![book_id, rel_path, now, cover_bytes.as_slice()],
         ).unwrap();
 
-        let book: Book = conn.query_row(
-            "SELECT id, title, author, description, cover_path, file_path, format, genre, pages, status, progress, current_cfi, created_at, updated_at FROM books WHERE id = ?1",
+        let (title, author, desc, format, pages, has_cover): (String, String, Option<String>, String, Option<i32>, bool) = conn.query_row(
+            "SELECT title, author, description, format, pages, (cover_data IS NOT NULL) FROM books WHERE id = ?1",
             params![book_id],
-            |row| Ok(Book {
-                id: row.get(0)?, title: row.get(1)?, author: row.get(2)?,
-                description: row.get(3)?, cover_path: row.get(4)?, file_path: row.get(5)?,
-                format: row.get(6)?, genre: row.get(7)?, pages: row.get(8)?,
-                status: row.get(9)?, progress: row.get(10)?, current_cfi: row.get(11)?,
-                created_at: row.get(12)?, updated_at: row.get(13)?, available: true, cover_data: None,
-            }),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
         ).unwrap();
 
-        assert_eq!(book.title, "Deep Learning");
-        assert_eq!(book.author, "Ian Goodfellow, Yoshua Bengio");
-        assert_eq!(book.description, Some("A comprehensive textbook".to_string()));
-        assert_eq!(book.format, "pdf");
-        assert_eq!(book.pages, Some(800));
-        assert!(book.cover_path.is_some());
+        assert_eq!(title, "Deep Learning");
+        assert_eq!(author, "Ian Goodfellow, Yoshua Bengio");
+        assert_eq!(desc, Some("A comprehensive textbook".to_string()));
+        assert_eq!(format, "pdf");
+        assert_eq!(pages, Some(800));
+        assert!(has_cover);
         assert!(dest.exists());
-        assert!(cover_file.exists());
     }
 
     #[test]
