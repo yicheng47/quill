@@ -188,6 +188,7 @@ pub fn mcp_stdio_main() {
         let sw = SyncWriter::new(device.device_uuid);
         if sync::migration::is_sync_enabled(&local_dir) {
             sw.set_should_queue(true);
+            sw.spawn_cover_writer();
         }
         (db, Some(sw))
     } else {

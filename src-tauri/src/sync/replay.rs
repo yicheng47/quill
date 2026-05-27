@@ -680,6 +680,7 @@ fn ingest_peer_covers(shared_dir: &Path, db: &Db) -> usize {
     };
 
     // Phase 1: collect candidates — quick SQL check per file, no file I/O.
+    // Recognizes both real files (foo.img) and iCloud placeholders (.foo.img.icloud).
     let candidates: Vec<(String, std::path::PathBuf)> = {
         let Ok(conn) = db.read_conn.lock() else { return 0 };
         entries
@@ -687,7 +688,17 @@ fn ingest_peer_covers(shared_dir: &Path, db: &Db) -> usize {
             .filter_map(|entry| {
                 let name = entry.file_name();
                 let name_str = name.to_string_lossy();
-                let book_id = name_str.strip_suffix(".img")?.to_string();
+                let (book_id, path) = if let Some(id) = name_str.strip_suffix(".img") {
+                    (id.to_string(), entry.path())
+                } else if name_str.starts_with('.') && name_str.ends_with(".img.icloud") {
+                    let inner = &name_str[1..name_str.len() - 7]; // strip leading '.' and trailing '.icloud'
+                    let id = inner.strip_suffix(".img")?.to_string();
+                    let real_path = covers_dir.join(format!("{id}.img"));
+                    crate::icloud::trigger_download_file(&real_path);
+                    return None; // skip this tick, file will be available next tick
+                } else {
+                    return None;
+                };
                 let has_cover: bool = conn
                     .query_row(
                         "SELECT cover_data IS NOT NULL AND LENGTH(cover_data) > 0 FROM books WHERE id = ?1",
@@ -695,7 +706,7 @@ fn ingest_peer_covers(shared_dir: &Path, db: &Db) -> usize {
                         |r| r.get(0),
                     )
                     .unwrap_or(true);
-                if has_cover { None } else { Some((book_id, entry.path())) }
+                if has_cover { None } else { Some((book_id, path)) }
             })
             .collect()
     };
