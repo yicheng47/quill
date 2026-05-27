@@ -451,8 +451,22 @@ pub fn run() {
             // When sync is on, blobs (books/, covers/) live in iCloud;
             // otherwise they're local.
             let data_dir = ubiquity_dir.clone().unwrap_or_else(|| local_dir.clone());
-            let db = Db::init_split(&local_dir, &data_dir)
+            let (db, needs_cover_backfill) = Db::init_split(&local_dir, &data_dir)
                 .expect("failed to initialize database");
+
+            if needs_cover_backfill {
+                let backfill_conn = db.conn.clone();
+                let backfill_dir = data_dir.clone();
+                std::thread::Builder::new()
+                    .name("cover-backfill".into())
+                    .spawn(move || {
+                        let conn = backfill_conn.lock().expect("backfill conn mutex");
+                        if let Err(e) = Db::backfill_cover_data(&conn, &backfill_dir) {
+                            log::warn!("cover backfill failed: {e}");
+                        }
+                    })
+                    .ok();
+            }
 
             log::info!(
                 "quill start v{version} os={os} arch={arch} data_dir={data_dir} schema_v={schema}",

@@ -70,7 +70,8 @@ impl Db {
     /// `app_data_dir`. Used by tests, fresh installs, and any caller
     /// where the materialized view and the binary blobs live together.
     pub fn init(app_data_dir: &Path) -> AppResult<Self> {
-        Self::init_split(app_data_dir, app_data_dir)
+        let (db, _needs_backfill) = Self::init_split(app_data_dir, app_data_dir)?;
+        Ok(db)
     }
 
     /// Open the SQLite file read-only without running migrations. Used
@@ -138,7 +139,9 @@ impl Db {
     /// Resolving `books/<id>.epub` then walks into the iCloud folder
     /// instead of an empty local one. Without this split, the reader
     /// silently breaks for every existing iCloud user post-migration.
-    pub fn init_split(db_dir: &Path, data_dir: &Path) -> AppResult<Self> {
+    /// Returns `(db, needs_cover_backfill)`. The caller should run
+    /// `backfill_cover_data` on a background thread when the flag is true.
+    pub fn init_split(db_dir: &Path, data_dir: &Path) -> AppResult<(Self, bool)> {
         fs::create_dir_all(db_dir)?;
         fs::create_dir_all(data_dir)?;
         fs::create_dir_all(data_dir.join("books"))?;
@@ -156,13 +159,13 @@ impl Db {
         // read access without blocking the Tauri app's writes.
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=OFF;")?;
 
+        let version_before = Self::current_schema_version(&conn);
         Self::run_migrations(&conn)?;
 
         // One-time migration: convert absolute paths to relative
         Self::migrate_to_relative_paths(&conn, data_dir)?;
 
-        // One-time backfill: read existing cover files into cover_data BLOB
-        Self::backfill_cover_data(&conn, data_dir)?;
+        let needs_cover_backfill = version_before < 13;
 
         // Separate read connection so frontend queries never contend
         // with sync engine writes. WAL mode allows concurrent readers
@@ -175,11 +178,20 @@ impl Db {
                 | rusqlite::OpenFlags::SQLITE_OPEN_URI,
         )?;
 
-        Ok(Self {
+        Ok((Self {
             conn: Arc::new(Mutex::new(conn)),
             read_conn: Arc::new(Mutex::new(read_conn)),
             data_dir: Arc::new(Mutex::new(data_dir.to_path_buf())),
-        })
+        }, needs_cover_backfill))
+    }
+
+    fn current_schema_version(conn: &Connection) -> i64 {
+        conn.query_row(
+            "SELECT COALESCE(MAX(version), 0) FROM schema_version",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0)
     }
 
     fn run_migrations(conn: &Connection) -> AppResult<()> {
@@ -290,10 +302,10 @@ impl Db {
     }
 
     /// One-time backfill: read existing cover files from disk into the
-    /// `cover_data` BLOB column. Runs after migration 013 adds the column.
+    /// `cover_data` BLOB column. Only needed when upgrading from schema <13.
     /// Rows that already have `cover_data` or whose `cover_path` is NULL /
     /// `'none'` are skipped.
-    fn backfill_cover_data(conn: &Connection, data_dir: &Path) -> AppResult<()> {
+    pub fn backfill_cover_data(conn: &Connection, data_dir: &Path) -> AppResult<()> {
         let mut stmt = conn.prepare(
             "SELECT id, cover_path FROM books
              WHERE cover_data IS NULL
@@ -380,7 +392,7 @@ mod tests {
     fn init_split_opens_db_in_db_dir_resolves_blobs_in_data_dir() {
         let db_dir = TempDir::new().unwrap();
         let data_dir = TempDir::new().unwrap();
-        let db = Db::init_split(db_dir.path(), data_dir.path()).unwrap();
+        let (db, _) = Db::init_split(db_dir.path(), data_dir.path()).unwrap();
 
         // SQLite file landed in db_dir (NOT data_dir).
         assert!(db_dir.path().join("quill.db").exists());
