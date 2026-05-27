@@ -317,6 +317,7 @@ pub fn sync_enable(
     // peers, and store the engine + watcher in app state so the rest
     // of the app sees sync as on.
     sync_writer.set_log(Some(Arc::clone(&log)));
+    sync_writer.spawn_cover_writer();
     {
         let mut g = sync_state
             .engine
@@ -436,6 +437,7 @@ pub fn sync_disable(
     // `_pending_publish` nor try to drain it.
     sync_writer.set_log(None);
     sync_writer.set_should_queue(false);
+    sync_writer.set_cover_tx(None);
 
     // Repoint data_dir at local now that the binary copy-back has
     // finished. Mid-flight reads during phase 1 still resolved

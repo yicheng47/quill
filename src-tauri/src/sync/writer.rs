@@ -161,6 +161,22 @@ impl SyncWriter {
         *self.cover_tx.lock().expect("cover_tx mutex") = tx;
     }
 
+    pub fn spawn_cover_writer(&self) {
+        let (tx, rx) = std::sync::mpsc::channel::<(std::path::PathBuf, Vec<u8>)>();
+        std::thread::Builder::new()
+            .name("cover-writer".into())
+            .spawn(move || {
+                for (path, bytes) in rx {
+                    if let Some(parent) = path.parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                    let _ = std::fs::write(&path, &bytes);
+                }
+            })
+            .ok();
+        self.set_cover_tx(Some(tx));
+    }
+
     pub fn queue_cover_write(&self, db: &crate::db::Db, book_id: &str, bytes: &[u8]) {
         if !self.should_queue.load(Ordering::SeqCst) {
             return;

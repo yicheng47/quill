@@ -679,43 +679,56 @@ fn ingest_peer_covers(shared_dir: &Path, db: &Db) -> usize {
         Err(_) => return 0,
     };
 
-    let conn = match db.conn.lock() {
-        Ok(c) => c,
-        Err(_) => return 0,
+    // Phase 1: collect candidates — quick SQL check per file, no file I/O.
+    let candidates: Vec<(String, std::path::PathBuf)> = {
+        let Ok(conn) = db.read_conn.lock() else { return 0 };
+        entries
+            .flatten()
+            .filter_map(|entry| {
+                let name = entry.file_name();
+                let name_str = name.to_string_lossy();
+                let book_id = name_str.strip_suffix(".img")?.to_string();
+                let has_cover: bool = conn
+                    .query_row(
+                        "SELECT cover_data IS NOT NULL AND LENGTH(cover_data) > 0 FROM books WHERE id = ?1",
+                        rusqlite::params![&book_id],
+                        |r| r.get(0),
+                    )
+                    .unwrap_or(true);
+                if has_cover { None } else { Some((book_id, entry.path())) }
+            })
+            .collect()
     };
 
+    if candidates.is_empty() {
+        return 0;
+    }
+
+    // Phase 2: read files (no DB lock held — safe if iCloud stalls).
+    let loaded: Vec<(String, Vec<u8>)> = candidates
+        .into_iter()
+        .filter_map(|(id, path)| {
+            std::fs::read(&path).ok().filter(|b| !b.is_empty()).map(|b| (id, b))
+        })
+        .collect();
+
+    if loaded.is_empty() {
+        return 0;
+    }
+
+    // Phase 3: brief write lock to store covers.
+    let Ok(conn) = db.conn.lock() else { return 0 };
     let mut ingested = 0usize;
-    for entry in entries.flatten() {
-        let name = entry.file_name();
-        let name_str = name.to_string_lossy();
-        let Some(book_id) = name_str.strip_suffix(".img") else { continue };
-
-        let has_cover: bool = conn
-            .query_row(
-                "SELECT cover_data IS NOT NULL AND LENGTH(cover_data) > 0 FROM books WHERE id = ?1",
-                rusqlite::params![book_id],
-                |r| r.get(0),
+    for (book_id, bytes) in &loaded {
+        if conn
+            .execute(
+                "UPDATE books SET cover_data = ?1 WHERE id = ?2 AND (cover_data IS NULL OR LENGTH(cover_data) = 0)",
+                rusqlite::params![bytes, book_id],
             )
-            .unwrap_or(true);
-
-        if has_cover {
-            continue;
-        }
-
-        match std::fs::read(entry.path()) {
-            Ok(bytes) if !bytes.is_empty() => {
-                if conn
-                    .execute(
-                        "UPDATE books SET cover_data = ?1 WHERE id = ?2 AND (cover_data IS NULL OR LENGTH(cover_data) = 0)",
-                        rusqlite::params![bytes, book_id],
-                    )
-                    .is_ok()
-                {
-                    ingested += 1;
-                    ::log::info!("sync: ingested cover for book {book_id}");
-                }
-            }
-            _ => {}
+            .is_ok_and(|n| n > 0)
+        {
+            ingested += 1;
+            ::log::info!("sync: ingested cover for book {book_id}");
         }
     }
     ingested

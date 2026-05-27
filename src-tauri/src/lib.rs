@@ -282,20 +282,7 @@ fn boot_sync_engine(
         *engine_guard = Some(Arc::clone(&engine));
         *watcher_guard = Some(watcher);
         sync_writer.set_log(Some(log));
-
-        let (cover_tx, cover_rx) = std::sync::mpsc::channel::<(std::path::PathBuf, Vec<u8>)>();
-        std::thread::Builder::new()
-            .name("cover-writer".into())
-            .spawn(move || {
-                for (path, bytes) in cover_rx {
-                    if let Some(parent) = path.parent() {
-                        let _ = std::fs::create_dir_all(parent);
-                    }
-                    let _ = std::fs::write(&path, &bytes);
-                }
-            })
-            .ok();
-        sync_writer.set_cover_tx(Some(cover_tx));
+        sync_writer.spawn_cover_writer();
     }
 
     let bg_engine = Arc::clone(&engine);
