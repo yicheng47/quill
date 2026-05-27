@@ -14,21 +14,20 @@ Save and restore AI chats per book. Multiple chat threads per book, each message
 ### Auto-update & migration
 In-app auto-update via Tauri updater plugin, plus a version-tracked DB migration system to ensure schema changes are safe across updates.
 
-- **Status:** Planned
+- **Status:** Complete
 - **Issue:** [#45](https://github.com/yicheng47/quill/issues/45)
 
 ### Internationalization (i18n)
 Externalize all UI strings, add language switcher (English / 简体中文), adapt AI responses to the user's preferred language.
 
-- **Status:** Planned
+- **Status:** Complete
 - **Issue:** [#44](https://github.com/yicheng47/quill/issues/44)
 
 ### AI Translation
 Passage-level translation and bilingual reading mode for reading foreign-language books. Passage translation via context menu with streaming + caching. Bilingual mode injects translations inline below each paragraph in the reader.
 
-- **Status:** Planned
+- **Status:** Complete
 - **Issue:** [#73](https://github.com/yicheng47/quill/issues/73)
-- **Spec:** [15 — AI Translation](../features/15-ai-translation.md)
 
 ### Notes (AI-Assisted)
 Rich note-taking tied to books — capture thoughts, annotations, and reflections beyond simple highlights. AI serves as a writing assistant (grammar, flow, expansion) and can respond to notes in a conversational thread, creating a dialogue anchored to the user's reflection rather than a standalone Q&A.
@@ -50,5 +49,5 @@ Capture a selected region of the page (screenshot crop) and send it to the AI as
 ### User profile in sidebar + Settings modal
 Move settings access to a bottom-left user avatar section (name + initials). Replaces the current settings gear, prepares the local user identity for Milestone 3 persona engine integration. Settings become a ChatGPT-style modal dialog instead of a full page.
 
-- **Status:** Planned
+- **Status:** Complete
 - **Issue:** [#59](https://github.com/yicheng47/quill/issues/59)

@@ -30,4 +30,4 @@ You can delete any of your data at any time from within the app — highlights, 
 
 ## Contact
 
-If you have questions about this privacy policy, open an issue at [github.com/yicheng47/quill](https://github.com/yicheng47/quill/issues) or email [wycstudios@gmail.com](mailto:wycstudios@gmail.com).
+If you have questions about this privacy policy, open an issue at [github.com/yicheng47/quill](https://github.com/yicheng47/quill/issues) or email [jason3gb@gmail.com](mailto:jason3gb@gmail.com).
