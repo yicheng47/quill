@@ -318,6 +318,7 @@ pub fn sync_enable(
     // of the app sees sync as on.
     sync_writer.set_log(Some(Arc::clone(&log)));
     sync_writer.spawn_cover_writer();
+    sync_writer.backfill_cover_files(&db);
     {
         let mut g = sync_state
             .engine
