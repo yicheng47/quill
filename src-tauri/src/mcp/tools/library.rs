@@ -92,10 +92,14 @@ impl QuillMcpHandler {
         &self,
         Parameters(ListBooksArgs { filter, search }): Parameters<ListBooksArgs>,
     ) -> Result<CallToolResult, ErrorData> {
-        let page =
-            books::query_books(&self.state.db, filter.as_deref(), search.as_deref(), None, None, 1000)
-                .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-        let books: Vec<McpBook> = page.books.into_iter().map(McpBook::from).collect();
+        let raw = books::query_books_lite(
+            &self.state.db,
+            filter.as_deref(),
+            search.as_deref(),
+            1000,
+        )
+        .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+        let books: Vec<McpBook> = raw.into_iter().map(McpBook::from).collect();
         Ok(CallToolResult::success(vec![Content::json(&books)?]))
     }
 

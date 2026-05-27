@@ -535,6 +535,80 @@ pub(crate) fn query_book(db: &Db, id: &str) -> AppResult<Book> {
     Ok(book)
 }
 
+/// Lightweight book query for MCP — computes `has_cover` from the BLOB
+/// without actually loading/encoding cover bytes. Prevents hundreds of
+/// MB of wasted DB reads + base64 allocations when MCP lists 1000 books.
+pub(crate) fn query_books_lite(
+    db: &Db,
+    filter: Option<&str>,
+    search: Option<&str>,
+    limit: usize,
+) -> AppResult<Vec<Book>> {
+    let conn = db.reader();
+    let mut conditions: Vec<String> = Vec::new();
+    let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+
+    if let Some(f) = filter {
+        match f {
+            "reading" | "finished" | "unread" => {
+                conditions.push("status = ?".to_string());
+                param_values.push(Box::new(f.to_string()));
+            }
+            "all" => {}
+            genre => {
+                conditions.push("genre = ?".to_string());
+                param_values.push(Box::new(genre.to_string()));
+            }
+        }
+    }
+    if let Some(q) = search {
+        if !q.is_empty() {
+            conditions.push("(LOWER(title) LIKE ? OR LOWER(author) LIKE ?)".to_string());
+            let pattern = format!("%{}%", q.to_lowercase());
+            param_values.push(Box::new(pattern.clone()));
+            param_values.push(Box::new(pattern));
+        }
+    }
+
+    let where_clause = if conditions.is_empty() {
+        String::new()
+    } else {
+        format!(" WHERE {}", conditions.join(" AND "))
+    };
+
+    let sql = format!(
+        "SELECT id, title, author, description, cover_path, file_path, format, genre, pages, status, progress, current_cfi, created_at, updated_at, (cover_data IS NOT NULL AND LENGTH(cover_data) > 0) AS has_cover FROM books{where_clause} ORDER BY updated_at DESC LIMIT ?",
+    );
+    param_values.push(Box::new(limit as i64));
+    let params_refs: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|p| p.as_ref()).collect();
+
+    let mut stmt = conn.prepare(&sql)?;
+    let books = stmt
+        .query_map(params_refs.as_slice(), |row| {
+            let has_cover: bool = row.get(14)?;
+            Ok(Book {
+                id: row.get(0)?,
+                title: row.get(1)?,
+                author: row.get(2)?,
+                description: row.get(3)?,
+                cover_path: row.get(4)?,
+                file_path: row.get(5)?,
+                format: row.get(6)?,
+                genre: row.get(7)?,
+                pages: row.get(8)?,
+                status: row.get(9)?,
+                progress: row.get(10)?,
+                current_cfi: row.get(11)?,
+                created_at: row.get(12)?,
+                updated_at: row.get(13)?,
+                available: true,
+                cover_data: if has_cover { Some("has_cover".to_string()) } else { None },
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(books)
+}
+
 const DEFAULT_PAGE_SIZE: usize = 20;
 
 #[tauri::command]
@@ -613,17 +687,13 @@ pub fn save_book_cover(
     book_id: String,
     cover_data: Vec<u8>,
     db: State<'_, Db>,
-    sync: State<'_, SyncWriter>,
 ) -> AppResult<()> {
-    let now = chrono::Utc::now().timestamp_millis();
-    let device = sync.self_device().to_string();
-    sync.with_tx(&db, now, |tx, _events| {
-        tx.execute(
-            "UPDATE books SET cover_data = ?1, updated_at = ?2, updated_by_device = ?3 WHERE id = ?4",
-            params![cover_data, now, device, book_id],
-        )?;
-        Ok(())
-    })
+    let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
+    conn.execute(
+        "UPDATE books SET cover_data = ?1 WHERE id = ?2",
+        params![cover_data, book_id],
+    )?;
+    Ok(())
 }
 
 #[tauri::command]
