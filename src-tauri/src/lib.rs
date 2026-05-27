@@ -560,6 +560,7 @@ pub fn run() {
             commands::books::update_book_metadata,
             commands::books::save_book_cover,
             commands::books::mark_cover_unavailable,
+            commands::books::list_books_needing_covers,
             // Settings
             commands::settings::get_all_settings,
             commands::settings::get_setting,

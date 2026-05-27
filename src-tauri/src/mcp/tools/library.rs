@@ -38,19 +38,17 @@ pub struct GetBookArgs {
     pub book_id: String,
 }
 
-/// MCP-facing projection of `books::Book`. Drops the `available`
-/// field because the stdio subprocess doesn't know the iCloud
-/// `data_dir` (only the Tauri app does), so it can't honestly compute
-/// availability; and iCloud-evicted state is a frontend rendering
-/// concern (greyed-out tile in the library view) — MCP clients have
-/// no use for it. Returning a hardcoded `true` would mislead callers.
+/// MCP-facing projection of `books::Book`. Drops `available` (the
+/// stdio subprocess can't compute iCloud eviction state) and
+/// `cover_data` (multi-hundred-KB base64 BLOBs are too large for
+/// MCP JSON responses — MCP clients that need covers should fetch
+/// them via a dedicated tool in the future).
 #[derive(Debug, Serialize)]
 struct McpBook {
     id: String,
     title: String,
     author: String,
     description: Option<String>,
-    cover_path: Option<String>,
     file_path: String,
     format: String,
     genre: Option<String>,
@@ -60,16 +58,17 @@ struct McpBook {
     current_cfi: Option<String>,
     created_at: i64,
     updated_at: i64,
+    has_cover: bool,
 }
 
 impl From<books::Book> for McpBook {
     fn from(b: books::Book) -> Self {
+        let has_cover = b.cover_data.as_ref().is_some_and(|d| !d.is_empty());
         Self {
             id: b.id,
             title: b.title,
             author: b.author,
             description: b.description,
-            cover_path: b.cover_path.filter(|c| c != "none"),
             file_path: b.file_path,
             format: b.format,
             genre: b.genre,
@@ -79,6 +78,7 @@ impl From<books::Book> for McpBook {
             current_cfi: b.current_cfi,
             created_at: b.created_at,
             updated_at: b.updated_at,
+            has_cover,
         }
     }
 }
@@ -86,7 +86,7 @@ impl From<books::Book> for McpBook {
 #[tool_router(router = library_router, vis = "pub(crate)")]
 impl QuillMcpHandler {
     #[tool(
-        description = "List books in the local library. Optionally filter by status or genre and search title/author. Returns relative file/cover paths (under the app data directory)."
+        description = "List books in the local library. Optionally filter by status or genre and search title/author. Returns relative file paths (under the app data directory). Covers are stored as BLOBs in the DB — use `has_cover` to check availability."
     )]
     pub async fn list_books(
         &self,

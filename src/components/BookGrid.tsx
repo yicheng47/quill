@@ -62,7 +62,7 @@ export default function BookGrid({ books, hasMore, loadMore, loadingMore, active
           >
             <div className="relative bg-border rounded-lg overflow-hidden shadow-card aspect-[3/4]">
               {book.cover_data ? (
-                <CoverImage src={`data:image/png;base64,${book.cover_data}`} alt={book.title} title={book.title} />
+                <CoverImage src={book.cover_data} alt={book.title} title={book.title} />
               ) : (
                 <div className="w-full h-full flex items-center justify-center bg-bg-muted">
                   <span className="text-[14px] text-text-muted text-center px-4">

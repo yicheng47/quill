@@ -60,7 +60,7 @@ export default function BookList({ books, hasMore, loadMore, loadingMore, active
             {/* Cover */}
             <div className="relative w-[96px] h-[144px] shrink-0 rounded-lg overflow-hidden bg-border shadow-card">
               {book.cover_data ? (
-                <CoverImage src={`data:image/png;base64,${book.cover_data}`} alt={book.title} title={book.title} />
+                <CoverImage src={book.cover_data} alt={book.title} title={book.title} />
               ) : (
                 <div className="w-full h-full flex items-center justify-center bg-bg-muted">
                   <span className="text-[10px] text-text-muted text-center px-1">

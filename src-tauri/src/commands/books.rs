@@ -13,6 +13,22 @@ use crate::icloud;
 use crate::sync::events::{BookImportPayload, EventBody};
 use crate::sync::writer::SyncWriter;
 
+fn cover_blob_to_data_uri(bytes: &[u8]) -> String {
+    let mime = if bytes.starts_with(b"\x89PNG") {
+        "image/png"
+    } else if bytes.starts_with(b"\xFF\xD8\xFF") {
+        "image/jpeg"
+    } else if bytes.starts_with(b"GIF8") {
+        "image/gif"
+    } else if bytes.len() > 12 && bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WEBP" {
+        "image/webp"
+    } else {
+        "image/png"
+    };
+    let b64 = base64::engine::general_purpose::STANDARD.encode(bytes);
+    format!("data:{mime};base64,{b64}")
+}
+
 fn pdf_obj_to_string(obj: &lopdf::Object) -> Option<String> {
     let bytes = obj.as_str().ok().or_else(|| obj.as_name().ok())?;
     let s = String::from_utf8_lossy(bytes).to_string();
@@ -181,7 +197,7 @@ pub(crate) fn do_import_epub(
     let now = chrono::Utc::now().timestamp_millis();
     let rel_file_path = format!("books/{}", filename);
     let cover_data_b64 = metadata.cover_data.as_deref().map(|b| {
-        base64::engine::general_purpose::STANDARD.encode(b)
+        cover_blob_to_data_uri(b)
     });
 
     let book = Book {
@@ -471,7 +487,7 @@ pub(crate) fn query_books(
             created_at: row.get(12)?,
             updated_at: row.get(13)?,
             available: true,
-            cover_data: cover_blob.map(|b| base64::engine::general_purpose::STANDARD.encode(&b)),
+            cover_data: cover_blob.filter(|b| !b.is_empty()).map(|b| cover_blob_to_data_uri(&b)),
         })
     })?
     .collect::<Result<Vec<_>, _>>()?;
@@ -512,7 +528,7 @@ pub(crate) fn query_book(db: &Db, id: &str) -> AppResult<Book> {
                 created_at: row.get(12)?,
                 updated_at: row.get(13)?,
                 available: true,
-                cover_data: cover_blob.map(|b| base64::engine::general_purpose::STANDARD.encode(&b)),
+                cover_data: cover_blob.filter(|b| !b.is_empty()).map(|b| cover_blob_to_data_uri(&b)),
             })
         },
     )?;
@@ -617,19 +633,48 @@ pub fn mark_cover_unavailable(
 ) -> AppResult<()> {
     let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
     conn.execute(
-        "UPDATE books SET cover_path = 'none' WHERE id = ?1 AND cover_path IS NULL",
+        "UPDATE books SET cover_data = X'' WHERE id = ?1 AND cover_data IS NULL",
         params![book_id],
     )?;
     Ok(())
 }
 
+#[derive(Debug, Serialize)]
+pub struct CoverBackfillEntry {
+    pub id: String,
+    pub file_path: String,
+}
+
+#[tauri::command]
+pub fn list_books_needing_covers(db: State<'_, Db>) -> AppResult<Vec<CoverBackfillEntry>> {
+    let conn = db.reader();
+    let mut stmt = conn.prepare(
+        "SELECT id, file_path FROM books WHERE format = 'pdf' AND cover_data IS NULL",
+    )?;
+    let entries: Vec<CoverBackfillEntry> = stmt
+        .query_map([], |row| {
+            Ok(CoverBackfillEntry {
+                id: row.get(0)?,
+                file_path: row.get(1)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(entries
+        .into_iter()
+        .map(|mut e| {
+            e.file_path = db.resolve_path(&e.file_path).to_string_lossy().to_string();
+            e
+        })
+        .collect())
+}
+
 pub(crate) fn do_delete_book(id: &str, db: &Db, sync: &SyncWriter) -> AppResult<()> {
-    let (file_path, cover_path): (String, Option<String>) = {
+    let file_path: String = {
         let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
         conn.query_row(
-            "SELECT file_path, cover_path FROM books WHERE id = ?1",
+            "SELECT file_path FROM books WHERE id = ?1",
             params![id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| row.get(0),
         )?
     };
 
@@ -655,12 +700,6 @@ pub(crate) fn do_delete_book(id: &str, db: &Db, sync: &SyncWriter) -> AppResult<
 
     let abs_file = db.resolve_path(&file_path);
     let _ = fs::remove_file(&abs_file);
-    if let Some(cover) = cover_path {
-        if cover != "none" {
-            let abs_cover = db.resolve_path(&cover);
-            let _ = fs::remove_file(&abs_cover);
-        }
-    }
 
     Ok(())
 }
@@ -925,7 +964,7 @@ pub async fn commit_pdf_import(
     let now = chrono::Utc::now().timestamp_millis();
     let rel_file_path = format!("books/{}", filename);
     let cover_data_b64 = cover_data.as_ref().map(|d| {
-        base64::engine::general_purpose::STANDARD.encode(d)
+        cover_blob_to_data_uri(d)
     });
 
     let book = Book {
