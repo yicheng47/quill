@@ -26,7 +26,6 @@ use std::fs;
 use std::io::Write;
 use std::path::Path;
 
-use base64::Engine;
 use rusqlite::{params, Connection, Transaction};
 use serde::{Deserialize, Serialize};
 use ulid::Ulid;
@@ -711,14 +710,11 @@ pub fn compact_own_log(
 // ---------------------------------------------------------------------------
 
 fn upsert_book(tx: &Transaction, id: &str, r: &BookRow) -> AppResult<()> {
-    let cover_bytes: Option<Vec<u8>> = r.cover_data.as_ref().and_then(|b64| {
-        base64::engine::general_purpose::STANDARD.decode(b64).ok()
-    });
     tx.execute(
         "INSERT INTO books
          (id, title, author, description, cover_path, file_path, genre, pages,
-          format, status, progress, current_cfi, created_at, updated_at, updated_by_device, cover_data)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+          format, status, progress, current_cfi, created_at, updated_at, updated_by_device)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
          ON CONFLICT(id) DO UPDATE SET
            title=excluded.title,
            author=excluded.author,
@@ -731,7 +727,6 @@ fn upsert_book(tx: &Transaction, id: &str, r: &BookRow) -> AppResult<()> {
            status=excluded.status,
            progress=excluded.progress,
            current_cfi=excluded.current_cfi,
-           cover_data=COALESCE(excluded.cover_data, books.cover_data),
            updated_at=excluded.updated_at,
            updated_by_device=excluded.updated_by_device
          WHERE (books.updated_at, books.updated_by_device)
@@ -739,16 +734,9 @@ fn upsert_book(tx: &Transaction, id: &str, r: &BookRow) -> AppResult<()> {
         params![
             id, r.title, r.author, r.description, r.cover_path, r.file_path,
             r.genre, r.pages, r.format, r.status, r.progress, r.current_cfi,
-            r.created_at, r.updated_at, r.updated_by_device, cover_bytes,
+            r.created_at, r.updated_at, r.updated_by_device,
         ],
     )?;
-    // Fill cover_data from snapshot even when LWW doesn't update (same timestamp)
-    if let Some(ref bytes) = cover_bytes {
-        tx.execute(
-            "UPDATE books SET cover_data = ?1 WHERE id = ?2 AND cover_data IS NULL",
-            params![bytes, id],
-        )?;
-    }
     Ok(())
 }
 
@@ -913,15 +901,14 @@ fn upsert_replay_state(
 fn dump_state(conn: &Connection) -> AppResult<SnapshotState> {
     let mut state = SnapshotState::default();
 
-    // books
+    // books — cover_data excluded from snapshots; covers sync via .img files
     let mut stmt = conn.prepare(
         "SELECT id, title, author, description, cover_path, file_path, genre, pages,
                 format, status, progress, current_cfi,
-                created_at, updated_at, updated_by_device, cover_data
+                created_at, updated_at, updated_by_device
          FROM books",
     )?;
     let rows = stmt.query_map([], |r| {
-        let cover_blob: Option<Vec<u8>> = r.get(15)?;
         Ok((
             r.get::<_, String>(0)?,
             BookRow {
@@ -939,9 +926,7 @@ fn dump_state(conn: &Connection) -> AppResult<SnapshotState> {
                 created_at: r.get(12)?,
                 updated_at: r.get(13)?,
                 updated_by_device: r.get(14)?,
-                cover_data: cover_blob.map(|b| {
-                    base64::engine::general_purpose::STANDARD.encode(&b)
-                }),
+                cover_data: None,
             },
         ))
     })?;

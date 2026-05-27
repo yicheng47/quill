@@ -249,6 +249,7 @@ fn boot_sync_engine(
     sync_writer: &SyncWriter,
     sync_state: &SyncState,
     app_handle: &tauri::AppHandle,
+    needs_cover_backfill: bool,
 ) -> error::AppResult<()> {
     let log_path = shared_dir.join("logs").join(format!("{device_uuid}.jsonl"));
     let log = Arc::new(EventLog::open(&log_path, device_uuid, true)?);
@@ -295,6 +296,10 @@ fn boot_sync_engine(
             let result = bg_engine.tick_with_progress(&bg_db, Some(&bg_handle));
             if let Err(e) = result {
                 log::warn!("sync: initial replay tick failed: {e}");
+            }
+            if needs_cover_backfill {
+                let bg_writer: tauri::State<SyncWriter> = bg_handle.state();
+                bg_writer.backfill_cover_files(&bg_db);
             }
             let _ = bg_handle.emit("sync-initial-tick-done", ());
         })
@@ -526,6 +531,7 @@ pub fn run() {
                 .flatten();
             if let Some(ub) = should_boot {
                 let bg_handle = app.handle().clone();
+                let bg_needs_backfill = needs_cover_backfill;
                 std::thread::Builder::new()
                     .name("sync-boot".into())
                     .spawn(move || {
@@ -534,7 +540,7 @@ pub fn run() {
                         let bg_device: tauri::State<DeviceIdentity> = bg_handle.state();
                         let bg_sync: tauri::State<SyncState> = bg_handle.state();
                         match boot_sync_engine(
-                            ub, &bg_device.device_uuid, &bg_db, &bg_writer, &bg_sync, &bg_handle,
+                            ub, &bg_device.device_uuid, &bg_db, &bg_writer, &bg_sync, &bg_handle, bg_needs_backfill,
                         ) {
                             Ok(()) => {
                                 log::info!("sync: engine booted (replay + watcher active)");

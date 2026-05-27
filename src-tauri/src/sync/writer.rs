@@ -190,6 +190,35 @@ impl SyncWriter {
         }
     }
 
+    /// One-time backfill: ensure every book with `cover_data` in the DB
+    /// has a corresponding `.img` file in the covers directory. Queues
+    /// missing files to the cover-writer thread. Only needed when
+    /// upgrading from schema <13 (before covers-in-db existed).
+    pub fn backfill_cover_files(&self, db: &crate::db::Db) {
+        let Ok(data_dir) = db.data_dir.lock() else { return };
+        let covers_dir = data_dir.join("covers");
+
+        let Ok(conn) = db.read_conn.lock() else { return };
+        let Ok(mut stmt) = conn.prepare(
+            "SELECT id, cover_data FROM books WHERE cover_data IS NOT NULL AND LENGTH(cover_data) > 0",
+        ) else { return };
+        let rows: Vec<(String, Vec<u8>)> = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .into_iter()
+            .flatten()
+            .flatten()
+            .collect();
+        drop(stmt);
+        drop(conn);
+
+        let Ok(guard) = self.cover_tx.lock() else { return };
+        let Some(tx) = guard.as_ref() else { return };
+
+        for (id, bytes) in rows {
+            let _ = tx.send((covers_dir.join(format!("{id}.img")), bytes));
+        }
+    }
+
     /// Test/probe accessor — `true` when an `EventLog` is wired up
     /// (i.e. the post-commit flush will run, not just the queue write).
     pub fn is_sync_enabled(&self) -> bool {
