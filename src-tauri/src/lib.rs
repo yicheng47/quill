@@ -297,6 +297,12 @@ fn boot_sync_engine(
             if let Err(e) = result {
                 log::warn!("sync: initial replay tick failed: {e}");
             }
+            // Chained: DB backfill first (cover files → BLOBs), then
+            // file backfill (BLOBs → .img). Sequential so .img writes
+            // always see the full set of cover_data.
+            if needs_cover_backfill {
+                bg_db.backfill_cover_data();
+            }
             let bg_writer: tauri::State<SyncWriter> = bg_handle.state();
             bg_writer.backfill_cover_files(&bg_db);
             let _ = bg_handle.emit("sync-initial-tick-done", ());
@@ -459,7 +465,11 @@ pub fn run() {
             let (db, needs_cover_backfill) = Db::init_split(&local_dir, &data_dir)
                 .expect("failed to initialize database");
 
-            if needs_cover_backfill {
+            // DB cover backfill for non-sync users. When sync boots, the
+            // initial-tick thread handles both DB and .img backfill sequentially.
+            let sync_will_boot = sync::migration::is_sync_enabled(&local_dir)
+                && ubiquity_dir.as_ref().is_some_and(|p| p.exists());
+            if needs_cover_backfill && !sync_will_boot {
                 let backfill_db = db.clone();
                 std::thread::Builder::new()
                     .name("cover-backfill".into())
