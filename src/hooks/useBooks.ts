@@ -18,6 +18,7 @@ export interface Book {
   created_at: number;
   updated_at: number;
   available: boolean;
+  cover_data: string | null;
 }
 
 interface BookPage {
@@ -44,10 +45,7 @@ export function useBooks(filter?: string, search?: string, collectionId?: string
         cursor: null,
         limit: null,
       });
-      setBooks(page.books.map((b) => ({
-        ...b,
-        cover_path: b.cover_path === "none" ? null : b.cover_path,
-      })));
+      setBooks(page.books);
       setTotal(page.total);
       setCursor(page.next_cursor);
       setHasMore(page.next_cursor !== null);
@@ -69,13 +67,7 @@ export function useBooks(filter?: string, search?: string, collectionId?: string
         cursor,
         limit: null,
       });
-      setBooks((prev) => [
-        ...prev,
-        ...page.books.map((b) => ({
-          ...b,
-          cover_path: b.cover_path === "none" ? null : b.cover_path,
-        })),
-      ]);
+      setBooks((prev) => [...prev, ...page.books]);
       setCursor(page.next_cursor);
       setHasMore(page.next_cursor !== null);
     } catch (err) {
@@ -137,7 +129,7 @@ const BACKFILL_DELAY_MS = 1000;
 let backfillRunning = false;
 
 function needsCover(b: Book): boolean {
-  return b.format === "pdf" && !b.cover_path;
+  return b.format === "pdf" && !b.cover_data && b.cover_path !== "none";
 }
 
 export async function backfillMissingCovers(): Promise<void> {
@@ -182,9 +174,7 @@ export async function backfillMissingCovers(): Promise<void> {
 }
 
 export async function getBook(id: string): Promise<Book> {
-  const b = await invoke<Book>("get_book", { id });
-  if (b.cover_path === "none") b.cover_path = null;
-  return b;
+  return invoke<Book>("get_book", { id });
 }
 
 export async function deleteBook(id: string): Promise<void> {

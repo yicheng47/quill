@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::Path;
 
+use base64::Engine;
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -123,6 +124,9 @@ pub struct Book {
     /// Whether the book file is locally available (not an iCloud placeholder).
     #[serde(default = "default_true")]
     pub available: bool,
+    /// Base64-encoded cover image bytes. Rendered as data URI on the frontend.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cover_data: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -161,12 +165,11 @@ pub(crate) fn do_import_epub(
         .map_err(|e| AppError::Other(e.to_string()))?
         .clone();
     let books_dir = data_dir.join("books");
-    let covers_dir = data_dir.join("covers");
 
     let book_id = uuid::Uuid::new_v4().to_string();
     let src = std::path::Path::new(file_path);
 
-    let metadata = epub::extract_metadata(src, &covers_dir, &book_id)
+    let metadata = epub::extract_metadata(src)
         .inspect_err(|e| log::error!("import_book: extract_metadata failed for {file_path}: {e}"))?;
     let pages = epub::count_chapters(src)
         .inspect_err(|e| log::error!("import_book: count_chapters failed for {file_path}: {e}"))? as i32;
@@ -177,13 +180,16 @@ pub(crate) fn do_import_epub(
 
     let now = chrono::Utc::now().timestamp_millis();
     let rel_file_path = format!("books/{}", filename);
+    let cover_data_b64 = metadata.cover_data.as_deref().map(|b| {
+        base64::engine::general_purpose::STANDARD.encode(b)
+    });
 
     let book = Book {
         id: book_id,
         title: metadata.title,
         author: metadata.author,
         description: metadata.description,
-        cover_path: metadata.cover_path,
+        cover_path: None,
         file_path: rel_file_path,
         format: "epub".to_string(),
         genre: None,
@@ -194,9 +200,10 @@ pub(crate) fn do_import_epub(
         created_at: now,
         updated_at: now,
         available: true,
+        cover_data: cover_data_b64,
     };
 
-    do_insert_book(&book, db, sync, now)?;
+    do_insert_book(&book, metadata.cover_data.as_deref(), db, sync, now)?;
 
     log::info!("import_book: complete id={} title={:?}", book.id, book.title);
     Ok(book)
@@ -243,20 +250,21 @@ pub(crate) fn do_import_pdf(
         created_at: now,
         updated_at: now,
         available: true,
+        cover_data: None,
     };
 
-    do_insert_book(&book, db, sync, now)?;
+    do_insert_book(&book, None, db, sync, now)?;
 
     log::info!("import_book: complete id={} title={:?} format=pdf", book.id, book.title);
     Ok(book)
 }
 
-fn do_insert_book(book: &Book, db: &Db, sync: &SyncWriter, now: i64) -> AppResult<()> {
+fn do_insert_book(book: &Book, cover_bytes: Option<&[u8]>, db: &Db, sync: &SyncWriter, now: i64) -> AppResult<()> {
     let device = sync.self_device().to_string();
     sync.with_tx(db, now, |tx, events| {
         tx.execute(
-            "INSERT INTO books (id, title, author, description, cover_path, file_path, format, genre, pages, status, progress, current_cfi, created_at, updated_at, updated_by_device)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+            "INSERT INTO books (id, title, author, description, cover_path, file_path, format, genre, pages, status, progress, current_cfi, created_at, updated_at, updated_by_device, cover_data)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
             params![
                 book.id,
                 book.title,
@@ -273,6 +281,7 @@ fn do_insert_book(book: &Book, db: &Db, sync: &SyncWriter, now: i64) -> AppResul
                 book.created_at,
                 book.updated_at,
                 device,
+                cover_bytes,
             ],
         )?;
         events.push(EventBody::BookImport(BookImportPayload {
@@ -437,7 +446,7 @@ pub(crate) fn query_books(
 
     // Main query with cursor + limit.
     let sql = format!(
-        "SELECT books.id, books.title, books.author, books.description, books.cover_path, books.file_path, books.format, books.genre, books.pages, books.status, books.progress, books.current_cfi, books.created_at, books.updated_at FROM {from_clause}{where_clause} ORDER BY books.updated_at DESC, books.id ASC LIMIT ?",
+        "SELECT books.id, books.title, books.author, books.description, books.cover_path, books.file_path, books.format, books.genre, books.pages, books.status, books.progress, books.current_cfi, books.created_at, books.updated_at, books.cover_data FROM {from_clause}{where_clause} ORDER BY books.updated_at DESC, books.id ASC LIMIT ?",
     );
     param_values.push(Box::new((limit + 1) as i64));
 
@@ -445,6 +454,7 @@ pub(crate) fn query_books(
 
     let mut stmt = conn.prepare(&sql)?;
     let mut books: Vec<Book> = stmt.query_map(params_refs.as_slice(), |row| {
+        let cover_blob: Option<Vec<u8>> = row.get(14)?;
         Ok(Book {
             id: row.get(0)?,
             title: row.get(1)?,
@@ -461,6 +471,7 @@ pub(crate) fn query_books(
             created_at: row.get(12)?,
             updated_at: row.get(13)?,
             available: true,
+            cover_data: cover_blob.map(|b| base64::engine::general_purpose::STANDARD.encode(&b)),
         })
     })?
     .collect::<Result<Vec<_>, _>>()?;
@@ -481,9 +492,10 @@ pub(crate) fn query_books(
 pub(crate) fn query_book(db: &Db, id: &str) -> AppResult<Book> {
     let conn = db.reader();
     let book = conn.query_row(
-        "SELECT id, title, author, description, cover_path, file_path, format, genre, pages, status, progress, current_cfi, created_at, updated_at FROM books WHERE id = ?1",
+        "SELECT id, title, author, description, cover_path, file_path, format, genre, pages, status, progress, current_cfi, created_at, updated_at, cover_data FROM books WHERE id = ?1",
         params![id],
         |row| {
+            let cover_blob: Option<Vec<u8>> = row.get(14)?;
             Ok(Book {
                 id: row.get(0)?,
                 title: row.get(1)?,
@@ -500,6 +512,7 @@ pub(crate) fn query_book(db: &Db, id: &str) -> AppResult<Book> {
                 created_at: row.get(12)?,
                 updated_at: row.get(13)?,
                 available: true,
+                cover_data: cover_blob.map(|b| base64::engine::general_purpose::STANDARD.encode(&b)),
             })
         },
     )?;
@@ -563,10 +576,10 @@ pub fn get_book(id: String, db: State<'_, Db>) -> AppResult<Book> {
 #[tauri::command]
 pub fn check_book_available(id: String, db: State<'_, Db>) -> AppResult<bool> {
     let conn = db.reader();
-    let (file_path, cover_path): (String, Option<String>) = conn.query_row(
-        "SELECT file_path, cover_path FROM books WHERE id = ?1",
+    let file_path: String = conn.query_row(
+        "SELECT file_path FROM books WHERE id = ?1",
         params![id],
-        |row| Ok((row.get(0)?, row.get(1)?)),
+        |row| row.get(0),
     )?;
 
     let abs_path = db.resolve_path(&file_path);
@@ -574,12 +587,6 @@ pub fn check_book_available(id: String, db: State<'_, Db>) -> AppResult<bool> {
 
     if !available {
         icloud::trigger_download_file(&abs_path);
-    }
-    if let Some(cover) = cover_path {
-        let cover_abs = db.resolve_path(&cover);
-        if !icloud::is_file_downloaded(&cover_abs) {
-            icloud::trigger_download_file(&cover_abs);
-        }
     }
 
     Ok(available)
@@ -592,30 +599,13 @@ pub fn save_book_cover(
     db: State<'_, Db>,
     sync: State<'_, SyncWriter>,
 ) -> AppResult<()> {
-    let data_dir = db
-        .data_dir
-        .lock()
-        .map_err(|e| AppError::Other(e.to_string()))?
-        .clone();
-    let covers_dir = data_dir.join("covers");
-    fs::create_dir_all(&covers_dir)?;
-
-    let cover_file = covers_dir.join(format!("{book_id}.png"));
-    fs::write(&cover_file, &cover_data)?;
-
-    let rel_cover = format!("covers/{book_id}.png");
     let now = chrono::Utc::now().timestamp_millis();
     let device = sync.self_device().to_string();
-    sync.with_tx(&db, now, |tx, events| {
+    sync.with_tx(&db, now, |tx, _events| {
         tx.execute(
-            "UPDATE books SET cover_path = ?1, updated_at = ?2, updated_by_device = ?3 WHERE id = ?4",
-            params![rel_cover, now, device, book_id],
+            "UPDATE books SET cover_data = ?1, updated_at = ?2, updated_by_device = ?3 WHERE id = ?4",
+            params![cover_data, now, device, book_id],
         )?;
-        events.push(EventBody::BookMetadataSet {
-            book: book_id.clone(),
-            field: "cover_path".into(),
-            value: serde_json::Value::String(rel_cover.clone()),
-        });
         Ok(())
     })
 }
@@ -916,7 +906,6 @@ pub async fn commit_pdf_import(
         .map_err(|e| AppError::Other(e.to_string()))?
         .clone();
     let books_dir = data_dir.join("books");
-    let covers_dir = data_dir.join("covers");
 
     let staged = books_dir.join(format!("{}.pdf", book_id));
     if !staged.exists() {
@@ -933,25 +922,18 @@ pub async fn commit_pdf_import(
         fs::rename(&staged, &dest)?;
     }
 
-    // Save cover image if provided
-    let cover_path = if let Some(ref data) = cover_data {
-        fs::create_dir_all(&covers_dir)?;
-        let cover_file = covers_dir.join(format!("{}.png", book_id));
-        fs::write(&cover_file, data)?;
-        Some(format!("covers/{}.png", book_id))
-    } else {
-        None
-    };
-
     let now = chrono::Utc::now().timestamp_millis();
     let rel_file_path = format!("books/{}", filename);
+    let cover_data_b64 = cover_data.as_ref().map(|d| {
+        base64::engine::general_purpose::STANDARD.encode(d)
+    });
 
     let book = Book {
         id: book_id,
         title,
         author: author.unwrap_or_else(|| "Unknown Author".to_string()),
         description,
-        cover_path,
+        cover_path: None,
         file_path: rel_file_path,
         format: "pdf".to_string(),
         genre: None,
@@ -962,13 +944,14 @@ pub async fn commit_pdf_import(
         created_at: now,
         updated_at: now,
         available: true,
+        cover_data: cover_data_b64,
     };
 
     let device = sync.self_device().to_string();
     sync.with_tx(&db, now, |tx, events| {
         tx.execute(
-            "INSERT INTO books (id, title, author, description, cover_path, file_path, format, genre, pages, status, progress, current_cfi, created_at, updated_at, updated_by_device)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+            "INSERT INTO books (id, title, author, description, cover_path, file_path, format, genre, pages, status, progress, current_cfi, created_at, updated_at, updated_by_device, cover_data)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
             params![
                 book.id,
                 book.title,
@@ -985,6 +968,7 @@ pub async fn commit_pdf_import(
                 book.created_at,
                 book.updated_at,
                 device,
+                cover_data,
             ],
         )?;
         events.push(EventBody::BookImport(BookImportPayload {
@@ -1031,9 +1015,6 @@ pub async fn cancel_pdf_import(book_id: String, db: State<'_, Db>) -> AppResult<
             }
         }
     }
-    // Remove cover if it was written before the failure.
-    let cover = data_dir.join("covers").join(format!("{}.png", book_id));
-    let _ = fs::remove_file(&cover);
     Ok(())
 }
 
@@ -1208,6 +1189,7 @@ mod tests {
                 created_at: row.get(12)?,
                 updated_at: row.get(13)?,
                 available: true,
+                cover_data: None,
             })
         }).unwrap().collect::<Result<Vec<_>, _>>().unwrap();
 
@@ -1278,7 +1260,7 @@ mod tests {
                 description: row.get(3)?, cover_path: row.get(4)?, file_path: row.get(5)?,
                 format: row.get(6)?, genre: row.get(7)?, pages: row.get(8)?,
                 status: row.get(9)?, progress: row.get(10)?, current_cfi: row.get(11)?,
-                created_at: row.get(12)?, updated_at: row.get(13)?, available: true,
+                created_at: row.get(12)?, updated_at: row.get(13)?, available: true, cover_data: None,
             }),
         ).unwrap();
 
@@ -1380,7 +1362,7 @@ mod tests {
                 description: row.get(3)?, cover_path: row.get(4)?, file_path: row.get(5)?,
                 format: row.get(6)?, genre: row.get(7)?, pages: row.get(8)?,
                 status: row.get(9)?, progress: row.get(10)?, current_cfi: row.get(11)?,
-                created_at: row.get(12)?, updated_at: row.get(13)?, available: true,
+                created_at: row.get(12)?, updated_at: row.get(13)?, available: true, cover_data: None,
             }),
         ).unwrap();
 

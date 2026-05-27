@@ -18,6 +18,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (10, include_str!("../migrations/010_replay_state.sql")),
     (11, include_str!("../migrations/011_lww_tiebreak_and_outbox.sql")),
     (12, include_str!("../migrations/012_vocab_context_explanation.sql")),
+    (13, include_str!("../migrations/013_covers_in_db.sql")),
 ];
 
 /// SQLite handle for the local materialized view.
@@ -160,6 +161,9 @@ impl Db {
         // One-time migration: convert absolute paths to relative
         Self::migrate_to_relative_paths(&conn, data_dir)?;
 
+        // One-time backfill: read existing cover files into cover_data BLOB
+        Self::backfill_cover_data(&conn, data_dir)?;
+
         // Separate read connection so frontend queries never contend
         // with sync engine writes. WAL mode allows concurrent readers
         // alongside one writer at the SQLite level; the two Rust
@@ -193,7 +197,7 @@ impl Db {
             if version > current {
                 log::info!("db: applying migration {version}");
                 // ALTER TABLE migrations may fail if column already exists
-                if version == 4 || version == 5 {
+                if version == 4 || version == 5 || version == 13 {
                     let _ = conn.execute_batch(sql);
                 } else if let Err(e) = conn.execute_batch(sql) {
                     log::error!("db: migration {version} failed: {e}");
@@ -268,7 +272,7 @@ impl Db {
                 break;
             }
             if version > current {
-                if version == 4 || version == 5 {
+                if version == 4 || version == 5 || version == 13 {
                     let _ = conn.execute_batch(sql);
                 } else {
                     conn.execute_batch(sql)?;
@@ -282,6 +286,48 @@ impl Db {
             }
         }
 
+        Ok(())
+    }
+
+    /// One-time backfill: read existing cover files from disk into the
+    /// `cover_data` BLOB column. Runs after migration 013 adds the column.
+    /// Rows that already have `cover_data` or whose `cover_path` is NULL /
+    /// `'none'` are skipped.
+    fn backfill_cover_data(conn: &Connection, data_dir: &Path) -> AppResult<()> {
+        let mut stmt = conn.prepare(
+            "SELECT id, cover_path FROM books
+             WHERE cover_data IS NULL
+               AND cover_path IS NOT NULL
+               AND cover_path != 'none'",
+        )?;
+        let rows: Vec<(String, String)> = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<Result<Vec<_>, _>>()?;
+        drop(stmt);
+
+        if rows.is_empty() {
+            return Ok(());
+        }
+
+        log::info!("db: backfilling cover_data for {} books", rows.len());
+        for (id, cover_path) in &rows {
+            let abs = if Path::new(cover_path).is_absolute() {
+                PathBuf::from(cover_path)
+            } else {
+                data_dir.join(cover_path)
+            };
+            match fs::read(&abs) {
+                Ok(bytes) => {
+                    conn.execute(
+                        "UPDATE books SET cover_data = ?1 WHERE id = ?2",
+                        params![bytes, id],
+                    )?;
+                }
+                Err(e) => {
+                    log::warn!("db: backfill cover_data failed for {id}: {e}");
+                }
+            }
+        }
         Ok(())
     }
 
@@ -362,7 +408,7 @@ mod tests {
         let conn = db.conn.lock().unwrap();
         let version: i64 =
             conn.query_row("SELECT version FROM schema_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 12);
+        assert_eq!(version, 13);
     }
 
     #[test]
@@ -398,7 +444,7 @@ mod tests {
         Db::run_migrations_on(&conn).unwrap();
         let version: i64 =
             conn.query_row("SELECT version FROM schema_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 12);
+        assert_eq!(version, 13);
     }
 
     #[test]

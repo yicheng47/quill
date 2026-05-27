@@ -287,9 +287,6 @@ fn boot_sync_engine(
     let bg_engine = Arc::clone(&engine);
     let bg_db = db.clone();
     let bg_handle = app_handle.clone();
-    let bg_data_dir = db.data_dir.lock()
-        .map(|d| d.clone())
-        .unwrap_or_default();
     std::thread::Builder::new()
         .name("sync-initial-tick".into())
         .spawn(move || {
@@ -297,38 +294,11 @@ fn boot_sync_engine(
             if let Err(e) = result {
                 log::warn!("sync: initial replay tick failed: {e}");
             }
-            trigger_cover_downloads(&bg_data_dir);
             let _ = bg_handle.emit("sync-initial-tick-done", ());
         })
         .ok();
 
     Ok(())
-}
-
-/// Trigger iCloud downloads for all evicted cover images so the
-/// library grid renders cover art immediately after sync. Covers
-/// are small (few KB each) — downloading eagerly is fine. Book
-/// EPUBs stay lazy (downloaded on access).
-fn trigger_cover_downloads(data_dir: &Path) {
-    let covers_dir = data_dir.join("covers");
-    let entries = match std::fs::read_dir(&covers_dir) {
-        Ok(e) => e,
-        Err(_) => return,
-    };
-    let mut triggered = 0usize;
-    for entry in entries.flatten() {
-        let name = entry.file_name();
-        let name_str = name.to_string_lossy();
-        if name_str.starts_with('.') && name_str.ends_with(".icloud") {
-            let real_name = &name_str[1..name_str.len() - 7];
-            let real_path = covers_dir.join(real_name);
-            icloud::trigger_download_file(&real_path);
-            triggered += 1;
-        }
-    }
-    if triggered > 0 {
-        log::info!("sync: triggered download for {triggered} evicted cover(s)");
-    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
