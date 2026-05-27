@@ -1,5 +1,4 @@
 use epub::doc::EpubDoc;
-use std::fs;
 use std::path::Path;
 
 use crate::error::{AppError, AppResult};
@@ -8,10 +7,10 @@ pub struct EpubMetadata {
     pub title: String,
     pub author: String,
     pub description: Option<String>,
-    pub cover_path: Option<String>,
+    pub cover_data: Option<Vec<u8>>,
 }
 
-pub fn extract_metadata(epub_path: &Path, covers_dir: &Path, book_id: &str) -> AppResult<EpubMetadata> {
+pub fn extract_metadata(epub_path: &Path) -> AppResult<EpubMetadata> {
     let mut doc = EpubDoc::new(epub_path).map_err(|e| AppError::Epub(e.to_string()))?;
 
     let title = doc
@@ -26,32 +25,19 @@ pub fn extract_metadata(epub_path: &Path, covers_dir: &Path, book_id: &str) -> A
 
     let description = doc.mdata("description").map(|m| m.value.clone());
 
-    let cover_path = extract_cover(&mut doc, covers_dir, book_id);
+    let cover_data = extract_cover(&mut doc);
 
     Ok(EpubMetadata {
         title,
         author,
         description,
-        cover_path,
+        cover_data,
     })
 }
 
-fn extract_cover(doc: &mut EpubDoc<std::io::BufReader<std::fs::File>>, covers_dir: &Path, book_id: &str) -> Option<String> {
-    let (data, mime) = resolve_cover_resource(doc)?;
-
-    let ext = match mime.as_str() {
-        "image/png" => "png",
-        "image/gif" => "gif",
-        _ => "jpg",
-    };
-
-    let cover_filename = format!("{}.{}", book_id, ext);
-    let cover_path = covers_dir.join(&cover_filename);
-
-    fs::write(&cover_path, &data).ok()?;
-
-    // Return relative path for DB storage
-    Some(format!("covers/{}", cover_filename))
+fn extract_cover(doc: &mut EpubDoc<std::io::BufReader<std::fs::File>>) -> Option<Vec<u8>> {
+    let (data, _mime) = resolve_cover_resource(doc)?;
+    Some(data)
 }
 
 /// Resolve the cover image bytes + mime, walking through fallback

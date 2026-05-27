@@ -107,6 +107,8 @@ pub struct BookRow {
     pub created_at: i64,
     pub updated_at: i64,
     pub updated_by_device: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cover_data: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -899,7 +901,7 @@ fn upsert_replay_state(
 fn dump_state(conn: &Connection) -> AppResult<SnapshotState> {
     let mut state = SnapshotState::default();
 
-    // books
+    // books — cover_data excluded from snapshots; covers sync via .img files
     let mut stmt = conn.prepare(
         "SELECT id, title, author, description, cover_path, file_path, genre, pages,
                 format, status, progress, current_cfi,
@@ -924,6 +926,7 @@ fn dump_state(conn: &Connection) -> AppResult<SnapshotState> {
                 created_at: r.get(12)?,
                 updated_at: r.get(13)?,
                 updated_by_device: r.get(14)?,
+                cover_data: None,
             },
         ))
     })?;

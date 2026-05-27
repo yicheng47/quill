@@ -188,6 +188,7 @@ pub fn mcp_stdio_main() {
         let sw = SyncWriter::new(device.device_uuid);
         if sync::migration::is_sync_enabled(&local_dir) {
             sw.set_should_queue(true);
+            sw.spawn_cover_writer();
         }
         (db, Some(sw))
     } else {
@@ -248,6 +249,7 @@ fn boot_sync_engine(
     sync_writer: &SyncWriter,
     sync_state: &SyncState,
     app_handle: &tauri::AppHandle,
+    needs_cover_backfill: bool,
 ) -> error::AppResult<()> {
     let log_path = shared_dir.join("logs").join(format!("{device_uuid}.jsonl"));
     let log = Arc::new(EventLog::open(&log_path, device_uuid, true)?);
@@ -282,14 +284,12 @@ fn boot_sync_engine(
         *engine_guard = Some(Arc::clone(&engine));
         *watcher_guard = Some(watcher);
         sync_writer.set_log(Some(log));
+        sync_writer.spawn_cover_writer();
     }
 
     let bg_engine = Arc::clone(&engine);
     let bg_db = db.clone();
     let bg_handle = app_handle.clone();
-    let bg_data_dir = db.data_dir.lock()
-        .map(|d| d.clone())
-        .unwrap_or_default();
     std::thread::Builder::new()
         .name("sync-initial-tick".into())
         .spawn(move || {
@@ -297,38 +297,19 @@ fn boot_sync_engine(
             if let Err(e) = result {
                 log::warn!("sync: initial replay tick failed: {e}");
             }
-            trigger_cover_downloads(&bg_data_dir);
+            // Chained: DB backfill first (cover files → BLOBs), then
+            // file backfill (BLOBs → .img). Sequential so .img writes
+            // always see the full set of cover_data.
+            if needs_cover_backfill {
+                bg_db.backfill_cover_data();
+            }
+            let bg_writer: tauri::State<SyncWriter> = bg_handle.state();
+            bg_writer.backfill_cover_files(&bg_db);
             let _ = bg_handle.emit("sync-initial-tick-done", ());
         })
         .ok();
 
     Ok(())
-}
-
-/// Trigger iCloud downloads for all evicted cover images so the
-/// library grid renders cover art immediately after sync. Covers
-/// are small (few KB each) — downloading eagerly is fine. Book
-/// EPUBs stay lazy (downloaded on access).
-fn trigger_cover_downloads(data_dir: &Path) {
-    let covers_dir = data_dir.join("covers");
-    let entries = match std::fs::read_dir(&covers_dir) {
-        Ok(e) => e,
-        Err(_) => return,
-    };
-    let mut triggered = 0usize;
-    for entry in entries.flatten() {
-        let name = entry.file_name();
-        let name_str = name.to_string_lossy();
-        if name_str.starts_with('.') && name_str.ends_with(".icloud") {
-            let real_name = &name_str[1..name_str.len() - 7];
-            let real_path = covers_dir.join(real_name);
-            icloud::trigger_download_file(&real_path);
-            triggered += 1;
-        }
-    }
-    if triggered > 0 {
-        log::info!("sync: triggered download for {triggered} evicted cover(s)");
-    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -481,8 +462,22 @@ pub fn run() {
             // When sync is on, blobs (books/, covers/) live in iCloud;
             // otherwise they're local.
             let data_dir = ubiquity_dir.clone().unwrap_or_else(|| local_dir.clone());
-            let db = Db::init_split(&local_dir, &data_dir)
+            let (db, needs_cover_backfill) = Db::init_split(&local_dir, &data_dir)
                 .expect("failed to initialize database");
+
+            // DB cover backfill for non-sync users. When sync boots, the
+            // initial-tick thread handles both DB and .img backfill sequentially.
+            let sync_will_boot = sync::migration::is_sync_enabled(&local_dir)
+                && ubiquity_dir.as_ref().is_some_and(|p| p.exists());
+            if needs_cover_backfill && !sync_will_boot {
+                let backfill_db = db.clone();
+                std::thread::Builder::new()
+                    .name("cover-backfill".into())
+                    .spawn(move || {
+                        backfill_db.backfill_cover_data();
+                    })
+                    .ok();
+            }
 
             log::info!(
                 "quill start v{version} os={os} arch={arch} data_dir={data_dir} schema_v={schema}",
@@ -540,6 +535,7 @@ pub fn run() {
                 .flatten();
             if let Some(ub) = should_boot {
                 let bg_handle = app.handle().clone();
+                let bg_needs_backfill = needs_cover_backfill;
                 std::thread::Builder::new()
                     .name("sync-boot".into())
                     .spawn(move || {
@@ -548,7 +544,7 @@ pub fn run() {
                         let bg_device: tauri::State<DeviceIdentity> = bg_handle.state();
                         let bg_sync: tauri::State<SyncState> = bg_handle.state();
                         match boot_sync_engine(
-                            ub, &bg_device.device_uuid, &bg_db, &bg_writer, &bg_sync, &bg_handle,
+                            ub, &bg_device.device_uuid, &bg_db, &bg_writer, &bg_sync, &bg_handle, bg_needs_backfill,
                         ) {
                             Ok(()) => {
                                 log::info!("sync: engine booted (replay + watcher active)");
@@ -590,6 +586,7 @@ pub fn run() {
             commands::books::update_book_metadata,
             commands::books::save_book_cover,
             commands::books::mark_cover_unavailable,
+            commands::books::list_books_needing_covers,
             // Settings
             commands::settings::get_all_settings,
             commands::settings::get_setting,

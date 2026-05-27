@@ -18,6 +18,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (10, include_str!("../migrations/010_replay_state.sql")),
     (11, include_str!("../migrations/011_lww_tiebreak_and_outbox.sql")),
     (12, include_str!("../migrations/012_vocab_context_explanation.sql")),
+    (13, include_str!("../migrations/013_covers_in_db.sql")),
 ];
 
 /// SQLite handle for the local materialized view.
@@ -69,7 +70,8 @@ impl Db {
     /// `app_data_dir`. Used by tests, fresh installs, and any caller
     /// where the materialized view and the binary blobs live together.
     pub fn init(app_data_dir: &Path) -> AppResult<Self> {
-        Self::init_split(app_data_dir, app_data_dir)
+        let (db, _needs_backfill) = Self::init_split(app_data_dir, app_data_dir)?;
+        Ok(db)
     }
 
     /// Open the SQLite file read-only without running migrations. Used
@@ -137,7 +139,9 @@ impl Db {
     /// Resolving `books/<id>.epub` then walks into the iCloud folder
     /// instead of an empty local one. Without this split, the reader
     /// silently breaks for every existing iCloud user post-migration.
-    pub fn init_split(db_dir: &Path, data_dir: &Path) -> AppResult<Self> {
+    /// Returns `(db, needs_cover_backfill)`. The caller should run
+    /// `backfill_cover_data` on a background thread when the flag is true.
+    pub fn init_split(db_dir: &Path, data_dir: &Path) -> AppResult<(Self, bool)> {
         fs::create_dir_all(db_dir)?;
         fs::create_dir_all(data_dir)?;
         fs::create_dir_all(data_dir.join("books"))?;
@@ -160,6 +164,14 @@ impl Db {
         // One-time migration: convert absolute paths to relative
         Self::migrate_to_relative_paths(&conn, data_dir)?;
 
+        let needs_cover_backfill: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM books WHERE cover_path IS NOT NULL AND cover_path != 'none' AND cover_data IS NULL)",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(false);
+
         // Separate read connection so frontend queries never contend
         // with sync engine writes. WAL mode allows concurrent readers
         // alongside one writer at the SQLite level; the two Rust
@@ -171,11 +183,11 @@ impl Db {
                 | rusqlite::OpenFlags::SQLITE_OPEN_URI,
         )?;
 
-        Ok(Self {
+        Ok((Self {
             conn: Arc::new(Mutex::new(conn)),
             read_conn: Arc::new(Mutex::new(read_conn)),
             data_dir: Arc::new(Mutex::new(data_dir.to_path_buf())),
-        })
+        }, needs_cover_backfill))
     }
 
     fn run_migrations(conn: &Connection) -> AppResult<()> {
@@ -193,7 +205,7 @@ impl Db {
             if version > current {
                 log::info!("db: applying migration {version}");
                 // ALTER TABLE migrations may fail if column already exists
-                if version == 4 || version == 5 {
+                if version == 4 || version == 5 || version == 13 {
                     let _ = conn.execute_batch(sql);
                 } else if let Err(e) = conn.execute_batch(sql) {
                     log::error!("db: migration {version} failed: {e}");
@@ -268,7 +280,7 @@ impl Db {
                 break;
             }
             if version > current {
-                if version == 4 || version == 5 {
+                if version == 4 || version == 5 || version == 13 {
                     let _ = conn.execute_batch(sql);
                 } else {
                     conn.execute_batch(sql)?;
@@ -283,6 +295,72 @@ impl Db {
         }
 
         Ok(())
+    }
+
+    /// One-time backfill: read existing cover files from disk into the
+    /// `cover_data` BLOB column. Three-phase to avoid holding the DB
+    /// lock during file I/O:
+    /// 1. Quick read-conn query to find candidates
+    /// 2. Read files from disk (no lock held)
+    /// 3. Brief write-conn lock to store each cover
+    pub fn backfill_cover_data(&self) {
+        let data_dir = match self.data_dir.lock() {
+            Ok(d) => d.clone(),
+            Err(_) => return,
+        };
+
+        // Phase 1: find candidates via read conn
+        let rows: Vec<(String, String)> = {
+            let Ok(conn) = self.read_conn.lock() else { return };
+            let Ok(mut stmt) = conn.prepare(
+                "SELECT id, cover_path FROM books
+                 WHERE cover_data IS NULL
+                   AND cover_path IS NOT NULL
+                   AND cover_path != 'none'",
+            ) else { return };
+            stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+                .into_iter()
+                .flatten()
+                .flatten()
+                .collect()
+        };
+
+        if rows.is_empty() {
+            return;
+        }
+
+        log::info!("db: backfilling cover_data for {} books", rows.len());
+
+        // Phase 2: read files (no lock held)
+        let loaded: Vec<(String, Vec<u8>)> = rows
+            .into_iter()
+            .filter_map(|(id, cover_path)| {
+                let abs = if Path::new(&cover_path).is_absolute() {
+                    PathBuf::from(&cover_path)
+                } else {
+                    data_dir.join(&cover_path)
+                };
+                match fs::read(&abs) {
+                    Ok(bytes) => Some((id, bytes)),
+                    Err(e) => {
+                        log::warn!("db: backfill cover_data failed for {id}: {e}");
+                        None
+                    }
+                }
+            })
+            .collect();
+
+        // Phase 3: brief write lock per cover
+        for (id, bytes) in &loaded {
+            if let Ok(conn) = self.conn.lock() {
+                let _ = conn.execute(
+                    "UPDATE books SET cover_data = ?1 WHERE id = ?2",
+                    params![bytes, id],
+                );
+            }
+        }
+
+        log::info!("db: backfilled {} cover(s)", loaded.len());
     }
 
     /// Migrate existing absolute paths in the books table to relative paths.
@@ -334,15 +412,14 @@ mod tests {
     fn init_split_opens_db_in_db_dir_resolves_blobs_in_data_dir() {
         let db_dir = TempDir::new().unwrap();
         let data_dir = TempDir::new().unwrap();
-        let db = Db::init_split(db_dir.path(), data_dir.path()).unwrap();
+        let (db, _) = Db::init_split(db_dir.path(), data_dir.path()).unwrap();
 
         // SQLite file landed in db_dir (NOT data_dir).
         assert!(db_dir.path().join("quill.db").exists());
         assert!(!data_dir.path().join("quill.db").exists());
 
-        // books/ + covers/ subdirs were created in data_dir (NOT db_dir).
+        // books/ subdir was created in data_dir (NOT db_dir).
         assert!(data_dir.path().join("books").exists());
-        assert!(data_dir.path().join("covers").exists());
         assert!(!db_dir.path().join("books").exists());
 
         // resolve_path uses data_dir as the base.
@@ -362,7 +439,7 @@ mod tests {
         let conn = db.conn.lock().unwrap();
         let version: i64 =
             conn.query_row("SELECT version FROM schema_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 12);
+        assert_eq!(version, 13);
     }
 
     #[test]
@@ -398,7 +475,7 @@ mod tests {
         Db::run_migrations_on(&conn).unwrap();
         let version: i64 =
             conn.query_row("SELECT version FROM schema_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 12);
+        assert_eq!(version, 13);
     }
 
     #[test]

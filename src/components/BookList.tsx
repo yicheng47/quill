@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef } from "react";
-import { convertFileSrc } from "@tauri-apps/api/core";
 import { openReaderWindow } from "../utils/openReaderWindow";
 import { Check, CloudDownload, Loader2 } from "lucide-react";
 import type { Book } from "../hooks/useBooks";
@@ -60,8 +59,8 @@ export default function BookList({ books, hasMore, loadMore, loadingMore, active
           >
             {/* Cover */}
             <div className="relative w-[96px] h-[144px] shrink-0 rounded-lg overflow-hidden bg-border shadow-card">
-              {book.cover_path ? (
-                <CoverImage src={convertFileSrc(book.cover_path)} alt={book.title} title={book.title} />
+              {book.cover_data ? (
+                <CoverImage src={book.cover_data} alt={book.title} title={book.title} />
               ) : (
                 <div className="w-full h-full flex items-center justify-center bg-bg-muted">
                   <span className="text-[10px] text-text-muted text-center px-1">

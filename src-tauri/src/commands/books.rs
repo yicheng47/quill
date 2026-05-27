@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::Path;
 
+use base64::Engine;
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -11,6 +12,22 @@ use crate::error::{AppError, AppResult};
 use crate::icloud;
 use crate::sync::events::{BookImportPayload, EventBody};
 use crate::sync::writer::SyncWriter;
+
+fn cover_blob_to_data_uri(bytes: &[u8]) -> String {
+    let mime = if bytes.starts_with(b"\x89PNG") {
+        "image/png"
+    } else if bytes.starts_with(b"\xFF\xD8\xFF") {
+        "image/jpeg"
+    } else if bytes.starts_with(b"GIF8") {
+        "image/gif"
+    } else if bytes.len() > 12 && bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WEBP" {
+        "image/webp"
+    } else {
+        "image/png"
+    };
+    let b64 = base64::engine::general_purpose::STANDARD.encode(bytes);
+    format!("data:{mime};base64,{b64}")
+}
 
 fn pdf_obj_to_string(obj: &lopdf::Object) -> Option<String> {
     let bytes = obj.as_str().ok().or_else(|| obj.as_name().ok())?;
@@ -123,6 +140,9 @@ pub struct Book {
     /// Whether the book file is locally available (not an iCloud placeholder).
     #[serde(default = "default_true")]
     pub available: bool,
+    /// Base64-encoded cover image bytes. Rendered as data URI on the frontend.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cover_data: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -161,12 +181,11 @@ pub(crate) fn do_import_epub(
         .map_err(|e| AppError::Other(e.to_string()))?
         .clone();
     let books_dir = data_dir.join("books");
-    let covers_dir = data_dir.join("covers");
 
     let book_id = uuid::Uuid::new_v4().to_string();
     let src = std::path::Path::new(file_path);
 
-    let metadata = epub::extract_metadata(src, &covers_dir, &book_id)
+    let metadata = epub::extract_metadata(src)
         .inspect_err(|e| log::error!("import_book: extract_metadata failed for {file_path}: {e}"))?;
     let pages = epub::count_chapters(src)
         .inspect_err(|e| log::error!("import_book: count_chapters failed for {file_path}: {e}"))? as i32;
@@ -177,13 +196,16 @@ pub(crate) fn do_import_epub(
 
     let now = chrono::Utc::now().timestamp_millis();
     let rel_file_path = format!("books/{}", filename);
+    let cover_data_b64 = metadata.cover_data.as_deref().map(|b| {
+        cover_blob_to_data_uri(b)
+    });
 
     let book = Book {
         id: book_id,
         title: metadata.title,
         author: metadata.author,
         description: metadata.description,
-        cover_path: metadata.cover_path,
+        cover_path: None,
         file_path: rel_file_path,
         format: "epub".to_string(),
         genre: None,
@@ -194,9 +216,10 @@ pub(crate) fn do_import_epub(
         created_at: now,
         updated_at: now,
         available: true,
+        cover_data: cover_data_b64,
     };
 
-    do_insert_book(&book, db, sync, now)?;
+    do_insert_book(&book, metadata.cover_data.as_deref(), db, sync, now)?;
 
     log::info!("import_book: complete id={} title={:?}", book.id, book.title);
     Ok(book)
@@ -243,20 +266,21 @@ pub(crate) fn do_import_pdf(
         created_at: now,
         updated_at: now,
         available: true,
+        cover_data: None,
     };
 
-    do_insert_book(&book, db, sync, now)?;
+    do_insert_book(&book, None, db, sync, now)?;
 
     log::info!("import_book: complete id={} title={:?} format=pdf", book.id, book.title);
     Ok(book)
 }
 
-fn do_insert_book(book: &Book, db: &Db, sync: &SyncWriter, now: i64) -> AppResult<()> {
+fn do_insert_book(book: &Book, cover_bytes: Option<&[u8]>, db: &Db, sync: &SyncWriter, now: i64) -> AppResult<()> {
     let device = sync.self_device().to_string();
     sync.with_tx(db, now, |tx, events| {
         tx.execute(
-            "INSERT INTO books (id, title, author, description, cover_path, file_path, format, genre, pages, status, progress, current_cfi, created_at, updated_at, updated_by_device)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+            "INSERT INTO books (id, title, author, description, cover_path, file_path, format, genre, pages, status, progress, current_cfi, created_at, updated_at, updated_by_device, cover_data)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
             params![
                 book.id,
                 book.title,
@@ -273,6 +297,7 @@ fn do_insert_book(book: &Book, db: &Db, sync: &SyncWriter, now: i64) -> AppResul
                 book.created_at,
                 book.updated_at,
                 device,
+                cover_bytes,
             ],
         )?;
         events.push(EventBody::BookImport(BookImportPayload {
@@ -287,7 +312,11 @@ fn do_insert_book(book: &Book, db: &Db, sync: &SyncWriter, now: i64) -> AppResul
             pages: book.pages,
         }));
         Ok(())
-    })
+    })?;
+    if let Some(bytes) = cover_bytes {
+        sync.queue_cover_write(db, &book.id, bytes);
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -437,7 +466,7 @@ pub(crate) fn query_books(
 
     // Main query with cursor + limit.
     let sql = format!(
-        "SELECT books.id, books.title, books.author, books.description, books.cover_path, books.file_path, books.format, books.genre, books.pages, books.status, books.progress, books.current_cfi, books.created_at, books.updated_at FROM {from_clause}{where_clause} ORDER BY books.updated_at DESC, books.id ASC LIMIT ?",
+        "SELECT books.id, books.title, books.author, books.description, books.cover_path, books.file_path, books.format, books.genre, books.pages, books.status, books.progress, books.current_cfi, books.created_at, books.updated_at, books.cover_data FROM {from_clause}{where_clause} ORDER BY books.updated_at DESC, books.id ASC LIMIT ?",
     );
     param_values.push(Box::new((limit + 1) as i64));
 
@@ -445,6 +474,7 @@ pub(crate) fn query_books(
 
     let mut stmt = conn.prepare(&sql)?;
     let mut books: Vec<Book> = stmt.query_map(params_refs.as_slice(), |row| {
+        let cover_blob: Option<Vec<u8>> = row.get(14)?;
         Ok(Book {
             id: row.get(0)?,
             title: row.get(1)?,
@@ -461,6 +491,7 @@ pub(crate) fn query_books(
             created_at: row.get(12)?,
             updated_at: row.get(13)?,
             available: true,
+            cover_data: cover_blob.filter(|b| !b.is_empty()).map(|b| cover_blob_to_data_uri(&b)),
         })
     })?
     .collect::<Result<Vec<_>, _>>()?;
@@ -481,9 +512,10 @@ pub(crate) fn query_books(
 pub(crate) fn query_book(db: &Db, id: &str) -> AppResult<Book> {
     let conn = db.reader();
     let book = conn.query_row(
-        "SELECT id, title, author, description, cover_path, file_path, format, genre, pages, status, progress, current_cfi, created_at, updated_at FROM books WHERE id = ?1",
+        "SELECT id, title, author, description, cover_path, file_path, format, genre, pages, status, progress, current_cfi, created_at, updated_at, cover_data FROM books WHERE id = ?1",
         params![id],
         |row| {
+            let cover_blob: Option<Vec<u8>> = row.get(14)?;
             Ok(Book {
                 id: row.get(0)?,
                 title: row.get(1)?,
@@ -500,10 +532,85 @@ pub(crate) fn query_book(db: &Db, id: &str) -> AppResult<Book> {
                 created_at: row.get(12)?,
                 updated_at: row.get(13)?,
                 available: true,
+                cover_data: cover_blob.filter(|b| !b.is_empty()).map(|b| cover_blob_to_data_uri(&b)),
             })
         },
     )?;
     Ok(book)
+}
+
+/// Lightweight book query for MCP — computes `has_cover` from the BLOB
+/// without actually loading/encoding cover bytes. Prevents hundreds of
+/// MB of wasted DB reads + base64 allocations when MCP lists 1000 books.
+pub(crate) fn query_books_lite(
+    db: &Db,
+    filter: Option<&str>,
+    search: Option<&str>,
+    limit: usize,
+) -> AppResult<Vec<Book>> {
+    let conn = db.reader();
+    let mut conditions: Vec<String> = Vec::new();
+    let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+
+    if let Some(f) = filter {
+        match f {
+            "reading" | "finished" | "unread" => {
+                conditions.push("status = ?".to_string());
+                param_values.push(Box::new(f.to_string()));
+            }
+            "all" => {}
+            genre => {
+                conditions.push("genre = ?".to_string());
+                param_values.push(Box::new(genre.to_string()));
+            }
+        }
+    }
+    if let Some(q) = search {
+        if !q.is_empty() {
+            conditions.push("(LOWER(title) LIKE ? OR LOWER(author) LIKE ?)".to_string());
+            let pattern = format!("%{}%", q.to_lowercase());
+            param_values.push(Box::new(pattern.clone()));
+            param_values.push(Box::new(pattern));
+        }
+    }
+
+    let where_clause = if conditions.is_empty() {
+        String::new()
+    } else {
+        format!(" WHERE {}", conditions.join(" AND "))
+    };
+
+    let sql = format!(
+        "SELECT id, title, author, description, cover_path, file_path, format, genre, pages, status, progress, current_cfi, created_at, updated_at, (cover_data IS NOT NULL AND LENGTH(cover_data) > 0) AS has_cover FROM books{where_clause} ORDER BY updated_at DESC LIMIT ?",
+    );
+    param_values.push(Box::new(limit as i64));
+    let params_refs: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|p| p.as_ref()).collect();
+
+    let mut stmt = conn.prepare(&sql)?;
+    let books = stmt
+        .query_map(params_refs.as_slice(), |row| {
+            let has_cover: bool = row.get(14)?;
+            Ok(Book {
+                id: row.get(0)?,
+                title: row.get(1)?,
+                author: row.get(2)?,
+                description: row.get(3)?,
+                cover_path: row.get(4)?,
+                file_path: row.get(5)?,
+                format: row.get(6)?,
+                genre: row.get(7)?,
+                pages: row.get(8)?,
+                status: row.get(9)?,
+                progress: row.get(10)?,
+                current_cfi: row.get(11)?,
+                created_at: row.get(12)?,
+                updated_at: row.get(13)?,
+                available: true,
+                cover_data: if has_cover { Some("has_cover".to_string()) } else { None },
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(books)
 }
 
 const DEFAULT_PAGE_SIZE: usize = 20;
@@ -563,10 +670,10 @@ pub fn get_book(id: String, db: State<'_, Db>) -> AppResult<Book> {
 #[tauri::command]
 pub fn check_book_available(id: String, db: State<'_, Db>) -> AppResult<bool> {
     let conn = db.reader();
-    let (file_path, cover_path): (String, Option<String>) = conn.query_row(
-        "SELECT file_path, cover_path FROM books WHERE id = ?1",
+    let file_path: String = conn.query_row(
+        "SELECT file_path FROM books WHERE id = ?1",
         params![id],
-        |row| Ok((row.get(0)?, row.get(1)?)),
+        |row| row.get(0),
     )?;
 
     let abs_path = db.resolve_path(&file_path);
@@ -574,12 +681,6 @@ pub fn check_book_available(id: String, db: State<'_, Db>) -> AppResult<bool> {
 
     if !available {
         icloud::trigger_download_file(&abs_path);
-    }
-    if let Some(cover) = cover_path {
-        let cover_abs = db.resolve_path(&cover);
-        if !icloud::is_file_downloaded(&cover_abs) {
-            icloud::trigger_download_file(&cover_abs);
-        }
     }
 
     Ok(available)
@@ -592,32 +693,14 @@ pub fn save_book_cover(
     db: State<'_, Db>,
     sync: State<'_, SyncWriter>,
 ) -> AppResult<()> {
-    let data_dir = db
-        .data_dir
-        .lock()
-        .map_err(|e| AppError::Other(e.to_string()))?
-        .clone();
-    let covers_dir = data_dir.join("covers");
-    fs::create_dir_all(&covers_dir)?;
-
-    let cover_file = covers_dir.join(format!("{book_id}.png"));
-    fs::write(&cover_file, &cover_data)?;
-
-    let rel_cover = format!("covers/{book_id}.png");
-    let now = chrono::Utc::now().timestamp_millis();
-    let device = sync.self_device().to_string();
-    sync.with_tx(&db, now, |tx, events| {
-        tx.execute(
-            "UPDATE books SET cover_path = ?1, updated_at = ?2, updated_by_device = ?3 WHERE id = ?4",
-            params![rel_cover, now, device, book_id],
-        )?;
-        events.push(EventBody::BookMetadataSet {
-            book: book_id.clone(),
-            field: "cover_path".into(),
-            value: serde_json::Value::String(rel_cover.clone()),
-        });
-        Ok(())
-    })
+    let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
+    conn.execute(
+        "UPDATE books SET cover_data = ?1 WHERE id = ?2",
+        params![cover_data, book_id],
+    )?;
+    drop(conn);
+    sync.queue_cover_write(&db, &book_id, &cover_data);
+    Ok(())
 }
 
 #[tauri::command]
@@ -627,19 +710,48 @@ pub fn mark_cover_unavailable(
 ) -> AppResult<()> {
     let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
     conn.execute(
-        "UPDATE books SET cover_path = 'none' WHERE id = ?1 AND cover_path IS NULL",
+        "UPDATE books SET cover_data = X'' WHERE id = ?1 AND cover_data IS NULL",
         params![book_id],
     )?;
     Ok(())
 }
 
+#[derive(Debug, Serialize)]
+pub struct CoverBackfillEntry {
+    pub id: String,
+    pub file_path: String,
+}
+
+#[tauri::command]
+pub fn list_books_needing_covers(db: State<'_, Db>) -> AppResult<Vec<CoverBackfillEntry>> {
+    let conn = db.reader();
+    let mut stmt = conn.prepare(
+        "SELECT id, file_path FROM books WHERE format = 'pdf' AND cover_data IS NULL",
+    )?;
+    let entries: Vec<CoverBackfillEntry> = stmt
+        .query_map([], |row| {
+            Ok(CoverBackfillEntry {
+                id: row.get(0)?,
+                file_path: row.get(1)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(entries
+        .into_iter()
+        .map(|mut e| {
+            e.file_path = db.resolve_path(&e.file_path).to_string_lossy().to_string();
+            e
+        })
+        .collect())
+}
+
 pub(crate) fn do_delete_book(id: &str, db: &Db, sync: &SyncWriter) -> AppResult<()> {
-    let (file_path, cover_path): (String, Option<String>) = {
+    let file_path: String = {
         let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
         conn.query_row(
-            "SELECT file_path, cover_path FROM books WHERE id = ?1",
+            "SELECT file_path FROM books WHERE id = ?1",
             params![id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| row.get(0),
         )?
     };
 
@@ -665,12 +777,8 @@ pub(crate) fn do_delete_book(id: &str, db: &Db, sync: &SyncWriter) -> AppResult<
 
     let abs_file = db.resolve_path(&file_path);
     let _ = fs::remove_file(&abs_file);
-    if let Some(cover) = cover_path {
-        if cover != "none" {
-            let abs_cover = db.resolve_path(&cover);
-            let _ = fs::remove_file(&abs_cover);
-        }
-    }
+    let cover_file = db.resolve_path(&format!("covers/{id}.img"));
+    let _ = fs::remove_file(&cover_file);
 
     Ok(())
 }
@@ -916,7 +1024,6 @@ pub async fn commit_pdf_import(
         .map_err(|e| AppError::Other(e.to_string()))?
         .clone();
     let books_dir = data_dir.join("books");
-    let covers_dir = data_dir.join("covers");
 
     let staged = books_dir.join(format!("{}.pdf", book_id));
     if !staged.exists() {
@@ -933,25 +1040,18 @@ pub async fn commit_pdf_import(
         fs::rename(&staged, &dest)?;
     }
 
-    // Save cover image if provided
-    let cover_path = if let Some(ref data) = cover_data {
-        fs::create_dir_all(&covers_dir)?;
-        let cover_file = covers_dir.join(format!("{}.png", book_id));
-        fs::write(&cover_file, data)?;
-        Some(format!("covers/{}.png", book_id))
-    } else {
-        None
-    };
-
     let now = chrono::Utc::now().timestamp_millis();
     let rel_file_path = format!("books/{}", filename);
+    let cover_data_b64 = cover_data.as_ref().map(|d| {
+        cover_blob_to_data_uri(d)
+    });
 
     let book = Book {
         id: book_id,
         title,
         author: author.unwrap_or_else(|| "Unknown Author".to_string()),
         description,
-        cover_path,
+        cover_path: None,
         file_path: rel_file_path,
         format: "pdf".to_string(),
         genre: None,
@@ -962,13 +1062,14 @@ pub async fn commit_pdf_import(
         created_at: now,
         updated_at: now,
         available: true,
+        cover_data: cover_data_b64,
     };
 
     let device = sync.self_device().to_string();
     sync.with_tx(&db, now, |tx, events| {
         tx.execute(
-            "INSERT INTO books (id, title, author, description, cover_path, file_path, format, genre, pages, status, progress, current_cfi, created_at, updated_at, updated_by_device)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+            "INSERT INTO books (id, title, author, description, cover_path, file_path, format, genre, pages, status, progress, current_cfi, created_at, updated_at, updated_by_device, cover_data)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
             params![
                 book.id,
                 book.title,
@@ -985,6 +1086,7 @@ pub async fn commit_pdf_import(
                 book.created_at,
                 book.updated_at,
                 device,
+                cover_data,
             ],
         )?;
         events.push(EventBody::BookImport(BookImportPayload {
@@ -1000,6 +1102,10 @@ pub async fn commit_pdf_import(
         }));
         Ok(())
     })?;
+
+    if let Some(ref bytes) = cover_data {
+        sync.queue_cover_write(&db, &book.id, bytes);
+    }
 
     log::info!("import_book: complete id={} title={:?} format=pdf", book.id, book.title);
 
@@ -1031,9 +1137,6 @@ pub async fn cancel_pdf_import(book_id: String, db: State<'_, Db>) -> AppResult<
             }
         }
     }
-    // Remove cover if it was written before the failure.
-    let cover = data_dir.join("covers").join(format!("{}.png", book_id));
-    let _ = fs::remove_file(&cover);
     Ok(())
 }
 
@@ -1154,31 +1257,26 @@ mod tests {
 
     #[test]
     fn test_import_pdf_with_cover() {
-        let (dir, db) = setup();
+        let (_dir, db) = setup();
         let book_id = "cover-test";
-        let cover_data = b"fake png data";
-
-        let cover_file = dir.path().join("covers").join(format!("{}.png", book_id));
-        fs::write(&cover_file, cover_data).unwrap();
+        let cover_bytes = b"\x89PNG fake png data";
 
         let conn = db.conn.lock().unwrap();
         let now = chrono::Utc::now().timestamp_millis();
-        let cover_path = format!("covers/{}.png", book_id);
 
         conn.execute(
-            "INSERT INTO books (id, title, author, file_path, format, cover_path, status, progress, created_at, updated_at)
+            "INSERT INTO books (id, title, author, file_path, format, cover_data, status, progress, created_at, updated_at)
              VALUES (?1, 'PDF With Cover', 'Author', 'books/test.pdf', 'pdf', ?2, 'unread', 0, ?3, ?3)",
-            params![book_id, cover_path, now],
+            params![book_id, cover_bytes.as_slice(), now],
         ).unwrap();
 
-        let db_cover: Option<String> = conn.query_row(
-            "SELECT cover_path FROM books WHERE id = ?1",
+        let db_cover: Option<Vec<u8>> = conn.query_row(
+            "SELECT cover_data FROM books WHERE id = ?1",
             params![book_id],
             |r| r.get(0),
         ).unwrap();
 
-        assert_eq!(db_cover, Some(cover_path));
-        assert!(cover_file.exists());
+        assert_eq!(db_cover.as_deref(), Some(cover_bytes.as_slice()));
     }
 
     #[test]
@@ -1208,6 +1306,7 @@ mod tests {
                 created_at: row.get(12)?,
                 updated_at: row.get(13)?,
                 available: true,
+                cover_data: None,
             })
         }).unwrap().collect::<Result<Vec<_>, _>>().unwrap();
 
@@ -1246,50 +1345,37 @@ mod tests {
     fn test_import_pdf_with_all_metadata() {
         let (dir, db) = setup();
 
-        // Create source PDF
         let src = dir.path().join("academic-paper.pdf");
         fs::write(&src, b"%PDF-1.7 fake").unwrap();
 
         let book_id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now().timestamp_millis();
         let rel_path = format!("books/{}.pdf", book_id);
-        let cover_rel = format!("covers/{}.png", book_id);
+        let cover_bytes = b"\x89PNG fake cover";
 
-        // Copy file
         let dest = dir.path().join("books").join(format!("{}.pdf", book_id));
         fs::copy(&src, &dest).unwrap();
 
-        // Write cover
-        let cover_file = dir.path().join("covers").join(format!("{}.png", book_id));
-        fs::write(&cover_file, b"PNG fake").unwrap();
-
         let conn = db.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO books (id, title, author, description, cover_path, file_path, format, pages, status, progress, created_at, updated_at)
-             VALUES (?1, 'Deep Learning', 'Ian Goodfellow, Yoshua Bengio', 'A comprehensive textbook', ?2, ?3, 'pdf', 800, 'unread', 0, ?4, ?4)",
-            params![book_id, cover_rel, rel_path, now],
+            "INSERT INTO books (id, title, author, description, file_path, format, pages, status, progress, created_at, updated_at, cover_data)
+             VALUES (?1, 'Deep Learning', 'Ian Goodfellow, Yoshua Bengio', 'A comprehensive textbook', ?2, 'pdf', 800, 'unread', 0, ?3, ?3, ?4)",
+            params![book_id, rel_path, now, cover_bytes.as_slice()],
         ).unwrap();
 
-        let book: Book = conn.query_row(
-            "SELECT id, title, author, description, cover_path, file_path, format, genre, pages, status, progress, current_cfi, created_at, updated_at FROM books WHERE id = ?1",
+        let (title, author, desc, format, pages, has_cover): (String, String, Option<String>, String, Option<i32>, bool) = conn.query_row(
+            "SELECT title, author, description, format, pages, (cover_data IS NOT NULL) FROM books WHERE id = ?1",
             params![book_id],
-            |row| Ok(Book {
-                id: row.get(0)?, title: row.get(1)?, author: row.get(2)?,
-                description: row.get(3)?, cover_path: row.get(4)?, file_path: row.get(5)?,
-                format: row.get(6)?, genre: row.get(7)?, pages: row.get(8)?,
-                status: row.get(9)?, progress: row.get(10)?, current_cfi: row.get(11)?,
-                created_at: row.get(12)?, updated_at: row.get(13)?, available: true,
-            }),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
         ).unwrap();
 
-        assert_eq!(book.title, "Deep Learning");
-        assert_eq!(book.author, "Ian Goodfellow, Yoshua Bengio");
-        assert_eq!(book.description, Some("A comprehensive textbook".to_string()));
-        assert_eq!(book.format, "pdf");
-        assert_eq!(book.pages, Some(800));
-        assert!(book.cover_path.is_some());
+        assert_eq!(title, "Deep Learning");
+        assert_eq!(author, "Ian Goodfellow, Yoshua Bengio");
+        assert_eq!(desc, Some("A comprehensive textbook".to_string()));
+        assert_eq!(format, "pdf");
+        assert_eq!(pages, Some(800));
+        assert!(has_cover);
         assert!(dest.exists());
-        assert!(cover_file.exists());
     }
 
     #[test]
@@ -1380,7 +1466,7 @@ mod tests {
                 description: row.get(3)?, cover_path: row.get(4)?, file_path: row.get(5)?,
                 format: row.get(6)?, genre: row.get(7)?, pages: row.get(8)?,
                 status: row.get(9)?, progress: row.get(10)?, current_cfi: row.get(11)?,
-                created_at: row.get(12)?, updated_at: row.get(13)?, available: true,
+                created_at: row.get(12)?, updated_at: row.get(13)?, available: true, cover_data: None,
             }),
         ).unwrap();
 

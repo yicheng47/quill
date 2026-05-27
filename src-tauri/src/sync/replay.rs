@@ -230,7 +230,9 @@ impl ReplayEngine {
                 ::log::error!("sync: batch apply failed: {e}");
             })?;
 
-        if events_applied > 0 || snapshots_applied > 0 || outbox_flushed > 0 {
+        let covers_ingested = ingest_peer_covers(&self.shared_dir, db);
+
+        if events_applied > 0 || snapshots_applied > 0 || outbox_flushed > 0 || covers_ingested > 0 {
             ::log::info!(
                 "sync: batch applied events={events_applied} snapshots={snapshots_applied} outbox_flushed={outbox_flushed} elapsed_ms={}",
                 started.elapsed().as_millis(),
@@ -668,6 +670,79 @@ fn read_outbox(conn: &Connection) -> AppResult<Vec<OutboxRow>> {
         })?
         .collect::<Result<_, _>>()?;
     Ok(collected)
+}
+
+fn ingest_peer_covers(shared_dir: &Path, db: &Db) -> usize {
+    let covers_dir = shared_dir.join("covers");
+    let entries = match std::fs::read_dir(&covers_dir) {
+        Ok(e) => e,
+        Err(_) => return 0,
+    };
+
+    // Phase 1: collect candidates — quick SQL check per file, no file I/O.
+    // Recognizes both real files (foo.img) and iCloud placeholders (.foo.img.icloud).
+    let candidates: Vec<(String, std::path::PathBuf)> = {
+        let Ok(conn) = db.read_conn.lock() else { return 0 };
+        entries
+            .flatten()
+            .filter_map(|entry| {
+                let name = entry.file_name();
+                let name_str = name.to_string_lossy();
+                let (book_id, path) = if let Some(id) = name_str.strip_suffix(".img") {
+                    (id.to_string(), entry.path())
+                } else if name_str.starts_with('.') && name_str.ends_with(".img.icloud") {
+                    let inner = &name_str[1..name_str.len() - 7]; // strip leading '.' and trailing '.icloud'
+                    let id = inner.strip_suffix(".img")?.to_string();
+                    let real_path = covers_dir.join(format!("{id}.img"));
+                    crate::icloud::trigger_download_file(&real_path);
+                    return None; // skip this tick, file will be available next tick
+                } else {
+                    return None;
+                };
+                let has_cover: bool = conn
+                    .query_row(
+                        "SELECT cover_data IS NOT NULL AND LENGTH(cover_data) > 0 FROM books WHERE id = ?1",
+                        rusqlite::params![&book_id],
+                        |r| r.get(0),
+                    )
+                    .unwrap_or(true);
+                if has_cover { None } else { Some((book_id, path)) }
+            })
+            .collect()
+    };
+
+    if candidates.is_empty() {
+        return 0;
+    }
+
+    // Phase 2: read files (no DB lock held — safe if iCloud stalls).
+    let loaded: Vec<(String, Vec<u8>)> = candidates
+        .into_iter()
+        .filter_map(|(id, path)| {
+            std::fs::read(&path).ok().filter(|b| !b.is_empty()).map(|b| (id, b))
+        })
+        .collect();
+
+    if loaded.is_empty() {
+        return 0;
+    }
+
+    // Phase 3: brief write lock to store covers.
+    let Ok(conn) = db.conn.lock() else { return 0 };
+    let mut ingested = 0usize;
+    for (book_id, bytes) in &loaded {
+        if conn
+            .execute(
+                "UPDATE books SET cover_data = ?1 WHERE id = ?2 AND (cover_data IS NULL OR LENGTH(cover_data) = 0)",
+                rusqlite::params![bytes, book_id],
+            )
+            .is_ok_and(|n| n > 0)
+        {
+            ingested += 1;
+            ::log::info!("sync: ingested cover for book {book_id}");
+        }
+    }
+    ingested
 }
 
 #[cfg(test)]

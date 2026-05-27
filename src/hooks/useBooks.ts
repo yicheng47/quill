@@ -18,6 +18,7 @@ export interface Book {
   created_at: number;
   updated_at: number;
   available: boolean;
+  cover_data: string | null;
 }
 
 interface BookPage {
@@ -44,10 +45,7 @@ export function useBooks(filter?: string, search?: string, collectionId?: string
         cursor: null,
         limit: null,
       });
-      setBooks(page.books.map((b) => ({
-        ...b,
-        cover_path: b.cover_path === "none" ? null : b.cover_path,
-      })));
+      setBooks(page.books);
       setTotal(page.total);
       setCursor(page.next_cursor);
       setHasMore(page.next_cursor !== null);
@@ -69,13 +67,7 @@ export function useBooks(filter?: string, search?: string, collectionId?: string
         cursor,
         limit: null,
       });
-      setBooks((prev) => [
-        ...prev,
-        ...page.books.map((b) => ({
-          ...b,
-          cover_path: b.cover_path === "none" ? null : b.cover_path,
-        })),
-      ]);
+      setBooks((prev) => [...prev, ...page.books]);
       setCursor(page.next_cursor);
       setHasMore(page.next_cursor !== null);
     } catch (err) {
@@ -132,40 +124,40 @@ async function importPdfStaged(filePath: string): Promise<Book> {
 
 export const importBookDialog = { pickFile, importFile };
 
+interface CoverBackfillEntry {
+  id: string;
+  file_path: string;
+}
+
 const BACKFILL_BATCH_SIZE = 3;
 const BACKFILL_DELAY_MS = 1000;
 let backfillRunning = false;
-
-function needsCover(b: Book): boolean {
-  return b.format === "pdf" && !b.cover_path;
-}
 
 export async function backfillMissingCovers(): Promise<void> {
   if (backfillRunning) return;
   backfillRunning = true;
   try {
-    const page = await invoke<BookPage>("list_books", { filter: null, search: null, cursor: null, limit: 1000 });
-    const missing = page.books.filter(needsCover);
+    const missing = await invoke<CoverBackfillEntry[]>("list_books_needing_covers");
     if (missing.length === 0) {
       backfillRunning = false;
       return;
     }
     const batch = missing.slice(0, BACKFILL_BATCH_SIZE);
     const { extractPdfCover } = await import("../utils/pdfMetadata");
-    for (const book of batch) {
+    for (const entry of batch) {
       try {
-        const coverData = await extractPdfCover(book.file_path);
+        const coverData = await extractPdfCover(entry.file_path);
         if (coverData) {
           await invoke("save_book_cover", {
-            bookId: book.id,
+            bookId: entry.id,
             coverData: Array.from(coverData),
           });
         } else {
-          await invoke("mark_cover_unavailable", { bookId: book.id });
+          await invoke("mark_cover_unavailable", { bookId: entry.id });
         }
       } catch (err) {
-        console.warn(`Cover backfill failed for ${book.id}:`, err);
-        await invoke("mark_cover_unavailable", { bookId: book.id }).catch(() => {});
+        console.warn(`Cover backfill failed for ${entry.id}:`, err);
+        await invoke("mark_cover_unavailable", { bookId: entry.id }).catch(() => {});
       }
     }
     if (missing.length > BACKFILL_BATCH_SIZE) {
@@ -182,9 +174,7 @@ export async function backfillMissingCovers(): Promise<void> {
 }
 
 export async function getBook(id: string): Promise<Book> {
-  const b = await invoke<Book>("get_book", { id });
-  if (b.cover_path === "none") b.cover_path = null;
-  return b;
+  return invoke<Book>("get_book", { id });
 }
 
 export async function deleteBook(id: string): Promise<void> {

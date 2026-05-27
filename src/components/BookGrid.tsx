@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef } from "react";
-import { convertFileSrc } from "@tauri-apps/api/core";
 import { Loader2 } from "lucide-react";
 import type { Book } from "../hooks/useBooks";
 import { openReaderWindow } from "../utils/openReaderWindow";
@@ -62,8 +61,8 @@ export default function BookGrid({ books, hasMore, loadMore, loadingMore, active
             className={`text-left cursor-pointer group ${book.available === false ? "opacity-60" : ""}`}
           >
             <div className="relative bg-border rounded-lg overflow-hidden shadow-card aspect-[3/4]">
-              {book.cover_path ? (
-                <CoverImage src={convertFileSrc(book.cover_path)} alt={book.title} title={book.title} />
+              {book.cover_data ? (
+                <CoverImage src={book.cover_data} alt={book.title} title={book.title} />
               ) : (
                 <div className="w-full h-full flex items-center justify-center bg-bg-muted">
                   <span className="text-[14px] text-text-muted text-center px-4">

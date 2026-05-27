@@ -103,6 +103,10 @@ pub struct SyncWriter {
     /// UI never blocks on `bird` / `NSFileCoordinator`. Tests flip it
     /// on so they can assert post-commit log state without polling.
     flush_inline_for_tests: AtomicBool,
+    /// Channel sender for the `cover-writer` background thread. Set by
+    /// `boot_sync_engine` when sync is enabled. Cover file writes go
+    /// through this channel so iCloud I/O never blocks the import path.
+    cover_tx: Mutex<Option<std::sync::mpsc::Sender<(std::path::PathBuf, Vec<u8>)>>>,
 }
 
 impl SyncWriter {
@@ -113,6 +117,7 @@ impl SyncWriter {
             should_queue: AtomicBool::new(false),
             progress_throttle: Mutex::new(HashMap::new()),
             flush_inline_for_tests: AtomicBool::new(false),
+            cover_tx: Mutex::new(None),
         }
     }
 
@@ -147,6 +152,79 @@ impl SyncWriter {
     /// launch flushes them via `ReplayEngine::tick`.
     pub fn set_should_queue(&self, queue: bool) {
         self.should_queue.store(queue, Ordering::SeqCst);
+    }
+
+    pub fn set_cover_tx(
+        &self,
+        tx: Option<std::sync::mpsc::Sender<(std::path::PathBuf, Vec<u8>)>>,
+    ) {
+        *self.cover_tx.lock().expect("cover_tx mutex") = tx;
+    }
+
+    pub fn spawn_cover_writer(&self) {
+        let (tx, rx) = std::sync::mpsc::channel::<(std::path::PathBuf, Vec<u8>)>();
+        std::thread::Builder::new()
+            .name("cover-writer".into())
+            .spawn(move || {
+                for (path, bytes) in rx {
+                    if let Some(parent) = path.parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                    let _ = std::fs::write(&path, &bytes);
+                }
+            })
+            .ok();
+        self.set_cover_tx(Some(tx));
+    }
+
+    pub fn queue_cover_write(&self, db: &crate::db::Db, book_id: &str, bytes: &[u8]) {
+        if !self.should_queue.load(Ordering::SeqCst) {
+            return;
+        }
+        let Ok(data_dir) = db.data_dir.lock() else { return };
+        let path = data_dir.join("covers").join(format!("{book_id}.img"));
+        if let Ok(guard) = self.cover_tx.lock() {
+            if let Some(tx) = guard.as_ref() {
+                let _ = tx.send((path, bytes.to_vec()));
+            }
+        }
+    }
+
+    /// One-time backfill: ensure every book with `cover_data` in the DB
+    /// has a corresponding `.img` file in the covers directory. Queues
+    /// missing files to the cover-writer thread. Only needed when
+    /// upgrading from schema <13 (before covers-in-db existed).
+    pub fn backfill_cover_files(&self, db: &crate::db::Db) {
+        let Ok(data_dir) = db.data_dir.lock() else { return };
+        let covers_dir = data_dir.join("covers");
+
+        let Ok(conn) = db.read_conn.lock() else { return };
+        let Ok(mut stmt) = conn.prepare(
+            "SELECT id, cover_data FROM books WHERE cover_data IS NOT NULL AND LENGTH(cover_data) > 0",
+        ) else { return };
+        let rows: Vec<(String, Vec<u8>)> = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .into_iter()
+            .flatten()
+            .flatten()
+            .collect();
+        drop(stmt);
+        drop(conn);
+
+        let Ok(guard) = self.cover_tx.lock() else { return };
+        let Some(tx) = guard.as_ref() else { return };
+
+        let mut queued = 0usize;
+        for (id, bytes) in rows {
+            let path = covers_dir.join(format!("{id}.img"));
+            if !path.exists() {
+                let _ = tx.send((path, bytes));
+                queued += 1;
+            }
+        }
+        if queued > 0 {
+            log::info!("sync: queued {queued} cover file(s) for backfill");
+        }
     }
 
     /// Test/probe accessor — `true` when an `EventLog` is wired up
