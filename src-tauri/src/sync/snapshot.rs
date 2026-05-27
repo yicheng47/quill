@@ -601,7 +601,6 @@ pub fn should_compact(shared_dir: &Path, device: &str) -> bool {
 pub fn compact_own_log(
     shared_dir: &Path,
     log_handle: &EventLog,
-    live_db: Option<&Db>,
 ) -> AppResult<CompactReport> {
     let device = log_handle.device().to_string();
     let snap_path = shared_dir
@@ -638,35 +637,7 @@ pub fn compact_own_log(
             }
             tx.commit()?;
         }
-        let mut state = dump_state(&conn)?;
-
-        // cover_data is written directly to SQLite (not through events),
-        // so the event replay above misses it. Overlay from the live DB
-        // so the compacted snapshot carries covers to peers.
-        if let Some(db) = live_db {
-            if let Ok(live_conn) = db.read_conn.lock() {
-                let mut stmt = live_conn.prepare(
-                    "SELECT id, cover_data FROM books WHERE cover_data IS NOT NULL AND LENGTH(cover_data) > 0",
-                ).ok();
-                if let Some(ref mut s) = stmt {
-                    let rows: Vec<(String, Vec<u8>)> = s
-                        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
-                        .into_iter()
-                        .flatten()
-                        .flatten()
-                        .collect();
-                    for (id, bytes) in rows {
-                        if let Some(book) = state.books.get_mut(&id) {
-                            if book.cover_data.is_none() {
-                                book.cover_data = Some(
-                                    base64::engine::general_purpose::STANDARD.encode(&bytes),
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        let state = dump_state(&conn)?;
 
         // The new snapshot's watermark is the highest event id we
         // just folded. After truncation the log is empty, so any
@@ -1923,7 +1894,7 @@ mod tests {
             vec![import("b1"), import("b2"), import("b3")],
         );
 
-        let report = compact_own_log(shared, &log, None).unwrap();
+        let report = compact_own_log(shared, &log).unwrap();
         assert_eq!(report.events_folded, 3);
         assert!(report.snapshot_written);
 
@@ -1946,7 +1917,7 @@ mod tests {
         let log_path = shared.join("logs/dev-A.jsonl");
         let log = EventLog::open(&log_path, "dev-A", false).unwrap();
 
-        let report = compact_own_log(shared, &log, None).unwrap();
+        let report = compact_own_log(shared, &log).unwrap();
         assert_eq!(report.events_folded, 0);
         assert!(!report.snapshot_written);
         assert!(!shared.join("logs/dev-A.snapshot.json").exists());
@@ -1959,11 +1930,11 @@ mod tests {
         std::fs::create_dir_all(shared.join("logs")).unwrap();
         let log = seed_log(shared, "dev-A", vec![import("b1"), import("b2")]);
 
-        let r1 = compact_own_log(shared, &log, None).unwrap();
+        let r1 = compact_own_log(shared, &log).unwrap();
         assert_eq!(r1.events_folded, 2);
 
         // Second run sees an empty log → no snapshot rewrite.
-        let r2 = compact_own_log(shared, &log, None).unwrap();
+        let r2 = compact_own_log(shared, &log).unwrap();
         assert_eq!(r2.events_folded, 0);
         assert!(!r2.snapshot_written);
     }
@@ -2009,7 +1980,7 @@ mod tests {
 
         // Compaction path: compact the log → snapshot, then apply the
         // snapshot to a fresh DB.
-        compact_own_log(shared, &log, None).unwrap();
+        compact_own_log(shared, &log).unwrap();
         let snap =
             Snapshot::read_from(&shared.join("logs/dev-A.snapshot.json")).unwrap();
         let mut db_via_snap = open_db();
@@ -2086,7 +2057,7 @@ mod tests {
         let snap_dst = shared.join("logs/dev-A.snapshot.json");
         std::fs::create_dir_all(&snap_dst).unwrap();
 
-        let result = compact_own_log(shared, &log, None);
+        let result = compact_own_log(shared, &log);
         assert!(
             result.is_err(),
             "compaction must propagate snapshot write failure"
@@ -2111,10 +2082,10 @@ mod tests {
         std::fs::create_dir_all(shared.join("logs")).unwrap();
         let log = seed_log(shared, "dev-A", vec![import("b1")]);
 
-        compact_own_log(shared, &log, None).unwrap();
+        compact_own_log(shared, &log).unwrap();
         // New event lands after the first compaction.
         log.append(import("b2"), 9_999).unwrap();
-        compact_own_log(shared, &log, None).unwrap();
+        compact_own_log(shared, &log).unwrap();
 
         let snap =
             Snapshot::read_from(&shared.join("logs/dev-A.snapshot.json")).unwrap();

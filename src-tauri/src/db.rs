@@ -145,6 +145,7 @@ impl Db {
         fs::create_dir_all(db_dir)?;
         fs::create_dir_all(data_dir)?;
         fs::create_dir_all(data_dir.join("books"))?;
+        fs::create_dir_all(data_dir.join("covers"))?;
 
         let db_path = db_dir.join("quill.db");
         let conn = Connection::open(&db_path)?;

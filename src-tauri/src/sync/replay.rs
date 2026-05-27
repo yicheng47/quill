@@ -230,7 +230,9 @@ impl ReplayEngine {
                 ::log::error!("sync: batch apply failed: {e}");
             })?;
 
-        if events_applied > 0 || snapshots_applied > 0 || outbox_flushed > 0 {
+        let covers_ingested = ingest_peer_covers(&self.shared_dir, db);
+
+        if events_applied > 0 || snapshots_applied > 0 || outbox_flushed > 0 || covers_ingested > 0 {
             ::log::info!(
                 "sync: batch applied events={events_applied} snapshots={snapshots_applied} outbox_flushed={outbox_flushed} elapsed_ms={}",
                 started.elapsed().as_millis(),
@@ -278,7 +280,7 @@ impl ReplayEngine {
         // Failures are non-fatal — the next tick will retry and the log
         // simply grows in the meantime.
         if snapshot::should_compact(&self.shared_dir, &self.self_device) {
-            match snapshot::compact_own_log(&self.shared_dir, &self.own_log, Some(db)) {
+            match snapshot::compact_own_log(&self.shared_dir, &self.own_log) {
                 Ok(report) if report.snapshot_written => ::log::info!(
                     "sync: compacted own log — {} events folded, {} bytes freed",
                     report.events_folded, report.bytes_freed,
@@ -668,6 +670,55 @@ fn read_outbox(conn: &Connection) -> AppResult<Vec<OutboxRow>> {
         })?
         .collect::<Result<_, _>>()?;
     Ok(collected)
+}
+
+fn ingest_peer_covers(shared_dir: &Path, db: &Db) -> usize {
+    let covers_dir = shared_dir.join("covers");
+    let entries = match std::fs::read_dir(&covers_dir) {
+        Ok(e) => e,
+        Err(_) => return 0,
+    };
+
+    let conn = match db.conn.lock() {
+        Ok(c) => c,
+        Err(_) => return 0,
+    };
+
+    let mut ingested = 0usize;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        let Some(book_id) = name_str.strip_suffix(".img") else { continue };
+
+        let has_cover: bool = conn
+            .query_row(
+                "SELECT cover_data IS NOT NULL AND LENGTH(cover_data) > 0 FROM books WHERE id = ?1",
+                rusqlite::params![book_id],
+                |r| r.get(0),
+            )
+            .unwrap_or(true);
+
+        if has_cover {
+            continue;
+        }
+
+        match std::fs::read(entry.path()) {
+            Ok(bytes) if !bytes.is_empty() => {
+                if conn
+                    .execute(
+                        "UPDATE books SET cover_data = ?1 WHERE id = ?2 AND (cover_data IS NULL OR LENGTH(cover_data) = 0)",
+                        rusqlite::params![bytes, book_id],
+                    )
+                    .is_ok()
+                {
+                    ingested += 1;
+                    ::log::info!("sync: ingested cover for book {book_id}");
+                }
+            }
+            _ => {}
+        }
+    }
+    ingested
 }
 
 #[cfg(test)]

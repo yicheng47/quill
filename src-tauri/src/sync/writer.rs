@@ -103,6 +103,10 @@ pub struct SyncWriter {
     /// UI never blocks on `bird` / `NSFileCoordinator`. Tests flip it
     /// on so they can assert post-commit log state without polling.
     flush_inline_for_tests: AtomicBool,
+    /// Channel sender for the `cover-writer` background thread. Set by
+    /// `boot_sync_engine` when sync is enabled. Cover file writes go
+    /// through this channel so iCloud I/O never blocks the import path.
+    cover_tx: Mutex<Option<std::sync::mpsc::Sender<(std::path::PathBuf, Vec<u8>)>>>,
 }
 
 impl SyncWriter {
@@ -113,6 +117,7 @@ impl SyncWriter {
             should_queue: AtomicBool::new(false),
             progress_throttle: Mutex::new(HashMap::new()),
             flush_inline_for_tests: AtomicBool::new(false),
+            cover_tx: Mutex::new(None),
         }
     }
 
@@ -147,6 +152,26 @@ impl SyncWriter {
     /// launch flushes them via `ReplayEngine::tick`.
     pub fn set_should_queue(&self, queue: bool) {
         self.should_queue.store(queue, Ordering::SeqCst);
+    }
+
+    pub fn set_cover_tx(
+        &self,
+        tx: Option<std::sync::mpsc::Sender<(std::path::PathBuf, Vec<u8>)>>,
+    ) {
+        *self.cover_tx.lock().expect("cover_tx mutex") = tx;
+    }
+
+    pub fn queue_cover_write(&self, db: &crate::db::Db, book_id: &str, bytes: &[u8]) {
+        if !self.should_queue.load(Ordering::SeqCst) {
+            return;
+        }
+        let Ok(data_dir) = db.data_dir.lock() else { return };
+        let path = data_dir.join("covers").join(format!("{book_id}.img"));
+        if let Ok(guard) = self.cover_tx.lock() {
+            if let Some(tx) = guard.as_ref() {
+                let _ = tx.send((path, bytes.to_vec()));
+            }
+        }
     }
 
     /// Test/probe accessor — `true` when an `EventLog` is wired up

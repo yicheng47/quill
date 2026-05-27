@@ -312,7 +312,11 @@ fn do_insert_book(book: &Book, cover_bytes: Option<&[u8]>, db: &Db, sync: &SyncW
             pages: book.pages,
         }));
         Ok(())
-    })
+    })?;
+    if let Some(bytes) = cover_bytes {
+        sync.queue_cover_write(db, &book.id, bytes);
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -687,12 +691,15 @@ pub fn save_book_cover(
     book_id: String,
     cover_data: Vec<u8>,
     db: State<'_, Db>,
+    sync: State<'_, SyncWriter>,
 ) -> AppResult<()> {
     let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
     conn.execute(
         "UPDATE books SET cover_data = ?1 WHERE id = ?2",
         params![cover_data, book_id],
     )?;
+    drop(conn);
+    sync.queue_cover_write(&db, &book_id, &cover_data);
     Ok(())
 }
 
@@ -770,6 +777,8 @@ pub(crate) fn do_delete_book(id: &str, db: &Db, sync: &SyncWriter) -> AppResult<
 
     let abs_file = db.resolve_path(&file_path);
     let _ = fs::remove_file(&abs_file);
+    let cover_file = db.resolve_path(&format!("covers/{id}.img"));
+    let _ = fs::remove_file(&cover_file);
 
     Ok(())
 }
@@ -1093,6 +1102,10 @@ pub async fn commit_pdf_import(
         }));
         Ok(())
     })?;
+
+    if let Some(ref bytes) = cover_data {
+        sync.queue_cover_write(&db, &book.id, bytes);
+    }
 
     log::info!("import_book: complete id={} title={:?} format=pdf", book.id, book.title);
 
