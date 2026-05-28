@@ -13,7 +13,7 @@ import TranslationsContent from "../components/TranslationsContent";
 import SettingsModal from "../components/SettingsModal";
 import Button from "../components/ui/Button";
 import Input from "../components/ui/Input";
-import { useBooks, importBookDialog, backfillMissingCovers } from "../hooks/useBooks";
+import { useBooks, importBookDialog } from "../hooks/useBooks";
 import { useCollections } from "../hooks/useCollections";
 
 function formatError(err: unknown): string {
@@ -147,18 +147,15 @@ export default function Home() {
   // Refresh when MCP subprocess writes to the library.
   // Debounced: bulk MCP imports fire hundreds of events in quick
   // succession; without the delay each one triggers a full book list
-  // reload + PDF cover backfill, which can OOM/freeze the webview.
+  // reload, which can OOM/freeze the webview.
   useEffect(() => {
     let mcpDebounce: ReturnType<typeof setTimeout> | null = null;
     const unlistenBooks = listen("mcp:books-changed", () => {
       if (mcpDebounce) clearTimeout(mcpDebounce);
-      mcpDebounce = setTimeout(async () => {
+      mcpDebounce = setTimeout(() => {
         refreshRef.current();
         countsRefreshRef.current();
         collectionsRefreshRef.current();
-        await backfillMissingCovers();
-        refreshRef.current();
-        countsRefreshRef.current();
       }, 500);
     });
     const unlistenCollections = listen("mcp:collections-changed", () => {

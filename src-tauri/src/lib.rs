@@ -9,6 +9,7 @@ mod error;
 mod icloud;
 mod mcp;
 mod panic_hook;
+mod pdfium;
 mod secrets;
 mod sync;
 
@@ -571,9 +572,6 @@ pub fn run() {
             commands::app::reveal_logs,
             // Books
             commands::books::import_book,
-            commands::books::stage_pdf_import,
-            commands::books::commit_pdf_import,
-            commands::books::cancel_pdf_import,
             commands::books::list_books,
             commands::books::get_book,
             commands::books::get_book_counts,
@@ -584,9 +582,6 @@ pub fn run() {
             commands::books::update_book_pages,
             commands::books::check_book_available,
             commands::books::update_book_metadata,
-            commands::books::save_book_cover,
-            commands::books::mark_cover_unavailable,
-            commands::books::list_books_needing_covers,
             // Settings
             commands::settings::get_all_settings,
             commands::settings::get_setting,

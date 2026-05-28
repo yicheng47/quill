@@ -59,10 +59,16 @@
 //! Commands don't branch on either — the closure is identical.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    Arc, Mutex,
+    mpsc, Arc, Mutex,
 };
+
+/// Channel-message shape for the `cover-writer` background thread:
+/// `(destination_path, jpeg_bytes)`. Named so clippy's
+/// `type_complexity` lint isn't tripped by the inline tuple.
+type CoverTx = mpsc::Sender<(PathBuf, Vec<u8>)>;
 
 use rusqlite::{params, Transaction};
 
@@ -106,7 +112,7 @@ pub struct SyncWriter {
     /// Channel sender for the `cover-writer` background thread. Set by
     /// `boot_sync_engine` when sync is enabled. Cover file writes go
     /// through this channel so iCloud I/O never blocks the import path.
-    cover_tx: Mutex<Option<std::sync::mpsc::Sender<(std::path::PathBuf, Vec<u8>)>>>,
+    cover_tx: Mutex<Option<CoverTx>>,
 }
 
 impl SyncWriter {
@@ -154,15 +160,12 @@ impl SyncWriter {
         self.should_queue.store(queue, Ordering::SeqCst);
     }
 
-    pub fn set_cover_tx(
-        &self,
-        tx: Option<std::sync::mpsc::Sender<(std::path::PathBuf, Vec<u8>)>>,
-    ) {
+    pub fn set_cover_tx(&self, tx: Option<CoverTx>) {
         *self.cover_tx.lock().expect("cover_tx mutex") = tx;
     }
 
     pub fn spawn_cover_writer(&self) {
-        let (tx, rx) = std::sync::mpsc::channel::<(std::path::PathBuf, Vec<u8>)>();
+        let (tx, rx) = mpsc::channel::<(PathBuf, Vec<u8>)>();
         std::thread::Builder::new()
             .name("cover-writer".into())
             .spawn(move || {
