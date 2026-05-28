@@ -1,7 +1,10 @@
 use std::fs;
+use std::io::Cursor;
 use std::path::Path;
 
 use base64::Engine;
+use image::ImageFormat;
+use pdfium_render::prelude::*;
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -10,6 +13,7 @@ use crate::db::Db;
 use crate::epub;
 use crate::error::{AppError, AppResult};
 use crate::icloud;
+use crate::pdfium;
 use crate::sync::events::{BookImportPayload, EventBody};
 use crate::sync::writer::SyncWriter;
 
@@ -29,46 +33,91 @@ fn cover_blob_to_data_uri(bytes: &[u8]) -> String {
     format!("data:{mime};base64,{b64}")
 }
 
-fn pdf_obj_to_string(obj: &lopdf::Object) -> Option<String> {
-    let bytes = obj.as_str().ok().or_else(|| obj.as_name().ok())?;
-    let s = String::from_utf8_lossy(bytes).to_string();
-    if s.trim().is_empty() { None } else { Some(s) }
+struct PdfExtracted {
+    title: String,
+    author: String,
+    description: Option<String>,
+    pages: i32,
+    cover: Option<Vec<u8>>,
 }
 
-fn extract_pdf_metadata(path: &Path) -> (String, String, i32) {
-    let fallback_title = path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("Untitled")
-        .to_string();
-
-    let Ok(doc) = lopdf::Document::load(path) else {
-        return (fallback_title, "Unknown Author".into(), 0);
+/// Single pdfium pass: load the doc once (streaming via `Read + Seek`
+/// internally — bounded memory regardless of PDF size), pull
+/// title/author/page-count from its metadata, and render page 1 to JPEG.
+/// Avoids the multi-second `lopdf::Document::load_mem` parse on large
+/// PDFs (lopdf walks the full document up front; pdfium is lazy).
+///
+/// Best-effort throughout: any failure falls back to the filename-derived
+/// title + "Unknown Author" + 0 pages + no cover, so the import still
+/// succeeds. The cover sub-step has its own fallback inside.
+fn extract_pdf(path: &Path, fallback_title: &str) -> PdfExtracted {
+    let fallback = || PdfExtracted {
+        title: fallback_title.to_string(),
+        author: "Unknown Author".into(),
+        description: None,
+        pages: 0,
+        cover: None,
     };
 
-    let pages = doc.get_pages().len() as i32;
+    let Ok(pdfium) = pdfium::pdfium()
+        .inspect_err(|e| log::warn!("extract_pdf: pdfium unavailable: {e}"))
+    else {
+        return fallback();
+    };
+    let Ok(doc) = pdfium
+        .load_pdf_from_file(path, None)
+        .inspect_err(|e| log::warn!("extract_pdf: load_pdf_from_file({}): {e}", path.display()))
+    else {
+        return fallback();
+    };
 
-    let info = doc
-        .trailer
-        .get(b"Info")
-        .ok()
-        .and_then(|r| r.as_reference().ok())
-        .and_then(|id| doc.get_object(id).ok())
-        .and_then(|o| o.as_dict().ok().cloned());
+    // Read from the PDF Info dictionary via pdfium (`FPDF_GetMetaText`).
+    // The old frontend pdf.js path also tried the XMP `/Metadata` stream
+    // (dc:title / dc:creator / dc:description) before falling back to
+    // Info, but in practice almost every PDF that has XMP also fills in
+    // Info with matching values — the XMP-only population is dominated
+    // by PDF/A archival and PDF/X print-prep files, which aren't typical
+    // reading material. Falling back to filename for that tail keeps
+    // this code path simple; revisit if a real-world bug surfaces.
+    let metadata = doc.metadata();
+    let info = |tag: PdfDocumentMetadataTagType| {
+        metadata
+            .get(tag)
+            .map(|t| t.value().to_string())
+            .filter(|s| !s.trim().is_empty())
+    };
 
-    let title = info
-        .as_ref()
-        .and_then(|d| d.get(b"Title").ok())
-        .and_then(pdf_obj_to_string)
-        .unwrap_or(fallback_title);
-
-    let author = info
-        .as_ref()
-        .and_then(|d| d.get(b"Author").ok())
-        .and_then(pdf_obj_to_string)
+    let title = info(PdfDocumentMetadataTagType::Title)
+        .unwrap_or_else(|| fallback_title.to_string());
+    let author = info(PdfDocumentMetadataTagType::Author)
         .unwrap_or_else(|| "Unknown Author".into());
+    let description = info(PdfDocumentMetadataTagType::Subject);
+    let pages = doc.pages().len();
+    let cover = render_first_page(&doc);
 
-    (title, author, pages)
+    PdfExtracted { title, author, description, pages, cover }
+}
+
+/// Render page 1 of an already-loaded PDF to JPEG bytes.
+/// Returns `None` on any rendering or encoding failure.
+fn render_first_page(doc: &PdfDocument) -> Option<Vec<u8>> {
+    let page = doc.pages().first().ok()?;
+    let bitmap = page
+        .render_with_config(
+            &PdfRenderConfig::new()
+                .set_target_width(600)
+                .render_form_data(false)
+                .render_annotations(false),
+        )
+        .ok()?;
+    let mut buf = Vec::new();
+    bitmap
+        .as_image()
+        .ok()?
+        .into_rgb8()
+        .write_to(&mut Cursor::new(&mut buf), ImageFormat::Jpeg)
+        .ok()?;
+    Some(buf)
 }
 
 
@@ -239,39 +288,60 @@ pub(crate) fn do_import_pdf(
     fs::create_dir_all(&books_dir)?;
 
     let book_id = uuid::Uuid::new_v4().to_string();
-    let src = std::path::Path::new(file_path);
+    let src = Path::new(file_path);
 
-    let (title, author, pages) = extract_pdf_metadata(src);
+    let fallback_title = src
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("Untitled");
+    // pdfium streams via Read+Seek so memory stays bounded regardless of
+    // PDF size; fs::copy then streams the file to its destination. We
+    // give up the "read once" optimization on purpose — for a 500MB
+    // magazine the byte-buffer pattern would spike RAM, and the OS page
+    // cache covers the cost of the second read (fs::copy) anyway.
+    let t1 = std::time::Instant::now();
+    let extracted = extract_pdf(src, fallback_title);
+    let t_extract = t1.elapsed();
 
-    let filename = book_filename(&title, &book_id, "pdf");
+    let filename = book_filename(&extracted.title, &book_id, "pdf");
     let dest = books_dir.join(&filename);
+    let t2 = std::time::Instant::now();
     fs::copy(src, &dest)?;
+    let t_copy = t2.elapsed();
 
     let now = chrono::Utc::now().timestamp_millis();
     let rel_file_path = format!("books/{}", filename);
+    let cover_data_b64 = extracted.cover.as_deref().map(cover_blob_to_data_uri);
 
     let book = Book {
         id: book_id,
-        title,
-        author,
-        description: None,
+        title: extracted.title,
+        author: extracted.author,
+        description: extracted.description,
         cover_path: None,
         file_path: rel_file_path,
         format: "pdf".to_string(),
         genre: None,
-        pages: Some(pages),
+        pages: Some(extracted.pages),
         status: "unread".to_string(),
         progress: 0,
         current_cfi: None,
         created_at: now,
         updated_at: now,
         available: true,
-        cover_data: None,
+        cover_data: cover_data_b64,
     };
 
-    do_insert_book(&book, None, db, sync, now)?;
+    do_insert_book(&book, extracted.cover.as_deref(), db, sync, now)?;
 
-    log::info!("import_book: complete id={} title={:?} format=pdf", book.id, book.title);
+    log::info!(
+        "import_book: complete id={} title={:?} format=pdf cover={} | extract={:?} copy={:?}",
+        book.id,
+        book.title,
+        extracted.cover.is_some(),
+        t_extract,
+        t_copy,
+    );
     Ok(book)
 }
 
@@ -686,65 +756,6 @@ pub fn check_book_available(id: String, db: State<'_, Db>) -> AppResult<bool> {
     Ok(available)
 }
 
-#[tauri::command]
-pub fn save_book_cover(
-    book_id: String,
-    cover_data: Vec<u8>,
-    db: State<'_, Db>,
-    sync: State<'_, SyncWriter>,
-) -> AppResult<()> {
-    let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
-    conn.execute(
-        "UPDATE books SET cover_data = ?1 WHERE id = ?2",
-        params![cover_data, book_id],
-    )?;
-    drop(conn);
-    sync.queue_cover_write(&db, &book_id, &cover_data);
-    Ok(())
-}
-
-#[tauri::command]
-pub fn mark_cover_unavailable(
-    book_id: String,
-    db: State<'_, Db>,
-) -> AppResult<()> {
-    let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
-    conn.execute(
-        "UPDATE books SET cover_data = X'' WHERE id = ?1 AND cover_data IS NULL",
-        params![book_id],
-    )?;
-    Ok(())
-}
-
-#[derive(Debug, Serialize)]
-pub struct CoverBackfillEntry {
-    pub id: String,
-    pub file_path: String,
-}
-
-#[tauri::command]
-pub fn list_books_needing_covers(db: State<'_, Db>) -> AppResult<Vec<CoverBackfillEntry>> {
-    let conn = db.reader();
-    let mut stmt = conn.prepare(
-        "SELECT id, file_path FROM books WHERE format = 'pdf' AND cover_data IS NULL",
-    )?;
-    let entries: Vec<CoverBackfillEntry> = stmt
-        .query_map([], |row| {
-            Ok(CoverBackfillEntry {
-                id: row.get(0)?,
-                file_path: row.get(1)?,
-            })
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(entries
-        .into_iter()
-        .map(|mut e| {
-            e.file_path = db.resolve_path(&e.file_path).to_string_lossy().to_string();
-            e
-        })
-        .collect())
-}
-
 pub(crate) fn do_delete_book(id: &str, db: &Db, sync: &SyncWriter) -> AppResult<()> {
     let file_path: String = {
         let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
@@ -960,183 +971,6 @@ pub fn update_book_metadata(
     sync: State<'_, SyncWriter>,
 ) -> AppResult<()> {
     do_update_book(&id, Some(&title), Some(&author), None, None, &db, &sync)?;
-    Ok(())
-}
-
-#[derive(Debug, Serialize)]
-pub struct StagedPdf {
-    pub book_id: String,
-    /// Absolute path to the staged file inside `$APPDATA/books/`,
-    /// safe for the frontend to fetch via the asset protocol.
-    pub abs_path: String,
-}
-
-/// Step 1 of PDF import: copy the user-selected file into `$APPDATA/books/`
-/// under a UUID filename. Returns an absolute path the frontend can read via
-/// the asset protocol (so PDF metadata extraction never has to fetch from
-/// arbitrary user paths, which is fragile across macOS/Tauri configurations).
-#[tauri::command]
-pub async fn stage_pdf_import(source_path: String, db: State<'_, Db>) -> AppResult<StagedPdf> {
-    log::info!("import_book: start file={source_path} format=pdf stage=stage");
-
-    let data_dir = db
-        .data_dir
-        .lock()
-        .map_err(|e| AppError::Other(e.to_string()))?
-        .clone();
-    let books_dir = data_dir.join("books");
-    fs::create_dir_all(&books_dir)?;
-
-    let book_id = uuid::Uuid::new_v4().to_string();
-    let staged = books_dir.join(format!("{}.pdf", book_id));
-    fs::copy(std::path::Path::new(&source_path), &staged)
-        .inspect_err(|e| log::error!("import_book: stage copy failed for {source_path}: {e}"))?;
-
-    Ok(StagedPdf {
-        book_id,
-        abs_path: staged.to_string_lossy().to_string(),
-    })
-}
-
-/// Step 2 of PDF import: rename the staged file to a slugged name, write the
-/// cover, and insert the DB row. Caller must have first called
-/// `stage_pdf_import` to obtain `book_id`.
-//
-// Tauri commands need an argument per UI-supplied field plus state handles,
-// so the count creeps over clippy's seven-arg threshold. Bundling into a
-// struct would force the frontend to wrap every call site for no
-// readability gain — the field names are already explicit at the call.
-#[allow(clippy::too_many_arguments)]
-#[tauri::command]
-pub async fn commit_pdf_import(
-    book_id: String,
-    title: String,
-    author: Option<String>,
-    description: Option<String>,
-    pages: i32,
-    cover_data: Option<Vec<u8>>,
-    db: State<'_, Db>,
-    sync: State<'_, SyncWriter>,
-) -> AppResult<Book> {
-    let data_dir = db
-        .data_dir
-        .lock()
-        .map_err(|e| AppError::Other(e.to_string()))?
-        .clone();
-    let books_dir = data_dir.join("books");
-
-    let staged = books_dir.join(format!("{}.pdf", book_id));
-    if !staged.exists() {
-        return Err(AppError::Other(format!(
-            "staged PDF not found for book_id {}",
-            book_id
-        )));
-    }
-
-    // Rename to a human-readable filename
-    let filename = book_filename(&title, &book_id, "pdf");
-    let dest = books_dir.join(&filename);
-    if dest != staged {
-        fs::rename(&staged, &dest)?;
-    }
-
-    let now = chrono::Utc::now().timestamp_millis();
-    let rel_file_path = format!("books/{}", filename);
-    let cover_data_b64 = cover_data.as_ref().map(|d| {
-        cover_blob_to_data_uri(d)
-    });
-
-    let book = Book {
-        id: book_id,
-        title,
-        author: author.unwrap_or_else(|| "Unknown Author".to_string()),
-        description,
-        cover_path: None,
-        file_path: rel_file_path,
-        format: "pdf".to_string(),
-        genre: None,
-        pages: Some(pages),
-        status: "unread".to_string(),
-        progress: 0,
-        current_cfi: None,
-        created_at: now,
-        updated_at: now,
-        available: true,
-        cover_data: cover_data_b64,
-    };
-
-    let device = sync.self_device().to_string();
-    sync.with_tx(&db, now, |tx, events| {
-        tx.execute(
-            "INSERT INTO books (id, title, author, description, cover_path, file_path, format, genre, pages, status, progress, current_cfi, created_at, updated_at, updated_by_device, cover_data)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
-            params![
-                book.id,
-                book.title,
-                book.author,
-                book.description,
-                book.cover_path,
-                book.file_path,
-                book.format,
-                book.genre,
-                book.pages,
-                book.status,
-                book.progress,
-                book.current_cfi,
-                book.created_at,
-                book.updated_at,
-                device,
-                cover_data,
-            ],
-        )?;
-        events.push(EventBody::BookImport(BookImportPayload {
-            id: book.id.clone(),
-            title: book.title.clone(),
-            author: book.author.clone(),
-            description: book.description.clone(),
-            cover_path: book.cover_path.clone(),
-            file_path: book.file_path.clone(),
-            format: book.format.clone(),
-            genre: book.genre.clone(),
-            pages: book.pages,
-        }));
-        Ok(())
-    })?;
-
-    if let Some(ref bytes) = cover_data {
-        sync.queue_cover_write(&db, &book.id, bytes);
-    }
-
-    log::info!("import_book: complete id={} title={:?} format=pdf", book.id, book.title);
-
-    let mut result = book;
-    resolve_book_paths(&mut result, &db);
-    Ok(result)
-}
-
-/// Roll back a staged PDF import by deleting the staged file. Used by the
-/// frontend when metadata extraction or commit fails.
-#[tauri::command]
-pub async fn cancel_pdf_import(book_id: String, db: State<'_, Db>) -> AppResult<()> {
-    let data_dir = db
-        .data_dir
-        .lock()
-        .map_err(|e| AppError::Other(e.to_string()))?
-        .clone();
-    let books_dir = data_dir.join("books");
-    // Remove the staged UUID-named file.
-    let staged = books_dir.join(format!("{}.pdf", book_id));
-    let _ = fs::remove_file(&staged);
-    // Also remove any renamed (slugged) file from a partial commit.
-    if let Ok(entries) = fs::read_dir(&books_dir) {
-        for entry in entries.flatten() {
-            let name = entry.file_name();
-            let name_str = name.to_string_lossy();
-            if name_str.contains(&book_id[..8]) && name_str.ends_with(".pdf") {
-                let _ = fs::remove_file(entry.path());
-            }
-        }
-    }
     Ok(())
 }
 
@@ -1601,5 +1435,106 @@ mod tests {
         let page2 = query_books(&db, None, None, Some("c1"), page1.next_cursor.as_deref(), 3).unwrap();
         assert_eq!(page2.books.len(), 2);
         assert!(page2.next_cursor.is_none());
+    }
+
+    /// Build a minimal one-page PDF on disk. The page has a single
+    /// filled rectangle so pdfium has something visible to rasterize —
+    /// otherwise an empty page is technically valid but bitmap output
+    /// could be all-white in a way that depends on background fill
+    /// semantics we don't want to depend on.
+    fn write_fixture_pdf(path: &std::path::Path) {
+        use lopdf::content::{Content, Operation};
+        use lopdf::{Document, Object, Stream, dictionary};
+
+        let mut doc = Document::with_version("1.5");
+        let pages_id = doc.new_object_id();
+        let content = Content {
+            operations: vec![
+                Operation::new("q", vec![]),
+                Operation::new("rg", vec![0.2.into(), 0.4.into(), 0.8.into()]),
+                Operation::new("re", vec![100.into(), 100.into(), 200.into(), 300.into()]),
+                Operation::new("f", vec![]),
+                Operation::new("Q", vec![]),
+            ],
+        };
+        let content_id = doc.add_object(Stream::new(dictionary! {}, content.encode().unwrap()));
+        let page_id = doc.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "Contents" => content_id,
+        });
+        let pages = dictionary! {
+            "Type" => "Pages",
+            "Kids" => vec![page_id.into()],
+            "Count" => 1,
+            "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+            "Resources" => dictionary! {},
+        };
+        doc.objects.insert(pages_id, Object::Dictionary(pages));
+        let catalog_id = doc.add_object(dictionary! {
+            "Type" => "Catalog",
+            "Pages" => pages_id,
+        });
+        doc.trailer.set("Root", catalog_id);
+        doc.save(path).unwrap();
+    }
+
+    #[test]
+    fn extract_pdf_renders_cover_for_valid_pdf() {
+        let dir = TempDir::new().unwrap();
+        let pdf = dir.path().join("fixture.pdf");
+        write_fixture_pdf(&pdf);
+
+        let out = extract_pdf(&pdf, "fallback");
+        let cover = out.cover.expect("cover should be populated");
+        // JPEG magic: FF D8 FF
+        assert_eq!(&cover[..3], &[0xFF, 0xD8, 0xFF]);
+        let decoded = image::load_from_memory(&cover).expect("output decodes as image");
+        assert!(decoded.width() > 100 && decoded.height() > 100);
+        assert_eq!(out.pages, 1);
+    }
+
+    #[test]
+    fn extract_pdf_returns_fallback_for_corrupt_pdf() {
+        let dir = TempDir::new().unwrap();
+        let bogus = dir.path().join("bogus.pdf");
+        std::fs::write(&bogus, b"this is not a PDF").unwrap();
+        let out = extract_pdf(&bogus, "myfile");
+        assert_eq!(out.title, "myfile");
+        assert_eq!(out.author, "Unknown Author");
+        assert_eq!(out.pages, 0);
+        assert!(out.cover.is_none());
+    }
+
+    #[test]
+    fn extract_pdf_returns_fallback_for_missing_file() {
+        let dir = TempDir::new().unwrap();
+        let missing = dir.path().join("nope.pdf");
+        let out = extract_pdf(&missing, "myfile");
+        assert_eq!(out.title, "myfile");
+        assert!(out.cover.is_none());
+    }
+
+    #[test]
+    fn do_import_pdf_populates_cover_data() {
+        let (dir, db) = setup();
+        let pdf = dir.path().join("fixture.pdf");
+        write_fixture_pdf(&pdf);
+
+        let sync = SyncWriter::new("dev-A".into());
+        let book = do_import_pdf(pdf.to_str().unwrap(), &db, &sync).unwrap();
+        assert_eq!(book.format, "pdf");
+        assert!(book.cover_data.is_some(), "cover_data should be populated");
+
+        let conn = db.conn.lock().unwrap();
+        let stored: Option<Vec<u8>> = conn
+            .query_row(
+                "SELECT cover_data FROM books WHERE id = ?1",
+                params![book.id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let bytes = stored.expect("cover_data BLOB present");
+        assert_eq!(&bytes[..3], &[0xFF, 0xD8, 0xFF], "stored bytes are JPEG");
     }
 }

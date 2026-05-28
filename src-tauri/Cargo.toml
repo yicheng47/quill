@@ -48,7 +48,8 @@ rand = "0.8"
 ulid = { version = "1", features = ["serde"] }
 notify = "6"
 gethostname = "0.5"
-lopdf = "0.40.0"
+pdfium-render = "0.9"
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
@@ -57,3 +58,4 @@ block2 = "0.6"
 
 [dev-dependencies]
 tempfile = "3"
+lopdf = "0.40.0"
