@@ -998,8 +998,9 @@ export default function Reader() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-screen">
-        <p className="text-text-muted">{t("reader.loading")}</p>
+      <div className="flex flex-col items-center justify-center h-screen gap-3">
+        <Loader2 size={24} className="animate-spin text-text-muted" />
+        <p className="text-text-muted text-[14px]">{t("reader.loading")}</p>
       </div>
     );
   }
@@ -1019,7 +1020,7 @@ export default function Reader() {
           <p className="text-text-muted text-[14px]">{t("reader.downloadTimeout")}</p>
         ) : (
           <>
-            <Loader2 size={24} className="text-accent animate-spin" />
+            <Loader2 size={24} className="animate-spin text-text-muted" />
             <p className="text-text-muted text-[14px]">{t("reader.downloadingFromICloud")}</p>
           </>
         )}
