@@ -170,6 +170,22 @@ export default function Home() {
     };
   }, []);
 
+  // Covers arrive a tick or two after the books they belong to (the sync
+  // engine triggers their iCloud download, then ingests the bytes into the
+  // cover_data BLOB on a later watcher tick). Refresh so blank cover cards
+  // fill in on their own. Debounced: covers land in bursts.
+  useEffect(() => {
+    let coverDebounce: ReturnType<typeof setTimeout> | null = null;
+    const unlisten = listen("sync-covers-ingested", () => {
+      if (coverDebounce) clearTimeout(coverDebounce);
+      coverDebounce = setTimeout(() => refreshRef.current(), 500);
+    });
+    return () => {
+      if (coverDebounce) clearTimeout(coverDebounce);
+      unlisten.then((fn) => fn());
+    };
+  }, []);
+
   // Listen for Tauri file drag-and-drop events
   useEffect(() => {
     let cancelled = false;
