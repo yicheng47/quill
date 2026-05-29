@@ -51,8 +51,6 @@ export default function LookupSettings({ settings, loading, save, showSavedToast
           ]}
         />
       </div>
-      <div className="h-px bg-black/10" />
-
       {/* Show Translation */}
       <div className="flex items-center justify-between h-[73px]">
         <div>
@@ -72,8 +70,6 @@ export default function LookupSettings({ settings, loading, save, showSavedToast
           }}
         />
       </div>
-      <div className="h-px bg-black/10" />
-
       {/* Preview */}
       <div className="mt-5">
         <p className="text-[12px] font-medium text-text-muted mb-2 uppercase tracking-[0.3px]">Preview</p>

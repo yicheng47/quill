@@ -57,11 +57,7 @@ export default function App() {
 
   const content = (
     <>
-      {isMainWindow && (
-        <UpdateToast
-          onOpenSettings={() => window.dispatchEvent(new CustomEvent("open-settings", { detail: "about" }))}
-        />
-      )}
+      {isMainWindow && <UpdateToast />}
       <Routes>
         <Route path="/" element={<Home />} />
         <Route path="/reader/:bookId" element={<Reader />} />

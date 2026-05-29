@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { useUpdateChecker, type UpdateState } from "../hooks/useUpdateChecker";
 
 const UpdateContext = createContext<UpdateState | null>(null);
@@ -7,7 +8,8 @@ const UpdateContext = createContext<UpdateState | null>(null);
 export function UpdateProvider({ children }: { children: ReactNode }) {
   const state = useUpdateChecker();
 
-  // Auto-check on mount after a short delay (if auto-check is enabled)
+  // Auto-check on mount after a short delay (if auto-check is enabled).
+  // Silent — surfaces only if an update is found.
   useEffect(() => {
     const timer = setTimeout(async () => {
       try {
@@ -21,6 +23,18 @@ export function UpdateProvider({ children }: { children: ReactNode }) {
       }
     }, 3000);
     return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Manual check triggered from the native app menu ("Check for Updates").
+  // Marked manual so the toast shows checking / up-to-date feedback.
+  useEffect(() => {
+    const unlisten = listen("menu:check-for-updates", () => {
+      state.checkForUpdate({ manual: true });
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

@@ -396,6 +396,34 @@ pub fn run() {
                     help.append(&item)?;
                 }
             }
+
+            // "Check for Updates…" — on macOS it belongs in the app menu
+            // next to About; elsewhere there's no app menu, so it goes in
+            // Help. Same English-at-boot limitation as `reveal_logs`.
+            let check = tauri::menu::MenuItem::with_id(
+                handle,
+                "check_for_updates",
+                "Check for Updates…",
+                true,
+                None::<&str>,
+            )?;
+            #[cfg(target_os = "macos")]
+            {
+                if let Some(app_kind) = menu.items()?.first() {
+                    if let Some(app_sub) = app_kind.as_submenu() {
+                        // 0 = About; place ours right after it.
+                        app_sub.insert(&check, 1)?;
+                    }
+                }
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                if let Some(help_kind) = menu.get(tauri::menu::HELP_SUBMENU_ID) {
+                    if let Some(help) = help_kind.as_submenu() {
+                        help.append(&check)?;
+                    }
+                }
+            }
             Ok(menu)
         })
         .on_menu_event(|app, event| {
@@ -403,6 +431,15 @@ pub fn run() {
                 if let Err(e) = commands::app::reveal_logs(app.clone()) {
                     log::warn!("menu: reveal_logs failed: {e}");
                 }
+            } else if event.id() == "check_for_updates" {
+                // Surface the main window (it may be hidden) so the
+                // update toast's feedback is visible, then let the
+                // frontend run the check via the updater plugin.
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.show();
+                    let _ = w.set_focus();
+                }
+                let _ = app.emit("menu:check-for-updates", ());
             }
         })
         .on_window_event(|window, event| {
