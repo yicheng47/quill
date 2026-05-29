@@ -236,11 +236,14 @@ pub fn sync_enable(
         .join(format!("{}.jsonl", device.device_uuid));
     let log = Arc::new(EventLog::open(&log_path, &device.device_uuid, true)?);
 
-    let engine = Arc::new(ReplayEngine::new(
-        icloud_dir.clone(),
-        device.device_uuid.clone(),
-        Arc::clone(&log),
-    ));
+    let engine = Arc::new(
+        ReplayEngine::new(
+            icloud_dir.clone(),
+            device.device_uuid.clone(),
+            Arc::clone(&log),
+        )
+        .with_app_handle(app.clone()),
+    );
 
     // Watcher spawn is the most likely failure point — do it before
     // any durable write. If it fails, we abort cleanly; the log file

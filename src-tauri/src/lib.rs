@@ -255,11 +255,14 @@ fn boot_sync_engine(
     let log_path = shared_dir.join("logs").join(format!("{device_uuid}.jsonl"));
     let log = Arc::new(EventLog::open(&log_path, device_uuid, true)?);
 
-    let engine = Arc::new(ReplayEngine::new(
-        shared_dir.clone(),
-        device_uuid.to_string(),
-        Arc::clone(&log),
-    ));
+    let engine = Arc::new(
+        ReplayEngine::new(
+            shared_dir.clone(),
+            device_uuid.to_string(),
+            Arc::clone(&log),
+        )
+        .with_app_handle(app_handle.clone()),
+    );
 
     let watcher = sync::watcher::spawn(
         shared_dir,

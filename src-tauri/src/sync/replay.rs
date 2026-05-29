@@ -148,6 +148,12 @@ pub struct ReplayEngine {
     /// Own log handle, shared with `SyncWriter`. `tick()` writes here when
     /// flushing the outbox.
     pub own_log: Arc<EventLog>,
+    /// Handle for emitting non-modal frontend events (e.g.
+    /// `sync-covers-ingested`) from any tick — including the silent
+    /// watcher ticks where covers actually land. Deliberately separate
+    /// from `tick_with_progress`'s `app_handle` parameter, which drives
+    /// the `sync-progress` modal and is `None` for watcher ticks.
+    app_handle: Option<tauri::AppHandle>,
     /// Set to `true` by `cancel()` to abort an in-flight tick early.
     /// Checked between events in Phase C so a `sync_disable` doesn't
     /// have to wait for a long replay to finish.
@@ -160,8 +166,16 @@ impl ReplayEngine {
             shared_dir,
             self_device,
             own_log,
+            app_handle: None,
             cancelled: std::sync::atomic::AtomicBool::new(false),
         }
+    }
+
+    /// Attach an `AppHandle` so ticks can emit non-modal frontend events.
+    /// Set at both engine boot sites (`boot_sync_engine`, `sync_enable`).
+    pub fn with_app_handle(mut self, handle: tauri::AppHandle) -> Self {
+        self.app_handle = Some(handle);
+        self
     }
 
     /// Signal any in-flight tick to stop after the current event.
@@ -231,6 +245,16 @@ impl ReplayEngine {
             })?;
 
         let covers_ingested = ingest_peer_covers(&self.shared_dir, db);
+        if covers_ingested > 0 {
+            // Covers land on watcher ticks (the placeholder triggered for
+            // download a tick or two earlier), which pass `None` for the
+            // modal `app_handle`. Use the engine-held handle so the grid
+            // refreshes when covers fill in — otherwise blank cards persist
+            // until the user navigates or relaunches.
+            if let Some(handle) = &self.app_handle {
+                let _ = handle.emit("sync-covers-ingested", covers_ingested);
+            }
+        }
 
         if events_applied > 0 || snapshots_applied > 0 || outbox_flushed > 0 || covers_ingested > 0 {
             ::log::info!(
@@ -1360,6 +1384,84 @@ mod tests {
             !is_in_flight(&log_path),
             "in-flight should be cleared after successful read",
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Cover ingestion
+    // -----------------------------------------------------------------------
+
+    fn insert_book_no_cover(conn: &Connection, id: &str) {
+        conn.execute(
+            "INSERT INTO books
+             (id, title, author, file_path, format, status, progress, created_at, updated_at, updated_by_device)
+             VALUES (?1, 'T', 'A', 'books/x.epub', 'epub', 'unread', 0, 1, 1, 'peer-A')",
+            params![id],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn ingest_peer_covers_reads_file_into_blob() {
+        let env = setup("self");
+        insert_book_no_cover(&env.conn(), "b1");
+
+        let covers = env.shared.join("covers");
+        fs::create_dir_all(&covers).unwrap();
+        fs::write(covers.join("b1.img"), b"\x89PNG fake cover bytes").unwrap();
+
+        let ingested = ingest_peer_covers(&env.shared, &env.db);
+        assert_eq!(ingested, 1, "the one new cover file should be ingested");
+
+        let blob: Vec<u8> = env
+            .conn()
+            .query_row("SELECT cover_data FROM books WHERE id = 'b1'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(blob, b"\x89PNG fake cover bytes");
+    }
+
+    #[test]
+    fn ingest_peer_covers_skips_books_that_already_have_a_blob() {
+        let env = setup("self");
+        {
+            let conn = env.conn();
+            insert_book_no_cover(&conn, "b1");
+            conn.execute("UPDATE books SET cover_data = ?1 WHERE id = 'b1'", params![b"existing"])
+                .unwrap();
+        }
+
+        let covers = env.shared.join("covers");
+        fs::create_dir_all(&covers).unwrap();
+        fs::write(covers.join("b1.img"), b"newer bytes").unwrap();
+
+        let ingested = ingest_peer_covers(&env.shared, &env.db);
+        assert_eq!(ingested, 0, "a book that already has a cover BLOB is left untouched");
+
+        let blob: Vec<u8> = env
+            .conn()
+            .query_row("SELECT cover_data FROM books WHERE id = 'b1'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(blob, b"existing", "existing BLOB must not be overwritten");
+    }
+
+    #[test]
+    fn ingest_peer_covers_defers_placeholder_only_covers() {
+        let env = setup("self");
+        insert_book_no_cover(&env.conn(), "b1");
+
+        // Only an iCloud placeholder exists — the real .img isn't materialized
+        // yet. Ingestion triggers a download and defers to a later tick.
+        let covers = env.shared.join("covers");
+        fs::create_dir_all(&covers).unwrap();
+        fs::write(covers.join(".b1.img.icloud"), b"placeholder").unwrap();
+
+        let ingested = ingest_peer_covers(&env.shared, &env.db);
+        assert_eq!(ingested, 0, "placeholder-only cover is deferred, not ingested");
+
+        let blob: Option<Vec<u8>> = env
+            .conn()
+            .query_row("SELECT cover_data FROM books WHERE id = 'b1'", [], |r| r.get(0))
+            .unwrap();
+        assert!(blob.is_none(), "no bytes should be written from a placeholder");
     }
 
 }
