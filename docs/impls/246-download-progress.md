@@ -59,6 +59,8 @@ if covers_ingested > 0 {
 - `boot_sync_engine` (`src-tauri/src/lib.rs`) — has `app_handle: &tauri::AppHandle`; build with `ReplayEngine::new(...).with_app_handle(app_handle.clone())`.
 - `sync_enable` (`src-tauri/src/commands/sync.rs`) — has `app: tauri::AppHandle`; same.
 
+**Watch `covers/` so cover arrivals actually wake the engine** (`src-tauri/src/sync/watcher.rs`). This is load-bearing: `ingest_peer_covers` only runs inside a tick, ticks fire only on watched fs events, and there is no periodic tick. The watcher previously watched `logs/` only — so a cover file materializing under `covers/` triggered nothing, and the emit above would never fire until some unrelated `logs/` event, a manual sync, or a relaunch. The fix adds a second non-recursive watch on `covers/` and broadens the event filter (`is_log_event` → `is_relevant_event`) to also tick on `.img` (a cover materialized → ingest) and `.icloud` (a placeholder appeared → trigger its download). Without this, the steady-state "peer adds one book while I'm running" case leaves a blank card for the whole session.
+
 ### Frontend
 
 **`Home.tsx`** — add a listener mirroring the existing debounced `mcp:books-changed` handler. Covers fill in over a few watcher ticks, so debounce coalesces the burst into one reload.

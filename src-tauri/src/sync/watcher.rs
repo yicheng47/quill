@@ -81,8 +81,14 @@ impl Drop for WatcherHandle {
     }
 }
 
-/// Spawn the watcher. Watches `shared_dir/logs/` non-recursively (own
-/// log + peer logs + snapshots are all flat in there).
+/// Spawn the watcher. Watches `shared_dir/logs/` (own log + peer logs +
+/// snapshots) and `shared_dir/covers/` (synced cover images), both
+/// non-recursively — each dir is flat. Covers are watched because peer
+/// cover files (and their iCloud placeholders) materialize independently
+/// of any `logs/` event: a cover that lands after its book's log event
+/// would otherwise never trigger the tick that ingests it, leaving a
+/// blank card until some unrelated `logs/` change, a manual sync, or a
+/// relaunch.
 ///
 /// The closure inside the dedicated thread holds `Arc<Db>` and
 /// `Arc<ReplayEngine>`. It locks `db.conn` only for the duration of one
@@ -99,6 +105,8 @@ pub fn spawn(
 ) -> AppResult<WatcherHandle> {
     let logs_dir = shared_dir.join("logs");
     std::fs::create_dir_all(&logs_dir)?;
+    let covers_dir = shared_dir.join("covers");
+    std::fs::create_dir_all(&covers_dir)?;
 
     let (tx, rx) = mpsc::channel();
     let mut watcher = recommended_watcher(move |res: notify::Result<notify::Event>| {
@@ -113,6 +121,9 @@ pub fn spawn(
     watcher
         .watch(&logs_dir, RecursiveMode::NonRecursive)
         .map_err(|e| AppError::Other(format!("notify watch {logs_dir:?}: {e}")))?;
+    watcher
+        .watch(&covers_dir, RecursiveMode::NonRecursive)
+        .map_err(|e| AppError::Other(format!("notify watch {covers_dir:?}: {e}")))?;
 
     let stop = Arc::new(AtomicBool::new(false));
     let stop_thread = Arc::clone(&stop);
@@ -147,10 +158,10 @@ fn run_loop(
             Err(mpsc::RecvTimeoutError::Disconnected) => return,
         };
         // Filter out unrelated events early — saves a tick on noisy
-        // file managers. We tick on any change inside `logs/`; the
-        // engine's watermarks make it cheap to re-tick when nothing
-        // actually moved.
-        if !is_log_event(&first) {
+        // file managers. We tick on any log/snapshot/cover change; the
+        // engine's watermarks (and `ingest_peer_covers`' has-cover guard)
+        // make it cheap to re-tick when nothing actually moved.
+        if !is_relevant_event(&first) {
             continue;
         }
 
@@ -186,13 +197,23 @@ fn run_loop(
 
 /// True if this fs event is interesting enough to trigger a tick.
 /// `notify` reports a lot of noise on macOS (mod time bumps from
-/// Spotlight, Finder previews, etc.); we only care about events that
-/// touch a `.jsonl` or `.snapshot.json` file directly.
-fn is_log_event(ev: &notify::Event) -> bool {
+/// Spotlight, Finder previews, etc.); we only tick on files we actually
+/// consume across the two watched dirs:
+///   - `.jsonl` / `.snapshot.json` — peer event logs and snapshots
+///   - `.img` — a cover file materialized, so `ingest_peer_covers` can
+///     read it into the `cover_data` BLOB
+///   - `.icloud` — a placeholder appeared (log or cover); ticking lets
+///     the engine trigger its download so the real file follows
+fn is_relevant_event(ev: &notify::Event) -> bool {
     ev.paths.iter().any(|p| {
         p.extension()
             .and_then(|e| e.to_str())
-            .map(|ext| ext.eq_ignore_ascii_case("jsonl") || ext.eq_ignore_ascii_case("json"))
+            .map(|ext| {
+                ext.eq_ignore_ascii_case("jsonl")
+                    || ext.eq_ignore_ascii_case("json")
+                    || ext.eq_ignore_ascii_case("img")
+                    || ext.eq_ignore_ascii_case("icloud")
+            })
             .unwrap_or(false)
             || is_snapshot_path(p)
     })
@@ -348,22 +369,69 @@ mod tests {
     }
 
     #[test]
-    fn is_log_event_filters_irrelevant_paths() {
-        let mut ev = notify::Event::new(notify::EventKind::Modify(
+    fn is_relevant_event_filters_irrelevant_paths() {
+        let base = notify::Event::new(notify::EventKind::Modify(
             notify::event::ModifyKind::Data(notify::event::DataChange::Content),
         ));
-        ev.paths.push(PathBuf::from("/tmp/random.txt"));
-        assert!(!is_log_event(&ev));
+        let relevant = |p: &str| {
+            let mut ev = base.clone();
+            ev.paths.clear();
+            ev.paths.push(PathBuf::from(p));
+            is_relevant_event(&ev)
+        };
 
-        let mut ev2 = ev.clone();
-        ev2.paths.clear();
-        ev2.paths.push(PathBuf::from("/shared/logs/peer.jsonl"));
-        assert!(is_log_event(&ev2));
+        assert!(!relevant("/tmp/random.txt"));
+        assert!(relevant("/shared/logs/peer.jsonl"));
+        assert!(relevant("/shared/logs/peer.snapshot.json"));
+        // Cover files and placeholders under covers/ must wake the engine.
+        assert!(relevant("/shared/covers/b1.img"));
+        assert!(relevant("/shared/covers/.b1.img.icloud"));
+        // A log placeholder materializing also counts.
+        assert!(relevant("/shared/logs/.peer.jsonl.icloud"));
+    }
 
-        let mut ev3 = ev.clone();
-        ev3.paths.clear();
-        ev3.paths.push(PathBuf::from("/shared/logs/peer.snapshot.json"));
-        assert!(is_log_event(&ev3));
+    /// End-to-end: a cover file landing under `covers/` (no `logs/` event
+    /// at all) must trigger a tick that ingests it into the `cover_data`
+    /// BLOB. Regression for PR #253's review: the watcher previously only
+    /// watched `logs/`, so a cover materializing was invisible.
+    #[test]
+    fn watcher_picks_up_cover_writes() {
+        let shared_dir = TempDir::new().unwrap();
+        let (engine, _logs_dir) = make_engine(shared_dir.path(), "self");
+        let (_db_tmp, db) = make_db();
+
+        // A book with no cover yet (as if its import event already synced).
+        db.conn
+            .lock()
+            .unwrap()
+            .execute(
+                "INSERT INTO books
+                 (id, title, author, file_path, format, status, progress, created_at, updated_at, updated_by_device)
+                 VALUES ('b1', 'T', 'A', 'books/b1.epub', 'epub', 'unread', 0, 1, 1, 'peer-A')",
+                [],
+            )
+            .unwrap();
+
+        let covers_dir = shared_dir.path().join("covers");
+        fs::create_dir_all(&covers_dir).unwrap();
+
+        let handle = spawn(shared_dir.path().to_path_buf(), db.clone(), engine).unwrap();
+        thread::sleep(Duration::from_millis(100));
+
+        fs::write(covers_dir.join("b1.img"), b"\x89PNG cover bytes").unwrap();
+        handle.drain_for_test(Duration::from_millis(1500));
+
+        let blob: Option<Vec<u8>> = db
+            .conn
+            .lock()
+            .unwrap()
+            .query_row("SELECT cover_data FROM books WHERE id = 'b1'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(
+            blob.as_deref(),
+            Some(b"\x89PNG cover bytes".as_slice()),
+            "a cover landing under covers/ should be ingested by the watcher tick",
+        );
     }
 
     /// Constructing a watcher should not hang on a missing logs dir —
