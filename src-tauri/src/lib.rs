@@ -287,8 +287,9 @@ fn boot_sync_engine(
             .map_err(|e| error::AppError::Other(format!("watcher mutex: {e}")))?;
         *engine_guard = Some(Arc::clone(&engine));
         *watcher_guard = Some(watcher);
-        sync_writer.set_log(Some(log));
+        sync_writer.set_log(Some(Arc::clone(&log)));
         sync_writer.spawn_cover_writer();
+        sync_writer.spawn_flush_worker(db.clone(), log);
     }
 
     let bg_engine = Arc::clone(&engine);

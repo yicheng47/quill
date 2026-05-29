@@ -113,6 +113,12 @@ pub struct SyncWriter {
     /// `boot_sync_engine` when sync is enabled. Cover file writes go
     /// through this channel so iCloud I/O never blocks the import path.
     cover_tx: Mutex<Option<CoverTx>>,
+    /// Signal channel to the long-lived `sync-flush` worker. `Some` while
+    /// sync is enabled. A unit send means "the outbox may be dirty —
+    /// drain it." Replaces the old per-write `std::thread::spawn`: the
+    /// worker coalesces a burst of signals into a single drain. Mirrors
+    /// `cover_tx`'s lifecycle (set on boot/enable, cleared on disable).
+    flush_tx: Mutex<Option<mpsc::Sender<()>>>,
 }
 
 impl SyncWriter {
@@ -124,6 +130,7 @@ impl SyncWriter {
             progress_throttle: Mutex::new(HashMap::new()),
             flush_inline_for_tests: AtomicBool::new(false),
             cover_tx: Mutex::new(None),
+            flush_tx: Mutex::new(None),
         }
     }
 
@@ -178,6 +185,51 @@ impl SyncWriter {
             })
             .ok();
         self.set_cover_tx(Some(tx));
+    }
+
+    pub fn set_flush_tx(&self, tx: Option<mpsc::Sender<()>>) {
+        *self.flush_tx.lock().expect("flush_tx mutex") = tx;
+    }
+
+    /// Spawn the long-lived `sync-flush` worker and wire its sender.
+    /// One thread for the whole "sync on" period — `with_tx` pokes it
+    /// over the channel instead of spawning a thread per write.
+    ///
+    /// Captures `db` and the current `log`; since the worker is torn
+    /// down on disable and respawned on enable (mirroring the
+    /// cover-writer), the captured `log` is always the live one. The
+    /// worker exits when its sender is dropped (`set_flush_tx(None)` on
+    /// disable, or replacement on re-enable) — `recv` then returns `Err`.
+    pub fn spawn_flush_worker(&self, db: Db, log: Arc<EventLog>) {
+        let (tx, rx) = mpsc::channel::<()>();
+        std::thread::Builder::new()
+            .name("sync-flush".into())
+            .spawn(move || {
+                log::info!("sync: flush worker started");
+                // Block for a signal, collapse any that piled up while we
+                // were draining, then drain once. `flush_outbox` is
+                // exactly-once (FLUSH_OUTBOX_MUTEX + delete-after-append),
+                // so a coalesced extra drain is a cheap no-op.
+                while rx.recv().is_ok() {
+                    let coalesced = {
+                        let mut n = 0usize;
+                        while rx.try_recv().is_ok() {
+                            n += 1;
+                        }
+                        n
+                    };
+                    match replay::flush_outbox(&db, &log) {
+                        Ok(0) => {}
+                        Ok(n) => log::debug!(
+                            "sync: flush worker drained {n} event(s) ({coalesced} signal(s) coalesced)"
+                        ),
+                        Err(e) => log::warn!("sync: flush worker drain failed: {e}"),
+                    }
+                }
+                log::info!("sync: flush worker stopped (channel closed)");
+            })
+            .ok();
+        self.set_flush_tx(Some(tx));
     }
 
     pub fn queue_cover_write(&self, db: &crate::db::Db, book_id: &str, bytes: &[u8]) {
@@ -314,37 +366,39 @@ impl SyncWriter {
             result
         }; // db.conn lock released.
 
-        // Phase 2 — post-commit flush. Only runs when the log is open
-        // (i.e. the engine booted this session). Failures just leave
-        // rows in the outbox for the next caller / replay tick to
-        // retry.
+        // Phase 2 — post-commit flush. Failures just leave rows in the
+        // outbox for the next signal / replay tick to retry.
         //
-        // Runs on a background thread so the command thread never
-        // blocks on `EventLog::append`. On macOS, `append` wraps the
-        // write in `NSFileCoordinator.coordinateWritingItemAtURL`,
-        // which synchronously waits for Apple's `bird` daemon to
-        // settle on the log file. `bird` can hold the writing
-        // accessor for several seconds after any nearby iCloud
-        // activity (just-copied EPUB, a peer's snapshot landing,
-        // etc.), so a synchronous flush stalls every UI write —
-        // exactly the "import spinner hangs" symptom users reported
-        // on v1.0.x. The row is durable in `_pending_publish` after
-        // commit, and both the watcher tick and the next write's
-        // post-commit flush retry, so dropping this onto a worker
-        // thread loses nothing — only the optimistic "publish before
-        // returning to the UI" timing.
-        if let Some(log) = log_snapshot {
-            if self.flush_inline_for_tests.load(Ordering::SeqCst) {
+        // The drain runs off the command thread so the UI never blocks
+        // on `EventLog::append`. On macOS, `append` wraps the write in
+        // `NSFileCoordinator.coordinateWritingItemAtURL`, which
+        // synchronously waits for Apple's `bird` daemon to settle on the
+        // log file. `bird` can hold the writing accessor for several
+        // seconds after any nearby iCloud activity (just-copied EPUB, a
+        // peer's snapshot landing, etc.), so a synchronous flush stalls
+        // every UI write — exactly the "import spinner hangs" symptom
+        // users reported on v1.0.x. The row is durable in
+        // `_pending_publish` after commit, and both the watcher tick and
+        // the next write's signal retry, so deferring the drain loses
+        // nothing — only the optimistic "publish before returning to the
+        // UI" timing.
+        //
+        // Rather than spawn a thread per write (#240 — burst writes and
+        // page turns churned short-lived no-op threads), poke the
+        // long-lived `sync-flush` worker over its channel; it coalesces a
+        // burst into one drain.
+        if self.flush_inline_for_tests.load(Ordering::SeqCst) {
+            // Tests drain synchronously so asserts don't race a worker.
+            if let Some(log) = log_snapshot {
                 if let Err(e) = replay::flush_outbox(db, &log) {
                     log::warn!("sync: post-commit outbox flush failed: {e}");
                 }
-            } else {
-                let db = db.clone();
-                std::thread::spawn(move || {
-                    if let Err(e) = replay::flush_outbox(&db, &log) {
-                        log::warn!("sync: post-commit outbox flush failed: {e}");
-                    }
-                });
+            }
+        } else if let Ok(guard) = self.flush_tx.lock() {
+            // No worker (queue-only mode / sync off) → leave the row in
+            // `_pending_publish`; the next enable's boot tick drains it.
+            if let Some(tx) = guard.as_ref() {
+                let _ = tx.send(());
             }
         }
 
@@ -698,6 +752,49 @@ mod tests {
         assert!(
             log_events.iter().any(|e| matches!(e.body, EventBody::BookImport(_))),
             "phase 1's BookImport must reach the log on phase 2's boot drain"
+        );
+    }
+
+    /// The real (non-inline) flush worker drains the outbox after a
+    /// `with_tx` signal — exercising the signal → coalesce → drain path
+    /// that replaced the per-write `std::thread::spawn` (#240).
+    #[test]
+    fn flush_worker_drains_outbox_on_signal() {
+        let (dir, db) = setup_db();
+        let writer = SyncWriter::new("dev-A".into());
+        let log_path = dir
+            .path()
+            .join("logs")
+            .join(format!("{}.jsonl", writer.self_device()));
+        let log = Arc::new(EventLog::open(&log_path, writer.self_device(), false).unwrap());
+        writer.set_should_queue(true);
+        writer.set_log(Some(log.clone()));
+        // Real worker — leave flush_inline_for_tests off so with_tx
+        // signals the channel rather than draining synchronously.
+        writer.spawn_flush_worker(db.clone(), log.clone());
+
+        writer
+            .with_tx(&db, 1_000, |tx, events| {
+                insert_book_row(tx, "b1", 1_000, "dev-A")?;
+                events.push(import_body("b1"));
+                Ok(())
+            })
+            .unwrap();
+
+        // The worker drains asynchronously — poll until the outbox empties.
+        let mut drained = false;
+        for _ in 0..200 {
+            if outbox_count(&db.conn.lock().unwrap()) == 0 {
+                drained = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(drained, "flush worker should drain the outbox after a with_tx signal");
+        assert_eq!(
+            log.read_all().unwrap().len(),
+            1,
+            "the queued event should reach the device log via the worker",
         );
     }
 
