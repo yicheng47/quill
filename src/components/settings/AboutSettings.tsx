@@ -1,158 +1,107 @@
 import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { getVersion } from "@tauri-apps/api/app";
-import { Loader2 } from "lucide-react";
-import { useUpdate } from "../../contexts/UpdateContext";
-import Button from "../ui/Button";
-import Toggle from "../ui/Toggle";
-import type { SettingsProps } from "./types";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { Github, BookText, Scale, ExternalLink } from "lucide-react";
+import QuillLogo from "../QuillLogo";
 
-export default function AboutSettings({ settings, loading, save, showSavedToast }: SettingsProps) {
+const GITHUB_URL = "https://github.com/yicheng47/quill";
+const DOCS_URL = "https://github.com/yicheng47/quill#readme";
+
+// Informational platform label derived from the UA string (no os plugin).
+function platformLabel(): string {
+  if (typeof navigator === "undefined") return "";
+  const ua = navigator.userAgent.toLowerCase();
+  const arch = ua.includes("arm64") || ua.includes("aarch64")
+    ? "arm64"
+    : ua.includes("x86_64") || ua.includes("x64")
+      ? "x86_64"
+      : "";
+  const os = ua.includes("mac")
+    ? "macOS"
+    : ua.includes("win")
+      ? "Windows"
+      : ua.includes("linux")
+        ? "Linux"
+        : "";
+  if (!os) return "";
+  return arch ? `${os} · ${arch}` : os;
+}
+
+export default function AboutSettings() {
   const { t } = useTranslation();
   const [version, setVersion] = useState("");
-  const { status, update, progress, error, checkForUpdate, downloadAndInstall, restart } =
-    useUpdate();
-  const [autoCheck, setAutoCheck] = useState(true);
+  const platform = platformLabel();
 
   useEffect(() => {
     getVersion().then(setVersion).catch(() => setVersion("unknown"));
   }, []);
 
-  useEffect(() => {
-    if (loading) return;
-    if (settings.auto_check_updates !== undefined) {
-      setAutoCheck(settings.auto_check_updates !== "false");
-    }
-  }, [settings, loading]);
-
-  const renderStatusText = () => {
-    switch (status) {
-      case "checking":
-        return (
-          <p className="text-[12px] text-text-muted mt-0.5">
-            {t("settings.about.checking")}
-          </p>
-        );
-      case "available":
-        return (
-          <p className="text-[12px] text-accent-text mt-0.5">
-            {t("settings.about.updateAvailable", { version: `v${update?.version}` })}
-          </p>
-        );
-      case "downloading":
-        return (
-          <p className="text-[12px] text-text-muted mt-0.5">
-            {t("settings.about.downloading")} {progress}%
-          </p>
-        );
-      case "ready":
-        return (
-          <p className="text-[12px] text-success-text mt-0.5">
-            {t("settings.about.readyToInstall")}
-          </p>
-        );
-      case "error":
-        return (
-          <p className="text-[12px] text-text-muted mt-0.5">
-            {error || t("settings.about.updateError")}
-          </p>
-        );
-      default:
-        return (
-          <p className="text-[12px] text-text-muted mt-0.5">
-            {t("settings.about.upToDate")}
-          </p>
-        );
-    }
-  };
-
-  const renderStatusAction = () => {
-    switch (status) {
-      case "checking":
-        return <Loader2 size={16} className="text-text-muted animate-spin shrink-0" />;
-      case "available":
-        return (
-          <Button variant="primary" size="sm" onClick={downloadAndInstall}>
-            {t("settings.about.downloadInstall")}
-          </Button>
-        );
-      case "downloading":
-        return null;
-      case "ready":
-        return (
-          <Button variant="primary" size="sm" onClick={restart}>
-            {t("settings.about.restartToUpdate")}
-          </Button>
-        );
-      case "error":
-        return (
-          <Button variant="secondary" size="sm" onClick={checkForUpdate}>
-            {t("settings.about.retry")}
-          </Button>
-        );
-      default:
-        return (
-          <Button variant="secondary" size="sm" onClick={checkForUpdate}>
-            {t("settings.about.checkNow")}
-          </Button>
-        );
-    }
+  const open = (url: string) => {
+    openUrl(url).catch(() => {});
   };
 
   return (
-    <div>
-      {/* App identity */}
-      <div className="flex items-center justify-between h-[73px]">
-        <div>
-          <p className="text-[14px] font-medium text-text-primary tracking-[-0.15px]">Quill</p>
-          <p className="text-[12px] text-text-muted mt-0.5">{t("settings.about.description")}</p>
+    <div className="flex flex-col min-h-full pb-2">
+      {/* Identity */}
+      <div className="flex flex-col items-center gap-3.5 pt-4 pb-6">
+        <QuillLogo size={56} className="rounded-2xl" />
+        <div className="flex flex-col items-center gap-1.5">
+          <span
+            className="text-[20px] font-semibold text-text-primary tracking-[0.5px]"
+            style={{ fontFamily: "Georgia, 'Times New Roman', serif" }}
+          >
+            Quill
+          </span>
+          <span className="text-[12px] text-text-muted">{t("settings.about.description")}</span>
         </div>
-        <span className="bg-bg-page dark:bg-bg-input text-text-secondary text-[12px] font-mono px-2 py-0.5 rounded-lg">
-          v{version}
-        </span>
+        <div className="flex items-center gap-2">
+          <span className="bg-bg-page dark:bg-bg-input text-text-secondary text-[12px] font-mono px-2 py-0.5 rounded-lg">
+            v{version}
+          </span>
+          {platform && (
+            <span className="bg-bg-page dark:bg-bg-input text-text-secondary text-[12px] font-mono px-2 py-0.5 rounded-lg">
+              {platform}
+            </span>
+          )}
+        </div>
       </div>
-      <div className="h-px bg-black/10" />
+      <div className="h-px bg-black/10 mb-4" />
 
-      {/* Software update */}
-      <div className="flex items-center justify-between min-h-[57px] py-2">
-        <div>
-          <p className="text-[14px] font-medium text-text-primary tracking-[-0.15px]">
-            {t("settings.about.softwareUpdate")}
-          </p>
-          {renderStatusText()}
+      {/* Links */}
+      <button
+        onClick={() => open(GITHUB_URL)}
+        className="group flex items-center justify-between h-[57px] cursor-pointer"
+      >
+        <div className="flex items-center gap-3">
+          <Github size={16} className="text-text-muted" />
+          <span className="text-[14px] text-text-primary tracking-[-0.15px]">{t("settings.about.github")}</span>
         </div>
-        <div className="shrink-0 ml-4">{renderStatusAction()}</div>
+        <ExternalLink size={14} className="text-text-muted" />
+      </button>
+
+      <button
+        onClick={() => open(DOCS_URL)}
+        className="group flex items-center justify-between h-[57px] cursor-pointer"
+      >
+        <div className="flex items-center gap-3">
+          <BookText size={16} className="text-text-muted" />
+          <span className="text-[14px] text-text-primary tracking-[-0.15px]">{t("settings.about.documentation")}</span>
+        </div>
+        <ExternalLink size={14} className="text-text-muted" />
+      </button>
+
+      <div className="flex items-center justify-between h-[57px]">
+        <div className="flex items-center gap-3">
+          <Scale size={16} className="text-text-muted" />
+          <span className="text-[14px] text-text-primary tracking-[-0.15px]">{t("settings.about.license")}</span>
+        </div>
+        <span className="text-[12px] text-text-muted">MIT</span>
       </div>
 
-      {/* Download progress bar */}
-      {status === "downloading" && (
-        <div className="h-[3px] bg-bg-input rounded-full mb-2 overflow-hidden">
-          <div
-            className="h-full bg-accent rounded-full transition-all duration-300 ease-out"
-            style={{ width: `${progress}%` }}
-          />
-        </div>
-      )}
-      <div className="h-px bg-black/10" />
-
-      {/* Auto-check toggle */}
-      <div className="flex items-center justify-between h-[73px]">
-        <div>
-          <p className="text-[14px] font-medium text-text-primary tracking-[-0.15px]">
-            {t("settings.about.autoCheck")}
-          </p>
-          <p className="text-[12px] text-text-muted mt-0.5">
-            {t("settings.about.autoCheckHint")}
-          </p>
-        </div>
-        <Toggle
-          checked={autoCheck}
-          onChange={(v) => {
-            setAutoCheck(v);
-            save("auto_check_updates", String(v));
-            showSavedToast();
-          }}
-        />
+      <div className="flex-1" />
+      <div className="flex items-center justify-center text-[11px] text-text-muted">
+        © 2026 wyc studios
       </div>
     </div>
   );

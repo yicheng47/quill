@@ -64,8 +64,6 @@ export default function ReadingSettings({ settings, loading, save, showSavedToas
           options={fonts.map((f) => ({ value: f.id, label: f.label }))}
         />
       </div>
-      <div className="h-px bg-black/10" />
-
       {/* Font Size */}
       <div className="flex items-center justify-between h-[73px]">
         <div>
@@ -74,8 +72,6 @@ export default function ReadingSettings({ settings, loading, save, showSavedToas
         </div>
         <NumberInput value={fontSize} onChange={setFontSize} onBlur={() => save("font_size", String(fontSize))} suffix="px" min={FONT_SIZE_MIN} max={FONT_SIZE_MAX} />
       </div>
-      <div className="h-px bg-black/10" />
-
       {/* Line Spacing */}
       <div className="flex items-center justify-between h-[73px]">
         <div>
@@ -84,8 +80,6 @@ export default function ReadingSettings({ settings, loading, save, showSavedToas
         </div>
         <NumberInput value={lineSpacing} onChange={setLineSpacing} onBlur={() => save("line_spacing", String(lineSpacing))} suffix="x" min={1} max={3} />
       </div>
-      <div className="h-px bg-black/10" />
-
       {/* Word Spacing */}
       <div className="flex items-center justify-between h-[73px]">
         <div>
@@ -94,8 +88,6 @@ export default function ReadingSettings({ settings, loading, save, showSavedToas
         </div>
         <NumberInput value={wordSpacing} onChange={setWordSpacing} onBlur={() => save("word_spacing", String(wordSpacing))} suffix="px" min={-4} max={16} />
       </div>
-      <div className="h-px bg-black/10" />
-
       {/* Margins */}
       <div className="flex items-center justify-between h-[73px]">
         <div>

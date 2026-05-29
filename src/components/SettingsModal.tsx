@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { Globe, BookOpen, Bot, Search, Languages, ArrowLeftRight, Cloud, Info, Terminal, X, ChevronRight } from "lucide-react";
+import { Globe, BookOpen, Bot, Search, ArrowLeftRight, Cloud, Info, Terminal, X, ChevronRight, Palette } from "lucide-react";
 import GeneralSettings from "./settings/GeneralSettings";
+import AppearanceSettings from "./settings/AppearanceSettings";
 import ReadingSettings from "./settings/ReadingSettings";
 import AiSettings from "./settings/AiSettings";
-import LanguageSettings from "./settings/LanguageSettings";
 import LookupSettings from "./settings/LookupSettings";
 import TranslationSettings from "./settings/TranslationSettings";
 import LibrarySyncSettings from "./settings/LibrarySyncSettings";
@@ -12,7 +12,7 @@ import McpSettings from "./settings/McpSettings";
 import AboutSettings from "./settings/AboutSettings";
 import { useSettings } from "../hooks/useSettings";
 
-type Section = "general" | "language" | "reading" | "ai" | "lookup" | "translation" | "librarySync" | "mcp" | "about";
+type Section = "general" | "appearance" | "reading" | "ai" | "lookup" | "translation" | "librarySync" | "mcp" | "about";
 
 interface SettingsModalProps {
   open: boolean;
@@ -60,7 +60,7 @@ export default function SettingsModal({ open, onClose, initialSection = "general
 
   const allSections: { id: Section; label: string; subtitle: string; icon: typeof Globe }[] = [
     { id: "general", label: t("settings.general.title"), subtitle: t("settings.general.subtitle"), icon: Globe },
-    { id: "language", label: t("settings.language"), subtitle: t("settings.language.subtitle"), icon: Languages },
+    { id: "appearance", label: t("settings.appearance.title"), subtitle: t("settings.appearance.subtitle"), icon: Palette },
     { id: "reading", label: t("settings.reading.title"), subtitle: t("settings.reading.subtitle"), icon: BookOpen },
     { id: "ai", label: t("settings.ai.shortTitle"), subtitle: t("settings.ai.shortSubtitle"), icon: Bot },
     { id: "lookup", label: t("settings.lookup.title"), subtitle: t("settings.lookup.shortSub"), icon: Search },
@@ -77,14 +77,14 @@ export default function SettingsModal({ open, onClose, initialSection = "general
   const renderContent = (): ReactNode => {
     switch (activeSection) {
       case "general": return <GeneralSettings {...settingsProps} />;
-      case "language": return <LanguageSettings {...settingsProps} />;
+      case "appearance": return <AppearanceSettings {...settingsProps} />;
       case "reading": return <ReadingSettings {...settingsProps} />;
       case "ai": return <AiSettings {...settingsProps} onDirtyChange={setAiDirty} onSaveRef={(fn) => { aiSaveRef.current = fn; }} />;
       case "lookup": return <LookupSettings {...settingsProps} />;
       case "translation": return <TranslationSettings {...settingsProps} />;
       case "librarySync": return <LibrarySyncSettings {...settingsProps} />;
       case "mcp": return <McpSettings {...settingsProps} />;
-      case "about": return <AboutSettings {...settingsProps} />;
+      case "about": return <AboutSettings />;
     }
   };
 
@@ -171,16 +171,20 @@ export default function SettingsModal({ open, onClose, initialSection = "general
 
           {/* Scrollable content */}
           <div className="flex-1 overflow-y-auto px-6">
-            {/* Section header */}
-            <div className="mb-1">
-              <h3 className="text-[17px] font-semibold text-text-primary leading-[25px] tracking-[-0.43px]">
-                {active?.label}
-              </h3>
-              <p className="text-[13px] text-text-muted tracking-[-0.08px]">
-                {active?.subtitle}
-              </p>
-            </div>
-            <div className="h-px bg-black/10 mb-2" />
+            {/* Pane header — title + subtitle, then a rule with room
+                below it. Suppressed for About, which leads with its
+                centered identity card. */}
+            {activeSection !== "about" && (
+              <div className="flex flex-col gap-1">
+                <h3 className="text-[18px] font-semibold text-text-primary">
+                  {active?.label}
+                </h3>
+                <p className="text-[13px] text-text-muted">
+                  {active?.subtitle}
+                </p>
+                <div className="mt-3 h-px bg-black/10 mb-2" />
+              </div>
+            )}
 
             {renderContent()}
           </div>

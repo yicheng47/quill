@@ -15,7 +15,12 @@ export interface UpdateState {
   update: Update | null;
   progress: number;
   error: string | null;
-  checkForUpdate: () => Promise<void>;
+  /** True when the in-flight/last check was user-initiated (menu). The
+   *  toast only surfaces the transient checking/up-to-date/error states
+   *  for manual checks — the launch auto-check stays silent unless an
+   *  update is actually found. */
+  manualCheck: boolean;
+  checkForUpdate: (opts?: { manual?: boolean }) => Promise<void>;
   downloadAndInstall: () => Promise<void>;
   restart: () => Promise<void>;
 }
@@ -25,11 +30,13 @@ export function useUpdateChecker(): UpdateState {
   const [update, setUpdate] = useState<Update | null>(null);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [manualCheck, setManualCheck] = useState(false);
   const checking = useRef(false);
 
-  const checkForUpdate = useCallback(async () => {
+  const checkForUpdate = useCallback(async (opts?: { manual?: boolean }) => {
     if (checking.current) return;
     checking.current = true;
+    setManualCheck(opts?.manual ?? false);
     setStatus("checking");
     setError(null);
     try {
@@ -68,6 +75,9 @@ export function useUpdateChecker(): UpdateState {
         }
       });
       setStatus("ready");
+      // Download + install finished — relaunch straight into the new
+      // version (no manual "Restart" step).
+      await relaunch();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setStatus("error");
@@ -83,6 +93,7 @@ export function useUpdateChecker(): UpdateState {
     update,
     progress,
     error,
+    manualCheck,
     checkForUpdate,
     downloadAndInstall,
     restart,

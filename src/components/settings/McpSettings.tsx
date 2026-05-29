@@ -96,8 +96,6 @@ export default function McpSettings(_props: SettingsProps) {
         />
       </div>
 
-      <div className="h-px bg-black/10" />
-
       {/* Codex CLI */}
       <div className="flex items-center justify-between h-[73px]">
         <div>
