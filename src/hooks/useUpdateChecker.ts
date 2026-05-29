@@ -34,7 +34,14 @@ export function useUpdateChecker(): UpdateState {
   const checking = useRef(false);
 
   const checkForUpdate = useCallback(async (opts?: { manual?: boolean }) => {
-    if (checking.current) return;
+    if (checking.current) {
+      // A check is already running (e.g. the silent launch check). If
+      // this one is manual (menu), promote it so the in-flight result
+      // still surfaces checking/up-to-date feedback instead of being a
+      // visible no-op.
+      if (opts?.manual) setManualCheck(true);
+      return;
+    }
     checking.current = true;
     setManualCheck(opts?.manual ?? false);
     setStatus("checking");
@@ -57,6 +64,11 @@ export function useUpdateChecker(): UpdateState {
 
   const downloadAndInstall = useCallback(async () => {
     if (!update) return;
+    // Clicking Update is an explicit user action — mark the lifecycle
+    // manual so a download/install/relaunch failure surfaces in the
+    // toast (error + Retry) even when the update was found by the
+    // silent launch check.
+    setManualCheck(true);
     setStatus("downloading");
     setProgress(0);
     try {
