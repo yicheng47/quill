@@ -205,16 +205,28 @@ impl SyncWriter {
         std::thread::Builder::new()
             .name("sync-flush".into())
             .spawn(move || {
+                log::info!("sync: flush worker started");
                 // Block for a signal, collapse any that piled up while we
                 // were draining, then drain once. `flush_outbox` is
                 // exactly-once (FLUSH_OUTBOX_MUTEX + delete-after-append),
                 // so a coalesced extra drain is a cheap no-op.
                 while rx.recv().is_ok() {
-                    while rx.try_recv().is_ok() {}
-                    if let Err(e) = replay::flush_outbox(&db, &log) {
-                        log::warn!("sync: flush worker drain failed: {e}");
+                    let coalesced = {
+                        let mut n = 0usize;
+                        while rx.try_recv().is_ok() {
+                            n += 1;
+                        }
+                        n
+                    };
+                    match replay::flush_outbox(&db, &log) {
+                        Ok(0) => {}
+                        Ok(n) => log::debug!(
+                            "sync: flush worker drained {n} event(s) ({coalesced} signal(s) coalesced)"
+                        ),
+                        Err(e) => log::warn!("sync: flush worker drain failed: {e}"),
                     }
                 }
+                log::info!("sync: flush worker stopped (channel closed)");
             })
             .ok();
         self.set_flush_tx(Some(tx));

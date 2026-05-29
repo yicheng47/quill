@@ -68,6 +68,8 @@ pub fn spawn_flush_worker(&self, db: Db, log: Arc<EventLog>) {
 
 The worker exits when the sender is dropped (`set_flush_tx(None)` on disable, or replacement on re-enable) — `rx.recv()` returns `Err`.
 
+Logs for observability: `info` on start and stop (lifecycle, infrequent), `debug` per non-empty drain with the events-flushed count and how many signals were coalesced, `warn` on drain failure.
+
 `with_tx` Phase 2 becomes a non-blocking signal:
 
 ```rust
