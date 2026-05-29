@@ -321,6 +321,7 @@ pub fn sync_enable(
     // of the app sees sync as on.
     sync_writer.set_log(Some(Arc::clone(&log)));
     sync_writer.spawn_cover_writer();
+    sync_writer.spawn_flush_worker(db.inner().clone(), Arc::clone(&log));
     sync_writer.backfill_cover_files(&db);
     {
         let mut g = sync_state
@@ -442,6 +443,7 @@ pub fn sync_disable(
     sync_writer.set_log(None);
     sync_writer.set_should_queue(false);
     sync_writer.set_cover_tx(None);
+    sync_writer.set_flush_tx(None);
 
     // Repoint data_dir at local now that the binary copy-back has
     // finished. Mid-flight reads during phase 1 still resolved
@@ -479,6 +481,7 @@ pub fn sync_disable(
             *eg = None;
             *wg = None;
             sync_writer.set_log(None);
+            sync_writer.set_flush_tx(None);
         }
     }
 
