@@ -117,6 +117,10 @@ export function useAiChat(bookId?: string, bookContext?: BookContext) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [streaming, setStreaming] = useState(false);
   const [titling, setTitling] = useState(false);
+  // True from mount until the first initialize() resolves. Consumers gate
+  // sending on this so a message can't be sent (and lazily create a *new*
+  // chat) before the existing session chat has loaded.
+  const [initializing, setInitializing] = useState(true);
   const [chatId, setChatId] = useState<string | null>(null);
   const [chats, setChats] = useState<ChatRecord[]>([]);
 
@@ -216,19 +220,24 @@ export function useAiChat(bookId?: string, bookContext?: BookContext) {
 
   const initialize = useCallback(async (bid?: string) => {
     const targetBook = bid || bookId;
-    if (!targetBook) return;
-    if (initializedBookRef.current === targetBook) return;
+    if (!targetBook) { setInitializing(false); return; }
+    if (initializedBookRef.current === targetBook) { setInitializing(false); return; }
     initializedBookRef.current = targetBook;
+    setInitializing(true);
 
-    const chatList = await refreshChats(targetBook);
-    if (chatList.length > 0) {
-      await loadChat(chatList[0].id);
-    } else {
-      // No chats yet — show empty state without creating a DB record.
-      // A chat will be created lazily on first send.
-      setChatId(null);
-      chatIdRef.current = null;
-      updateMessages([]);
+    try {
+      const chatList = await refreshChats(targetBook);
+      if (chatList.length > 0) {
+        await loadChat(chatList[0].id);
+      } else {
+        // No chats yet — show empty state without creating a DB record.
+        // A chat will be created lazily on first send.
+        setChatId(null);
+        chatIdRef.current = null;
+        updateMessages([]);
+      }
+    } finally {
+      setInitializing(false);
     }
   }, [bookId, refreshChats, loadChat]);
 
@@ -436,6 +445,7 @@ export function useAiChat(bookId?: string, bookContext?: BookContext) {
     messages,
     streaming,
     titling,
+    initializing,
     send,
     reset,
     initialize,

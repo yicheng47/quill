@@ -26,7 +26,7 @@ export default function AiPanel({ bookId, bookTitle, bookAuthor, currentChapter,
   ];
   const {
     messages, streaming, send, initialize,
-    chatId, chats, titling, loadChat, deleteChat, renameChat, reset,
+    chatId, chats, titling, initializing, loadChat, deleteChat, renameChat, reset,
   } = useAiChat(bookId, { title: bookTitle, author: bookAuthor, chapter: currentChapter });
 
   const [input, setInput] = useState("");
@@ -78,7 +78,7 @@ export default function AiPanel({ bookId, bookTitle, bookAuthor, currentChapter,
   }, [editingTitle]);
 
   const handleSend = () => {
-    if (!input.trim() || streaming) return;
+    if (!input.trim() || streaming || initializing) return;
     send(input.trim(), pendingQuote?.text, pendingQuote?.cfi);
     setPendingQuote(undefined);
     setInput("");
@@ -288,9 +288,9 @@ export default function AiPanel({ bookId, bookTitle, bookAuthor, currentChapter,
           />
           <button
             onClick={handleSend}
-            disabled={!input.trim() || streaming}
+            disabled={!input.trim() || streaming || initializing}
             className={`size-[60px] shrink-0 rounded-lg flex items-center justify-center cursor-pointer bg-accent text-white ${
-              !input.trim() || streaming ? "opacity-50" : ""
+              !input.trim() || streaming || initializing ? "opacity-50" : ""
             }`}
           >
             {streaming ? (
