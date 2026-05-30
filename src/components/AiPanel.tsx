@@ -237,10 +237,12 @@ export default function AiPanel({ bookId, bookTitle, bookAuthor, currentChapter,
                 <button
                   key={prompt}
                   onClick={() => {
+                    if (initializing) return;
                     send(prompt, pendingQuote?.text, pendingQuote?.cfi);
                     setPendingQuote(undefined);
                   }}
-                  className="px-3 py-1.5 rounded-full text-[12px] font-medium text-accent-text bg-accent-bg border border-accent/30 hover:opacity-80 cursor-pointer transition-colors"
+                  disabled={initializing}
+                  className="px-3 py-1.5 rounded-full text-[12px] font-medium text-accent-text bg-accent-bg border border-accent/30 hover:opacity-80 cursor-pointer transition-colors disabled:opacity-50 disabled:cursor-default"
                 >
                   {prompt}
                 </button>

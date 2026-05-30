@@ -129,6 +129,14 @@ export function useAiChat(bookId?: string, bookContext?: BookContext) {
   const messagesRef = useRef<ChatMessage[]>([]);
   const chatIdRef = useRef<string | null>(null);
   const streamingRef = useRef(false);
+  const initializingRef = useRef(true);
+
+  // Keep the ref in lockstep with the state so send() (which reads refs to
+  // avoid stale closures) can refuse while initialization is in flight.
+  const setInitializingSynced = (v: boolean) => {
+    initializingRef.current = v;
+    setInitializing(v);
+  };
 
   // Cleanup stream listener on unmount
   useEffect(() => {
@@ -220,10 +228,10 @@ export function useAiChat(bookId?: string, bookContext?: BookContext) {
 
   const initialize = useCallback(async (bid?: string) => {
     const targetBook = bid || bookId;
-    if (!targetBook) { setInitializing(false); return; }
-    if (initializedBookRef.current === targetBook) { setInitializing(false); return; }
+    if (!targetBook) { setInitializingSynced(false); return; }
+    if (initializedBookRef.current === targetBook) { setInitializingSynced(false); return; }
     initializedBookRef.current = targetBook;
-    setInitializing(true);
+    setInitializingSynced(true);
 
     try {
       const chatList = await refreshChats(targetBook);
@@ -237,13 +245,18 @@ export function useAiChat(bookId?: string, bookContext?: BookContext) {
         updateMessages([]);
       }
     } finally {
-      setInitializing(false);
+      setInitializingSynced(false);
     }
   }, [bookId, refreshChats, loadChat]);
 
   /* eslint-disable react-hooks/preserve-manual-memoization */
   const send = useCallback(
     async (content: string, context?: string, contextCfi?: string) => {
+      // Refuse while the session chat is still loading — otherwise the lazy
+      // chat-creation path below would spawn a *new* chat and miss the
+      // existing one. Belt-and-suspenders alongside the UI gate.
+      if (initializingRef.current) return;
+
       let currentChatId = chatIdRef.current;
       const currentBookId = bookId;
 
