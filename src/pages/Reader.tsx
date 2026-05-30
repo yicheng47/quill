@@ -21,6 +21,7 @@ import ReaderSettings, { type ReaderSettingsState, getFontFamily, getThemeStyles
 import ReaderContextMenu from "../components/ReaderContextMenu";
 import HighlightToolbar from "../components/HighlightToolbar";
 import LookupPopover from "../components/LookupPopover";
+import ExplainPopover from "../components/ExplainPopover";
 import DictionaryPanel from "../components/DictionaryPanel";
 import TranslationPopover from "../components/TranslationPopover";
 import TableOfContents from "../components/TableOfContents";
@@ -258,6 +259,15 @@ export default function Reader() {
     x: number;
     y: number;
     word: string;
+    sentence: string;
+    bookTitle?: string;
+    chapter?: string;
+    cfi?: string;
+  } | null>(null);
+  const [explain, setExplain] = useState<{
+    x: number;
+    y: number;
+    text: string;
     sentence: string;
     bookTitle?: string;
     chapter?: string;
@@ -1391,7 +1401,22 @@ export default function Reader() {
             navigator.clipboard.writeText(contextMenu.text);
             setContextMenu(null);
           }}
-          onAskAI={() => {
+          onExplain={() => {
+            const chapterTitle = currentChapterIndex >= 0 && currentChapterIndex < chapters.length
+              ? chapters[currentChapterIndex].title
+              : undefined;
+            setExplain({
+              x: contextMenu.x,
+              y: contextMenu.y,
+              text: contextMenu.text,
+              sentence: contextMenu.sentence,
+              bookTitle: book?.title,
+              chapter: chapterTitle,
+              cfi: contextMenu.cfiRange,
+            });
+            setContextMenu(null);
+          }}
+          onQuote={() => {
             setAiContext({
               text: contextMenu.text,
               cfi: contextMenu.cfiRange,
@@ -1452,6 +1477,20 @@ export default function Reader() {
           bookId={bookId!}
           cfi={lookup.cfi}
           onClose={() => setLookup(null)}
+        />
+      )}
+
+      {explain && (
+        <ExplainPopover
+          x={explain.x}
+          y={explain.y}
+          text={explain.text}
+          sentence={explain.sentence}
+          bookTitle={explain.bookTitle}
+          chapter={explain.chapter}
+          bookId={bookId!}
+          cfi={explain.cfi}
+          onClose={() => setExplain(null)}
         />
       )}
 

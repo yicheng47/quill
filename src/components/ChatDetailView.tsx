@@ -167,6 +167,9 @@ export default function ChatDetailView({ chat, onBack, onChatDeleted }: ChatDeta
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder={t("ai.placeholder")}
+            spellCheck={false}
+            autoCorrect="off"
+            autoCapitalize="off"
             rows={2}
             className="flex-1 h-[60px] bg-bg-input rounded-lg px-3 py-2 text-[14px] text-text-primary placeholder:text-text-placeholder tracking-[-0.15px] leading-5 outline-none border border-transparent focus:border-accent resize-none"
           />

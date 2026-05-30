@@ -53,7 +53,6 @@
   "ai.placeholder": "Ask me anything about what you're reading...",
   "ai.sendHint": "Press Enter to send, Shift+Enter for new line",
   "ai.thinking": "Thinking...",
-  "ai.explain": "Explain",
   "ai.prompt.summarize": "Summarize this chapter",
   "ai.prompt.themes": "Explain the main themes",
   "ai.prompt.characters": "Who are the key characters?",
@@ -124,8 +123,16 @@
   "lookup.copy": "Copy",
   "lookup.copied": "Copied",
 
+  "explain.title": "Explain",
+  "explain.thinking": "Explaining...",
+  "explain.copy": "Copy",
+  "explain.copied": "Copied",
+
+  "aiPanel.quoteChip.dismiss": "Remove quote",
+
   "contextMenu.lookUp": "Look Up",
-  "contextMenu.askAI": "Ask AI Assistant",
+  "contextMenu.explain": "Explain",
+  "contextMenu.quote": "Quote",
   "contextMenu.translate": "Translate",
   "contextMenu.highlight": "Highlight",
   "contextMenu.copy": "Copy",

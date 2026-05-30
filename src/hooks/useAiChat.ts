@@ -48,10 +48,11 @@ function deriveTitle(userMsg: string): string {
   return title;
 }
 
-/** Generate a chat title using a dedicated AI call with per-request event channel. */
+/** Generate a chat title using a dedicated AI call with per-request event channel.
+ *  Titles from the user's first message alone so it can run concurrently with
+ *  the response stream instead of waiting for it to finish. */
 async function generateAiTitle(
   userMsg: string,
-  assistantMsg: string,
 ): Promise<string | null> {
   const requestId = `title-${Date.now()}`;
   const eventName = `ai-title-chunk-${requestId}`;
@@ -91,7 +92,7 @@ async function generateAiTitle(
   // Fire the command (returns immediately, streaming happens in background)
   invoke("ai_generate_title", {
     userMessage: userMsg,
-    assistantMessage: assistantMsg,
+    assistantMessage: "",
     requestId,
   }).catch(() => {
     unlisten();
@@ -246,8 +247,23 @@ export function useAiChat(bookId?: string, bookContext?: BookContext) {
       }
       if (!currentChatId) return;
 
-      // Show title loading immediately for new chats
-      if (isNewChat) setTitling(true);
+      // New chat: generate the title from the user's message, concurrently with
+      // the response stream (not after it), showing a loading state until it
+      // lands. Falls back to a truncated title if the AI call fails.
+      if (isNewChat && currentBookId) {
+        const titleSource = context || content;
+        setTitling(true);
+        generateAiTitle(titleSource).then(async (aiTitle) => {
+          const title = aiTitle || deriveTitle(titleSource);
+          if (title) {
+            try {
+              await invoke("rename_chat", { chatId: currentChatId, title });
+              await refreshChats(currentBookId);
+            } catch { /* ignore */ }
+          }
+          setTitling(false);
+        });
+      }
 
       const userMessage: ChatMessage = {
         id: nextMsgId(),
@@ -308,25 +324,6 @@ export function useAiChat(bookId?: string, bookContext?: BookContext) {
               } catch (err) {
                 console.error("Failed to save assistant message:", err);
               }
-            }
-
-            // Auto-title: use AI with per-request channel, fallback to truncation
-            if (currentBookId && isNewChat) {
-              try {
-                const chat = await invoke<ChatRecord>("get_chat", { chatId: currentChatId });
-                if (chat.title === "New chat") {
-                  const userText = context || content;
-                  const aiTitle = await generateAiTitle(userText, fullContent);
-                  const title = aiTitle || deriveTitle(userText);
-                  if (title) {
-                    await invoke("rename_chat", { chatId: currentChatId, title });
-                    await refreshChats(currentBookId);
-                  }
-                }
-              } catch {
-                // Ignore auto-title errors
-              }
-              setTitling(false);
             }
 
             return;

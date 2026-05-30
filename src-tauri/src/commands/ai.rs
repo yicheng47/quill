@@ -169,6 +169,143 @@ pub async fn ai_lookup(
     Ok(())
 }
 
+/// Build the system prompt for sentence/passage explanation.
+///
+/// Brevity is enforced by the prompt itself (2–3 sentences, no preamble) —
+/// deliberately no `max_tokens` cap, which would truncate mid-sentence.
+/// Unlike `ai_lookup`, there is no translation-gloss branch: that is a
+/// word-level concept and makes no sense for a whole passage. The only
+/// language handling is the response-language directive.
+fn explain_system_prompt(language: &str) -> String {
+    let language_prefix = if language != "en" {
+        let lang_name = match language {
+            "zh" => "Chinese (Simplified)",
+            other => other,
+        };
+        format!("Respond entirely in {}.\n\n", lang_name)
+    } else {
+        String::new()
+    };
+
+    format!(
+        "{}You are a reading assistant embedded in an ebook reader. The user selected a sentence or passage and wants to understand it in context.\n\nIn 2–3 sentences, explain what it means and why it matters here — clarify any difficult phrasing, allusion, or tone. Be direct and concise. Do not restate the passage, add headers or labels, or pad with preamble. Plain prose only.",
+        language_prefix
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+pub async fn ai_explain(
+    passage: String,
+    surrounding: Option<String>,
+    book_title: Option<String>,
+    chapter: Option<String>,
+    request_id: String,
+    app: AppHandle,
+    db: State<'_, Db>,
+    secrets: State<'_, Secrets>,
+) -> AppResult<()> {
+    // Read provider settings
+    let (provider, model, base_url, keep_alive, auth_mode, language) = {
+        let conn = db.reader();
+        let get = |key: &str| -> Option<String> {
+            conn.query_row(
+                "SELECT value FROM settings WHERE key = ?1",
+                rusqlite::params![key],
+                |row| row.get(0),
+            )
+            .ok()
+        };
+        let sys_language = get("language").unwrap_or_else(|| "en".to_string());
+        // lookup_language overrides system language for reading-assistant prompts
+        let lookup_language = get("lookup_language").unwrap_or(sys_language);
+        (
+            get("ai_provider").unwrap_or_else(|| "ollama".to_string()),
+            get("ai_model").unwrap_or_else(|| "llama3.2".to_string()),
+            get("ai_base_url"),
+            get("ai_keep_alive").unwrap_or_else(|| "30m".to_string()),
+            get("ai_auth_mode").unwrap_or_else(|| "api_key".to_string()),
+            lookup_language,
+        )
+    };
+
+    // Read API key from secrets store
+    let api_key = secrets.get("ai_api_key").unwrap_or_default();
+
+    let (api_key, oauth_account_id) = if auth_mode == "oauth" && provider == "openai" {
+        let (token, acct_id) = crate::ai::oauth::get_valid_token(&secrets).await?;
+        (token, acct_id)
+    } else {
+        if api_key.is_empty() && provider != "ollama" {
+            log::warn!("ai_explain: AI_NOT_CONFIGURED provider={provider}");
+            return Err(AppError::Other("AI_NOT_CONFIGURED".to_string()));
+        }
+        (api_key, None)
+    };
+
+    let mut user_content = format!("Passage: \"{}\"", passage);
+    if let Some(ref ctx) = surrounding {
+        if !ctx.is_empty() && ctx != &passage {
+            user_content.push_str(&format!("\nSurrounding text: \"{}\"", ctx));
+        }
+    }
+    if let Some(ref title) = book_title {
+        user_content.push_str(&format!("\nBook: \"{}\"", title));
+    }
+    if let Some(ref ch) = chapter {
+        user_content.push_str(&format!("\nChapter: \"{}\"", ch));
+    }
+
+    let messages = vec![
+        ChatMessage {
+            role: "system".to_string(),
+            content: explain_system_prompt(&language),
+        },
+        ChatMessage {
+            role: "user".to_string(),
+            content: user_content,
+        },
+    ];
+
+    let event_name = format!("ai-lookup-chunk-{}", request_id);
+
+    log::info!("ai_explain: spawn provider={provider} model={model}");
+
+    let use_responses_api = auth_mode == "oauth" && provider == "openai";
+    let app_clone = app.clone();
+    let log_provider = provider.clone();
+    tauri::async_runtime::spawn(async move {
+        let result = match provider.as_str() {
+            "anthropic" => {
+                let url = base_url.unwrap_or_else(|| "https://api.anthropic.com".to_string());
+                crate::ai::anthropic::stream_chat(&app_clone, &url, &api_key, &model, 0.3, &messages, false, &event_name, None).await
+            }
+            _ if use_responses_api => {
+                let url = "https://chatgpt.com/backend-api/codex".to_string();
+                crate::ai::openai_responses::stream_chat(&app_clone, &url, &api_key, &model, &messages, oauth_account_id.as_deref(), &event_name).await
+            }
+            _ => {
+                let url = base_url.unwrap_or_else(|| "http://localhost:11434".to_string());
+                let ka = if provider == "ollama" { Some(keep_alive.clone()) } else { None };
+                crate::ai::openai_compat::stream_chat(&app_clone, &url, &api_key, &model, 0.3, &messages, ka.as_deref(), &event_name, None).await
+            }
+        };
+        if let Err(e) = result {
+            log::error!("ai_explain: provider={log_provider} streaming failed: {e}");
+            let _ = app_clone.emit(&event_name, AiStreamChunk {
+                delta: format!("Error: {}", e),
+                done: false,
+            });
+            let _ = app_clone.emit(&event_name, AiStreamChunk {
+                delta: String::new(),
+                done: true,
+            });
+        }
+    });
+
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn ai_generate_title(
     user_message: String,
@@ -363,4 +500,45 @@ pub async fn ai_chat(
     });
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn explain_prompt_asks_for_brevity_and_no_headers() {
+        let p = explain_system_prompt("en");
+        assert!(p.contains("2–3 sentences"), "must request a short answer");
+        assert!(p.contains("headers or labels"), "must forbid headers/labels");
+        assert!(p.contains("in context"), "must be context-aware");
+    }
+
+    #[test]
+    fn explain_prompt_english_has_no_language_directive() {
+        let p = explain_system_prompt("en");
+        assert!(!p.contains("Respond entirely in"));
+    }
+
+    #[test]
+    fn explain_prompt_non_english_prepends_response_language() {
+        let zh = explain_system_prompt("zh");
+        assert!(zh.starts_with("Respond entirely in Chinese (Simplified)."));
+
+        let fr = explain_system_prompt("fr");
+        assert!(fr.starts_with("Respond entirely in fr."));
+    }
+
+    #[test]
+    fn explain_prompt_never_has_translation_gloss() {
+        // The word-level "brief translation of the word/phrase" preamble from
+        // ai_lookup must not leak into the passage-level explain prompt.
+        for lang in ["en", "zh", "fr"] {
+            let p = explain_system_prompt(lang);
+            assert!(
+                !p.to_lowercase().contains("translation of the"),
+                "explain must not carry ai_lookup's word-gloss logic (lang={lang})"
+            );
+        }
+    }
 }

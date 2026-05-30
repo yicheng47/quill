@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
-import { Sparkles, Send, Loader2, Plus, ChevronDown, ChevronUp, Trash2 } from "lucide-react";
+import { Sparkles, Send, Loader2, Plus, ChevronDown, ChevronUp, Trash2, X } from "lucide-react";
 import { useAiChat } from "../hooks/useAiChat";
 import { timeAgo } from "../utils/timeAgo";
 import MessageBubble from "./MessageBubble";
@@ -30,6 +30,7 @@ export default function AiPanel({ bookId, bookTitle, bookAuthor, currentChapter,
   } = useAiChat(bookId, { title: bookTitle, author: bookAuthor, chapter: currentChapter });
 
   const [input, setInput] = useState("");
+  const [pendingQuote, setPendingQuote] = useState<{ text: string; cfi?: string } | undefined>();
   const [pickerOpen, setPickerOpen] = useState(false);
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
@@ -39,14 +40,12 @@ export default function AiPanel({ bookId, bookTitle, bookAuthor, currentChapter,
 
   const currentChat = chats.find((c) => c.id === chatId);
 
-  // Initialize on mount / bookId change.
-  // Skip when an incoming context is pending — the context effect below will
-  // create a new chat for it, and we don't want a racing initialize() to load
-  // a stale chat and cancel the stream.
+  // Initialize on mount / bookId change. Always loads the existing session
+  // chat (or empty state when none) — Quote attaches to that chat rather than
+  // starting a fresh one.
   useEffect(() => {
-    if (context) return;
     initialize();
-  }, [initialize, context]);
+  }, [initialize]);
 
   // Load specific chat when navigating from ChatsPage
   useEffect(() => {
@@ -60,17 +59,15 @@ export default function AiPanel({ bookId, bookTitle, bookAuthor, currentChapter,
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // Handle context from "Ask AI" context menu — always start a new chat.
-  // reset() clears chatId so send()'s lazy-create path fires; that path is
-  // also what marks the message as belonging to a new chat (drives title gen).
+  // Handle context from the "Quote" context-menu action — pin it as a pending
+  // quote chip above the composer. Does NOT reset the chat or auto-send: the
+  // quote attaches to the existing session conversation and rides along with
+  // the user's next message.
   useEffect(() => {
-    if (!context || streaming || !bookId) return;
-    (async () => {
-      await reset();
-      send(t("ai.explain"), context.text, context.cfi);
-    })();
+    if (!context) return;
+    setPendingQuote(context);
     onContextConsumed?.();
-  }, [context, bookId, onContextConsumed, reset, send, streaming, t]);
+  }, [context, onContextConsumed]);
 
   // Focus title input when editing
   useEffect(() => {
@@ -82,7 +79,8 @@ export default function AiPanel({ bookId, bookTitle, bookAuthor, currentChapter,
 
   const handleSend = () => {
     if (!input.trim() || streaming) return;
-    send(input.trim());
+    send(input.trim(), pendingQuote?.text, pendingQuote?.cfi);
+    setPendingQuote(undefined);
     setInput("");
   };
 
@@ -90,6 +88,9 @@ export default function AiPanel({ bookId, bookTitle, bookAuthor, currentChapter,
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSend();
+    } else if (e.key === "Escape" && pendingQuote) {
+      e.preventDefault();
+      setPendingQuote(undefined);
     }
   };
 
@@ -234,7 +235,10 @@ export default function AiPanel({ bookId, bookTitle, bookAuthor, currentChapter,
               {SUGGESTED_PROMPTS.map((prompt) => (
                 <button
                   key={prompt}
-                  onClick={() => send(prompt)}
+                  onClick={() => {
+                    send(prompt, pendingQuote?.text, pendingQuote?.cfi);
+                    setPendingQuote(undefined);
+                  }}
                   className="px-3 py-1.5 rounded-full text-[12px] font-medium text-accent-text bg-accent-bg border border-accent/30 hover:opacity-80 cursor-pointer transition-colors"
                 >
                   {prompt}
@@ -254,12 +258,31 @@ export default function AiPanel({ bookId, bookTitle, bookAuthor, currentChapter,
 
       {/* Input */}
       <div className="border-t border-border px-4 pt-[17px] pb-4 flex flex-col gap-2">
+        {/* Pending quote chip — passage to attach to the next message */}
+        {pendingQuote && (
+          <div className="flex items-start gap-2 px-2.5 py-2 rounded-lg bg-[rgba(192,132,252,0.12)] border-l-2 border-[#c084fc]">
+            <p className="flex-1 text-[12px] italic text-text-muted line-clamp-2 tracking-[-0.08px]">
+              {pendingQuote.text}
+            </p>
+            <button
+              onClick={() => setPendingQuote(undefined)}
+              title={t("aiPanel.quoteChip.dismiss")}
+              aria-label={t("aiPanel.quoteChip.dismiss")}
+              className="shrink-0 size-[18px] flex items-center justify-center rounded hover:bg-bg-input cursor-pointer"
+            >
+              <X size={13} className="text-text-muted" />
+            </button>
+          </div>
+        )}
         <div className="flex gap-2 items-start">
           <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder={t("ai.placeholder")}
+            spellCheck={false}
+            autoCorrect="off"
+            autoCapitalize="off"
             rows={2}
             className="flex-1 h-[60px] bg-bg-input rounded-lg px-3 py-2 text-[14px] text-text-primary placeholder:text-text-placeholder tracking-[-0.15px] leading-5 outline-none border border-transparent focus:border-accent resize-none"
           />

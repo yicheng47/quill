@@ -1,7 +1,8 @@
 import { useEffect, useRef } from "react";
 import {
   Copy,
-  Bot,
+  WandSparkles,
+  Quote,
   Sparkles,
   Highlighter,
   Languages,
@@ -22,7 +23,8 @@ interface ReaderContextMenuProps {
   text: string;
   onClose: () => void;
   onCopy: () => void;
-  onAskAI: () => void;
+  onExplain: () => void;
+  onQuote: () => void;
   onLookup: () => void;
   onTranslate: () => void;
   onHighlight?: (color: string) => void;
@@ -34,7 +36,8 @@ export default function ReaderContextMenu({
   text,
   onClose,
   onCopy,
-  onAskAI,
+  onExplain,
+  onQuote,
   onLookup,
   onTranslate,
   onHighlight,
@@ -94,14 +97,25 @@ export default function ReaderContextMenu({
         </button>
       )}
 
-      {/* Ask AI Assistant */}
+      {/* Explain */}
       <button
-        onClick={onAskAI}
+        onClick={onExplain}
         className="flex items-center gap-3 w-[calc(100%-8px)] mx-1 px-3 h-[31.5px] rounded-sm text-left cursor-pointer hover:bg-accent-bg transition-colors"
       >
-        <Bot size={16} className="text-text-muted" />
+        <WandSparkles size={16} className="text-text-muted" />
         <span className="flex-1 text-[13px] font-medium text-text-primary tracking-[-0.08px]">
-          {t("contextMenu.askAI")}
+          {t("contextMenu.explain")}
+        </span>
+      </button>
+
+      {/* Quote */}
+      <button
+        onClick={onQuote}
+        className="flex items-center gap-3 w-[calc(100%-8px)] mx-1 px-3 h-[31.5px] rounded-sm text-left cursor-pointer hover:bg-accent-bg transition-colors"
+      >
+        <Quote size={16} className="text-text-muted" />
+        <span className="flex-1 text-[13px] font-medium text-text-primary tracking-[-0.08px]">
+          {t("contextMenu.quote")}
         </span>
       </button>
 

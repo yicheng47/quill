@@ -53,7 +53,6 @@
   "ai.placeholder": "关于正在阅读的内容，随便问我...",
   "ai.sendHint": "按 Enter 发送，Shift+Enter 换行",
   "ai.thinking": "思考中...",
-  "ai.explain": "解释",
   "ai.prompt.summarize": "总结这一章",
   "ai.prompt.themes": "解释主要主题",
   "ai.prompt.characters": "主要人物有哪些？",
@@ -124,8 +123,16 @@
   "lookup.copy": "复制",
   "lookup.copied": "已复制",
 
+  "explain.title": "解释",
+  "explain.thinking": "正在解释...",
+  "explain.copy": "复制",
+  "explain.copied": "已复制",
+
+  "aiPanel.quoteChip.dismiss": "移除引用",
+
   "contextMenu.lookUp": "查词",
-  "contextMenu.askAI": "询问 AI 助手",
+  "contextMenu.explain": "解释",
+  "contextMenu.quote": "引用",
   "contextMenu.translate": "翻译",
   "contextMenu.highlight": "高亮",
   "contextMenu.copy": "复制",
