@@ -99,6 +99,7 @@ export default function ChatDetailView({ chat, onBack, onChatDeleted }: ChatDeta
               <span
                 className="text-[15px] font-semibold text-text-primary tracking-[-0.23px] truncate cursor-default"
                 onDoubleClick={() => {
+                  if (titling) return;
                   setTitleDraft(currentTitle);
                   setEditingTitle(true);
                 }}

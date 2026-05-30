@@ -140,6 +140,7 @@ export default function AiPanel({ bookId, bookTitle, bookAuthor, currentChapter,
             <button
               onClick={() => setPickerOpen(!pickerOpen)}
               onDoubleClick={() => {
+                if (titling) return;
                 setTitleDraft(currentChat?.title || t("ai.newChat"));
                 setEditingTitle(true);
               }}
