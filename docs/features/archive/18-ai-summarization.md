@@ -1,6 +1,6 @@
 # 18 — AI Summarization
 
-> GitHub Issue: https://github.com/yicheng47/quill/issues/89
+> **Status: Dropped** ([#89](https://github.com/yicheng47/quill/issues/89) closed as not planned). In-app summarization via the embedded AI provider was the wrong layer; the better shape — an MCP tool that serves chapter text so any connected agent can summarize — requires backend EPUB/PDF text extraction in the `quill mcp` subprocess, which is out of scope for [#184](https://github.com/yicheng47/quill/issues/184). Kept for reference; revisit if there's demand.
 > Milestone: 2 (Core Reading Experience Polish)
 
 ## Motivation
