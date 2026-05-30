@@ -254,14 +254,20 @@ export function useAiChat(bookId?: string, bookContext?: BookContext) {
         const titleSource = context || content;
         setTitling(true);
         generateAiTitle(titleSource).then(async (aiTitle) => {
-          const title = aiTitle || deriveTitle(titleSource);
-          if (title) {
-            try {
-              await invoke("rename_chat", { chatId: currentChatId, title });
-              await refreshChats(currentBookId);
-            } catch { /* ignore */ }
+          try {
+            // Only auto-title if the chat is still untitled — the user (or a
+            // synced rename) may have renamed it while generation was pending.
+            const chat = await invoke<ChatRecord>("get_chat", { chatId: currentChatId });
+            if (chat.title === "New chat") {
+              const title = aiTitle || deriveTitle(titleSource);
+              if (title) {
+                await invoke("rename_chat", { chatId: currentChatId, title });
+                await refreshChats(currentBookId);
+              }
+            }
+          } catch { /* ignore */ } finally {
+            setTitling(false);
           }
-          setTitling(false);
         });
       }
 
