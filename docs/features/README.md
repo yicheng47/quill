@@ -13,3 +13,4 @@ Specs for features that are in progress or planned. Shipped, dropped, or superse
 - [32 — Library Backup](32-library-backup.md)
 - [215 — Split Ask AI into Explain and Quote](215-explain-and-quote.md)
 - [257 — Persist Explain results + Explanations tools page](257-persist-explanations.md)
+- [260 — TOC as Collapsible Left Side Panel](260-toc-side-panel.md)
