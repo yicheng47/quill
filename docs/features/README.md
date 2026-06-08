@@ -14,3 +14,4 @@ Specs for features that are in progress or planned. Shipped, dropped, or superse
 - [215 — Split Ask AI into Explain and Quote](215-explain-and-quote.md)
 - [257 — Persist Explain results + Explanations tools page](257-persist-explanations.md)
 - [260 — TOC as Collapsible Left Side Panel](260-toc-side-panel.md)
+- [261 - Disable Sync Copy-to-Local Progress](261-disable-sync-copy-progress.md)
