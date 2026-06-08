@@ -141,59 +141,67 @@ impl From<CompactReport> for SyncCompactResult {
 }
 
 #[tauri::command]
-pub fn sync_status(
+pub async fn sync_status(
     local: State<'_, LocalDir>,
     db: State<'_, Db>,
     device: State<'_, DeviceIdentity>,
     sync_state: State<'_, SyncState>,
 ) -> AppResult<SyncStatus> {
-    let sync_enabled = sync::migration::is_sync_enabled(&local.0);
-    let shared_dir = sync::migration::recorded_data_dir(&local.0)
-        .or_else(icloud::icloud_data_dir);
-    let available = icloud::icloud_data_dir().is_some_and(|p| p.exists())
-        || icloud::is_icloud_available();
+    let local_dir = local.0.clone();
+    let db = db.inner().clone();
+    let device_uuid = device.device_uuid.clone();
     let enabled = sync_state.engine_snapshot()?.is_some();
 
-    // Peer list + outbox count when the user has sync enabled (even
-    // if the engine hasn't booted yet — e.g. during async boot or
-    // offline queue-only mode). Skip when fully disabled.
-    let (peer_infos, pending_events, last_replay_at) = if sync_enabled {
-        let peers = match shared_dir.as_ref() {
-            Some(dir) => peers::list_peers(dir, &device.device_uuid).unwrap_or_else(|e| {
-                log::warn!("sync_status: list_peers failed: {e}");
-                Vec::new()
-            }),
-            None => Vec::new(),
-        };
-        let infos: Vec<PeerInfo> = peers
-            .into_iter()
-            .map(|p| PeerInfo {
-                device_uuid: p.device_uuid,
-                name: p.name,
-                platform: p.platform,
-                app_version: p.app_version,
-                last_seen: p.last_seen,
-                pending_events: 0,
-            })
-            .collect();
-        let pending = count_local_outbox(&db).unwrap_or(0);
-        let last = read_last_replay_at(&db).unwrap_or(None);
-        (infos, pending, last)
-    } else {
-        (Vec::new(), 0, None)
-    };
+    tokio::task::spawn_blocking(move || {
+        let sync_enabled = sync::migration::is_sync_enabled(&local_dir);
+        let shared_dir = sync::migration::recorded_data_dir(&local_dir)
+            .or_else(icloud::icloud_data_dir);
+        let available = icloud::icloud_data_dir().is_some_and(|p| p.exists())
+            || icloud::is_icloud_available();
 
-    Ok(SyncStatus {
-        enabled,
-        available,
-        sync_enabled,
-        shared_dir: shared_dir.map(|p| p.to_string_lossy().into_owned()),
-        device_uuid: device.device_uuid.clone(),
-        device_name: peers::device_name(),
-        peers: peer_infos,
-        pending_events,
-        last_replay_at,
+        // Peer list + outbox count when the user has sync enabled (even
+        // if the engine hasn't booted yet — e.g. during async boot or
+        // offline queue-only mode). Skip when fully disabled.
+        let (peer_infos, pending_events, last_replay_at) = if sync_enabled {
+            let peers = match shared_dir.as_ref() {
+                Some(dir) => peers::list_peers(dir, &device_uuid).unwrap_or_else(|e| {
+                    log::warn!("sync_status: list_peers failed: {e}");
+                    Vec::new()
+                }),
+                None => Vec::new(),
+            };
+            let infos: Vec<PeerInfo> = peers
+                .into_iter()
+                .map(|p| PeerInfo {
+                    device_uuid: p.device_uuid,
+                    name: p.name,
+                    platform: p.platform,
+                    app_version: p.app_version,
+                    last_seen: p.last_seen,
+                    pending_events: 0,
+                })
+                .collect();
+            let pending = count_local_outbox(&db).unwrap_or(0);
+            let last = read_last_replay_at(&db).unwrap_or(None);
+            (infos, pending, last)
+        } else {
+            (Vec::new(), 0, None)
+        };
+
+        Ok(SyncStatus {
+            enabled,
+            available,
+            sync_enabled,
+            shared_dir: shared_dir.map(|p| p.to_string_lossy().into_owned()),
+            device_uuid,
+            device_name: peers::device_name(),
+            peers: peer_infos,
+            pending_events,
+            last_replay_at,
+        })
     })
+    .await
+    .map_err(|e| AppError::Other(format!("sync_status worker failed: {e}")))?
 }
 
 #[tauri::command]
