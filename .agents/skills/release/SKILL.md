@@ -12,6 +12,7 @@ Create a new versioned release for Quill.
 1. Ask the user for the version number (e.g. `0.3.0`) if not provided as an argument.
 
 2. Bump version in all three files. **IMPORTANT: Do NOT use `sed` for version bumps.** Instead:
+   - Confirm you're on `main` and the working tree is clean (`git status`). If not, stop and report.
    - Read each file first with the Read tool to confirm the current version string.
    - Use the Edit tool to replace the version in `package.json`, `src-tauri/tauri.conf.json`, and `src-tauri/Cargo.toml`.
    - After editing, verify all three files show the correct new version.
@@ -25,13 +26,13 @@ Create a new versioned release for Quill.
 
 5. Push the tag: `git push origin v{version}`
 
-11. Wait for the release workflow to complete: `gh run list --workflow=release.yml --limit 1 --json status,conclusion,databaseId`
+6. Wait for the release workflow to complete: `gh run list --workflow=release.yml --limit 1 --json status,conclusion,databaseId`
 
-12. Once the workflow succeeds, draft a release message by reviewing commits since the last tag: `git log $(git describe --tags --abbrev=0 HEAD^)..HEAD --oneline`
+7. Once the workflow succeeds, draft a release message by reviewing commits since the last tag: `git log $(git describe --tags --abbrev=0 HEAD^)..HEAD --oneline`
 
-13. Categorize changes into sections: **What's New**, **Improvements**, **Bug Fixes** (omit empty sections).
+8. Categorize changes into sections: **What's New**, **Improvements**, **Bug Fixes** (omit empty sections).
 
-14. Publish the release: `gh release edit v{version} --draft=false --notes "..."`. Include a **Download** section at the bottom with the `.dmg` filenames for Apple Silicon and Intel.
+9. Publish the release: `gh release edit v{version} --draft=false --notes "..."`. Include a **Download** section at the bottom with the `.dmg` filenames for Apple Silicon and Intel.
 
 If any step fails, stop and report the error — do not continue.
 
