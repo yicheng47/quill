@@ -1,8 +1,41 @@
 import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
+import { Check } from "lucide-react";
 import Select from "../ui/Select";
-import { fonts, FONT_SIZE_MIN, FONT_SIZE_MAX } from "../ReaderSettings";
+import { fonts, FONT_SIZE_MIN, FONT_SIZE_MAX, getDefaultReaderTheme, type ReaderTheme } from "../ReaderSettings";
 import type { SettingsProps } from "./types";
+
+const READER_THEME_OPTIONS: {
+  value: ReaderTheme;
+  labelKey: string;
+  swatchClass: string;
+  checkClass: string;
+}[] = [
+  {
+    value: "original",
+    labelKey: "readerSettings.themeOriginal",
+    swatchClass: "bg-white border border-[#d4d4d8]",
+    checkClass: "text-accent",
+  },
+  {
+    value: "paper",
+    labelKey: "readerSettings.themeSepia",
+    swatchClass: "bg-[#F2E2C9]",
+    checkClass: "text-accent",
+  },
+  {
+    value: "quiet",
+    labelKey: "readerSettings.themeGray",
+    swatchClass: "bg-[#71717b]",
+    checkClass: "text-white",
+  },
+  {
+    value: "dark",
+    labelKey: "readerSettings.themeDark",
+    swatchClass: "bg-[#18181b] border border-[#3f3f46]",
+    checkClass: "text-white",
+  },
+];
 
 function NumberInput({ value, onChange, onBlur, suffix, min, max }: {
   value: number;
@@ -34,6 +67,7 @@ function NumberInput({ value, onChange, onBlur, suffix, min, max }: {
 
 export default function ReadingSettings({ settings, loading, save, showSavedToast }: SettingsProps) {
   const { t } = useTranslation();
+  const [readerTheme, setReaderTheme] = useState<ReaderTheme>(getDefaultReaderTheme());
   const [fontFamily, setFontFamily] = useState("georgia");
   const [fontSize, setFontSize] = useState(26);
   const [lineSpacing, setLineSpacing] = useState(1.8);
@@ -42,6 +76,7 @@ export default function ReadingSettings({ settings, loading, save, showSavedToas
 
   useEffect(() => {
     if (loading) return;
+    setReaderTheme((settings.reader_theme as ReaderTheme) || getDefaultReaderTheme());
     if (settings.font_family) setFontFamily(settings.font_family);
     if (settings.font_size) setFontSize(parseInt(settings.font_size));
     if (settings.line_spacing) setLineSpacing(parseFloat(settings.line_spacing));
@@ -51,6 +86,36 @@ export default function ReadingSettings({ settings, loading, save, showSavedToas
 
   return (
     <div>
+      {/* Theme */}
+      <div className="flex items-center justify-between min-h-[88px] py-2">
+        <div>
+          <p className="text-[14px] font-medium text-text-primary tracking-[-0.15px]">{t("settings.layout.theme")}</p>
+          <p className="text-[12px] text-text-muted mt-0.5">{t("settings.layout.themeHint")}</p>
+        </div>
+        <div className="grid grid-cols-4 gap-2 shrink-0">
+          {READER_THEME_OPTIONS.map((theme) => (
+            <button
+              key={theme.value}
+              type="button"
+              onClick={() => {
+                setReaderTheme(theme.value);
+                save("reader_theme", theme.value);
+                showSavedToast();
+              }}
+              className="w-[48px] flex flex-col items-center gap-1.5 cursor-pointer"
+            >
+              <span
+                className={`size-8 rounded-full ${theme.swatchClass} flex items-center justify-center ${
+                  readerTheme === theme.value ? "ring-2 ring-accent ring-offset-2 ring-offset-bg-surface" : ""
+                }`}
+              >
+                {readerTheme === theme.value && <Check size={14} className={theme.checkClass} />}
+              </span>
+              <span className="text-[10px] font-medium text-text-muted leading-none">{t(theme.labelKey)}</span>
+            </button>
+          ))}
+        </div>
+      </div>
       {/* Font Family */}
       <div className="flex items-center justify-between h-[73px]">
         <div>

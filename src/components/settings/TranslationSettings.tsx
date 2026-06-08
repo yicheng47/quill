@@ -2,14 +2,15 @@ import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import Select from "../ui/Select";
 import type { SettingsProps } from "./types";
+import { LANGUAGE_OPTIONS } from "./languageOptions";
 
 export default function TranslationSettings({ settings, loading, save, showSavedToast }: SettingsProps) {
   const { t } = useTranslation();
-  const [nativeLanguage, setNativeLanguage] = useState("en");
+  const [translationLanguage, setTranslationLanguage] = useState("");
 
   useEffect(() => {
     if (loading) return;
-    if (settings.native_language) setNativeLanguage(settings.native_language);
+    setTranslationLanguage(settings.translation_language || settings.language || "en");
   }, [settings, loading]);
 
   return (
@@ -26,21 +27,14 @@ export default function TranslationSettings({ settings, loading, save, showSaved
         </div>
         <Select
           className="w-[130px] shrink-0"
-          value={nativeLanguage}
+          value={translationLanguage}
+          placeholder={t("settings.languageUnset")}
           onChange={(lang) => {
-            setNativeLanguage(lang);
-            save("native_language", lang);
+            setTranslationLanguage(lang);
+            save("translation_language", lang);
             showSavedToast();
           }}
-          options={[
-            { value: "en", label: "English" },
-            { value: "zh", label: "简体中文" },
-            { value: "ja", label: "日本語" },
-            { value: "ko", label: "한국어" },
-            { value: "es", label: "Español" },
-            { value: "fr", label: "Français" },
-            { value: "de", label: "Deutsch" },
-          ]}
+          options={LANGUAGE_OPTIONS}
         />
       </div>
     </div>

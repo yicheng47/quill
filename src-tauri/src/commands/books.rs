@@ -245,9 +245,7 @@ pub(crate) fn do_import_epub(
 
     let now = chrono::Utc::now().timestamp_millis();
     let rel_file_path = format!("books/{}", filename);
-    let cover_data_b64 = metadata.cover_data.as_deref().map(|b| {
-        cover_blob_to_data_uri(b)
-    });
+    let cover_data_b64 = metadata.cover_data.as_deref().map(cover_blob_to_data_uri);
 
     let book = Book {
         id: book_id,

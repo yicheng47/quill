@@ -17,6 +17,65 @@ pub struct AiStreamChunk {
     pub done: bool,
 }
 
+const LOOKUP_TRANSLATION_MARKER: &str = "[[QUILL_TRANSLATION]]";
+
+fn language_name(code: &str) -> String {
+    match code {
+        "en" => "English",
+        "zh" => "Chinese (Simplified)",
+        "ja" => "Japanese",
+        "ko" => "Korean",
+        "es" => "Spanish",
+        "fr" => "French",
+        "de" => "German",
+        _ => code,
+    }
+    .to_string()
+}
+
+fn lookup_system_prompt(
+    kind: &str,
+    language: &str,
+    lookup_translation_language: &str,
+    show_translation: bool,
+) -> String {
+    let should_show_translation = show_translation
+        && !lookup_translation_language.is_empty()
+        && lookup_translation_language != language;
+    let translation_prefix = if should_show_translation {
+        format!(
+            "Before the definition, provide a brief translation of the word/phrase in {}. The first line MUST be exactly `{}` followed immediately by the brief translation, then a newline. This marker is required machine-readable metadata, not a header. Keep the translation to a few words — no explanation, just the meaning. After that first line, proceed with the definition as usual. Do not put the marker anywhere except the first line.\n\n",
+            language_name(lookup_translation_language),
+            LOOKUP_TRANSLATION_MARKER,
+        )
+    } else {
+        String::new()
+    };
+    let definition_language_prefix = if language != "en" {
+        if should_show_translation {
+            format!("After that first line, respond entirely in {}.\n\n", language_name(language))
+        } else {
+            format!("Respond entirely in {}.\n\n", language_name(language))
+        }
+    } else {
+        String::new()
+    };
+    let context_language_prefix = if language != "en" {
+        format!("Respond entirely in {}.\n\n", language_name(language))
+    } else {
+        String::new()
+    };
+
+    let def_prefix = format!("{translation_prefix}{definition_language_prefix}");
+    let ctx_prefix = if language != "en" { &context_language_prefix } else { "" };
+
+    match kind {
+        "definition" => format!("{}You are a reading assistant embedded in an ebook reader. The user selected a word or phrase and wants a dictionary-style definition.\n\nGive: pronunciation in IPA (if English), part of speech, and a concise definition in 1–2 sentences.\n\nIf the selection is a proper noun (person, place, historical event), give a brief factual identification instead.\n\nBe concise. No headers or labels.", def_prefix),
+        "context" => format!("{}You are a reading assistant embedded in an ebook reader. The user selected a word or phrase and wants to understand how it's used in the surrounding passage.\n\nExplain how the word is used in context. Consider the author's intent, tone, or any literary/idiomatic significance. Keep it to 2–3 sentences.\n\nBe concise. No headers or labels.", ctx_prefix),
+        _ => format!("{}You are a reading assistant embedded in an ebook reader. The user selected a word or phrase and wants to understand it.\n\nRespond in two parts:\n\n1. **Definition** — Give a dictionary-style entry: the word, pronunciation in IPA (if it's an English word), part of speech, and a concise definition in one sentence.\n\n2. **In context** — Explain how the word is used in the given passage. Consider the author's intent, tone, or any literary/idiomatic significance. Keep it to 2–3 sentences.\n\nIf the selection is a proper noun (person, place, historical event), replace the dictionary definition with a brief factual identification, then explain its relevance in context.\n\nDo not use headers or labels like \"Definition:\" or \"In context:\". Separate the two parts with a line break. Be concise.", def_prefix),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn ai_lookup(
@@ -31,7 +90,7 @@ pub async fn ai_lookup(
     secrets: State<'_, Secrets>,
 ) -> AppResult<()> {
     // Read provider settings
-    let (provider, model, base_url, keep_alive, auth_mode, language, native_language, show_translation) = {
+    let (provider, model, base_url, keep_alive, auth_mode, language, lookup_translation_language, show_translation) = {
         let conn = db.reader();
         let get = |key: &str| -> Option<String> {
             conn.query_row(
@@ -44,6 +103,10 @@ pub async fn ai_lookup(
         let sys_language = get("language").unwrap_or_else(|| "en".to_string());
         // lookup_language overrides system language for lookup prompts
         let lookup_language = get("lookup_language").unwrap_or(sys_language.clone());
+        let lookup_translation_language = get("lookup_translation_language")
+            .map(|lang| lang.trim().to_string())
+            .filter(|lang| !lang.is_empty())
+            .unwrap_or_else(|| sys_language.clone());
         (
             get("ai_provider").unwrap_or_else(|| "ollama".to_string()),
             get("ai_model").unwrap_or_else(|| "llama3.2".to_string()),
@@ -51,7 +114,7 @@ pub async fn ai_lookup(
             get("ai_keep_alive").unwrap_or_else(|| "30m".to_string()),
             get("ai_auth_mode").unwrap_or_else(|| "api_key".to_string()),
             lookup_language,
-            get("native_language").unwrap_or_else(|| "en".to_string()),
+            lookup_translation_language,
             get("show_translation").unwrap_or_else(|| "false".to_string()),
         )
     };
@@ -81,37 +144,12 @@ pub async fn ai_lookup(
 
     let kind = kind.unwrap_or_else(|| "full".to_string());
 
-    // Language-aware lookup (uses lookup_language, falling back to system language):
-    // 1. When lookup language is non-English, respond entirely in that language
-    // 2. When English but translation is enabled, prepend a native translation
-    let language_prefix = if language != "en" {
-        let lang_name = match language.as_str() {
-            "zh" => "Chinese (Simplified)",
-            _ => &language,
-        };
-        format!("Respond entirely in {}.\n\n", lang_name)
-    } else if show_translation == "true" && native_language != "en" {
-        let lang_name = match native_language.as_str() {
-            "zh" => "Chinese (Simplified)",
-            _ => "the user's language",
-        };
-        format!(
-            "Before the definition, provide a brief translation of the word/phrase in {}. Keep the translation to a few words — no explanation, just the meaning. Then proceed with the definition as usual.\n\n",
-            lang_name
-        )
-    } else {
-        String::new()
-    };
-
-    // Only apply translation prefix to definition, not context
-    let def_prefix = &language_prefix;
-    let ctx_prefix = if language != "en" { &language_prefix } else { "" };
-
-    let system_prompt = match kind.as_str() {
-        "definition" => format!("{}You are a reading assistant embedded in an ebook reader. The user selected a word or phrase and wants a dictionary-style definition.\n\nGive: pronunciation in IPA (if English), part of speech, and a concise definition in 1–2 sentences.\n\nIf the selection is a proper noun (person, place, historical event), give a brief factual identification instead.\n\nBe concise. No headers or labels.", def_prefix),
-        "context" => format!("{}You are a reading assistant embedded in an ebook reader. The user selected a word or phrase and wants to understand how it's used in the surrounding passage.\n\nExplain how the word is used in context. Consider the author's intent, tone, or any literary/idiomatic significance. Keep it to 2–3 sentences.\n\nBe concise. No headers or labels.", ctx_prefix),
-        _ => format!("{}You are a reading assistant embedded in an ebook reader. The user selected a word or phrase and wants to understand it.\n\nRespond in two parts:\n\n1. **Definition** — Give a dictionary-style entry: the word, pronunciation in IPA (if it's an English word), part of speech, and a concise definition in one sentence.\n\n2. **In context** — Explain how the word is used in the given passage. Consider the author's intent, tone, or any literary/idiomatic significance. Keep it to 2–3 sentences.\n\nIf the selection is a proper noun (person, place, historical event), replace the dictionary definition with a brief factual identification, then explain its relevance in context.\n\nDo not use headers or labels like \"Definition:\" or \"In context:\". Separate the two parts with a line break. Be concise.", def_prefix),
-    };
+    let system_prompt = lookup_system_prompt(
+        kind.as_str(),
+        &language,
+        lookup_translation_language.trim(),
+        show_translation == "true",
+    );
 
     let max_tokens = match kind.as_str() {
         "definition" => Some(128),
@@ -540,5 +578,38 @@ mod tests {
                 "explain must not carry ai_lookup's word-gloss logic (lang={lang})"
             );
         }
+    }
+
+    #[test]
+    fn lookup_definition_prompt_marks_translation_when_target_differs() {
+        let p = lookup_system_prompt("definition", "en", "zh", true);
+        assert!(p.contains(LOOKUP_TRANSLATION_MARKER));
+        assert!(p.contains("Chinese (Simplified)"));
+
+        let non_english_lookup = lookup_system_prompt("definition", "zh", "en", true);
+        assert!(non_english_lookup.contains(LOOKUP_TRANSLATION_MARKER));
+        assert!(non_english_lookup
+            .contains("brief translation of the word/phrase in English"));
+        assert!(non_english_lookup
+            .contains("After that first line, respond entirely in Chinese (Simplified)."));
+
+        let same_language = lookup_system_prompt("definition", "en", "en", true);
+        assert!(!same_language.contains(LOOKUP_TRANSLATION_MARKER));
+
+        let disabled = lookup_system_prompt("definition", "en", "zh", false);
+        assert!(!disabled.contains(LOOKUP_TRANSLATION_MARKER));
+    }
+
+    #[test]
+    fn lookup_context_prompt_never_marks_english_translation() {
+        let p = lookup_system_prompt("context", "en", "zh", true);
+        assert!(!p.contains(LOOKUP_TRANSLATION_MARKER));
+        assert!(!p.to_lowercase().contains("brief translation"));
+    }
+
+    #[test]
+    fn lookup_prompt_uses_lookup_language_names() {
+        let zh = lookup_system_prompt("definition", "zh", "en", true);
+        assert!(zh.contains("respond entirely in Chinese (Simplified)."));
     }
 }

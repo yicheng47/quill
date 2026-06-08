@@ -1,15 +1,49 @@
 import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { invoke } from "@tauri-apps/api/core";
-import { ArrowLeft, Bot, BookOpen, SlidersHorizontal, Palette, KeyRound, Shield, Cloud, Loader2, Globe, Sparkles, X } from "lucide-react";
+import { ArrowLeft, Bot, BookOpen, SlidersHorizontal, Palette, KeyRound, Shield, Cloud, Loader2, Globe, Sparkles, X, Check } from "lucide-react";
 import i18n from "../i18n";
 import Button from "../components/ui/Button";
 import Select from "../components/ui/Select";
 import Input from "../components/ui/Input";
 import Toggle from "../components/ui/Toggle";
 import Slider from "../components/ui/Slider";
+import { LANGUAGE_OPTIONS } from "../components/settings/languageOptions";
+import { getDefaultReaderTheme, type ReaderTheme } from "../components/ReaderSettings";
 import { useSettings } from "../hooks/useSettings";
 import { useTranslation } from "react-i18next";
+
+const READER_THEME_OPTIONS: {
+  value: ReaderTheme;
+  labelKey: string;
+  swatchClass: string;
+  checkClass: string;
+}[] = [
+  {
+    value: "original",
+    labelKey: "readerSettings.themeOriginal",
+    swatchClass: "bg-white border border-[#d4d4d8]",
+    checkClass: "text-accent",
+  },
+  {
+    value: "paper",
+    labelKey: "readerSettings.themeSepia",
+    swatchClass: "bg-[#F2E2C9]",
+    checkClass: "text-accent",
+  },
+  {
+    value: "quiet",
+    labelKey: "readerSettings.themeGray",
+    swatchClass: "bg-[#71717b]",
+    checkClass: "text-white",
+  },
+  {
+    value: "dark",
+    labelKey: "readerSettings.themeDark",
+    swatchClass: "bg-[#18181b] border border-[#3f3f46]",
+    checkClass: "text-white",
+  },
+];
 
 export default function SettingsPage() {
   const navigate = useNavigate();
@@ -38,6 +72,7 @@ export default function SettingsPage() {
   const [autoSave, setAutoSave] = useState(true);
 
   // Default layout
+  const [readerTheme, setReaderTheme] = useState<ReaderTheme>(getDefaultReaderTheme());
   const [fontFamily, setFontFamily] = useState("georgia");
   const [fontSize, setFontSize] = useState(26);
   const [lineSpacing, setLineSpacing] = useState(1.8);
@@ -49,7 +84,7 @@ export default function SettingsPage() {
   const [language, setLanguage] = useState("en");
 
   // Lookup
-  const [nativeLanguage, setNativeLanguage] = useState("en");
+  const [lookupTranslationLanguage, setLookupTranslationLanguage] = useState("");
   const [showTranslation, setShowTranslation] = useState(false);
 
   // Appearance
@@ -108,6 +143,7 @@ export default function SettingsPage() {
     if (settings.ai_temperature) setTemperature(parseFloat(settings.ai_temperature));
     if (settings.ai_keep_alive) setKeepAlive(settings.ai_keep_alive);
     if (settings.ai_auth_mode) setAuthMode(settings.ai_auth_mode as "api_key" | "oauth");
+    setReaderTheme((settings.reader_theme as ReaderTheme) || getDefaultReaderTheme());
     if (settings.font_size) setFontSize(parseInt(settings.font_size));
     if (settings.font_family) setFontFamily(settings.font_family);
     if (settings.line_spacing) setLineSpacing(parseFloat(settings.line_spacing));
@@ -117,8 +153,8 @@ export default function SettingsPage() {
     if (settings.auto_save) setAutoSave(settings.auto_save === "true");
     if (settings.theme) setTheme(settings.theme);
     if (settings.language) setLanguage(settings.language);
-    if (settings.native_language) setNativeLanguage(settings.native_language);
-    if (settings.show_translation) setShowTranslation(settings.show_translation === "true");
+    setLookupTranslationLanguage(settings.lookup_translation_language || settings.language || "en");
+    setShowTranslation(settings.show_translation === "true");
   }, [settings, loading]);
 
   // Fetch iCloud status on mount
@@ -480,6 +516,35 @@ export default function SettingsPage() {
             </p>
 
             <div className="space-y-5">
+              <div>
+                <label className="block text-[14px] font-semibold text-text-primary mb-1.5">
+                  {t("settings.layout.theme")}
+                </label>
+                <div className="flex gap-3">
+                  {READER_THEME_OPTIONS.map((themeOption) => (
+                    <button
+                      key={themeOption.value}
+                      type="button"
+                      onClick={() => {
+                        setReaderTheme(themeOption.value);
+                        autoSaveSetting("reader_theme", themeOption.value);
+                      }}
+                      className="w-[52px] flex flex-col items-center gap-1.5 cursor-pointer"
+                    >
+                      <span
+                        className={`size-9 rounded-full ${themeOption.swatchClass} flex items-center justify-center ${
+                          readerTheme === themeOption.value ? "ring-2 ring-accent ring-offset-2 ring-offset-bg-surface" : ""
+                        }`}
+                      >
+                        {readerTheme === themeOption.value && <Check size={14} className={themeOption.checkClass} />}
+                      </span>
+                      <span className="text-[11px] font-medium text-text-muted leading-none">{t(themeOption.labelKey)}</span>
+                    </button>
+                  ))}
+                </div>
+                <p className="text-[12px] text-text-muted mt-1.5">{t("settings.layout.themeHint")}</p>
+              </div>
+
               <Select
                 label={t("settings.layout.fontFamily")}
                 value={fontFamily}
@@ -672,10 +737,7 @@ export default function SettingsPage() {
                 i18n.changeLanguage(lang);
                 showSavedToast();
               }}
-              options={[
-                { value: "en", label: "English" },
-                { value: "zh", label: "简体中文" },
-              ]}
+              options={LANGUAGE_OPTIONS}
             />
           </section>
 
@@ -695,20 +757,18 @@ export default function SettingsPage() {
               {/* Left: controls */}
               <div className="flex-1 space-y-4">
                 <Select
-                  label={t("settings.lookup.nativeLanguage")}
-                  value={nativeLanguage}
+                  label={t("settings.lookup.translationLanguage")}
+                  value={lookupTranslationLanguage}
+                  placeholder={t("settings.languageUnset")}
                   onChange={(lang) => {
-                    setNativeLanguage(lang);
-                    save("native_language", lang);
+                    setLookupTranslationLanguage(lang);
+                    save("lookup_translation_language", lang);
                     showSavedToast();
                   }}
-                  options={[
-                    { value: "en", label: "English" },
-                    { value: "zh", label: "简体中文" },
-                  ]}
+                  options={LANGUAGE_OPTIONS}
                 />
                 <p className="text-[12px] text-text-muted -mt-2">
-                  {t("settings.lookup.nativeLanguageHint")}
+                  {t("settings.lookup.translationLanguageHint")}
                 </p>
 
                 <div className="border-t border-border pt-4">
@@ -763,9 +823,9 @@ export default function SettingsPage() {
                       </>
                     ) : (
                       <>
-                        {showTranslation && nativeLanguage !== "en" && (
+                        {showTranslation && lookupTranslationLanguage && lookupTranslationLanguage !== "en" && (
                           <p className="text-[13px] text-accent-text mb-2">
-                            {nativeLanguage === "zh" ? "界面；接口" : "interfaces"}
+                            {lookupTranslationLanguage === "zh" ? "界面；接口" : "interfaces"}
                           </p>
                         )}
                         <p className="text-[12px] text-text-primary leading-[1.5] mb-2">

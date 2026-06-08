@@ -7,6 +7,8 @@ import { useTranslation } from "react-i18next";
 import Markdown from "react-markdown";
 import { LOOKUP_PROSE } from "./lookup-prose";
 
+const TRANSLATION_MARKER = "[[QUILL_TRANSLATION]]";
+
 interface LookupPopoverProps {
   x: number;
   y: number;
@@ -30,11 +32,16 @@ function useStreamingLookup(
   const [content, setContent] = useState("");
   const [streaming, setStreaming] = useState(true);
   const [notConfigured, setNotConfigured] = useState(false);
+  const [translationLanguageNotConfigured, setTranslationLanguageNotConfigured] = useState(false);
   const unlistenRef = useRef<UnlistenFn | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     contentRef.current = "";
+    setContent("");
+    setStreaming(true);
+    setNotConfigured(false);
+    setTranslationLanguageNotConfigured(false);
 
     const run = async () => {
       const requestId = crypto.randomUUID();
@@ -68,6 +75,8 @@ function useStreamingLookup(
           const msg = String(err);
           if (msg.includes("AI_NOT_CONFIGURED")) {
             setNotConfigured(true);
+          } else if (msg.includes("LOOKUP_TRANSLATION_LANGUAGE_NOT_CONFIGURED")) {
+            setTranslationLanguageNotConfigured(true);
           } else {
             setContent(`Error: ${msg}`);
           }
@@ -85,7 +94,38 @@ function useStreamingLookup(
     };
   }, [word, sentence, bookTitle, chapter, kind]);
 
-  return { content, contentRef, streaming, notConfigured };
+  return { content, contentRef, streaming, notConfigured, translationLanguageNotConfigured };
+}
+
+function splitDefinitionContent(content: string, streaming: boolean): {
+  translationLine: string | null;
+  definitionText: string;
+} {
+  if (content.startsWith(TRANSLATION_MARKER)) {
+    const newline = content.indexOf("\n");
+    if (newline === -1) {
+      return {
+        translationLine: null,
+        definitionText: streaming ? "" : content.slice(TRANSLATION_MARKER.length).trimStart(),
+      };
+    }
+    const translationLine = content.slice(TRANSLATION_MARKER.length, newline).trim();
+    return {
+      translationLine: translationLine || null,
+      definitionText: content.slice(newline + 1).trimStart(),
+    };
+  }
+
+  if (TRANSLATION_MARKER.startsWith(content)) {
+    return { translationLine: null, definitionText: "" };
+  }
+
+  return { translationLine: null, definitionText: content };
+}
+
+function displayedDefinitionContent(content: string): string {
+  const split = splitDefinitionContent(content, false);
+  return [split.translationLine, split.definitionText].filter(Boolean).join("\n");
 }
 
 export default function LookupPopover({
@@ -102,30 +142,19 @@ export default function LookupPopover({
   const { t } = useTranslation();
   const [saved, setSaved] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [showTranslation, setShowTranslation] = useState(false);
   const popoverRef = useRef<HTMLDivElement>(null);
-
-  // Check if translation is enabled
-  useEffect(() => {
-    invoke<Record<string, string>>("get_all_settings").then((s) => {
-      const isEn = (s.language ?? "en") === "en";
-      setShowTranslation(isEn && s.show_translation === "true" && (s.native_language ?? "en") !== "en");
-    }).catch(() => {});
-  }, []);
 
   // Two concurrent AI streams
   const definition = useStreamingLookup(word, sentence, bookTitle, chapter, "definition");
   const context = useStreamingLookup(word, sentence, bookTitle, chapter, "context");
 
-  // Split translation from definition when translation is enabled
-  const translationLine = showTranslation && definition.content.includes("\n")
-    ? definition.content.split("\n")[0].trim()
-    : null;
-  const definitionText = translationLine
-    ? definition.content.slice(definition.content.indexOf("\n") + 1).trim()
-    : definition.content;
+  // Split the backend-marked translation from the definition stream.
+  const { translationLine, definitionText } = splitDefinitionContent(definition.content, definition.streaming);
 
   const aiNotConfigured = definition.notConfigured || context.notConfigured;
+  const translationLanguageNotConfigured =
+    definition.translationLanguageNotConfigured || context.translationLanguageNotConfigured;
+  const hasConfigurationError = aiNotConfigured || translationLanguageNotConfigured;
   const allDone = !definition.streaming && !context.streaming;
   const hasContent = definition.content || context.content;
 
@@ -165,7 +194,7 @@ export default function LookupPopover({
       await invoke("add_vocab_word", {
         bookId,
         word,
-        definition: definition.contentRef.current ?? "",
+        definition: displayedDefinitionContent(definition.contentRef.current ?? ""),
         contextSentence: sentence || null,
         contextExplanation: context.contentRef.current || null,
         cfi: cfi || null,
@@ -177,7 +206,10 @@ export default function LookupPopover({
   };
 
   const handleCopy = () => {
-    const fullText = [definition.contentRef.current, context.contentRef.current]
+    const fullText = [
+      displayedDefinitionContent(definition.contentRef.current),
+      context.contentRef.current,
+    ]
       .filter(Boolean)
       .join("\n\n");
     navigator.clipboard.writeText(fullText);
@@ -242,26 +274,28 @@ export default function LookupPopover({
           <h3 className="text-[20px] font-bold text-text-primary leading-6">{word}</h3>
         </div>
 
-        {aiNotConfigured ? (
+        {hasConfigurationError ? (
           <div className="flex flex-col items-center gap-2 py-4 text-center">
-            <p className="text-[13px] text-text-muted">{t("ai.notConfigured")}</p>
+            <p className="text-[13px] text-text-muted">
+              {translationLanguageNotConfigured ? t("lookup.translationLanguageNotConfigured") : t("ai.notConfigured")}
+            </p>
             <button
               onClick={async () => {
                 onClose();
-                await invoke("open_settings_on_main", { section: "ai" });
+                await invoke("open_settings_on_main", { section: translationLanguageNotConfigured ? "lookup" : "ai" });
                 const main = await WebviewWindow.getByLabel("main");
                 await main?.setFocus();
               }}
               className="flex items-center gap-1.5 text-[13px] font-medium text-accent-text hover:opacity-70 cursor-pointer"
             >
               <Settings size={14} />
-              {t("ai.openSettings")}
+              {translationLanguageNotConfigured ? t("lookup.openSettings") : t("ai.openSettings")}
             </button>
           </div>
         ) : null}
 
         {/* Definition section */}
-        {!aiNotConfigured && (definition.streaming && !definition.content ? (
+        {!hasConfigurationError && (definition.streaming && !definition.content ? (
           <div className="flex items-center gap-1.5 py-1">
             <Loader2 size={14} className="animate-spin text-text-muted" />
             <span className="text-[13px] text-text-muted">{t("lookup.lookingUp")}</span>
@@ -281,7 +315,7 @@ export default function LookupPopover({
         ))}
 
         {/* In this context — card */}
-        {!aiNotConfigured && (context.content || context.streaming) && (
+        {!hasConfigurationError && (context.content || context.streaming) && (
           <div className="mt-3 mb-1 p-3 rounded-lg bg-bg-muted border border-border/50">
             <span className="block text-[12px] font-medium text-text-muted mb-1">
               {t("lookup.inContext")}
@@ -304,7 +338,7 @@ export default function LookupPopover({
       </div>
 
       {/* Footer — Save & Copy */}
-      {allDone && hasContent && (
+      {allDone && hasContent && !hasConfigurationError && (
         <div className="flex items-center justify-between px-4 py-2.5 border-t border-border/40">
           <button
             onClick={handleSave}

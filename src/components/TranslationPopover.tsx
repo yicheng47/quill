@@ -49,17 +49,23 @@ function useStreamingTranslation(
   const [content, setContent] = useState("");
   const [streaming, setStreaming] = useState(true);
   const [notConfigured, setNotConfigured] = useState(false);
+  const [languageNotConfigured, setLanguageNotConfigured] = useState(false);
   const [targetLang, setTargetLang] = useState("");
   const unlistenRef = useRef<UnlistenFn | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     contentRef.current = "";
+    setContent("");
+    setStreaming(true);
+    setNotConfigured(false);
+    setLanguageNotConfigured(false);
+    setTargetLang("");
 
     // Fetch target language for display
     invoke<Record<string, string>>("get_all_settings").then((s) => {
       if (cancelled) return;
-      const lang = s.native_language || "en";
+      const lang = s.translation_language || s.language || "en";
       setTargetLang(lang);
     }).catch(() => {});
 
@@ -94,6 +100,8 @@ function useStreamingTranslation(
           const msg = String(err);
           if (msg.includes("AI_NOT_CONFIGURED")) {
             setNotConfigured(true);
+          } else if (msg.includes("TRANSLATION_LANGUAGE_NOT_CONFIGURED")) {
+            setLanguageNotConfigured(true);
           } else {
             setContent(`Error: ${msg}`);
           }
@@ -111,7 +119,7 @@ function useStreamingTranslation(
     };
   }, [text, context, bookId, cfi]);
 
-  return { content, contentRef, streaming, notConfigured, targetLang };
+  return { content, contentRef, streaming, notConfigured, languageNotConfigured, targetLang };
 }
 
 export default function TranslationPopover({
@@ -129,11 +137,12 @@ export default function TranslationPopover({
   const [expanded, setExpanded] = useState(false);
   const popoverRef = useRef<HTMLDivElement>(null);
 
-  const { content, contentRef, streaming, notConfigured, targetLang } =
+  const { content, contentRef, streaming, notConfigured, languageNotConfigured, targetLang } =
     useStreamingTranslation(text, context, bookId, cfi);
 
   const allDone = !streaming;
   const hasContent = !!content;
+  const hasConfigurationError = notConfigured || languageNotConfigured;
 
   // Position clamping
   const [pos, setPos] = useState({ left: x, top: y });
@@ -165,7 +174,7 @@ export default function TranslationPopover({
         bookId,
         sourceText: text,
         translatedText: contentRef.current,
-        targetLanguage: targetLang || "en",
+        targetLanguage: targetLang,
         cfi: cfi || null,
       });
       setSaved(true);
@@ -264,26 +273,28 @@ export default function TranslationPopover({
         <div className="h-px bg-border/60 mb-3" />
 
         {/* Not configured state */}
-        {notConfigured ? (
+        {hasConfigurationError ? (
           <div className="flex flex-col items-center gap-2 py-4 text-center">
-            <p className="text-[13px] text-text-muted">{t("ai.notConfigured")}</p>
+            <p className="text-[13px] text-text-muted">
+              {languageNotConfigured ? t("translation.languageNotConfigured") : t("ai.notConfigured")}
+            </p>
             <button
               onClick={async () => {
                 onClose();
-                await invoke("open_settings_on_main", { section: "ai" });
+                await invoke("open_settings_on_main", { section: languageNotConfigured ? "translation" : "ai" });
                 const main = await WebviewWindow.getByLabel("main");
                 await main?.setFocus();
               }}
               className="flex items-center gap-1.5 text-[13px] font-medium text-accent-text hover:opacity-70 cursor-pointer"
             >
               <Settings size={14} />
-              {t("ai.openSettings")}
+              {languageNotConfigured ? t("translation.openSettings") : t("ai.openSettings")}
             </button>
           </div>
         ) : null}
 
         {/* Translation body */}
-        {!notConfigured &&
+        {!hasConfigurationError &&
           (streaming && !content ? (
             <div className="flex items-center gap-1.5 py-1">
               <Loader2 size={14} className="animate-spin text-text-muted" />
@@ -305,7 +316,7 @@ export default function TranslationPopover({
       </div>
 
       {/* Footer — Save & Copy */}
-      {allDone && hasContent && (
+      {allDone && hasContent && !hasConfigurationError && (
         <div className="flex items-center justify-between px-4 py-2.5 border-t border-border/40">
           <button
             onClick={handleSave}
