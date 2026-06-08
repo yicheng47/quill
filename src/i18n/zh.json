@@ -286,7 +286,9 @@
   "settings.ai.savedToast": "AI 配置已保存",
 
   "settings.layout.title": "默认排版",
-  "settings.layout.subtitle": "设置打开书籍时的默认字体和间距",
+  "settings.layout.subtitle": "设置打开书籍时的默认主题、字体和间距",
+  "settings.layout.theme": "主题",
+  "settings.layout.themeHint": "新打开书籍的默认阅读主题",
   "settings.layout.fontFamily": "字体",
   "settings.layout.fontFamilyHint": "选择你偏好的阅读字体",
   "settings.layout.fontSize": "字号",

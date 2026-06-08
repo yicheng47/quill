@@ -286,7 +286,9 @@
   "settings.ai.savedToast": "AI configuration saved",
 
   "settings.layout.title": "Default Layout",
-  "settings.layout.subtitle": "Set default font and spacing applied when opening books",
+  "settings.layout.subtitle": "Set default theme, font, and spacing applied when opening books",
+  "settings.layout.theme": "Theme",
+  "settings.layout.themeHint": "Default reading theme for newly opened books",
   "settings.layout.fontFamily": "Font Family",
   "settings.layout.fontFamilyHint": "Choose your preferred reading font",
   "settings.layout.fontSize": "Font Size",
