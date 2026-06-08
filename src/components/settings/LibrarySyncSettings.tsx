@@ -63,6 +63,7 @@ function platformIcon(platform: string) {
 export default function LibrarySyncSettings(_props: SettingsProps) {
   const { t } = useTranslation();
   const [status, setStatus] = useState<SyncStatus | null>(null);
+  const [loadingStatus, setLoadingStatus] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<"enable" | "disable" | null>(null);
@@ -81,11 +82,14 @@ export default function LibrarySyncSettings(_props: SettingsProps) {
   const [syncing, setSyncing] = useState(false);
 
   const refresh = useCallback(async () => {
+    setLoadingStatus(true);
     try {
       const next = await invoke<SyncStatus>("sync_status");
       setStatus(next);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoadingStatus(false);
     }
   }, []);
 
@@ -226,13 +230,14 @@ export default function LibrarySyncSettings(_props: SettingsProps) {
   const engineRunning = status?.enabled ?? false;
   const available = status?.available ?? false;
   const peers = status?.peers ?? [];
+  const initialStatusLoading = loadingStatus && !status;
 
   return (
     <>
       <div>
         {/* Sync toggle */}
         <div className="flex items-center justify-between h-[73px]">
-          {busy ? (
+          {busy || initialStatusLoading ? (
             <div className="flex items-center gap-2">
               <Loader2 size={16} className="text-text-muted animate-spin" />
               <p className="text-[13px] text-text-muted">
