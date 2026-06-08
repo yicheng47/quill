@@ -21,6 +21,7 @@ const LOOKUP_TRANSLATION_MARKER: &str = "[[QUILL_TRANSLATION]]";
 
 fn language_name(code: &str) -> String {
     match code {
+        "en" => "English",
         "zh" => "Chinese (Simplified)",
         "ja" => "Japanese",
         "ko" => "Korean",
@@ -587,7 +588,8 @@ mod tests {
 
         let non_english_lookup = lookup_system_prompt("definition", "zh", "en", true);
         assert!(non_english_lookup.contains(LOOKUP_TRANSLATION_MARKER));
-        assert!(non_english_lookup.contains("English"));
+        assert!(non_english_lookup
+            .contains("brief translation of the word/phrase in English"));
         assert!(non_english_lookup
             .contains("After that first line, respond entirely in Chinese (Simplified)."));
 
