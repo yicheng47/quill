@@ -15,3 +15,4 @@ Specs for features that are in progress or planned. Shipped, dropped, or superse
 - [257 — Persist Explain results + Explanations tools page](257-persist-explanations.md)
 - [260 — TOC as Collapsible Left Side Panel](260-toc-side-panel.md)
 - [261 - Disable Sync Copy-to-Local Progress](261-disable-sync-copy-progress.md)
+- [262 - Softer Dark Theme Palette](262-softer-dark-theme-palette.md)
