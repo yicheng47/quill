@@ -41,6 +41,13 @@ interface SyncCompactResult {
   bytes_freed: number;
 }
 
+interface SyncDisableProgress {
+  phase: "preparing" | "downloading" | "copying" | "skipped" | "done";
+  copied: number;
+  total: number;
+  current: string | null;
+}
+
 function formatRelative(ts: number | null, now: number): string {
   if (ts == null) return "—";
   const diffSec = Math.max(0, Math.floor((now - ts) / 1000));
@@ -57,6 +64,11 @@ function platformIcon(platform: string) {
   if (platform === "ios") return Smartphone;
   if (platform === "macos") return Laptop;
   return Monitor;
+}
+
+function progressPercent(progress: SyncDisableProgress): number {
+  if (progress.total <= 0) return progress.phase === "done" ? 100 : 0;
+  return Math.min(100, Math.round((progress.copied / progress.total) * 100));
 }
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -80,6 +92,7 @@ export default function LibrarySyncSettings(_props: SettingsProps) {
   // is open. Cheap; the component re-renders are bounded.
   const [now, setNow] = useState(Date.now());
   const [syncing, setSyncing] = useState(false);
+  const [disableProgress, setDisableProgress] = useState<SyncDisableProgress | null>(null);
 
   const refresh = useCallback(async () => {
     setLoadingStatus(true);
@@ -100,10 +113,14 @@ export default function LibrarySyncSettings(_props: SettingsProps) {
       refresh();
     });
     const unStatusChanged = listen("sync-status-changed", () => refresh());
+    const unDisableProgress = listen<SyncDisableProgress>("sync-disable-progress", (e) => {
+      setDisableProgress(e.payload);
+    });
     return () => {
       unProgress.then((fn) => fn());
       unDone.then((fn) => fn());
       unStatusChanged.then((fn) => fn());
+      unDisableProgress.then((fn) => fn());
     };
   }, [refresh]);
 
@@ -128,6 +145,7 @@ export default function LibrarySyncSettings(_props: SettingsProps) {
     try {
       const minDelay = new Promise((r) => setTimeout(r, 1500));
       if (action === "disable") {
+        setDisableProgress({ phase: "preparing", copied: 0, total: 0, current: null });
         await Promise.all([invoke("sync_disable"), minDelay]);
       } else {
         await Promise.all([invoke("sync_enable"), minDelay]);
@@ -143,6 +161,7 @@ export default function LibrarySyncSettings(_props: SettingsProps) {
       // refreshing here the toggle would lie about reality and the
       // user wouldn't see they can retry to finish the move.
       await refresh();
+      setDisableProgress(null);
       setBusy(false);
     }
   };
@@ -231,6 +250,7 @@ export default function LibrarySyncSettings(_props: SettingsProps) {
   const available = status?.available ?? false;
   const peers = status?.peers ?? [];
   const initialStatusLoading = loadingStatus && !status;
+  const disableProgressValue = disableProgress ? progressPercent(disableProgress) : 0;
 
   return (
     <>
@@ -412,6 +432,46 @@ export default function LibrarySyncSettings(_props: SettingsProps) {
                 {t("settings.librarySync.remove")}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {disableProgress && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40">
+          <div className="bg-bg-surface rounded-xl shadow-lg w-[420px] p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <Loader2 size={18} className="text-[#7c3aed] animate-spin" />
+              <h3 className="text-[18px] font-semibold text-text-primary">
+                {t("settings.librarySync.copyingTitle")}
+              </h3>
+            </div>
+            <p className="text-[14px] text-text-secondary leading-5 mb-5">
+              {t("settings.librarySync.copyingMsg")}
+            </p>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-[12px] font-medium text-text-primary">
+                {t(`settings.librarySync.copyPhase.${disableProgress.phase}`)}
+              </p>
+              <p className="text-[12px] text-text-muted">
+                {disableProgress.total > 0
+                  ? t("settings.librarySync.copyingCount", {
+                    copied: disableProgress.copied,
+                    total: disableProgress.total,
+                  })
+                  : t("settings.librarySync.working")}
+              </p>
+            </div>
+            <div className="h-2 rounded-full bg-bg-muted overflow-hidden">
+              <div
+                className="h-full bg-[#7c3aed] transition-[width] duration-200"
+                style={{ width: `${disableProgress.total > 0 ? disableProgressValue : 12}%` }}
+              />
+            </div>
+            {disableProgress.current && (
+              <p className="text-[12px] text-text-muted truncate mt-3">
+                {disableProgress.current}
+              </p>
+            )}
           </div>
         </div>
       )}

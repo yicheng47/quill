@@ -10,9 +10,11 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
-use tauri::State;
+use tauri::{AppHandle, Emitter, State};
 
 use crate::db::Db;
 use crate::error::{AppError, AppResult};
@@ -26,6 +28,15 @@ use crate::sync::snapshot::{self, CompactReport, Snapshot};
 use crate::sync::watcher::{self, WatcherHandle};
 use crate::sync::writer::SyncWriter;
 use crate::{sync, LocalDir};
+
+#[cfg(not(test))]
+const DISABLE_COPY_PLACEHOLDER_TIMEOUT: Duration = Duration::from_secs(120);
+#[cfg(test)]
+const DISABLE_COPY_PLACEHOLDER_TIMEOUT: Duration = Duration::from_millis(50);
+#[cfg(not(test))]
+const DISABLE_COPY_PLACEHOLDER_POLL: Duration = Duration::from_millis(500);
+#[cfg(test)]
+const DISABLE_COPY_PLACEHOLDER_POLL: Duration = Duration::from_millis(5);
 
 /// Live sync engine + watcher handles, swappable from `sync_enable` /
 /// `sync_disable`. Stored in Tauri state once at setup and read by
@@ -128,6 +139,14 @@ pub struct SyncCompactResult {
     pub events_folded: usize,
     pub snapshot_written: bool,
     pub bytes_freed: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SyncDisableProgress {
+    pub phase: String,
+    pub copied: usize,
+    pub total: usize,
+    pub current: Option<String>,
 }
 
 impl From<CompactReport> for SyncCompactResult {
@@ -366,7 +385,8 @@ pub fn sync_enable(
 }
 
 #[tauri::command]
-pub fn sync_disable(
+pub async fn sync_disable(
+    app: AppHandle,
     local: State<'_, LocalDir>,
     db: State<'_, Db>,
     device: State<'_, DeviceIdentity>,
@@ -374,6 +394,7 @@ pub fn sync_disable(
     sync_state: State<'_, SyncState>,
 ) -> AppResult<()> {
     let engine = sync_state.engine_snapshot()?;
+    let local_dir = local.0.clone();
 
     // Stop new watcher ticks first, then cancel any tick already in
     // flight before joining the watcher thread.
@@ -403,11 +424,17 @@ pub fn sync_disable(
     // session that thought sync was off while the marker stayed on,
     // which then silently re-enabled on the next launch.
 
-    let ubiquity_dir = sync::migration::recorded_data_dir(&local.0)
+    let ubiquity_dir = sync::migration::recorded_data_dir(&local_dir)
         .or_else(icloud::icloud_data_dir);
     let copy_result = if let Some(ub) = ubiquity_dir.as_ref() {
-        copy_dir_contents(&ub.join("books"), &local.0.join("books"))
-            .and_then(|_| copy_dir_contents(&ub.join("covers"), &local.0.join("covers")))
+        let app = app.clone();
+        let jobs = vec![
+            (ub.join("books"), local_dir.join("books")),
+            (ub.join("covers"), local_dir.join("covers")),
+        ];
+        tokio::task::spawn_blocking(move || copy_disable_files_with_progress(&app, &jobs))
+            .await
+            .map_err(|e| AppError::Other(format!("sync_disable copy worker failed: {e}")))?
     } else {
         Ok(())
     };
@@ -461,7 +488,7 @@ pub fn sync_disable(
             .data_dir
             .lock()
             .map_err(|e| AppError::Other(format!("data_dir mutex: {e}")))?;
-        *data_dir = local.0.clone();
+        *data_dir = local_dir.clone();
     }
 
     // Remove the manifest so other peers don't see a stuck "Last
@@ -473,7 +500,7 @@ pub fn sync_disable(
         }
     }
 
-    sync::migration::remove_sync_settings(&local.0)?;
+    sync::migration::remove_sync_settings(&local_dir)?;
 
     // Final sweep: if the async boot thread installed an engine/watcher
     // between our initial snapshot and the marker removal, clear it now.
@@ -623,6 +650,76 @@ fn read_last_replay_at(db: &Db) -> AppResult<Option<i64>> {
     Ok(v)
 }
 
+struct DisableCopyProgressEmitter {
+    app: Option<AppHandle>,
+    copied: usize,
+    total: usize,
+}
+
+impl DisableCopyProgressEmitter {
+    fn new(app: Option<AppHandle>, total: usize) -> Self {
+        Self {
+            app,
+            copied: 0,
+            total,
+        }
+    }
+
+    fn emit(&self, phase: &str, current: Option<String>) {
+        if let Some(app) = self.app.as_ref() {
+            let _ = app.emit(
+                "sync-disable-progress",
+                SyncDisableProgress {
+                    phase: phase.to_string(),
+                    copied: self.copied,
+                    total: self.total,
+                    current,
+                },
+            );
+        }
+    }
+
+    fn complete(&mut self, phase: &str, current: Option<String>) {
+        self.copied = self.copied.saturating_add(1).min(self.total);
+        self.emit(phase, current);
+    }
+}
+
+fn copy_disable_files_with_progress(
+    app: &AppHandle,
+    jobs: &[(PathBuf, PathBuf)],
+) -> AppResult<()> {
+    let total = jobs
+        .iter()
+        .try_fold(0usize, |acc, (src, _)| count_copy_entries(src).map(|n| acc + n))?;
+    let mut progress = DisableCopyProgressEmitter::new(Some(app.clone()), total);
+    progress.emit("preparing", None);
+    for (src, dst) in jobs {
+        copy_dir_contents_with_progress(src, dst, Some(&mut progress))?;
+    }
+    progress.emit("done", None);
+    Ok(())
+}
+
+fn count_copy_entries(src: &Path) -> AppResult<usize> {
+    if !src.exists() {
+        return Ok(0);
+    }
+    let mut total = 0usize;
+    for entry in fs::read_dir(src)? {
+        let _ = entry?;
+        total += 1;
+    }
+    Ok(total)
+}
+
+fn display_file_name(path: &Path) -> String {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .map(String::from)
+        .unwrap_or_else(|| path.to_string_lossy().into_owned())
+}
+
 /// True when `name` matches the iCloud-evicted-placeholder pattern
 /// `.<realname>.icloud`. macOS replaces the contents of an evicted
 /// file with a tiny stub at this name; the real file disappears from
@@ -694,51 +791,92 @@ fn move_dir_contents(src: &Path, dst: &Path) -> AppResult<()> {
 /// `read_dir` as tiny stub files named `.<realname>.icloud`. Copying
 /// the stub to local would silently corrupt the local copy — the user
 /// would then open what looks like a book and get unreadable bytes.
-/// We detect placeholders, trigger a background iCloud download for
-/// each, copy every non-placeholder entry, and finally **return an
-/// error** if any placeholders were encountered.
+/// We detect placeholders, trigger iCloud download for their real file,
+/// wait for materialization, then copy the real bytes.
 ///
 /// Returning Err is load-bearing for `sync_disable`: the caller's `?`
 /// aborts before the marker removal / `data_dir` repoint, so sync
-/// stays on and the user can retry after iCloud has finished
-/// materialising the files. Without this, disable would silently
-/// finish with `data_dir` pointing at local while some books were
-/// only in iCloud — making them unreachable until re-enable. PR
-/// #190's fifth review pass caught the silent-skip path.
+/// stays on if iCloud cannot materialize a file within the bounded wait.
+/// Without this, disable would silently finish with `data_dir` pointing
+/// at local while some books were only in iCloud — making them
+/// unreachable until re-enable. PR #190's fifth review pass caught the
+/// silent-skip path.
+#[cfg(test)]
 fn copy_dir_contents(src: &Path, dst: &Path) -> AppResult<()> {
+    copy_dir_contents_with_progress(src, dst, None)
+}
+
+fn copy_dir_contents_with_progress(
+    src: &Path,
+    dst: &Path,
+    mut progress: Option<&mut DisableCopyProgressEmitter>,
+) -> AppResult<()> {
     if !src.exists() {
         return Ok(());
     }
     fs::create_dir_all(dst)?;
-    let mut skipped = Vec::new();
     for entry in fs::read_dir(src)? {
         let entry = entry?;
         let name = entry.file_name();
         if is_icloud_placeholder(&name) {
-            // Trigger background download for the real file even on
-            // the failing path: by the time the user retries disable,
-            // iCloud may have materialised some/all of them.
-            #[cfg(target_os = "macos")]
-            if let Some(real) = icloud_real_from_placeholder(src, entry.file_name()) {
-                crate::icloud::trigger_download_file(&real);
+            let real = icloud_real_from_placeholder(src, name)
+                .ok_or_else(|| AppError::Other(format!("invalid iCloud placeholder under {}", src.display())))?;
+            let file_name = real
+                .file_name()
+                .ok_or_else(|| AppError::Other(format!("invalid iCloud file path: {}", real.display())))?;
+            let target = dst.join(file_name);
+            if target.exists() {
+                if let Some(p) = progress.as_deref_mut() {
+                    p.complete("skipped", Some(display_file_name(&target)));
+                }
+                continue;
             }
-            skipped.push(name);
+            if let Some(p) = progress.as_deref() {
+                p.emit("downloading", Some(display_file_name(&real)));
+            }
+            icloud::trigger_download_file(&real);
+            wait_for_icloud_file(&real)?;
+            copy_one_disable_file(&real, &target, progress.as_deref_mut())?;
             continue;
         }
-        let target = dst.join(&name);
-        if target.exists() {
-            continue;
-        }
-        fs::copy(entry.path(), &target)?;
+        copy_one_disable_file(&entry.path(), &dst.join(&name), progress.as_deref_mut())?;
     }
-    if !skipped.is_empty() {
-        return Err(AppError::Other(format!(
-            "Cannot disable sync: {} iCloud-evicted file(s) under {} \
-             aren't downloaded yet. iCloud downloads have been triggered; \
-             please retry disable in a moment.",
-            skipped.len(),
-            src.display(),
-        )));
+    Ok(())
+}
+
+fn copy_one_disable_file(
+    src: &Path,
+    dst: &Path,
+    progress: Option<&mut DisableCopyProgressEmitter>,
+) -> AppResult<()> {
+    let name = display_file_name(src);
+    if dst.exists() {
+        if let Some(p) = progress {
+            p.complete("skipped", Some(name));
+        }
+        return Ok(());
+    }
+    if let Some(p) = progress.as_deref() {
+        p.emit("copying", Some(name.clone()));
+    }
+    fs::copy(src, dst)?;
+    if let Some(p) = progress {
+        p.complete("copying", Some(name));
+    }
+    Ok(())
+}
+
+fn wait_for_icloud_file(path: &Path) -> AppResult<()> {
+    let started = Instant::now();
+    while !path.exists() {
+        if started.elapsed() >= DISABLE_COPY_PLACEHOLDER_TIMEOUT {
+            return Err(AppError::Other(format!(
+                "Cannot disable sync: iCloud has not downloaded {} yet. Downloads have been triggered; try again once iCloud finishes.",
+                path.display(),
+            )));
+        }
+        icloud::trigger_download_file(path);
+        thread::sleep(DISABLE_COPY_PLACEHOLDER_POLL);
     }
     Ok(())
 }
@@ -847,10 +985,10 @@ mod tests {
     /// Regression for the same smoke-test finding, copy direction:
     /// an iCloud-evicted entry in `src` (`.foo.epub.icloud`) is a
     /// stub, not real content. Copying it as if it were the real file
-    /// would silently corrupt the local library. We skip it AND
-    /// return Err, so `sync_disable` aborts Phase 1 (markers stay,
-    /// `data_dir` stays at iCloud) instead of finishing with books
-    /// only in iCloud and the app resolving against local.
+    /// would silently corrupt the local library. If iCloud never
+    /// materializes the real file, disable must still abort Phase 1
+    /// (markers stay, `data_dir` stays at iCloud) instead of finishing
+    /// with books only in iCloud and the app resolving against local.
     #[test]
     fn copy_dir_contents_returns_err_on_icloud_placeholder_entries() {
         let tmp = TempDir::new().unwrap();
@@ -877,6 +1015,26 @@ mod tests {
             !dst.join("evicted.epub").exists(),
             "no fake real file should land at the translated name either",
         );
+    }
+
+    #[test]
+    fn copy_dir_contents_waits_for_icloud_placeholder_materialization() {
+        let tmp = TempDir::new().unwrap();
+        let src = tmp.path().join("icloud");
+        let dst = tmp.path().join("local");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(src.join(".evicted.epub.icloud"), b"stub").unwrap();
+
+        let real = src.join("evicted.epub");
+        let real_for_thread = real.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(DISABLE_COPY_PLACEHOLDER_POLL + DISABLE_COPY_PLACEHOLDER_POLL);
+            fs::write(real_for_thread, b"downloaded").unwrap();
+        });
+
+        copy_dir_contents(&src, &dst).unwrap();
+        assert_eq!(fs::read(dst.join("evicted.epub")).unwrap(), b"downloaded");
+        assert!(real.exists(), "copy-back must keep the iCloud source file");
     }
 
     #[test]
