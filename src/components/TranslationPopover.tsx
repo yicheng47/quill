@@ -65,7 +65,7 @@ function useStreamingTranslation(
     // Fetch target language for display
     invoke<Record<string, string>>("get_all_settings").then((s) => {
       if (cancelled) return;
-      const lang = s.translation_language || "";
+      const lang = s.translation_language || s.language || "en";
       setTargetLang(lang);
     }).catch(() => {});
 

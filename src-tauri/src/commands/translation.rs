@@ -41,11 +41,13 @@ fn lang_display_name(code: &str) -> &str {
 fn configured_translation_language(
     target_language: Option<String>,
     saved_language: Option<String>,
+    ui_language: Option<String>,
 ) -> AppResult<String> {
-    target_language
-        .or(saved_language)
+    [target_language, saved_language, ui_language]
+        .into_iter()
+        .flatten()
         .map(|lang| lang.trim().to_string())
-        .filter(|lang| !lang.is_empty())
+        .find(|lang| !lang.is_empty())
         .ok_or_else(|| AppError::Other("TRANSLATION_LANGUAGE_NOT_CONFIGURED".to_string()))
 }
 
@@ -74,7 +76,11 @@ pub async fn ai_translate_passage(
             )
             .ok()
         };
-        let tl = configured_translation_language(target_language, get("translation_language"))?;
+        let tl = configured_translation_language(
+            target_language,
+            get("translation_language"),
+            get("language").or_else(|| Some("en".to_string())),
+        )?;
         (
             tl,
             get("ai_provider").unwrap_or_else(|| "ollama".to_string()),
@@ -266,20 +272,31 @@ mod tests {
     use super::*;
 
     #[test]
-    fn configured_translation_language_requires_explicit_language() {
-        let err = configured_translation_language(None, None).unwrap_err();
+    fn configured_translation_language_defaults_to_ui_language() {
+        let lang = configured_translation_language(None, None, Some("zh".to_string())).unwrap();
+        assert_eq!(lang, "zh");
+
+        let err = configured_translation_language(None, None, None).unwrap_err();
         assert_eq!(err.to_string(), "TRANSLATION_LANGUAGE_NOT_CONFIGURED");
 
-        let blank = configured_translation_language(None, Some("  ".to_string())).unwrap_err();
+        let blank = configured_translation_language(None, Some("  ".to_string()), Some("  ".to_string())).unwrap_err();
         assert_eq!(blank.to_string(), "TRANSLATION_LANGUAGE_NOT_CONFIGURED");
+
+        let blank_saved = configured_translation_language(None, Some("  ".to_string()), Some("zh".to_string())).unwrap();
+        assert_eq!(blank_saved, "zh");
     }
 
     #[test]
-    fn configured_translation_language_prefers_command_target() {
-        let lang = configured_translation_language(Some("zh".to_string()), Some("en".to_string())).unwrap();
+    fn configured_translation_language_prefers_command_target_then_saved_target() {
+        let lang = configured_translation_language(
+            Some("zh".to_string()),
+            Some("en".to_string()),
+            Some("en".to_string()),
+        )
+        .unwrap();
         assert_eq!(lang, "zh");
 
-        let saved = configured_translation_language(None, Some(" en ".to_string())).unwrap();
+        let saved = configured_translation_language(None, Some(" en ".to_string()), Some("zh".to_string())).unwrap();
         assert_eq!(saved, "en");
     }
 }

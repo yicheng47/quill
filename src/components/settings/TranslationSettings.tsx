@@ -10,7 +10,7 @@ export default function TranslationSettings({ settings, loading, save, showSaved
 
   useEffect(() => {
     if (loading) return;
-    setTranslationLanguage(settings.translation_language || "");
+    setTranslationLanguage(settings.translation_language || settings.language || "en");
   }, [settings, loading]);
 
   return (

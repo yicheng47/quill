@@ -118,7 +118,7 @@ export default function SettingsPage() {
     if (settings.auto_save) setAutoSave(settings.auto_save === "true");
     if (settings.theme) setTheme(settings.theme);
     if (settings.language) setLanguage(settings.language);
-    setLookupTranslationLanguage(settings.lookup_translation_language || "");
+    setLookupTranslationLanguage(settings.lookup_translation_language || settings.language || "en");
     setShowTranslation(settings.show_translation === "true");
   }, [settings, loading]);
 

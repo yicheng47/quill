@@ -102,6 +102,10 @@ pub async fn ai_lookup(
         let sys_language = get("language").unwrap_or_else(|| "en".to_string());
         // lookup_language overrides system language for lookup prompts
         let lookup_language = get("lookup_language").unwrap_or(sys_language.clone());
+        let lookup_translation_language = get("lookup_translation_language")
+            .map(|lang| lang.trim().to_string())
+            .filter(|lang| !lang.is_empty())
+            .unwrap_or_else(|| sys_language.clone());
         (
             get("ai_provider").unwrap_or_else(|| "ollama".to_string()),
             get("ai_model").unwrap_or_else(|| "llama3.2".to_string()),
@@ -109,16 +113,10 @@ pub async fn ai_lookup(
             get("ai_keep_alive").unwrap_or_else(|| "30m".to_string()),
             get("ai_auth_mode").unwrap_or_else(|| "api_key".to_string()),
             lookup_language,
-            get("lookup_translation_language").unwrap_or_default(),
+            lookup_translation_language,
             get("show_translation").unwrap_or_else(|| "false".to_string()),
         )
     };
-
-    if show_translation == "true" && lookup_translation_language.trim().is_empty() {
-        return Err(AppError::Other(
-            "LOOKUP_TRANSLATION_LANGUAGE_NOT_CONFIGURED".to_string(),
-        ));
-    }
 
     // Read API key from secrets store
     let api_key = secrets.get("ai_api_key").unwrap_or_default();

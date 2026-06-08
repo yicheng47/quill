@@ -20,7 +20,7 @@ export default function LookupSettings({ settings, loading, save, showSavedToast
   useEffect(() => {
     if (loading) return;
     setLookupLanguage(settings.lookup_language || "en");
-    setLookupTranslationLanguage(settings.lookup_translation_language || "");
+    setLookupTranslationLanguage(settings.lookup_translation_language || settings.language || "en");
     setShowTranslation(settings.show_translation === "true");
   }, [settings, loading]);
 
