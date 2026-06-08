@@ -122,6 +122,8 @@
   "lookup.saved": "已保存",
   "lookup.copy": "复制",
   "lookup.copied": "已复制",
+  "lookup.translationLanguageNotConfigured": "请先在设置中选择查词翻译语言",
+  "lookup.openSettings": "打开查词设置",
 
   "explain.title": "解释",
   "explain.thinking": "正在解释...",
@@ -194,6 +196,7 @@
   "settings.updates.autoCheckHint": "启动时检查",
 
   "settings.language": "语言",
+  "settings.languageUnset": "选择",
   "settings.language.subtitle": "界面语言",
   "settings.languageSub": "选择你的首选语言",
 
@@ -241,12 +244,12 @@
   "settings.lookup.title": "查词",
   "settings.lookup.sub": "自定义查词显示方式",
   "settings.lookup.shortSub": "翻译与词典",
-  "settings.lookup.nativeLanguage": "母语",
-  "settings.lookup.nativeLanguageHint": "查词时的翻译语言",
   "settings.lookup.language": "查词语言",
   "settings.lookup.languageHint": "查词使用的语言",
   "settings.lookup.showTranslation": "显示翻译",
-  "settings.lookup.showTranslationHint": "在查词结果中显示母语翻译",
+  "settings.lookup.showTranslationHint": "在查词结果中显示所选目标语言的简短翻译",
+  "settings.lookup.translationLanguage": "翻译为",
+  "settings.lookup.translationLanguageHint": "查词翻译的目标语言",
 
   "settings.translation.title": "翻译",
   "settings.translation.subtitle": "语言与设置",
@@ -353,6 +356,8 @@
   "translation.title": "翻译",
   "translation.original": "原文",
   "translation.translating": "翻译中...",
+  "translation.languageNotConfigured": "请先在设置中选择翻译语言",
+  "translation.openSettings": "打开翻译设置",
   "translation.save": "保存",
   "translation.saved": "已保存",
   "translation.copy": "复制",

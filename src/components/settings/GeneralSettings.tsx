@@ -5,6 +5,7 @@ import i18n from "../../i18n";
 import Select from "../ui/Select";
 import Toggle from "../ui/Toggle";
 import type { SettingsProps } from "./types";
+import { LANGUAGE_OPTIONS } from "./languageOptions";
 
 export default function GeneralSettings({ settings, loading, save, showSavedToast }: SettingsProps) {
   const { t } = useTranslation();
@@ -57,10 +58,7 @@ export default function GeneralSettings({ settings, loading, save, showSavedToas
             i18n.changeLanguage(lang);
             showSavedToast();
           }}
-          options={[
-            { value: "en", label: "English" },
-            { value: "zh", label: "简体中文" },
-          ]}
+          options={LANGUAGE_OPTIONS}
         />
       </div>
 

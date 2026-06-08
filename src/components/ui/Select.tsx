@@ -12,9 +12,10 @@ interface SelectProps {
   onChange: (value: string) => void;
   options: SelectOption[];
   className?: string;
+  placeholder?: string;
 }
 
-export default function Select({ label, value, onChange, options, className = "" }: SelectProps) {
+export default function Select({ label, value, onChange, options, className = "", placeholder = "" }: SelectProps) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -48,7 +49,7 @@ export default function Select({ label, value, onChange, options, className = ""
         onClick={() => setOpen((v) => !v)}
         className="w-full h-9 bg-bg-input rounded-lg px-3 text-[13px] font-medium text-text-primary flex items-center justify-between cursor-pointer border border-transparent hover:border-border transition-colors"
       >
-        <span>{selected?.label ?? ""}</span>
+        <span>{selected?.label ?? placeholder}</span>
         <ChevronDown size={16} className={`text-text-muted transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
 

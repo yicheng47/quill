@@ -8,6 +8,7 @@ import Select from "../components/ui/Select";
 import Input from "../components/ui/Input";
 import Toggle from "../components/ui/Toggle";
 import Slider from "../components/ui/Slider";
+import { LANGUAGE_OPTIONS } from "../components/settings/languageOptions";
 import { useSettings } from "../hooks/useSettings";
 import { useTranslation } from "react-i18next";
 
@@ -49,7 +50,7 @@ export default function SettingsPage() {
   const [language, setLanguage] = useState("en");
 
   // Lookup
-  const [nativeLanguage, setNativeLanguage] = useState("en");
+  const [lookupTranslationLanguage, setLookupTranslationLanguage] = useState("");
   const [showTranslation, setShowTranslation] = useState(false);
 
   // Appearance
@@ -117,8 +118,8 @@ export default function SettingsPage() {
     if (settings.auto_save) setAutoSave(settings.auto_save === "true");
     if (settings.theme) setTheme(settings.theme);
     if (settings.language) setLanguage(settings.language);
-    if (settings.native_language) setNativeLanguage(settings.native_language);
-    if (settings.show_translation) setShowTranslation(settings.show_translation === "true");
+    setLookupTranslationLanguage(settings.lookup_translation_language || "");
+    setShowTranslation(settings.show_translation === "true");
   }, [settings, loading]);
 
   // Fetch iCloud status on mount
@@ -672,10 +673,7 @@ export default function SettingsPage() {
                 i18n.changeLanguage(lang);
                 showSavedToast();
               }}
-              options={[
-                { value: "en", label: "English" },
-                { value: "zh", label: "简体中文" },
-              ]}
+              options={LANGUAGE_OPTIONS}
             />
           </section>
 
@@ -695,20 +693,18 @@ export default function SettingsPage() {
               {/* Left: controls */}
               <div className="flex-1 space-y-4">
                 <Select
-                  label={t("settings.lookup.nativeLanguage")}
-                  value={nativeLanguage}
+                  label={t("settings.lookup.translationLanguage")}
+                  value={lookupTranslationLanguage}
+                  placeholder={t("settings.languageUnset")}
                   onChange={(lang) => {
-                    setNativeLanguage(lang);
-                    save("native_language", lang);
+                    setLookupTranslationLanguage(lang);
+                    save("lookup_translation_language", lang);
                     showSavedToast();
                   }}
-                  options={[
-                    { value: "en", label: "English" },
-                    { value: "zh", label: "简体中文" },
-                  ]}
+                  options={LANGUAGE_OPTIONS}
                 />
                 <p className="text-[12px] text-text-muted -mt-2">
-                  {t("settings.lookup.nativeLanguageHint")}
+                  {t("settings.lookup.translationLanguageHint")}
                 </p>
 
                 <div className="border-t border-border pt-4">
@@ -763,9 +759,9 @@ export default function SettingsPage() {
                       </>
                     ) : (
                       <>
-                        {showTranslation && nativeLanguage !== "en" && (
+                        {showTranslation && lookupTranslationLanguage && lookupTranslationLanguage !== "en" && (
                           <p className="text-[13px] text-accent-text mb-2">
-                            {nativeLanguage === "zh" ? "界面；接口" : "interfaces"}
+                            {lookupTranslationLanguage === "zh" ? "界面；接口" : "interfaces"}
                           </p>
                         )}
                         <p className="text-[12px] text-text-primary leading-[1.5] mb-2">

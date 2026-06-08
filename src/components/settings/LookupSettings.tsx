@@ -4,21 +4,30 @@ import { Sparkles, X } from "lucide-react";
 import Toggle from "../ui/Toggle";
 import Select from "../ui/Select";
 import type { SettingsProps } from "./types";
+import { LANGUAGE_OPTIONS } from "./languageOptions";
+
+const SAMPLE_TRANSLATIONS: Record<string, string> = {
+  en: "interfaces",
+  zh: "界面；接口",
+};
 
 export default function LookupSettings({ settings, loading, save, showSavedToast }: SettingsProps) {
   const { t } = useTranslation();
   const [lookupLanguage, setLookupLanguage] = useState("en");
   const [showTranslation, setShowTranslation] = useState(false);
-
-  const nativeLanguage = settings.native_language || "en";
+  const [lookupTranslationLanguage, setLookupTranslationLanguage] = useState("");
 
   useEffect(() => {
     if (loading) return;
-    if (settings.lookup_language) setLookupLanguage(settings.lookup_language);
-    if (settings.show_translation) setShowTranslation(settings.show_translation === "true");
+    setLookupLanguage(settings.lookup_language || "en");
+    setLookupTranslationLanguage(settings.lookup_translation_language || "");
+    setShowTranslation(settings.show_translation === "true");
   }, [settings, loading]);
 
   if (loading) return null;
+
+  const shouldShowTranslation =
+    showTranslation && lookupTranslationLanguage !== "" && lookupTranslationLanguage !== lookupLanguage;
 
   return (
     <div>
@@ -40,15 +49,7 @@ export default function LookupSettings({ settings, loading, save, showSavedToast
             save("lookup_language", lang);
             showSavedToast();
           }}
-          options={[
-            { value: "en", label: "English" },
-            { value: "zh", label: "简体中文" },
-            { value: "ja", label: "日本語" },
-            { value: "ko", label: "한국어" },
-            { value: "es", label: "Español" },
-            { value: "fr", label: "Français" },
-            { value: "de", label: "Deutsch" },
-          ]}
+          options={LANGUAGE_OPTIONS}
         />
       </div>
       {/* Show Translation */}
@@ -70,6 +71,28 @@ export default function LookupSettings({ settings, loading, save, showSavedToast
           }}
         />
       </div>
+      {/* Lookup Translation Language */}
+      <div className="flex items-center justify-between h-[73px]">
+        <div>
+          <p className="text-[14px] font-medium text-text-primary tracking-[-0.15px]">
+            {t("settings.lookup.translationLanguage")}
+          </p>
+          <p className="text-[12px] text-text-muted mt-0.5">
+            {t("settings.lookup.translationLanguageHint")}
+          </p>
+        </div>
+        <Select
+          className="w-[130px] shrink-0"
+          value={lookupTranslationLanguage}
+          placeholder={t("settings.languageUnset")}
+          onChange={(lang) => {
+            setLookupTranslationLanguage(lang);
+            save("lookup_translation_language", lang);
+            showSavedToast();
+          }}
+          options={LANGUAGE_OPTIONS}
+        />
+      </div>
       {/* Preview */}
       <div className="mt-5">
         <p className="text-[12px] font-medium text-text-muted mb-2 uppercase tracking-[0.3px]">Preview</p>
@@ -83,6 +106,11 @@ export default function LookupSettings({ settings, loading, save, showSavedToast
           </div>
           <div className="px-3 py-2.5">
             <p className="text-[15px] font-bold text-text-primary mb-0.5">interfaces</p>
+            {shouldShowTranslation && (
+              <p className="text-[12px] text-accent-text mb-1">
+                {SAMPLE_TRANSLATIONS[lookupTranslationLanguage] || "interfaces"}
+              </p>
+            )}
             {lookupLanguage !== "en" ? (
               <>
                 <p className="text-[12px] text-text-secondary leading-[1.5] mb-2">
@@ -101,11 +129,6 @@ export default function LookupSettings({ settings, loading, save, showSavedToast
               </>
             ) : (
               <>
-                {showTranslation && nativeLanguage !== "en" && (
-                  <p className="text-[12px] text-accent-text mb-1">
-                    {nativeLanguage === "zh" ? "\u754c\u9762\uff1b\u63a5\u53e3" : "interfaces"}
-                  </p>
-                )}
                 <p className="text-[11px] text-text-secondary leading-[1.5] mb-2">
                   A term used in this passage to convey a specific quality relevant to themes of technological advancement.
                 </p>
