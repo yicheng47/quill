@@ -231,6 +231,7 @@ export default function LibrarySyncSettings(_props: SettingsProps) {
   const available = status?.available ?? false;
   const peers = status?.peers ?? [];
   const initialStatusLoading = loadingStatus && !status;
+  const showPeerStatus = syncOn || initialStatusLoading;
 
   return (
     <>
@@ -273,14 +274,21 @@ export default function LibrarySyncSettings(_props: SettingsProps) {
             files on disk, not from the running engine, so it's still
             meaningful offline. The empty state still renders so a
             single-device user understands why the list is empty. */}
-        {syncOn && (
+        {showPeerStatus && (
           <>
             <div className="h-px bg-black/10" />
             <div className="pt-4 pb-2">
               <p className="text-[11px] font-semibold text-text-muted tracking-[0.6px]">
                 {t("settings.librarySync.otherDevices").toUpperCase()}
               </p>
-              {peers.length === 0 ? (
+              {initialStatusLoading ? (
+                <div className="flex items-center gap-2 mt-2">
+                  <Loader2 size={14} className="text-text-muted animate-spin" />
+                  <p className="text-[12px] text-text-muted">
+                    {t("settings.librarySync.working")}
+                  </p>
+                </div>
+              ) : peers.length === 0 ? (
                 <p className="text-[12px] text-text-muted mt-2 leading-[1.5]">
                   {t("settings.librarySync.noPeers")}
                 </p>
@@ -325,40 +333,44 @@ export default function LibrarySyncSettings(_props: SettingsProps) {
                 </div>
               )}
             </div>
-            <div className="h-px bg-black/10 mt-3" />
+            {syncOn && (
+              <>
+                <div className="h-px bg-black/10 mt-3" />
 
-            {/* Actions row. Sync now / Compact log both require the
-                engine to be running this session — disable them when
-                we're in queue-only mode so the user isn't confused by
-                an error toast. The "Last sync" caption still renders
-                whatever the backend reports. */}
-            <div className="flex items-center justify-between pt-4 pb-2">
-              <div className="flex items-center gap-4">
-                <button
-                  type="button"
-                  onClick={syncing ? () => invoke("sync_cancel") : onSyncNow}
-                  disabled={(!syncing && busy) || !engineRunning}
-                  title={!engineRunning ? t("settings.librarySync.paused") : undefined}
-                  className="text-[13px] font-medium text-[#7c3aed] hover:underline disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-                >
-                  {syncing ? t("settings.librarySync.cancelSync") : t("settings.librarySync.syncNow")}
-                </button>
-                <button
-                  type="button"
-                  onClick={onCompact}
-                  disabled={busy || !engineRunning}
-                  title={!engineRunning ? t("settings.librarySync.paused") : undefined}
-                  className="text-[13px] font-medium text-[#7c3aed] hover:underline disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-                >
-                  {t("settings.librarySync.compact")}
-                </button>
-              </div>
-              <p className="text-[12px] text-text-muted">
-                {t("settings.librarySync.lastSyncAt", {
-                  time: formatRelative(status?.last_replay_at ?? null, now),
-                })}
-              </p>
-            </div>
+                {/* Actions row. Sync now / Compact log both require the
+                    engine to be running this session — disable them when
+                    we're in queue-only mode so the user isn't confused by
+                    an error toast. The "Last sync" caption still renders
+                    whatever the backend reports. */}
+                <div className="flex items-center justify-between pt-4 pb-2">
+                  <div className="flex items-center gap-4">
+                    <button
+                      type="button"
+                      onClick={syncing ? () => invoke("sync_cancel") : onSyncNow}
+                      disabled={(!syncing && busy) || !engineRunning}
+                      title={!engineRunning ? t("settings.librarySync.paused") : undefined}
+                      className="text-[13px] font-medium text-[#7c3aed] hover:underline disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                    >
+                      {syncing ? t("settings.librarySync.cancelSync") : t("settings.librarySync.syncNow")}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={onCompact}
+                      disabled={busy || !engineRunning}
+                      title={!engineRunning ? t("settings.librarySync.paused") : undefined}
+                      className="text-[13px] font-medium text-[#7c3aed] hover:underline disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                    >
+                      {t("settings.librarySync.compact")}
+                    </button>
+                  </div>
+                  <p className="text-[12px] text-text-muted">
+                    {t("settings.librarySync.lastSyncAt", {
+                      time: formatRelative(status?.last_replay_at ?? null, now),
+                    })}
+                  </p>
+                </div>
+              </>
+            )}
           </>
         )}
 
