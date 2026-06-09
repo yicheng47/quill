@@ -6,7 +6,6 @@ import {
   X,
   Loader2,
   Languages,
-  BookmarkPlus,
   Check,
   Copy,
   ChevronDown,
@@ -132,7 +131,6 @@ export default function TranslationPopover({
   onClose,
 }: TranslationPopoverProps) {
   const { t } = useTranslation();
-  const [saved, setSaved] = useState(false);
   const [copied, setCopied] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const popoverRef = useRef<HTMLDivElement>(null);
@@ -167,21 +165,6 @@ export default function TranslationPopover({
     return () => observer.disconnect();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  const handleSave = async () => {
-    try {
-      await invoke("save_translation", {
-        bookId,
-        sourceText: text,
-        translatedText: contentRef.current,
-        targetLanguage: targetLang,
-        cfi: cfi || null,
-      });
-      setSaved(true);
-    } catch (err) {
-      console.error("Failed to save translation:", err);
-    }
-  };
 
   const handleCopy = () => {
     navigator.clipboard.writeText(contentRef.current);
@@ -281,7 +264,7 @@ export default function TranslationPopover({
             <button
               onClick={async () => {
                 onClose();
-                await invoke("open_settings_on_main", { section: languageNotConfigured ? "translation" : "ai" });
+                await invoke("open_settings_on_main", { section: languageNotConfigured ? "tools" : "ai" });
                 const main = await WebviewWindow.getByLabel("main");
                 await main?.setFocus();
               }}
@@ -315,17 +298,9 @@ export default function TranslationPopover({
           ))}
       </div>
 
-      {/* Footer — Save & Copy */}
+      {/* Footer */}
       {allDone && hasContent && !hasConfigurationError && (
-        <div className="flex items-center justify-between px-4 py-2.5 border-t border-border/40">
-          <button
-            onClick={handleSave}
-            disabled={saved}
-            className="flex items-center gap-1.5 text-[13px] font-medium cursor-pointer text-accent-text hover:opacity-70 disabled:opacity-50 disabled:cursor-default"
-          >
-            {saved ? <Check size={14} /> : <BookmarkPlus size={14} />}
-            {saved ? t("translation.saved") : t("translation.save")}
-          </button>
+        <div className="flex items-center justify-end px-4 py-2.5 border-t border-border/40">
           <button
             onClick={handleCopy}
             className="flex items-center gap-1.5 text-[13px] font-medium cursor-pointer text-text-muted hover:opacity-70"

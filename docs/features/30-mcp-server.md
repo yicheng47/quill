@@ -20,7 +20,7 @@ This is more powerful than adding CLI providers to Quill's settings because:
 ### In scope
 
 - MCP server running on a local HTTP port (SSE transport) using the official `rmcp` Rust SDK
-- Read tools: library, book metadata, highlights (with text), bookmarks, vocabulary (with SRS state), translations, chat history, collections
+- Read tools: library, book metadata, highlights (with text), bookmarks, vocabulary (with SRS state), chat history, collections
 - Write tools: add highlight, add bookmark, add vocab word, update vocab mastery
 - Frontend bridge: push live reading state (selected text, current chapter) to backend for MCP exposure
 - Settings UI: enable/disable MCP server, configure port
@@ -48,7 +48,6 @@ This is more powerful than adding CLI providers to Quill's settings because:
 - `get_bookmarks(book_id)` — bookmarks with labels
 - `get_vocab_words(book_id?)` — vocabulary with mastery/SRS data
 - `get_vocab_due()` — words due for spaced repetition review
-- `get_translations(book_id?)` — saved translations
 - `get_collections()` — collections with book counts
 - `get_chat_history(book_id, chat_id?)` — chat messages
 - `get_reading_state()` — current book, position, chapter

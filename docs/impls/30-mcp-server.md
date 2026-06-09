@@ -15,7 +15,7 @@ This plan ships in four phases. **Phase 1** stands up the stdio binary and the M
 
 These are the inputs to this plan. Do not relitigate while implementing — open a follow-up if a constraint conflicts with reality.
 
-1. **MCP scope = library management, not active reading.** Tools expose collections of saved data the user might want an AI client to help organize, search, or annotate (books, collections, highlights, bookmarks, vocab list, translations, chat history). Active-reading-session state (current position, SRS due queue) stays in-app and is intentionally NOT exposed — the in-app reader is the right surface for that.
+1. **MCP scope = library management, not active reading.** Tools expose collections of saved data the user might want an AI client to help organize, search, or annotate (books, collections, highlights, bookmarks, vocab list, chat history). Active-reading-session state (current position, SRS due queue) stays in-app and is intentionally NOT exposed — the in-app reader is the right surface for that.
 2. **stdio transport, not HTTP.** AI clients spawn `quill mcp` as a subprocess and the MCP session lives as long as the client uses it. No port to manage, no auth surface, no in-process server inside the Tauri app. This is the standard MCP shape and works whether or not the Quill desktop app is currently running.
 3. **Single binary, `mcp` subcommand.** `main.rs` dispatches on `argv[1] == "mcp"` to `quill_lib::mcp_stdio_main()`, otherwise launches the normal Tauri app. Avoids a second binary in the macOS app bundle and the packaging complexity that brings.
 4. **WAL journal mode** for `quill.db`. The stdio subprocess opens its own SQLite connection; WAL is what lets that coexist with the Tauri app's writer without serializing on the file lock. Was already safe to switch — DELETE mode was a hangover from the pre-Chunk-6 era when `quill.db` lived in iCloud.
@@ -52,7 +52,6 @@ src-tauri/src/mcp/
     highlights.rs     # get_highlights
     bookmarks.rs      # get_bookmarks
     vocab.rs          # get_vocab_words, get_vocab_stats
-    translations.rs   # get_translations
     chats.rs          # get_chat_history
     collections.rs    # Phase 4: create/rename/delete collection, add/remove book
 ```
@@ -127,7 +126,6 @@ impl QuillMcpHandler {
         r.merge(Self::highlights_router());
         r.merge(Self::bookmarks_router());
         r.merge(Self::vocab_router());
-        r.merge(Self::translations_router());
         r.merge(Self::chats_router());
         r
     }
@@ -195,7 +193,6 @@ All read tools are pure SQLite queries that reuse the existing column shapes. Ea
 | `get_bookmarks` | `book_id` | `Vec<Bookmark>` | bookmarks.rs `query_bookmarks` |
 | `get_vocab_words` | `book_id` | `Vec<VocabWord>` (incl. mastery, SRS) | vocab.rs `query_vocab_words` |
 | `get_vocab_stats` | — | aggregate counts by mastery | vocab.rs `query_vocab_stats` |
-| `get_translations` | `book_id?` | `Vec<Translation>` | translation.rs `query_translations` |
 | `get_collections` | — | `Vec<Collection>` + book counts | collections.rs `query_collections` |
 | `get_chat_history` | `book_id`, `chat_id?` | chats + messages | chats.rs `query_chats` + `query_chat_messages` |
 
@@ -248,7 +245,7 @@ There is no SQL-level enforcement; the `Db` connection sees everything. Instead,
 ### Step 2.4: Verification (Phase 2)
 
 - Smoke via `printf … | target/debug/quill mcp` (or `npx @modelcontextprotocol/inspector --command /path/to/quill --args mcp`):
-  - `tools/list` returns all 9 tools.
+  - `tools/list` returns all 8 tools.
   - `get_highlights(book_id)` returns rows with `text_content` populated.
   - `get_vocab_stats()` returns the same shape as the existing Tauri command.
   - `list_books` paths are **relative** (`books/<slug>.epub`).
@@ -266,7 +263,7 @@ Pattern follows tools that "auto-register Quill with each AI client": for each s
 
 **File: `src/components/settings/AiAssistantSettings.tsx`** (existing or new) — append a section titled "MCP Integrations" with:
 
-1. **Section header** "MCP Integrations" + short subtitle: "Let AI clients read your library — books, highlights, bookmarks, vocab, translations, and chat history. Read-only."
+1. **Section header** "MCP Integrations" + short subtitle: "Let AI clients read your library — books, highlights, bookmarks, vocab, and chat history. Read-only."
 2. **Per-client toggle rows**, identical row shape to the General settings rows:
    - **Claude Code CLI** — toggle. On = write entry to `~/.claude.json` (user-scoped) or project-scoped `.mcp.json` (decide per-platform). Subtext: "Auto-register Quill with Claude Code."
    - **Codex CLI** — toggle. Subtext: "Auto-register Quill with Codex."
@@ -460,7 +457,7 @@ The write tools are always registered in the tool router (they always appear in 
 >
 > **MCP Integrations section structure (top to bottom):**
 > 1. **Section header** — "MCP Integrations" title + a `Plug` icon on the left in the gutter. Small "Beta" pill on the right.
-> 2. **Subtitle** — "Let AI clients read your library — books, highlights, bookmarks, vocab, translations, and chat history. Read-only."
+> 2. **Subtitle** — "Let AI clients read your library — books, highlights, bookmarks, vocab, and chat history. Read-only."
 > 3. **Claude Code CLI row** — label "Claude Code CLI", subtext "Auto-register Quill with Claude Code.", `Toggle` on the right.
 > 4. **Codex CLI row** — label "Codex CLI", subtext "Auto-register Quill with Codex.", `Toggle` on the right.
 > 5. **Custom MCP Server subsection** — collapsible. Header "Custom MCP Server Configuration" + "Copy MCP config" button on the right. Expanded body has a short paragraph + a syntax-highlighted JSON snippet preview.
@@ -489,14 +486,12 @@ The write tools are always registered in the tool router (they always appear in 
 | `src-tauri/src/mcp/tools/highlights.rs` | New: get_highlights. |
 | `src-tauri/src/mcp/tools/bookmarks.rs` | New: get_bookmarks. |
 | `src-tauri/src/mcp/tools/vocab.rs` | New: get_vocab_words, get_vocab_stats. |
-| `src-tauri/src/mcp/tools/translations.rs` | New: get_translations. |
 | `src-tauri/src/mcp/tools/chats.rs` | New: get_chat_history. |
 | `src-tauri/src/commands/mcp.rs` | New: mcp_integration_status / mcp_set_integration / mcp_config_snippet. |
 | `src-tauri/src/commands/mod.rs` | Register `mcp` module. |
 | `src-tauri/src/commands/bookmarks.rs` | Extract `query_highlights`, `query_bookmarks` helpers. |
 | `src-tauri/src/commands/books.rs` | Extract `query_books`, `query_book` helpers (relative paths). |
 | `src-tauri/src/commands/vocab.rs` | Extract `query_vocab_words`, `query_vocab_stats` helpers. |
-| `src-tauri/src/commands/translation.rs` | Extract `query_translations` helper. |
 | `src-tauri/src/commands/chats.rs` | Extract `query_chats`, `query_chat_messages` helpers. |
 | `src-tauri/src/commands/collections.rs` | Extract `query_collections` helper. |
 | `src-tauri/src/main.rs` | Dispatch `argv[1] == "mcp"` → `quill_lib::mcp_stdio_main()`. |
@@ -515,7 +510,7 @@ The write tools are always registered in the tool router (they always appear in 
 2. `cargo test --workspace` — passes; schema-version assertions stay at 12 (no migration added in v1).
 3. `target/debug/quill mcp` smoke test:
    - `initialize` returns serverInfo + `capabilities.tools`.
-   - `tools/list` returns all 9 tools with populated schemas.
+   - `tools/list` returns all 8 tools with populated schemas.
    - `tools/call` for `get_collections` (no args) returns the library's collections.
    - `tools/call` for `list_books` returns books with **relative** paths.
    - Exits cleanly when stdin closes.

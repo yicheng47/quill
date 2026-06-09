@@ -91,6 +91,8 @@ pub enum EventBody {
     #[serde(rename = "vocab.delete")]
     VocabDelete { id: String },
 
+    // Legacy no-op: saved translations were removed in #263. Keep these
+    // variants so old peer logs deserialize and replay harmlessly.
     #[serde(rename = "translation.add")]
     TranslationAdd(TranslationPayload),
     #[serde(rename = "translation.delete")]

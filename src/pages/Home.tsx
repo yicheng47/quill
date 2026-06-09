@@ -9,8 +9,7 @@ import BookGrid from "../components/BookGrid";
 import BookList from "../components/BookList";
 import DictionaryContent from "../components/DictionaryContent";
 import ChatsContent from "../components/ChatsContent";
-import TranslationsContent from "../components/TranslationsContent";
-import SettingsModal from "../components/SettingsModal";
+import SettingsModal, { type SettingsSection } from "../components/SettingsModal";
 import Button from "../components/ui/Button";
 import Input from "../components/ui/Input";
 import { useBooks, importBookDialog } from "../hooks/useBooks";
@@ -37,7 +36,7 @@ export default function Home() {
   const [importError, setImportError] = useState<string | null>(null);
   const [syncProgress, setSyncProgress] = useState<{ applied: number; total: number } | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsSection, setSettingsSection] = useState<"general" | "reading" | "ai" | "lookup" | "librarySync" | "about">("general");
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>("general");
   const [userName, setUserName] = useState("");
   const collections = useCollections();
 
@@ -48,18 +47,33 @@ export default function Home() {
       .catch(() => {});
   }, []);
 
+  const normalizeSettingsSection = useCallback((section: unknown): SettingsSection => {
+    if (section === "lookup" || section === "translation" || section === "tools") return "tools";
+    if (
+      section === "general" ||
+      section === "appearance" ||
+      section === "reading" ||
+      section === "ai" ||
+      section === "librarySync" ||
+      section === "mcp" ||
+      section === "about"
+    ) {
+      return section;
+    }
+    return "general";
+  }, []);
+
   // Listen for open-settings events (DOM from same window, storage from reader windows)
   useEffect(() => {
     const handler = (e: Event) => {
-      const section = (e as CustomEvent).detail ?? "general";
-      setSettingsSection(section);
+      setSettingsSection(normalizeSettingsSection((e as CustomEvent).detail));
       setSettingsOpen(true);
     };
     window.addEventListener("open-settings", handler);
 
     // Cross-window: reader uses emitTo("main", ...) — must use webview-specific listener
     const unlisten = getCurrentWebview().listen<string>("open-settings", (event) => {
-      setSettingsSection((event.payload as typeof settingsSection) || "general");
+      setSettingsSection(normalizeSettingsSection(event.payload));
       setSettingsOpen(true);
     });
 
@@ -67,7 +81,7 @@ export default function Home() {
       window.removeEventListener("open-settings", handler);
       unlisten.then((fn) => fn());
     };
-  }, []);
+  }, [normalizeSettingsSection]);
 
   // Cmd+, to open settings
   useEffect(() => {
@@ -300,8 +314,6 @@ export default function Home() {
         <DictionaryContent />
       ) : activeFilter === "chats" ? (
         <ChatsContent />
-      ) : activeFilter === "translations" ? (
-        <TranslationsContent />
       ) : (
         <main className="flex-1 flex flex-col min-w-0">
           <div className="border-b border-border px-page pb-section relative select-none">

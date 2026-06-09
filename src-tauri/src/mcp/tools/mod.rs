@@ -27,5 +27,4 @@ pub mod chats;
 pub mod collections;
 pub mod highlights;
 pub mod library;
-pub mod translations;
 pub mod vocab;

@@ -260,7 +260,7 @@ impl QuillMcpHandler {
     }
 
     #[tool(
-        description = "Permanently delete a book and all its associated data (highlights, bookmarks, chats, vocab, translations). Also removes the book file and cover image from disk."
+        description = "Permanently delete a book and all its associated data (highlights, bookmarks, chats, vocab). Also removes the book file and cover image from disk."
     )]
     pub async fn delete_book(
         &self,

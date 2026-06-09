@@ -130,19 +130,11 @@ Remove:
 
 Update MCP copy that says the server exposes translations. `delete_book` tool descriptions should no longer mention translations.
 
-### 5. Drop the local translations table
+### 5. Retain the legacy translations table
 
-Add a new migration, likely `014_drop_translations.sql`, that does:
+Do not add a destructive migration for saved translations. The feature removes UI/API/MCP/sync surfaces, but existing saved translation rows can remain in the legacy `translations` table in case the data is useful later.
 
-```sql
-DROP TABLE IF EXISTS translations;
-```
-
-Register it in `src-tauri/src/db.rs` and update schema-version tests from 13 to 14.
-
-Update DB tests that currently assert translations exist or use old translations rows during migration tests. Historical migrations can still create and normalize the table on old databases; the final schema after migration 14 should not contain it.
-
-Remove book-delete cleanup SQL that deletes from `translations`, because the table will no longer exist after migration 14.
+Remove book-delete cleanup SQL that deletes from `translations`; saved translations are no longer an active child surface of books.
 
 ### 6. Make legacy translation sync events harmless
 
@@ -181,7 +173,7 @@ Frontend:
 Backend:
 - `cd src-tauri && cargo test`
 - `cd src-tauri && cargo clippy -- -D warnings`
-- Migration smoke: fresh DB reaches schema version 14 and has no `translations` table.
+- Migration smoke: fresh DB stays at schema version 13 and keeps the legacy `translations` table.
 - Sync smoke: a legacy `translation.add` / `translation.delete` event deserializes and `apply_event` returns `Ok(())`.
 - MCP smoke: `get_translations` is absent from the tool list.
 
@@ -190,6 +182,6 @@ Backend:
 1. Land the settings merge first, with no persistence removal.
 2. Remove Save from `TranslationPopover`, update the sidebar IA to **Chats** above **Saved**, and delete saved-translation frontend surfaces.
 3. Remove backend saved-translation commands and MCP tool.
-4. Add migration 14 and remove backend SQL references to the table.
+4. Keep the existing legacy table migrations, but remove active backend SQL references to saved translations.
 5. Convert legacy sync events to no-ops and trim snapshots.
 6. Run verification and clean i18n/docs references found by `rg "translations|Translation|translation\\."`.

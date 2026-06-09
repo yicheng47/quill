@@ -46,7 +46,6 @@ impl QuillMcpHandler {
         r.merge(Self::highlights_router());
         r.merge(Self::bookmarks_router());
         r.merge(Self::vocab_router());
-        r.merge(Self::translations_router());
         r.merge(Self::chats_router());
         r.merge(Self::collections_write_router());
         r
@@ -67,7 +66,7 @@ impl ServerHandler for QuillMcpHandler {
             .with_server_info(implementation)
             .with_instructions(
                 "Quill MCP server. Read-only access to the local library, \
-                 highlights, bookmarks, vocabulary, translations, and chat \
+                 highlights, bookmarks, vocabulary, and chat \
                  history. Write tools (add/update/delete books and collections) \
                  are available when write access is enabled in Quill settings.",
             )
@@ -108,9 +107,8 @@ mod tests {
         {
             let conn = db.conn.lock().unwrap();
             // One book + one collection + one bookmark + one highlight
-            // + one vocab word + one chat + one message + one
-            // translation. Enough breadth to verify each tool returns
-            // the expected row shape.
+            // + one vocab word + one chat + one message. Enough breadth
+            // to verify each tool returns the expected row shape.
             let now: i64 = 1_700_000_000_000;
             conn.execute(
                 "INSERT INTO books (id, title, author, file_path, status, progress, created_at, updated_at)
@@ -147,11 +145,6 @@ mod tests {
                  VALUES ('m1','ch1','user','hello',NULL,NULL,?1,?1)",
                 params![now],
             ).unwrap();
-            conn.execute(
-                "INSERT INTO translations (id, book_id, source_text, translated_text, target_language, cfi, created_at, updated_at)
-                 VALUES ('t1','b1','hola','hello','en','epubcfi(/6/2!/2)',?1,?1)",
-                params![now],
-            ).unwrap();
         }
         (dir, McpState::new(db, None, None))
     }
@@ -182,7 +175,6 @@ mod tests {
             "get_bookmarks",
             "get_vocab_words",
             "get_vocab_stats",
-            "get_translations",
             "get_chat_history",
             "add_book",
             "update_book",
@@ -299,17 +291,6 @@ mod tests {
         let stats: serde_json::Value = serde_json::from_str(&stats_body).unwrap();
         assert_eq!(stats["total"], serde_json::json!(1));
         assert_eq!(stats["learning_count"], serde_json::json!(1));
-    }
-
-    #[tokio::test]
-    async fn get_translations_returns_seeded_row() {
-        let (_dir, state) = seeded();
-        let handler = QuillMcpHandler::new(state);
-        let args = crate::mcp::tools::translations::GetTranslationsArgs { book_id: None };
-        let body = text_of(handler.get_translations(Parameters(args)).await.unwrap());
-        let arr: serde_json::Value = serde_json::from_str(&body).unwrap();
-        assert_eq!(arr[0]["source_text"], serde_json::json!("hola"));
-        assert_eq!(arr[0]["target_language"], serde_json::json!("en"));
     }
 
     #[tokio::test]

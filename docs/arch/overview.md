@@ -19,7 +19,7 @@ Quill is a local-first AI-powered ebook reader. It reads EPUBs and PDFs, provide
 │  │  Reader ── Foliate.js (EPUB) / PDF.js (PDF)                           │   │
 │  │  Settings Modal (8 tabs)                                              │   │
 │  │  Popovers: LookupPopover, TranslationPopover, HighlightToolbar       │   │
-│  │  Side panels: AI chat, bookmarks, highlights, vocab, translations     │   │
+│  │  Side panels: AI chat, bookmarks, highlights, vocab                  │   │
 │  └────────────────────────────────┬──────────────────────────────────────┘   │
 │                                   │ Tauri IPC (invoke + event emitter)       │
 │                                   ▼                                          │
@@ -99,7 +99,6 @@ Quill's domain is a personal reading library. The objects are simpler than Runne
 │    ├── Highlights[]      (CFI range + color + note + text_content)        │
 │    ├── Chats[]           (per-book AI conversation threads)               │
 │    │    └── ChatMessages[]  (role + content, persisted)                   │
-│    ├── Translations[]    (passage_text → translation, cached)             │
 │    └── progress / status / current_cfi  (reading state)                   │
 │                                                                            │
 │   Collection ─── CollectionBooks (M:N junction) ─── Book                  │
@@ -124,7 +123,7 @@ Quill's domain is a personal reading library. The objects are simpler than Runne
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-**Book is the central entity.** Almost everything hangs off a book — bookmarks, highlights, chats, translations. The exceptions are vocab words (which may reference a book but exist independently) and collections (which group books without owning them).
+**Book is the central entity.** Almost everything hangs off a book — bookmarks, highlights, and chats. The exceptions are vocab words (which may reference a book but exist independently) and collections (which group books without owning them).
 
 ### 3.2 Book — *one imported ebook*
 
@@ -346,7 +345,7 @@ run()
 
 **Write-back coordination.** When MCP write access is enabled, the subprocess mutates the database and touches `.mcp-notify` (a sentinel JSON file). The main app's filesystem watcher detects this and refreshes the UI. This avoids polling and keeps the two processes decoupled.
 
-**Tools exposed:** library (list/search/import books), chats (list/create), vocab (add/remove/list), highlights (list), collections (list/add/remove books), translations (list).
+**Tools exposed:** library (list/search/import books), chats (list/create), vocab (add/remove/list), highlights (list), and collections (list/add/remove books).
 
 ## 8. AI integration — *provider-agnostic streaming*
 
@@ -384,7 +383,7 @@ This pattern avoids holding the Tauri command channel open for the full response
 |---|---|---|
 | **Lookup** | Select text → popover | Streamed definition with book context (title, author, surrounding passage). |
 | **Chat** | Side panel | Multi-turn per book. Full history sent on each turn. Persisted in `chats`/`chat_messages`. |
-| **Translation** | Select text → popover | Passage-level translation. Cached in `translations` table to avoid re-calling the API. |
+| **Translation** | Select text → popover | Passage-level streaming translation. Results are ephemeral; copy what you need from the popover. |
 
 All AI features respect the user's configured language. The system prompt adapts: if the user's language is Chinese, explanations come back in Chinese.
 
@@ -393,7 +392,7 @@ All AI features respect the user's configured language. The system prompt adapts
 ### 9.1 Routing
 
 Two routes, both top-level:
-- **`/`** — Home (library). BookGrid or BookList view, sidebar with collections/vocab/chats/translations, search + filter, drag-drop import.
+- **`/`** — Home (library). BookGrid or BookList view, sidebar with collections, chats, and saved items such as Vocab, plus search + filter and drag-drop import.
 - **`/reader/:bookId`** — Reader. Rendered in a separate Tauri window. Foliate.js for EPUB, PDF.js for PDF.
 
 ### 9.2 State management
@@ -408,7 +407,6 @@ No global state library. Each domain has a custom hook that wraps Tauri `invoke`
 | `useChats` | Chat sessions: create/rename/delete, save messages |
 | `useAiChat` | AI streaming: compose requests, handle event chunks |
 | `useDictionary` | Vocab: add/remove, mastery tracking, review |
-| `useTranslations` | Translations: save/remove/list per passage |
 | `useSettings` | App + per-book settings: get/set, theme, language |
 | `useUpdateChecker` | Auto-update: check GitHub releases, prompt install |
 

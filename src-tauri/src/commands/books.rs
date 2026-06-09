@@ -775,7 +775,6 @@ pub(crate) fn do_delete_book(id: &str, db: &Db, sync: &SyncWriter) -> AppResult<
         tx.execute("DELETE FROM highlights WHERE book_id = ?1", params![id])?;
         tx.execute("DELETE FROM bookmarks WHERE book_id = ?1", params![id])?;
         tx.execute("DELETE FROM vocab_words WHERE book_id = ?1", params![id])?;
-        tx.execute("DELETE FROM translations WHERE book_id = ?1", params![id])?;
         tx.execute("DELETE FROM book_settings WHERE book_id = ?1", params![id])?;
         tx.execute("DELETE FROM books WHERE id = ?1", params![id])?;
         events.push(EventBody::BookDelete {

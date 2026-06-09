@@ -151,7 +151,6 @@ fn quill_mcp_initialize_lists_tools_and_calls_get_collections() {
         "get_bookmarks",
         "get_vocab_words",
         "get_vocab_stats",
-        "get_translations",
         "get_chat_history",
         "add_book",
         "update_book",

@@ -255,15 +255,21 @@ pub async fn ai_explain(
             .ok()
         };
         let sys_language = get("language").unwrap_or_else(|| "en".to_string());
-        // lookup_language overrides system language for reading-assistant prompts
-        let lookup_language = get("lookup_language").unwrap_or(sys_language);
+        let lookup_language = get("lookup_language").unwrap_or_else(|| sys_language.clone());
+        let explain_language = get("explain_language")
+            .map(|lang| lang.trim().to_string())
+            .filter(|lang| !lang.is_empty());
+        let language = match explain_language.as_deref() {
+            Some("lookup") | None => lookup_language,
+            Some(lang) => lang.to_string(),
+        };
         (
             get("ai_provider").unwrap_or_else(|| "ollama".to_string()),
             get("ai_model").unwrap_or_else(|| "llama3.2".to_string()),
             get("ai_base_url"),
             get("ai_keep_alive").unwrap_or_else(|| "30m".to_string()),
             get("ai_auth_mode").unwrap_or_else(|| "api_key".to_string()),
-            lookup_language,
+            language,
         )
     };
 
