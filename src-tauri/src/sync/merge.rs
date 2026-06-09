@@ -29,7 +29,7 @@ use crate::error::{AppError, AppResult};
 
 use super::events::{
     BookImportPayload, BookmarkPayload, ChatMessagePayload, Event, EventBody, HighlightPayload,
-    TranslationPayload, VocabPayload,
+    VocabPayload,
 };
 
 /// Fold `event` into `tx`. Idempotent — applying the same event twice is a
@@ -69,8 +69,7 @@ pub fn apply_event(tx: &Transaction, event: &Event) -> AppResult<()> {
         } => apply_vocab_mastery(tx, event, id, mastery, *next_review_at, *review_count),
         EventBody::VocabDelete { id } => apply_vocab_delete(tx, event, id),
 
-        EventBody::TranslationAdd(p) => apply_translation_add(tx, event, p),
-        EventBody::TranslationDelete { id } => apply_translation_delete(tx, event, id),
+        EventBody::TranslationAdd(_) | EventBody::TranslationDelete { .. } => Ok(()),
 
         EventBody::CollectionCreate { id, name, sort_order } => {
             apply_collection_create(tx, event, id, name, *sort_order)
@@ -107,7 +106,6 @@ pub mod entity {
     pub const HIGHLIGHT: &str = "highlight";
     pub const BOOKMARK: &str = "bookmark";
     pub const VOCAB: &str = "vocab";
-    pub const TRANSLATION: &str = "translation";
     pub const COLLECTION: &str = "collection";
     /// Composite-key entity for `collection_books`. Id format:
     /// `"<collection_id>:<book_id>"`.
@@ -183,10 +181,7 @@ pub fn cascade_delete(tx: &Transaction, entity: &str, id: &str, ts: i64) -> AppR
             tx.execute("DELETE FROM vocab_words WHERE id = ?1", params![id])?;
             Ok(())
         }
-        entity::TRANSLATION => {
-            tx.execute("DELETE FROM translations WHERE id = ?1", params![id])?;
-            Ok(())
-        }
+        "translation" => Ok(()),
         entity::CHAT_MESSAGE => {
             tx.execute("DELETE FROM chat_messages WHERE id = ?1", params![id])?;
             Ok(())
@@ -203,7 +198,7 @@ fn cascade_delete_book(tx: &Transaction, id: &str, ts: i64) -> AppResult<()> {
     // off, so we can't rely on ON DELETE CASCADE.
     //
     // For the direct-child tables (highlights, bookmarks, vocab_words,
-    // collection_books, translations) we don't write per-row tombstones —
+    // collection_books) we don't write per-row tombstones —
     // late `*.add` events for those tables are caught by their parent-
     // tombstone check on `('book', id)`.
     //
@@ -220,7 +215,6 @@ fn cascade_delete_book(tx: &Transaction, id: &str, ts: i64) -> AppResult<()> {
         "DELETE FROM collection_books WHERE book_id = ?1",
         params![id],
     )?;
-    tx.execute("DELETE FROM translations WHERE book_id = ?1", params![id])?;
     tx.execute("DELETE FROM book_settings WHERE book_id = ?1", params![id])?;
     let chat_ids: Vec<String> = {
         let mut stmt = tx.prepare("SELECT id FROM chats WHERE book_id = ?1")?;
@@ -544,40 +538,6 @@ fn apply_vocab_mastery(
 fn apply_vocab_delete(tx: &Transaction, event: &Event, id: &str) -> AppResult<()> {
     tx.execute("DELETE FROM vocab_words WHERE id = ?1", params![id])?;
     insert_tombstone(tx, entity::VOCAB, id, event.ts)?;
-    Ok(())
-}
-
-// ---------------------------------------------------------------------------
-// translations (append-only)
-// ---------------------------------------------------------------------------
-
-fn apply_translation_add(tx: &Transaction, event: &Event, p: &TranslationPayload) -> AppResult<()> {
-    if is_tombstoned(tx, entity::TRANSLATION, &p.id)?
-        || parent_tombstoned(tx, &[(entity::BOOK, &p.book_id)])?
-    {
-        return Ok(());
-    }
-    tx.execute(
-        "INSERT OR IGNORE INTO translations
-         (id, book_id, source_text, translated_text, target_language, cfi,
-          created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
-        params![
-            p.id,
-            p.book_id,
-            p.source_text,
-            p.translated_text,
-            p.target_language,
-            p.cfi,
-            event.ts,
-        ],
-    )?;
-    Ok(())
-}
-
-fn apply_translation_delete(tx: &Transaction, event: &Event, id: &str) -> AppResult<()> {
-    tx.execute("DELETE FROM translations WHERE id = ?1", params![id])?;
-    insert_tombstone(tx, entity::TRANSLATION, id, event.ts)?;
     Ok(())
 }
 
@@ -1253,7 +1213,6 @@ mod tests {
                 "highlights",
                 "bookmarks",
                 "vocab_words",
-                "translations",
                 "collections",
                 "collection_books",
                 "chats",
@@ -1586,8 +1545,8 @@ mod tests {
     // converge, then device-A comes back and publishes its older event.
     // Without parent-tombstone checks the older event resurrects the join
     // and inflates `list_collections` counts. The same shape applies to
-    // every child entity (highlights, bookmarks, vocab, translations,
-    // chats, chat messages).
+    // every child entity (highlights, bookmarks, vocab, chats, chat
+    // messages).
     // -----------------------------------------------------------------------
 
     #[test]

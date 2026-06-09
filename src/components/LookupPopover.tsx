@@ -282,7 +282,7 @@ export default function LookupPopover({
             <button
               onClick={async () => {
                 onClose();
-                await invoke("open_settings_on_main", { section: translationLanguageNotConfigured ? "lookup" : "ai" });
+                await invoke("open_settings_on_main", { section: translationLanguageNotConfigured ? "tools" : "ai" });
                 const main = await WebviewWindow.getByLabel("main");
                 await main?.setFocus();
               }}

@@ -75,8 +75,6 @@ pub struct SnapshotState {
     #[serde(default)]
     pub vocab_words: BTreeMap<String, VocabRow>,
     #[serde(default)]
-    pub translations: BTreeMap<String, TranslationRow>,
-    #[serde(default)]
     pub collections: BTreeMap<String, CollectionRow>,
     /// Keyed by `"<collection_id>:<book_id>"` — the same composite key the
     /// merge engine uses for tombstones.
@@ -147,17 +145,6 @@ pub struct VocabRow {
     pub created_at: i64,
     pub updated_at: i64,
     pub updated_by_device: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct TranslationRow {
-    pub book_id: String,
-    pub source_text: String,
-    pub translated_text: String,
-    pub target_language: String,
-    pub cfi: Option<String>,
-    pub created_at: i64,
-    pub updated_at: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -463,12 +450,6 @@ impl Snapshot {
                 continue;
             }
             upsert_vocab(tx, id, row)?;
-        }
-        for (id, row) in &self.state.translations {
-            if merge::is_tombstoned(tx, merge::entity::TRANSLATION, id)? {
-                continue;
-            }
-            insert_translation(tx, id, row)?;
         }
         for (id, row) in &self.state.collections {
             if merge::is_tombstoned(tx, merge::entity::COLLECTION, id)? {
@@ -796,20 +777,6 @@ fn upsert_vocab(tx: &Transaction, id: &str, r: &VocabRow) -> AppResult<()> {
     Ok(())
 }
 
-fn insert_translation(tx: &Transaction, id: &str, r: &TranslationRow) -> AppResult<()> {
-    tx.execute(
-        "INSERT OR IGNORE INTO translations
-         (id, book_id, source_text, translated_text, target_language, cfi,
-          created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-        params![
-            id, r.book_id, r.source_text, r.translated_text, r.target_language,
-            r.cfi, r.created_at, r.updated_at,
-        ],
-    )?;
-    Ok(())
-}
-
 fn upsert_collection(tx: &Transaction, id: &str, r: &CollectionRow) -> AppResult<()> {
     tx.execute(
         "INSERT INTO collections
@@ -1012,31 +979,6 @@ fn dump_state(conn: &Connection) -> AppResult<SnapshotState> {
     for row in rows {
         let (id, v) = row?;
         state.vocab_words.insert(id, v);
-    }
-    drop(stmt);
-
-    // translations
-    let mut stmt = conn.prepare(
-        "SELECT id, book_id, source_text, translated_text, target_language, cfi,
-                created_at, updated_at FROM translations",
-    )?;
-    let rows = stmt.query_map([], |r| {
-        Ok((
-            r.get::<_, String>(0)?,
-            TranslationRow {
-                book_id: r.get(1)?,
-                source_text: r.get(2)?,
-                translated_text: r.get(3)?,
-                target_language: r.get(4)?,
-                cfi: r.get(5)?,
-                created_at: r.get(6)?,
-                updated_at: r.get(7)?,
-            },
-        ))
-    })?;
-    for row in rows {
-        let (id, t) = row?;
-        state.translations.insert(id, t);
     }
     drop(stmt);
 
@@ -1771,7 +1713,6 @@ mod tests {
             "highlights",
             "bookmarks",
             "vocab_words",
-            "translations",
             "collections",
             "collection_books",
             "chats",

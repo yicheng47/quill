@@ -678,9 +678,6 @@ pub fn run() {
             commands::chats::save_chat_message,
             // Translation
             commands::translation::ai_translate_passage,
-            commands::translation::save_translation,
-            commands::translation::remove_saved_translation,
-            commands::translation::list_translations,
             // MCP client integrations
             commands::mcp::mcp_integration_status,
             commands::mcp::mcp_set_integration,

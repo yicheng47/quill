@@ -1,28 +1,27 @@
 import { useState, useEffect, useRef, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { Globe, BookOpen, Bot, Search, ArrowLeftRight, Cloud, Info, Terminal, X, ChevronRight, Palette } from "lucide-react";
+import { Globe, BookOpen, Bot, Wrench, Cloud, Info, Terminal, X, ChevronRight, Palette } from "lucide-react";
 import GeneralSettings from "./settings/GeneralSettings";
 import AppearanceSettings from "./settings/AppearanceSettings";
 import ReadingSettings from "./settings/ReadingSettings";
 import AiSettings from "./settings/AiSettings";
-import LookupSettings from "./settings/LookupSettings";
-import TranslationSettings from "./settings/TranslationSettings";
+import ToolsSettings from "./settings/ToolsSettings";
 import LibrarySyncSettings from "./settings/LibrarySyncSettings";
 import McpSettings from "./settings/McpSettings";
 import AboutSettings from "./settings/AboutSettings";
 import { useSettings } from "../hooks/useSettings";
 
-type Section = "general" | "appearance" | "reading" | "ai" | "lookup" | "translation" | "librarySync" | "mcp" | "about";
+export type SettingsSection = "general" | "appearance" | "reading" | "ai" | "tools" | "librarySync" | "mcp" | "about";
 
 interface SettingsModalProps {
   open: boolean;
   onClose: () => void;
-  initialSection?: Section;
+  initialSection?: SettingsSection;
 }
 
 export default function SettingsModal({ open, onClose, initialSection = "general" }: SettingsModalProps) {
   const { t } = useTranslation();
-  const [activeSection, setActiveSection] = useState<Section>(initialSection);
+  const [activeSection, setActiveSection] = useState<SettingsSection>(initialSection);
   const { settings, loading, save, saveBulk } = useSettings();
   const modalRef = useRef<HTMLDivElement>(null);
 
@@ -58,13 +57,12 @@ export default function SettingsModal({ open, onClose, initialSection = "general
 
   const isMacos = navigator.userAgent.includes("Macintosh");
 
-  const allSections: { id: Section; label: string; subtitle: string; icon: typeof Globe }[] = [
+  const allSections: { id: SettingsSection; label: string; subtitle: string; paneSubtitle?: string; icon: typeof Globe }[] = [
     { id: "general", label: t("settings.general.title"), subtitle: t("settings.general.subtitle"), icon: Globe },
     { id: "appearance", label: t("settings.appearance.title"), subtitle: t("settings.appearance.subtitle"), icon: Palette },
     { id: "reading", label: t("settings.reading.title"), subtitle: t("settings.reading.subtitle"), icon: BookOpen },
     { id: "ai", label: t("settings.ai.shortTitle"), subtitle: t("settings.ai.shortSubtitle"), icon: Bot },
-    { id: "lookup", label: t("settings.lookup.title"), subtitle: t("settings.lookup.shortSub"), icon: Search },
-    { id: "translation", label: t("settings.translation.title"), subtitle: t("settings.translation.subtitle"), icon: ArrowLeftRight },
+    { id: "tools", label: t("settings.tools.title"), subtitle: t("settings.tools.subtitle"), paneSubtitle: t("settings.tools.paneSubtitle"), icon: Wrench },
     { id: "librarySync", label: t("settings.librarySync.title"), subtitle: t("settings.librarySync.subtitle"), icon: Cloud },
     { id: "mcp", label: t("settings.mcp.title"), subtitle: t("settings.mcp.subtitle"), icon: Terminal },
     { id: "about", label: t("settings.about.title"), subtitle: t("settings.about.subtitle"), icon: Info },
@@ -80,8 +78,7 @@ export default function SettingsModal({ open, onClose, initialSection = "general
       case "appearance": return <AppearanceSettings {...settingsProps} />;
       case "reading": return <ReadingSettings {...settingsProps} />;
       case "ai": return <AiSettings {...settingsProps} onDirtyChange={setAiDirty} onSaveRef={(fn) => { aiSaveRef.current = fn; }} />;
-      case "lookup": return <LookupSettings {...settingsProps} />;
-      case "translation": return <TranslationSettings {...settingsProps} />;
+      case "tools": return <ToolsSettings {...settingsProps} />;
       case "librarySync": return <LibrarySyncSettings {...settingsProps} />;
       case "mcp": return <McpSettings {...settingsProps} />;
       case "about": return <AboutSettings />;
@@ -170,7 +167,10 @@ export default function SettingsModal({ open, onClose, initialSection = "general
           </div>
 
           {/* Scrollable content */}
-          <div className="flex-1 overflow-y-auto px-6">
+          <div
+            className="flex-1 overflow-y-scroll px-6"
+            style={{ scrollbarGutter: "stable" }}
+          >
             {/* Pane header — title + subtitle, then a rule with room
                 below it. Suppressed for About, which leads with its
                 centered identity card. */}
@@ -180,7 +180,7 @@ export default function SettingsModal({ open, onClose, initialSection = "general
                   {active?.label}
                 </h3>
                 <p className="text-[13px] text-text-muted">
-                  {active?.subtitle}
+                  {active?.paneSubtitle ?? active?.subtitle}
                 </p>
                 <div className="mt-3 h-px bg-black/10 mb-2" />
               </div>

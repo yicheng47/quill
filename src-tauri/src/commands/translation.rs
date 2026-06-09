@@ -1,25 +1,9 @@
-use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
 
 use crate::commands::ai::{AiStreamChunk, ChatMessage};
 use crate::db::Db;
 use crate::error::{AppError, AppResult};
 use crate::secrets::Secrets;
-use crate::sync::events::{EventBody, TranslationPayload};
-use crate::sync::writer::SyncWriter;
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Translation {
-    pub id: String,
-    pub book_id: String,
-    pub source_text: String,
-    pub translated_text: String,
-    pub target_language: String,
-    pub cfi: Option<String>,
-    pub created_at: i64,
-    pub updated_at: i64,
-    pub book_title: Option<String>,
-}
 
 fn lang_display_name(code: &str) -> &str {
     match code {
@@ -51,8 +35,8 @@ fn configured_translation_language(
         .ok_or_else(|| AppError::Other("TRANSLATION_LANGUAGE_NOT_CONFIGURED".to_string()))
 }
 
-/// Stream a translation from the AI provider. Does NOT persist — the frontend
-/// calls `save_translation` explicitly when the user clicks Save.
+/// Stream a translation from the AI provider. Translation results are ephemeral
+/// and are discarded when the frontend popover closes.
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn ai_translate_passage(
@@ -169,102 +153,6 @@ pub async fn ai_translate_passage(
     });
 
     Ok(())
-}
-
-/// Persist a translation the user explicitly chose to save.
-#[tauri::command]
-pub fn save_translation(
-    book_id: String,
-    source_text: String,
-    translated_text: String,
-    target_language: String,
-    cfi: Option<String>,
-    db: State<'_, Db>,
-    sync: State<'_, SyncWriter>,
-) -> AppResult<String> {
-    let id = uuid::Uuid::new_v4().to_string();
-    let now = chrono::Utc::now().timestamp_millis();
-    let id_for_return = id.clone();
-
-    log::debug!("translation: save_translation book_id={book_id} target={target_language}");
-
-    sync.with_tx(&db, now, |tx, events| {
-        tx.execute(
-            "INSERT INTO translations (id, book_id, source_text, translated_text, target_language, cfi, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
-            rusqlite::params![id, book_id, source_text, translated_text, target_language, cfi, now],
-        )?;
-        events.push(EventBody::TranslationAdd(TranslationPayload {
-            id: id.clone(),
-            book_id: book_id.clone(),
-            source_text: source_text.clone(),
-            translated_text: translated_text.clone(),
-            target_language: target_language.clone(),
-            cfi: cfi.clone(),
-        }));
-        Ok(())
-    })?;
-    Ok(id_for_return)
-}
-
-#[tauri::command]
-pub fn remove_saved_translation(
-    id: String,
-    db: State<'_, Db>,
-    sync: State<'_, SyncWriter>,
-) -> AppResult<()> {
-    let now = chrono::Utc::now().timestamp_millis();
-    sync.with_tx(&db, now, |tx, events| {
-        tx.execute(
-            "DELETE FROM translations WHERE id = ?1",
-            rusqlite::params![id],
-        )?;
-        events.push(EventBody::TranslationDelete { id: id.clone() });
-        Ok(())
-    })
-}
-
-pub(crate) fn query_translations(
-    db: &Db,
-    book_id: Option<&str>,
-) -> AppResult<Vec<Translation>> {
-    let conn = db.reader();
-
-    let mut sql = "SELECT t.id, t.book_id, t.source_text, t.translated_text, t.target_language, t.cfi, t.created_at, t.updated_at, b.title FROM translations t LEFT JOIN books b ON t.book_id = b.id".to_string();
-    let mut sql_params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
-
-    if let Some(bid) = book_id {
-        sql.push_str(" WHERE t.book_id = ?1");
-        sql_params.push(Box::new(bid.to_string()));
-    }
-    sql.push_str(" ORDER BY t.created_at DESC");
-
-    let mut stmt = conn.prepare(&sql)?;
-    let param_refs: Vec<&dyn rusqlite::types::ToSql> = sql_params.iter().map(|p| p.as_ref()).collect();
-
-    let rows = stmt.query_map(param_refs.as_slice(), |row| {
-        Ok(Translation {
-            id: row.get(0)?,
-            book_id: row.get(1)?,
-            source_text: row.get(2)?,
-            translated_text: row.get(3)?,
-            target_language: row.get(4)?,
-            cfi: row.get(5)?,
-            created_at: row.get(6)?,
-            updated_at: row.get(7)?,
-            book_title: row.get(8)?,
-        })
-    })?;
-
-    let translations: Vec<Translation> = rows.filter_map(|r| r.ok()).collect();
-    Ok(translations)
-}
-
-#[tauri::command]
-pub fn list_translations(
-    book_id: Option<String>,
-    db: State<'_, Db>,
-) -> AppResult<Vec<Translation>> {
-    query_translations(&db, book_id.as_deref())
 }
 
 #[cfg(test)]

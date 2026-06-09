@@ -24,7 +24,7 @@ Externalize all UI strings, add language switcher (English / 简体中文), adap
 - **Issue:** [#44](https://github.com/yicheng47/quill/issues/44)
 
 ### AI Translation
-Passage-level translation and bilingual reading mode for reading foreign-language books. Passage translation via context menu with streaming + caching. Bilingual mode injects translations inline below each paragraph in the reader.
+Passage-level translation and bilingual reading mode for reading foreign-language books. Passage translation via context menu streams ephemerally with copy from the popover. Bilingual mode injects translations inline below each paragraph in the reader; any future cache should be scoped to that mode rather than saved translation history.
 
 - **Status:** Complete
 - **Issue:** [#73](https://github.com/yicheng47/quill/issues/73)
