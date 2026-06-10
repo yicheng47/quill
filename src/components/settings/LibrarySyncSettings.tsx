@@ -275,7 +275,7 @@ export default function LibrarySyncSettings(_props: SettingsProps) {
             single-device user understands why the list is empty. */}
         {syncOn && (
           <>
-            <div className="h-px bg-black/10" />
+            <div className="h-px bg-border-light" />
             <div className="pt-4 pb-2">
               <p className="text-[11px] font-semibold text-text-muted tracking-[0.6px]">
                 {t("settings.librarySync.otherDevices").toUpperCase()}
@@ -315,7 +315,7 @@ export default function LibrarySyncSettings(_props: SettingsProps) {
                           disabled={busy}
                           aria-label={t("settings.librarySync.removeDevice")}
                           title={t("settings.librarySync.removeDevice")}
-                          className="text-text-muted hover:text-[#e7000b] dark:hover:text-red-400 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer p-1 -m-1"
+                          className="text-text-muted hover:text-danger-text disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer p-1 -m-1"
                         >
                           <Trash2 size={14} />
                         </button>
@@ -325,7 +325,7 @@ export default function LibrarySyncSettings(_props: SettingsProps) {
                 </div>
               )}
             </div>
-            <div className="h-px bg-black/10 mt-3" />
+            <div className="h-px bg-border-light mt-3" />
 
             {/* Actions row. Sync now / Compact log both require the
                 engine to be running this session — disable them when
@@ -339,7 +339,7 @@ export default function LibrarySyncSettings(_props: SettingsProps) {
                   onClick={syncing ? () => invoke("sync_cancel") : onSyncNow}
                   disabled={(!syncing && busy) || !engineRunning}
                   title={!engineRunning ? t("settings.librarySync.paused") : undefined}
-                  className="text-[13px] font-medium text-[#7c3aed] hover:underline disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                  className="text-[13px] font-medium text-accent-text hover:underline disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                 >
                   {syncing ? t("settings.librarySync.cancelSync") : t("settings.librarySync.syncNow")}
                 </button>
@@ -348,7 +348,7 @@ export default function LibrarySyncSettings(_props: SettingsProps) {
                   onClick={onCompact}
                   disabled={busy || !engineRunning}
                   title={!engineRunning ? t("settings.librarySync.paused") : undefined}
-                  className="text-[13px] font-medium text-[#7c3aed] hover:underline disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                  className="text-[13px] font-medium text-accent-text hover:underline disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                 >
                   {t("settings.librarySync.compact")}
                 </button>
@@ -363,7 +363,7 @@ export default function LibrarySyncSettings(_props: SettingsProps) {
         )}
 
         {/* Notes — always visible. */}
-        <div className="h-px bg-black/10 mt-2" />
+        <div className="h-px bg-border-light mt-2" />
         <p className="text-[12px] text-text-muted leading-[1.5] mt-3">
           {t("settings.librarySync.keysNote")}
         </p>
@@ -373,14 +373,14 @@ export default function LibrarySyncSettings(_props: SettingsProps) {
 
         {/* Error */}
         {error && (
-          <div className="flex items-center justify-between bg-[#fef2f2] dark:bg-red-950/30 border border-[#ffc9c9] dark:border-red-800 rounded-lg px-3.5 py-2 mt-3">
-            <span className="text-[12px] text-[#e7000b] dark:text-red-400 truncate">
+          <div className="flex items-center justify-between bg-danger-bg border border-danger-border rounded-lg px-3.5 py-2 mt-3">
+            <span className="text-[12px] text-danger-text truncate">
               {error}
             </span>
             <button
               type="button"
               disabled={busy}
-              className="text-[12px] font-medium text-[#e7000b] dark:text-red-400 underline cursor-pointer ml-2 shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="text-[12px] font-medium text-danger-text underline cursor-pointer ml-2 shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
               onClick={onRetry}
             >
               {t("settings.ai.retry")}
@@ -392,7 +392,7 @@ export default function LibrarySyncSettings(_props: SettingsProps) {
       {/* Remove-device confirmation. Mirrors iOS's destructive alert
           copy so the cross-platform UX matches. */}
       {pendingRemoval && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40">
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-overlay">
           <div className="bg-bg-surface rounded-xl shadow-lg w-[400px] p-6">
             <h3 className="text-[18px] font-semibold text-text-primary mb-2">
               {t("settings.librarySync.removeDeviceTitle", { name: pendingRemoval.name })}
@@ -407,7 +407,7 @@ export default function LibrarySyncSettings(_props: SettingsProps) {
               <button
                 type="button"
                 onClick={onConfirmRemovePeer}
-                className="bg-[#e7000b] hover:bg-[#c00009] text-white text-[14px] font-medium rounded-md px-4 py-2 cursor-pointer"
+                className="bg-danger hover:bg-danger-hover text-white text-[14px] font-medium rounded-md px-4 py-2 cursor-pointer"
               >
                 {t("settings.librarySync.remove")}
               </button>
@@ -419,7 +419,7 @@ export default function LibrarySyncSettings(_props: SettingsProps) {
       {/* Confirmation dialog — same shape as the legacy iCloud one so
           the UX is identical at the point of decision. */}
       {confirm && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40">
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-overlay">
           <div className="bg-bg-surface rounded-xl shadow-lg w-[400px] p-6">
             <h3 className="text-[18px] font-semibold text-text-primary mb-2">
               {confirm === "enable"

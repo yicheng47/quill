@@ -7,10 +7,10 @@ const sliderClass =
   "w-full h-1 cursor-pointer appearance-none rounded-full bg-border [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3.5 [&::-webkit-slider-thumb]:h-3.5 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-bg-surface [&::-webkit-slider-thumb]:border [&::-webkit-slider-thumb]:border-border [&::-webkit-slider-thumb]:shadow-sm";
 
 const themes = [
-  { id: "original", label: "Original", color: "bg-white border border-[#d4d4d8]", pdf: true },
-  { id: "paper", label: "Sepia", color: "bg-[#F2E2C9]", pdf: true },
-  { id: "quiet", label: "Gray", color: "bg-[#71717b]", pdf: true },
-  { id: "dark", label: "Dark", color: "bg-[#18181b] border border-[#3f3f46]", pdf: true },
+  { id: "original", label: "Original", color: "bg-reader-original-bg border border-reader-original-border", pdf: true },
+  { id: "paper", label: "Sepia", color: "bg-reader-paper-bg", pdf: true },
+  { id: "quiet", label: "Gray", color: "bg-reader-quiet-bg", pdf: true },
+  { id: "dark", label: "Dark", color: "bg-reader-dark-bg border border-reader-dark-border", pdf: true },
 ] as const;
 
 export const FONT_SIZE_MIN = 12;
@@ -63,7 +63,7 @@ export function getThemeStyles(themeId: ReaderTheme) {
     case "quiet":
       return { body: "#71717b", text: "#fafafa" };
     case "dark":
-      return { body: "#18181b", text: "#d4d4d8" };
+      return { body: "#1b1b1f", text: "#d8d8de" };
     default:
       return { body: "#ffffff", text: "#0a0a0a" };
   }

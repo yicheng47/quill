@@ -82,7 +82,7 @@ export default function GeneralSettings({ settings, loading, save, showSavedToas
       <div className="mt-8 mb-2 text-[11px] font-medium uppercase tracking-[0.5px] text-text-muted">
         {t("settings.updates.title")}
       </div>
-      <div className="h-px bg-black/10" />
+      <div className="h-px bg-border-light" />
       <div className="flex items-center justify-between h-[73px]">
         <div>
           <p className="text-[14px] font-medium text-text-primary tracking-[-0.15px]">{t("settings.updates.autoCheck")}</p>
@@ -104,7 +104,7 @@ export default function GeneralSettings({ settings, loading, save, showSavedToas
       <div className="mt-8 mb-2 text-[11px] font-medium uppercase tracking-[0.5px] text-text-muted">
         {t("settings.diagnostics.title")}
       </div>
-      <div className="h-px bg-black/10" />
+      <div className="h-px bg-border-light" />
       <div className="flex items-center justify-between h-[73px]">
         <div>
           <p className="text-[14px] font-medium text-text-primary tracking-[-0.15px]">{t("settings.diagnostics.revealLogs")}</p>

@@ -117,7 +117,7 @@ export default function McpSettings(_props: SettingsProps) {
         {t("settings.mcp.autoRegisterHint")}
       </p>
 
-      <div className="h-px bg-black/10 mt-4" />
+      <div className="h-px bg-border-light mt-4" />
 
       {/* Write access */}
       <div className="flex items-center justify-between h-[73px]">
@@ -139,7 +139,7 @@ export default function McpSettings(_props: SettingsProps) {
         />
       </div>
 
-      <div className="h-px bg-black/10" />
+      <div className="h-px bg-border-light" />
 
       {/* Custom MCP Server */}
       <div className="flex items-center justify-between pt-4 pb-2">
@@ -169,13 +169,13 @@ export default function McpSettings(_props: SettingsProps) {
 
       {/* Error */}
       {error && (
-        <div className="flex items-start gap-2 bg-[#fef2f2] dark:bg-red-950/30 border border-[#ffc9c9] dark:border-red-800 rounded-lg px-3.5 py-2.5 mt-3">
-          <p className="text-[12px] text-[#e7000b] dark:text-red-400 min-w-0">
+        <div className="flex items-start gap-2 bg-danger-bg border border-danger-border rounded-lg px-3.5 py-2.5 mt-3">
+          <p className="text-[12px] text-danger-text min-w-0">
             {error}
           </p>
           <button
             type="button"
-            className="text-[12px] font-medium text-[#e7000b] dark:text-red-400 underline cursor-pointer shrink-0"
+            className="text-[12px] font-medium text-danger-text underline cursor-pointer shrink-0"
             onClick={() => {
               setError(null);
               refresh();

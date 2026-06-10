@@ -90,7 +90,7 @@ export default function SettingsModal({ open, onClose, initialSection = "general
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-overlay"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -183,7 +183,7 @@ export default function SettingsModal({ open, onClose, initialSection = "general
                 <p className="text-[13px] text-text-muted">
                   {active?.paneSubtitle ?? active?.subtitle}
                 </p>
-                <div className="mt-3 h-px bg-black/10 mb-2" />
+                <div className="mt-3 h-px bg-border-light mb-2" />
               </div>
             )}
 
