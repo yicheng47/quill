@@ -60,7 +60,7 @@ export default function DictionaryContent() {
       }
       map.get(w.book_id)!.words.push(w);
     }
-    return Array.from(map.values());
+    return Array.from(map.entries()).map(([id, group]) => ({ id, ...group }));
   }, [sorted, t]);
 
   const groupedByLetter = useMemo(() => {
@@ -203,7 +203,7 @@ export default function DictionaryContent() {
             </p>
           </div>
         ) : view === "list" ? (
-          <div>
+          <div key="list">
             {groupedByLetter.map(([letter, letterWords]) => (
               <div key={letter} className="mb-6">
                 <div className="flex items-center gap-3 mb-2">
@@ -260,9 +260,9 @@ export default function DictionaryContent() {
             ))}
           </div>
         ) : (
-          <div className="max-w-[525px] space-y-6">
+          <div key="card" className="max-w-[525px] space-y-6">
             {groupedByBook.map((group) => (
-              <div key={group.title}>
+              <div key={group.id}>
                 <div className="flex items-center gap-2 mb-3">
                   <BookOpen size={14} className="text-text-muted" />
                   <span className="text-[12px] font-semibold uppercase text-text-muted tracking-[0.3px]">

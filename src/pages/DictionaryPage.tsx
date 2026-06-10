@@ -67,7 +67,7 @@ export default function DictionaryPage() {
       }
       map.get(key)!.words.push(w);
     }
-    return Array.from(map.values());
+    return Array.from(map.entries()).map(([id, group]) => ({ id, ...group }));
   }, [sorted]);
 
   // Group by letter for list view
@@ -250,7 +250,7 @@ export default function DictionaryPage() {
           </div>
         ) : view === "list" ? (
           /* A-Z list view */
-          <div>
+          <div key="list">
             {groupedByLetter.map(([letter, letterWords]) => (
               <div key={letter} className="mb-6">
                 {/* Letter header */}
@@ -308,9 +308,9 @@ export default function DictionaryPage() {
           </div>
         ) : (
           /* Card view — grouped by book */
-          <div className="max-w-[525px] space-y-6">
+          <div key="card" className="max-w-[525px] space-y-6">
             {groupedByBook.map((group) => (
-              <div key={group.title}>
+              <div key={group.id}>
                 {/* Book section header */}
                 <div className="flex items-center gap-2 mb-3">
                   <BookOpen size={14} className="text-text-muted" />
