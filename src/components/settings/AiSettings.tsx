@@ -30,7 +30,6 @@ export default function AiSettings({ settings, loading, saveBulk, showSavedToast
   const [oauthStatus, setOauthStatus] = useState<{ connected: boolean; account_id: string | null }>({ connected: false, account_id: null });
   const [oauthLoading, setOauthLoading] = useState(false);
   const [oauthError, setOauthError] = useState<string | null>(null);
-  const [oauthToast, setOauthToast] = useState(false);
 
   // Load saved settings
   useEffect(() => {
@@ -87,8 +86,6 @@ export default function AiSettings({ settings, loading, saveBulk, showSavedToast
     try {
       const result = await invoke<{ connected: boolean; account_id: string | null }>("openai_oauth_login");
       setOauthStatus(result);
-      setOauthToast(true);
-      setTimeout(() => setOauthToast(false), 2000);
       // Auto-save AI configuration after successful OAuth login
       await saveBulk({
         ai_provider: provider,
@@ -100,6 +97,7 @@ export default function AiSettings({ settings, loading, saveBulk, showSavedToast
         ai_auth_mode: authMode,
       });
       setAiDirty(false);
+      showSavedToast(t("settings.ai.oauthSuccess"));
     } catch (err) {
       setOauthError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -323,14 +321,6 @@ export default function AiSettings({ settings, loading, saveBulk, showSavedToast
           <p className="text-[12px] text-text-muted mt-1.5">
             {t("settings.ai.keepAliveHint")}
           </p>
-        </div>
-      )}
-
-
-      {/* OAuth success toast */}
-      {oauthToast && (
-        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-50 bg-accent text-white text-[13px] font-medium px-4 py-2 rounded-lg shadow-popover flex items-center gap-2">
-          {t("settings.ai.oauthSuccess")}
         </div>
       )}
     </div>

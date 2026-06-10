@@ -9,6 +9,7 @@ import ToolsSettings from "./settings/ToolsSettings";
 import LibrarySyncSettings from "./settings/LibrarySyncSettings";
 import McpSettings from "./settings/McpSettings";
 import AboutSettings from "./settings/AboutSettings";
+import Toast from "./ui/Toast";
 import { useSettings } from "../hooks/useSettings";
 
 export type SettingsSection = "general" | "appearance" | "reading" | "ai" | "tools" | "librarySync" | "mcp" | "about";
@@ -193,14 +194,7 @@ export default function SettingsModal({ open, onClose, initialSection = "general
 
       {/* Toast */}
       {showToast && (
-        <div className="fixed top-6 left-1/2 -translate-x-1/2 bg-white dark:bg-bg-surface border border-border px-4 py-2.5 rounded-xl text-[13px] font-medium shadow-lg z-[60] flex items-center gap-2">
-          <div className="size-5 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center shrink-0">
-            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-              <path d="M2.5 6L5 8.5L9.5 3.5" stroke="#22c55e" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </div>
-          <span className="text-text-primary">{toastMessage}</span>
-        </div>
+        <Toast>{toastMessage}</Toast>
       )}
     </div>
   );
