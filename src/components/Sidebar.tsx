@@ -181,7 +181,7 @@ export default function Sidebar({ activeFilter, onFilterChange, bookCounts, coll
       <div data-tauri-drag-region className="absolute top-0 left-0 right-0 h-11" />
       <div className="flex items-center gap-2.5 pb-2 pt-11">
         <QuillLogo size={28} />
-        <span className="text-[18px] font-semibold tracking-[0.5px] text-text-primary" style={{ fontFamily: "Georgia, 'Times New Roman', serif" }}>
+        <span className="text-[18px] font-semibold tracking-[0.5px] text-text-primary">
           Quill
         </span>
         {syncProgress ? (

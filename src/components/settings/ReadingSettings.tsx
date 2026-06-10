@@ -14,25 +14,25 @@ const READER_THEME_OPTIONS: {
   {
     value: "original",
     labelKey: "readerSettings.themeOriginal",
-    swatchClass: "bg-white border border-[#d4d4d8]",
+    swatchClass: "bg-reader-original-bg border border-reader-original-border",
     checkClass: "text-accent",
   },
   {
     value: "paper",
     labelKey: "readerSettings.themeSepia",
-    swatchClass: "bg-[#F2E2C9]",
+    swatchClass: "bg-reader-paper-bg",
     checkClass: "text-accent",
   },
   {
     value: "quiet",
     labelKey: "readerSettings.themeGray",
-    swatchClass: "bg-[#71717b]",
+    swatchClass: "bg-reader-quiet-bg",
     checkClass: "text-white",
   },
   {
     value: "dark",
     labelKey: "readerSettings.themeDark",
-    swatchClass: "bg-[#18181b] border border-[#3f3f46]",
+    swatchClass: "bg-reader-dark-bg border border-reader-dark-border",
     checkClass: "text-white",
   },
 ];

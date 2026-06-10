@@ -35,10 +35,23 @@
   --color-success: #00c950;
   --color-success-text: #00a63e;
 
+  --color-danger: #e7000b;
+  --color-danger-hover: #c00009;
+  --color-danger-bg: #fef2f2;
+  --color-danger-border: #ffc9c9;
+  --color-danger-text: #e7000b;
+
   --color-link: #155dfc;
   --color-link-light: #2b7fff;
 
   --color-overlay: rgba(0, 0, 0, 0.5);
+
+  --color-reader-original-bg: #ffffff;
+  --color-reader-original-border: #d4d4d8;
+  --color-reader-paper-bg: #f2e2c9;
+  --color-reader-quiet-bg: #71717b;
+  --color-reader-dark-bg: #1b1b1f;
+  --color-reader-dark-border: #34343d;
 
   /* ── Radius ── */
   --radius-sm: 4px;
@@ -62,39 +75,45 @@
 }
 
 .dark {
-  --color-bg-page: #09090b;
-  --color-bg-surface: #18181b;
-  --color-bg-muted: #1c1c1f;
-  --color-bg-input: #27272a;
+  --color-bg-page: #151518;
+  --color-bg-surface: #18191d;
+  --color-bg-muted: #1f2023;
+  --color-bg-input: #25262c;
 
   --color-text-primary: #f4f4f5;
-  --color-text-body: #f4f4f5;
-  --color-text-secondary: #d4d4d8;
-  --color-text-muted: #71717a;
-  --color-text-placeholder: #52525c;
+  --color-text-body: #e7e7ea;
+  --color-text-secondary: #c9c9d1;
+  --color-text-muted: #9a9aa4;
+  --color-text-placeholder: #85858f;
 
-  --color-border: #3f3f46;
-  --color-border-light: #27272a;
+  --color-border: #34343d;
+  --color-border-light: #2a2b31;
 
-  --color-accent: #a855f7;
-  --color-accent-bg: #2d1b4e;
-  --color-accent-text: #a855f7;
+  --color-accent: #8b5cf6;
+  --color-accent-bg: #302647;
+  --color-accent-text: #a78bfa;
 
-  --color-deep-purple: #a855f7;
-  --color-purple: #c084fc;
-  --color-lavender: #d8b4fe;
-  --color-soft-lilac: #e9d5ff;
-  --color-mist: #3b1d6e;
+  --color-deep-purple: #8b5cf6;
+  --color-purple: #a78bfa;
+  --color-lavender: #c4b5fd;
+  --color-soft-lilac: #ddd6fe;
+  --color-mist: #302647;
 
   --color-dark: #fafafa;
 
   --color-success: #22c55e;
   --color-success-text: #4ade80;
 
+  --color-danger: #e7000b;
+  --color-danger-hover: #c00009;
+  --color-danger-bg: #450a0a4d;
+  --color-danger-border: #991b1b;
+  --color-danger-text: #f87171;
+
   --color-link: #60a5fa;
   --color-link-light: #93bbfd;
 
-  --color-overlay: rgba(0, 0, 0, 0.7);
+  --color-overlay: rgba(21, 21, 24, 0.72);
 }
 
 body {

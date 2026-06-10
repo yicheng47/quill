@@ -117,18 +117,18 @@ function getReaderThemeVars(theme: string): Record<string, string> | undefined {
       "--color-accent-bg": "#5A4D6E",
     };
     case "dark": return {
-      "--color-bg-page": "#09090b",
-      "--color-bg-surface": "#18181b",
-      "--color-bg-muted": "#1c1c1f",
-      "--color-bg-input": "#27272a",
-      "--color-text-primary": "#d4d4d8",
-      "--color-text-body": "#d4d4d8",
-      "--color-text-secondary": "#a1a1aa",
-      "--color-text-muted": "#71717a",
-      "--color-text-placeholder": "#52525c",
-      "--color-border": "#3f3f46",
-      "--color-border-light": "#27272a",
-      "--color-accent-bg": "#2d1b4e",
+      "--color-bg-page": "#151518",
+      "--color-bg-surface": "#18191d",
+      "--color-bg-muted": "#1f2023",
+      "--color-bg-input": "#25262c",
+      "--color-text-primary": "#f4f4f5",
+      "--color-text-body": "#e7e7ea",
+      "--color-text-secondary": "#c9c9d1",
+      "--color-text-muted": "#9a9aa4",
+      "--color-text-placeholder": "#85858f",
+      "--color-border": "#34343d",
+      "--color-border-light": "#2a2b31",
+      "--color-accent-bg": "#302647",
     };
     default: return undefined;
   }

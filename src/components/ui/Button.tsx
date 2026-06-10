@@ -13,7 +13,7 @@ const variantStyles: Record<ButtonVariant, string> = {
   primary:
     "bg-accent text-white hover:opacity-90 font-medium",
   secondary:
-    "border border-border text-[#3f3f47] hover:bg-bg-input font-medium",
+    "border border-border text-text-secondary hover:bg-bg-input font-medium",
   ghost:
     "text-text-muted hover:bg-bg-input",
   icon:

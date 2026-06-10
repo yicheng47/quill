@@ -22,25 +22,25 @@ const READER_THEME_OPTIONS: {
   {
     value: "original",
     labelKey: "readerSettings.themeOriginal",
-    swatchClass: "bg-white border border-[#d4d4d8]",
+    swatchClass: "bg-reader-original-bg border border-reader-original-border",
     checkClass: "text-accent",
   },
   {
     value: "paper",
     labelKey: "readerSettings.themeSepia",
-    swatchClass: "bg-[#F2E2C9]",
+    swatchClass: "bg-reader-paper-bg",
     checkClass: "text-accent",
   },
   {
     value: "quiet",
     labelKey: "readerSettings.themeGray",
-    swatchClass: "bg-[#71717b]",
+    swatchClass: "bg-reader-quiet-bg",
     checkClass: "text-white",
   },
   {
     value: "dark",
     labelKey: "readerSettings.themeDark",
-    swatchClass: "bg-[#18181b] border border-[#3f3f46]",
+    swatchClass: "bg-reader-dark-bg border border-reader-dark-border",
     checkClass: "text-white",
   },
 ];
@@ -695,13 +695,13 @@ export default function SettingsPage() {
               )}
 
               {icloudError && (
-                <div className="flex items-center justify-between bg-[#fef2f2] border border-[#ffc9c9] rounded-lg px-3.5 py-2">
-                  <span className="text-[12px] text-[#e7000b]">
+                <div className="flex items-center justify-between bg-danger-bg border border-danger-border rounded-lg px-3.5 py-2">
+                  <span className="text-[12px] text-danger-text">
                     {t("settings.icloud.error")}
                   </span>
                   <button
                     type="button"
-                    className="text-[12px] font-medium text-[#e7000b] underline"
+                    className="text-[12px] font-medium text-danger-text underline"
                     onClick={handleIcloudToggle}
                   >
                     {t("settings.ai.retry")}
@@ -709,7 +709,7 @@ export default function SettingsPage() {
                 </div>
               )}
 
-              <p className="text-[12px] text-[#9f9fa9]">
+              <p className="text-[12px] text-text-muted">
                 {t("settings.icloud.keysNote")}
               </p>
             </div>

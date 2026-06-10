@@ -47,10 +47,7 @@ export default function AboutSettings() {
       <div className="flex flex-col items-center gap-3.5 pt-4 pb-6">
         <QuillLogo size={56} className="rounded-2xl" />
         <div className="flex flex-col items-center gap-1.5">
-          <span
-            className="text-[20px] font-semibold text-text-primary tracking-[0.5px]"
-            style={{ fontFamily: "Georgia, 'Times New Roman', serif" }}
-          >
+          <span className="text-[20px] font-semibold text-text-primary tracking-[0.5px]">
             Quill
           </span>
           <span className="text-[12px] text-text-muted">{t("settings.about.description")}</span>
@@ -66,7 +63,7 @@ export default function AboutSettings() {
           )}
         </div>
       </div>
-      <div className="h-px bg-black/10 mb-4" />
+      <div className="h-px bg-border-light mb-4" />
 
       {/* Links */}
       <button
