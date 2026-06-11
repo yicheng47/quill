@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
@@ -179,7 +179,8 @@ type SidePanel = "ai" | "bookmarks" | "vocab" | null;
 
 interface TocChapter {
   title: string;
-  href: string;
+  href?: string;
+  targetHref?: string;
   depth: number;
 }
 
@@ -301,12 +302,17 @@ export default function Reader() {
   }));
 
   const settingsAnchorRef = useRef<HTMLButtonElement>(null);
-  const tocAnchorRef = useRef<HTMLButtonElement>(null);
   const viewerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<FoliateView | null>(null);
   const isDragging = useRef(false);
   const chaptersRef = useRef<TocChapter[]>([]);
   const selectedTextRef = useRef<{ text: string; cfi: string } | null>(null);
+  const tocChapters = useMemo(() => chapters.map((chapter, i) => ({
+    title: chapter.title,
+    page: i + 1,
+    depth: chapter.depth,
+    disabled: !chapter.targetHref,
+  })), [chapters]);
 
   // Load book metadata and default settings from DB
   useEffect(() => {
@@ -503,10 +509,22 @@ export default function Reader() {
       const toc = view.book.toc;
       if (toc) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const tocHref = (item: any): string | undefined => {
+          if (typeof item.href !== "string" || item.href === "" || item.href === "null") return undefined;
+          return item.href;
+        };
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const firstHref = (item: any): string | undefined => {
+          const href = tocHref(item);
+          if (href) return href;
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          return item.subitems?.map((child: any) => firstHref(child)).find(Boolean);
+        };
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const flattenToc = (items: any[], depth = 0): TocChapter[] =>
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           items.flatMap((item: any) => [
-            { title: item.label?.trim() || "", href: item.href, depth },
+            { title: item.label?.trim() || "", href: tocHref(item), targetHref: firstHref(item), depth },
             ...(item.subitems ? flattenToc(item.subitems, depth + 1) : []),
           ]);
         const chs = flattenToc(toc);
@@ -527,7 +545,10 @@ export default function Reader() {
         }
 
         if (tocItem) {
-          const idx = chaptersRef.current.findIndex((c) => c.href === tocItem.href);
+          const exactIdx = chaptersRef.current.findIndex((c) => c.href === tocItem.href);
+          const idx = exactIdx !== -1
+            ? exactIdx
+            : chaptersRef.current.findIndex((c) => c.targetHref === tocItem.href);
           if (idx !== -1) setCurrentChapterIndex(idx);
         }
 
@@ -1038,13 +1059,24 @@ export default function Reader() {
     );
   }
 
+
+  const toggleTocPanel = () => {
+    setTocOpen((open) => !open);
+    setSettingsOpen(false);
+  };
+
+  const handleTocNavigate = (page: number) => {
+    const chapter = chapters[page - 1];
+    if (chapter?.targetHref) navigateToChapter(chapter.targetHref);
+  };
+
   return (
     <div className="flex flex-col h-screen bg-bg-page" style={getReaderThemeVars(readerSettings.theme) as React.CSSProperties}>
       {/* Invisible overlay to close popovers when clicking anywhere */}
-      {(tocOpen || settingsOpen) && (
+      {settingsOpen && (
         <div
           className="fixed inset-0 z-40"
-          onMouseDown={(e) => { e.preventDefault(); setTocOpen(false); setSettingsOpen(false); }}
+          onMouseDown={(e) => { e.preventDefault(); setSettingsOpen(false); }}
         />
       )}
       {/* Header */}
@@ -1078,26 +1110,17 @@ export default function Reader() {
               {/* TOC on left in standalone window */}
               <div className="w-px h-6 bg-current opacity-15" />
               <Button
-                ref={tocAnchorRef}
                 variant="icon"
                 size="md"
                 active={tocOpen}
-                onClick={() => { setTocOpen((v) => !v); setSettingsOpen(false); }}
+                className={tocOpen ? "bg-accent-bg" : ""}
+                aria-label={t(tocOpen ? "reader.tocClose" : "reader.tocOpen")}
+                aria-expanded={tocOpen}
+                title={t(tocOpen ? "reader.tocClose" : "reader.tocOpen")}
+                onClick={toggleTocPanel}
               >
                 <List size={16} />
               </Button>
-              <TableOfContents
-                open={tocOpen}
-                onClose={() => setTocOpen(false)}
-                chapters={chapters.map((c, i) => ({ title: c.title, page: i + 1, depth: c.depth }))}
-                currentPage={currentChapterIndex + 1}
-                onNavigate={(page) => {
-                  const ch = chapters[page - 1];
-                  if (ch) navigateToChapter(ch.href);
-                }}
-                anchorRef={tocAnchorRef}
-                alignLeft
-              />
             </>
           ) : (
             <>
@@ -1139,31 +1162,26 @@ export default function Reader() {
           {!isStandaloneWindow && (
             <>
               <Button
-                ref={tocAnchorRef}
                 variant="icon"
                 size="md"
                 active={tocOpen}
-                onClick={() => { setTocOpen((v) => !v); setSettingsOpen(false); }}
+                className={tocOpen ? "bg-accent-bg" : ""}
+                aria-label={t(tocOpen ? "reader.tocClose" : "reader.tocOpen")}
+                aria-expanded={tocOpen}
+                title={t(tocOpen ? "reader.tocClose" : "reader.tocOpen")}
+                onClick={toggleTocPanel}
               >
                 <List size={16} />
               </Button>
-              <TableOfContents
-                open={tocOpen}
-                onClose={() => setTocOpen(false)}
-                chapters={chapters.map((c, i) => ({ title: c.title, page: i + 1, depth: c.depth }))}
-                currentPage={currentChapterIndex + 1}
-                onNavigate={(page) => {
-                  const ch = chapters[page - 1];
-                  if (ch) navigateToChapter(ch.href);
-                }}
-                anchorRef={tocAnchorRef}
-              />
             </>
           )}
 
           <button
             ref={settingsAnchorRef}
-            onClick={() => { setSettingsOpen((v) => !v); setTocOpen(false); }}
+            onClick={() => {
+              setSettingsOpen((open) => !open);
+              setTocOpen(false);
+            }}
             className={`flex items-center justify-center gap-1 size-9 rounded-lg cursor-pointer transition-colors ${
               settingsOpen ? "text-accent-text" : isStandaloneWindow ? "opacity-60 hover:opacity-100" : "text-text-muted hover:bg-bg-input"
             }`}
@@ -1221,13 +1239,18 @@ export default function Reader() {
         className="flex flex-1 overflow-hidden"
         style={{ backgroundColor: getThemeStyles(readerSettings.theme).body }}
       >
+        <TableOfContents
+          open={tocOpen}
+          chapters={tocChapters}
+          currentPage={currentChapterIndex + 1}
+          onNavigate={handleTocNavigate}
+        />
         <div className="flex-1 flex flex-col min-w-0" style={{ backgroundColor: getThemeStyles(readerSettings.theme).body }}>
           <main
             className="flex-1 relative overflow-hidden"
             style={{ backgroundColor: getThemeStyles(readerSettings.theme).body }}
             onContextMenu={handleContextMenu}
             onClick={() => {
-              setTocOpen(false);
               setSettingsOpen(false);
               // Clicks inside the iframe (text content) don't bubble out
               // through the sandbox boundary, so this fires only for clicks
