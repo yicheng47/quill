@@ -1034,9 +1034,9 @@ mod tests {
             "must Err when placeholders are present so disable aborts cleanly",
         );
 
-        // The good file is still copied (we did the work), but the
-        // stub is NOT copied under either name.
-        assert!(dst.join("good.epub").exists(), "real file must copy");
+        // `read_dir` order is filesystem-dependent; this test only
+        // requires that the placeholder stub is never copied under
+        // either name before the operation aborts.
         assert!(
             !dst.join(".evicted.epub.icloud").exists(),
             "placeholder stub must not be copied to local — that'd masquerade as the real file",
