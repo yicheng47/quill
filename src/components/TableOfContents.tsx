@@ -59,8 +59,21 @@ export default function TableOfContents({
     return path;
   }, [currentPage, rowsByPage]);
 
+  const shouldScrollActiveRef = useRef(false);
+  const wasOpenRef = useRef(open);
+
   useEffect(() => {
-    if (open) setExpandedPages(new Set(activePathPages));
+    if (open && !wasOpenRef.current) shouldScrollActiveRef.current = true;
+    wasOpenRef.current = open;
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    setExpandedPages((prev) => {
+      const next = new Set(prev);
+      for (const page of activePathPages) next.add(page);
+      return next.size === prev.size ? prev : next;
+    });
   }, [activePathPages, open]);
 
   const visibleRows = useMemo(() => rows.filter((row) => {
@@ -73,9 +86,10 @@ export default function TableOfContents({
   }), [expandedPages, rows, rowsByPage]);
 
   useEffect(() => {
-    if (!open || !activeRef.current) return;
+    if (!open || !activeRef.current || !shouldScrollActiveRef.current) return;
+    shouldScrollActiveRef.current = false;
     requestAnimationFrame(() => activeRef.current?.scrollIntoView({ block: "center" }));
-  }, [currentPage, open, visibleRows]);
+  }, [open, visibleRows]);
 
   if (!open) return null;
 

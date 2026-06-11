@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
@@ -307,6 +307,12 @@ export default function Reader() {
   const isDragging = useRef(false);
   const chaptersRef = useRef<TocChapter[]>([]);
   const selectedTextRef = useRef<{ text: string; cfi: string } | null>(null);
+  const tocChapters = useMemo(() => chapters.map((chapter, i) => ({
+    title: chapter.title,
+    page: i + 1,
+    depth: chapter.depth,
+    disabled: !chapter.targetHref,
+  })), [chapters]);
 
   // Load book metadata and default settings from DB
   useEffect(() => {
@@ -503,8 +509,14 @@ export default function Reader() {
       const toc = view.book.toc;
       if (toc) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const tocHref = (item: any): string | undefined => {
+          if (typeof item.href !== "string" || item.href === "" || item.href === "null") return undefined;
+          return item.href;
+        };
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const firstHref = (item: any): string | undefined => {
-          if (item.href) return item.href;
+          const href = tocHref(item);
+          if (href) return href;
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           return item.subitems?.map((child: any) => firstHref(child)).find(Boolean);
         };
@@ -512,7 +524,7 @@ export default function Reader() {
         const flattenToc = (items: any[], depth = 0): TocChapter[] =>
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           items.flatMap((item: any) => [
-            { title: item.label?.trim() || "", href: item.href, targetHref: firstHref(item), depth },
+            { title: item.label?.trim() || "", href: tocHref(item), targetHref: firstHref(item), depth },
             ...(item.subitems ? flattenToc(item.subitems, depth + 1) : []),
           ]);
         const chs = flattenToc(toc);
@@ -1047,12 +1059,6 @@ export default function Reader() {
     );
   }
 
-  const tocChapters = chapters.map((chapter, i) => ({
-    title: chapter.title,
-    page: i + 1,
-    depth: chapter.depth,
-    disabled: !chapter.targetHref,
-  }));
 
   const toggleTocPanel = () => {
     setTocOpen((open) => !open);
