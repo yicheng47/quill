@@ -437,10 +437,10 @@ export default function LibrarySyncSettings(_props: SettingsProps) {
       )}
 
       {disableProgress && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40">
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-overlay">
           <div className="bg-bg-surface rounded-xl shadow-lg w-[420px] p-6">
             <div className="flex items-center gap-3 mb-4">
-              <Loader2 size={18} className="text-[#7c3aed] animate-spin" />
+              <Loader2 size={18} className="text-accent-text animate-spin" />
               <h3 className="text-[18px] font-semibold text-text-primary">
                 {t("settings.librarySync.copyingTitle")}
               </h3>
@@ -463,7 +463,7 @@ export default function LibrarySyncSettings(_props: SettingsProps) {
             </div>
             <div className="h-2 rounded-full bg-bg-muted overflow-hidden">
               <div
-                className="h-full bg-[#7c3aed] transition-[width] duration-200"
+                className="h-full bg-accent transition-[width] duration-200"
                 style={{ width: `${disableProgress.total > 0 ? disableProgressValue : 12}%` }}
               />
             </div>

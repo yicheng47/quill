@@ -395,6 +395,7 @@ pub async fn sync_disable(
 ) -> AppResult<()> {
     let engine = sync_state.engine_snapshot()?;
     let local_dir = local.0.clone();
+    log::info!("sync_disable: requested");
 
     // Stop new watcher ticks first, then cancel any tick already in
     // flight before joining the watcher thread.
@@ -414,6 +415,11 @@ pub async fn sync_disable(
     }
     drop(old_watcher);
     replay::tick_mutex_wait();
+    log::info!(
+        "sync_disable: watcher stopped had_engine={} had_watcher={}",
+        engine.is_some(),
+        had_watcher
+    );
 
     // ---- Phase 1: fallible binary copy-back with no durable state change ----
     // If this fails (e.g. iCloud-evicted files, disk full), return an
@@ -427,6 +433,7 @@ pub async fn sync_disable(
     let ubiquity_dir = sync::migration::recorded_data_dir(&local_dir)
         .or_else(icloud::icloud_data_dir);
     let copy_result = if let Some(ub) = ubiquity_dir.as_ref() {
+        log::info!("sync_disable: copy-back starting");
         let app = app.clone();
         let jobs = vec![
             (ub.join("books"), local_dir.join("books")),
@@ -436,9 +443,11 @@ pub async fn sync_disable(
             .await
             .map_err(|e| AppError::Other(format!("sync_disable copy worker failed: {e}")))?
     } else {
+        log::warn!("sync_disable: no iCloud shared dir resolved; skipping copy-back");
         Ok(())
     };
     if let Err(e) = copy_result {
+        log::warn!("sync_disable: copy-back failed; keeping sync enabled: {e}");
         if had_watcher {
             if let (Some(ub), Some(engine)) = (ubiquity_dir.as_ref(), engine.as_ref()) {
                 match watcher::spawn(ub.clone(), db.inner().clone(), Arc::clone(engine)) {
@@ -458,6 +467,7 @@ pub async fn sync_disable(
         }
         return Err(e);
     }
+    log::info!("sync_disable: copy-back complete; tearing down sync");
 
     // ---- Phase 2: teardown + marker removal ----
     // Every step from here is non-fatal or explicitly logged. The
@@ -520,6 +530,7 @@ pub async fn sync_disable(
         }
     }
 
+    log::info!("sync_disable: completed; sync is off and data_dir is local");
     Ok(())
 }
 
@@ -692,12 +703,18 @@ fn copy_disable_files_with_progress(
     let total = jobs
         .iter()
         .try_fold(0usize, |acc, (src, _)| count_copy_entries(src).map(|n| acc + n))?;
+    log::info!("sync_disable: copy-back total_files={total}");
     let mut progress = DisableCopyProgressEmitter::new(Some(app.clone()), total);
     progress.emit("preparing", None);
     for (src, dst) in jobs {
         copy_dir_contents_with_progress(src, dst, Some(&mut progress))?;
     }
     progress.emit("done", None);
+    log::info!(
+        "sync_disable: copy-back finished copied_files={} total_files={}",
+        progress.copied,
+        progress.total
+    );
     Ok(())
 }
 
@@ -868,8 +885,17 @@ fn copy_one_disable_file(
 
 fn wait_for_icloud_file(path: &Path) -> AppResult<()> {
     let started = Instant::now();
+    log::info!(
+        "sync_disable: waiting for iCloud download file={}",
+        display_file_name(path)
+    );
     while !path.exists() {
         if started.elapsed() >= DISABLE_COPY_PLACEHOLDER_TIMEOUT {
+            log::warn!(
+                "sync_disable: iCloud download timed out file={} elapsed_ms={}",
+                display_file_name(path),
+                started.elapsed().as_millis()
+            );
             return Err(AppError::Other(format!(
                 "Cannot disable sync: iCloud has not downloaded {} yet. Downloads have been triggered; try again once iCloud finishes.",
                 path.display(),
@@ -878,6 +904,11 @@ fn wait_for_icloud_file(path: &Path) -> AppResult<()> {
         icloud::trigger_download_file(path);
         thread::sleep(DISABLE_COPY_PLACEHOLDER_POLL);
     }
+    log::info!(
+        "sync_disable: iCloud download materialized file={} elapsed_ms={}",
+        display_file_name(path),
+        started.elapsed().as_millis()
+    );
     Ok(())
 }
 
@@ -891,7 +922,6 @@ fn icloud_placeholder_for(real: &Path) -> Option<PathBuf> {
 
 /// `<dir>/.foo.epub.icloud` → `<dir>/foo.epub`. None when the
 /// filename doesn't match the placeholder pattern.
-#[cfg(target_os = "macos")]
 fn icloud_real_from_placeholder(parent: &Path, placeholder_name: std::ffi::OsString) -> Option<PathBuf> {
     let s = placeholder_name.to_str()?;
     if !s.starts_with('.') || !s.ends_with(".icloud") {
