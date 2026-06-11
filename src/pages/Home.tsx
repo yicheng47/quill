@@ -30,6 +30,7 @@ export default function Home() {
   const [activeFilter, setActiveFilter] = useState("all");
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
   const [isDragging, setIsDragging] = useState(false);
   const [importing, setImporting] = useState(false);
   const [importSlow, setImportSlow] = useState(false);
@@ -98,7 +99,13 @@ export default function Home() {
   const isCollectionFilter = activeFilter.startsWith("collection:");
   const statusFilter = !isCollectionFilter && activeFilter !== "all" ? activeFilter : undefined;
   const collectionId = isCollectionFilter ? activeFilter.replace("collection:", "") : undefined;
-  const searchParam = searchQuery || undefined;
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedSearchQuery(searchQuery.trim()), 250);
+    return () => window.clearTimeout(timer);
+  }, [searchQuery]);
+
+  const searchParam = debouncedSearchQuery || undefined;
 
   const { books, loading, hasMore, loadMore, loadingMore, refresh } = useBooks(statusFilter, searchParam, collectionId);
 
