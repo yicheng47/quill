@@ -26470,6 +26470,1881 @@
           ]
         }
       ]
+    },
+    {
+      "type": "frame",
+      "id": "oc2T7",
+      "x": 4847,
+      "y": 2013,
+      "name": "Reader — TOC Side Panel Open",
+      "clip": true,
+      "width": 1440,
+      "height": 960,
+      "fill": "$bg-surface",
+      "layout": "vertical",
+      "children": [
+        {
+          "type": "frame",
+          "id": "F0MfGg",
+          "name": "Top bar",
+          "width": "fill_container",
+          "fill": "$bg-surface",
+          "stroke": "$border",
+          "strokeWidth": {
+            "bottom": 1
+          },
+          "strokeAlignment": "inner",
+          "padding": [
+            32,
+            24,
+            8,
+            24
+          ],
+          "justifyContent": "space_between",
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "frame",
+              "id": "kkOED",
+              "name": "Top left",
+              "gap": 12,
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "d0wLA",
+                  "name": "Back icon",
+                  "width": 40,
+                  "height": 40,
+                  "fill": "$accent",
+                  "cornerRadius": 8,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "g3YYK",
+                      "name": "backIcon",
+                      "width": 18,
+                      "height": 18,
+                      "icon": "book-open",
+                      "library": "lucide",
+                      "fill": "$white"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "MnNXX",
+                  "name": "TOC",
+                  "width": 36,
+                  "height": 36,
+                  "fill": "#f3e8ff",
+                  "cornerRadius": 8,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "Up4qJ",
+                      "name": "tocIcon",
+                      "width": 18,
+                      "height": 18,
+                      "icon": "list",
+                      "library": "lucide",
+                      "fill": "#7c3aed"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "qKQLh",
+              "name": "Title center",
+              "layout": "vertical",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "Tf7IB",
+                  "name": "titleText",
+                  "fill": "$text-primary",
+                  "content": "Fight Club",
+                  "fontFamily": "Inter",
+                  "fontSize": 14,
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "text",
+                  "id": "XDxGG",
+                  "name": "chapterText",
+                  "fill": "$text-muted",
+                  "content": "Chapter 22 of 38",
+                  "fontFamily": "Inter",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "MO77M",
+              "name": "Top right",
+              "gap": 2,
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "lKLwQ",
+                  "name": "Font",
+                  "width": 36,
+                  "height": 36,
+                  "cornerRadius": 8,
+                  "gap": 1,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "oz79x",
+                      "name": "fontBig",
+                      "fill": "$text-primary",
+                      "content": "A",
+                      "fontFamily": "Inter",
+                      "fontSize": 16,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "text",
+                      "id": "FogSj",
+                      "name": "fontSmall",
+                      "fill": "$text-primary",
+                      "content": "A",
+                      "fontFamily": "Inter",
+                      "fontSize": 12,
+                      "fontWeight": "600"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "Nuk7s",
+                  "name": "Bookmark",
+                  "width": 36,
+                  "height": 36,
+                  "cornerRadius": 8,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "bWsW9",
+                      "name": "bookmarkIcon",
+                      "width": 18,
+                      "height": 18,
+                      "icon": "bookmark",
+                      "library": "lucide",
+                      "fill": "$text-muted"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "ybaqO",
+                  "name": "Translate",
+                  "width": 36,
+                  "height": 36,
+                  "cornerRadius": 8,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "QN7Nm",
+                      "name": "translateIcon",
+                      "width": 18,
+                      "height": 18,
+                      "icon": "languages",
+                      "library": "lucide",
+                      "fill": "$text-muted"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "y25gw",
+                  "name": "dividerWrap",
+                  "padding": [
+                    0,
+                    4
+                  ],
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "id": "fCpMF",
+                      "name": "divider",
+                      "fill": "$border",
+                      "width": 1,
+                      "height": 24
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "NlYH4",
+                  "name": "AI Assistant",
+                  "height": 32,
+                  "fill": "$accent-bg",
+                  "cornerRadius": 8,
+                  "gap": 8,
+                  "padding": [
+                    0,
+                    10
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "fgYof",
+                      "name": "aiIcon",
+                      "width": 14,
+                      "height": 14,
+                      "icon": "sparkles",
+                      "library": "lucide",
+                      "fill": "$accent"
+                    },
+                    {
+                      "type": "text",
+                      "id": "CM4G0",
+                      "name": "aiLabel",
+                      "fill": "$accent",
+                      "content": "AI Assistant",
+                      "fontFamily": "Inter",
+                      "fontSize": 14,
+                      "fontWeight": "500",
+                      "letterSpacing": -0.15
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "IDHYO",
+          "name": "Body",
+          "width": "fill_container",
+          "height": "fill_container",
+          "fill": "$bg-surface",
+          "children": [
+            {
+              "type": "frame",
+              "id": "J7aYQ",
+              "name": "TOC Side Panel",
+              "width": 320,
+              "height": "fill_container",
+              "fill": "#fafafa",
+              "stroke": "#e4e4e7",
+              "strokeWidth": {
+                "right": 1
+              },
+              "strokeAlignment": "inner",
+              "layout": "vertical",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "xHO2N",
+                  "name": "TOC Header",
+                  "width": "fill_container",
+                  "height": 64,
+                  "fill": "#ffffff",
+                  "stroke": "#e4e4e7",
+                  "strokeWidth": {
+                    "bottom": 1
+                  },
+                  "strokeAlignment": "inner",
+                  "padding": [
+                    10,
+                    12,
+                    10,
+                    20
+                  ],
+                  "justifyContent": "space_between",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "RzYzz",
+                      "name": "TOC Title Stack",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 3,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "pEXo2",
+                          "name": "TOC Title",
+                          "fill": "#18181b",
+                          "content": "Table of Contents",
+                          "fontFamily": "Inter",
+                          "fontSize": 15,
+                          "fontWeight": "700"
+                        },
+                        {
+                          "type": "text",
+                          "id": "RW3WS",
+                          "name": "TOC Chapter Count",
+                          "fill": "#71717a",
+                          "content": "38 chapters",
+                          "fontFamily": "Inter",
+                          "fontSize": 11,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "HzYhM",
+                  "name": "TOC Chapter List",
+                  "width": "fill_container",
+                  "height": "fill_container",
+                  "fill": "#fafafa",
+                  "layout": "vertical",
+                  "gap": 3,
+                  "padding": 12,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "Lwcx0",
+                      "name": "TOC Parent Row",
+                      "width": "fill_container",
+                      "height": 34,
+                      "fill": "#fafafa",
+                      "cornerRadius": 6,
+                      "gap": 8,
+                      "padding": [
+                        0,
+                        12,
+                        0,
+                        4
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "Z12SqS",
+                          "name": "Expanded Chevron",
+                          "width": 14,
+                          "height": 14,
+                          "icon": "chevron-down",
+                          "library": "lucide",
+                          "fill": "#71717a"
+                        },
+                        {
+                          "type": "text",
+                          "id": "Weh2f",
+                          "name": "Chapter Label",
+                          "fill": "#3f3f46",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "Front Matter",
+                          "fontFamily": "Inter",
+                          "fontSize": 12,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "x4r3i",
+                      "name": "TOC Child Row",
+                      "width": "fill_container",
+                      "height": 32,
+                      "fill": "#fafafa",
+                      "cornerRadius": 6,
+                      "gap": 8,
+                      "padding": [
+                        0,
+                        12,
+                        0,
+                        4
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "GXyhY",
+                          "name": "Depth Indent",
+                          "width": 16,
+                          "height": 1,
+                          "fill": "#00000000"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "j04zsJ",
+                          "name": "Leaf Spacer",
+                          "width": 14,
+                          "height": 1,
+                          "fill": "#00000000"
+                        },
+                        {
+                          "type": "text",
+                          "id": "mw8iM",
+                          "name": "Chapter Label",
+                          "fill": "#52525b",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "Cover",
+                          "fontFamily": "Inter",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "OZlNJ",
+                      "name": "TOC Child Row",
+                      "width": "fill_container",
+                      "height": 32,
+                      "fill": "#fafafa",
+                      "cornerRadius": 6,
+                      "gap": 8,
+                      "padding": [
+                        0,
+                        12,
+                        0,
+                        4
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "I7Txal",
+                          "name": "Depth Indent",
+                          "width": 16,
+                          "height": 1,
+                          "fill": "#00000000"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "JoW70",
+                          "name": "Leaf Spacer",
+                          "width": 14,
+                          "height": 1,
+                          "fill": "#00000000"
+                        },
+                        {
+                          "type": "text",
+                          "id": "YpXWU",
+                          "name": "Chapter Label",
+                          "fill": "#52525b",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "Title Page",
+                          "fontFamily": "Inter",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "B2bEU",
+                      "name": "TOC Child Row",
+                      "width": "fill_container",
+                      "height": 32,
+                      "fill": "#fafafa",
+                      "cornerRadius": 6,
+                      "gap": 8,
+                      "padding": [
+                        0,
+                        12,
+                        0,
+                        4
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "SPT0k",
+                          "name": "Depth Indent",
+                          "width": 16,
+                          "height": 1,
+                          "fill": "#00000000"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "Q0re7",
+                          "name": "Leaf Spacer",
+                          "width": 14,
+                          "height": 1,
+                          "fill": "#00000000"
+                        },
+                        {
+                          "type": "text",
+                          "id": "gXj3m",
+                          "name": "Chapter Label",
+                          "fill": "#52525b",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "Contents",
+                          "fontFamily": "Inter",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "ofPSj",
+                      "name": "TOC Parent Row",
+                      "width": "fill_container",
+                      "height": 34,
+                      "fill": "#fafafa",
+                      "cornerRadius": 6,
+                      "gap": 8,
+                      "padding": [
+                        0,
+                        12,
+                        0,
+                        4
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "E4dddx",
+                          "name": "Expanded Chevron",
+                          "width": 14,
+                          "height": 14,
+                          "icon": "chevron-down",
+                          "library": "lucide",
+                          "fill": "#71717a"
+                        },
+                        {
+                          "type": "text",
+                          "id": "R9XQ1",
+                          "name": "Chapter Label",
+                          "fill": "#3f3f46",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "Book One: The Coming of the Martians",
+                          "fontFamily": "Inter",
+                          "fontSize": 12,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "vbMhm",
+                      "name": "TOC Child Row",
+                      "width": "fill_container",
+                      "height": 32,
+                      "fill": "#fafafa",
+                      "cornerRadius": 6,
+                      "gap": 8,
+                      "padding": [
+                        0,
+                        12,
+                        0,
+                        4
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "zncOu",
+                          "name": "Depth Indent",
+                          "width": 16,
+                          "height": 1,
+                          "fill": "#00000000"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "I7CoE",
+                          "name": "Leaf Spacer",
+                          "width": 14,
+                          "height": 1,
+                          "fill": "#00000000"
+                        },
+                        {
+                          "type": "text",
+                          "id": "k0HMNE",
+                          "name": "Chapter Label",
+                          "fill": "#52525b",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "Chapter 1 - The Eve of War",
+                          "fontFamily": "Inter",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "TDCsv",
+                      "name": "TOC Child Row",
+                      "width": "fill_container",
+                      "height": 32,
+                      "fill": "#fafafa",
+                      "cornerRadius": 6,
+                      "gap": 8,
+                      "padding": [
+                        0,
+                        12,
+                        0,
+                        4
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "gFhyT",
+                          "name": "Depth Indent",
+                          "width": 16,
+                          "height": 1,
+                          "fill": "#00000000"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "kNVVB",
+                          "name": "Leaf Spacer",
+                          "width": 14,
+                          "height": 1,
+                          "fill": "#00000000"
+                        },
+                        {
+                          "type": "text",
+                          "id": "HRaFy",
+                          "name": "Chapter Label",
+                          "fill": "#52525b",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "Chapter 2 - The Falling Star",
+                          "fontFamily": "Inter",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "YjRKt",
+                      "name": "TOC Child Row",
+                      "width": "fill_container",
+                      "height": 32,
+                      "fill": "#fafafa",
+                      "cornerRadius": 6,
+                      "gap": 8,
+                      "padding": [
+                        0,
+                        12,
+                        0,
+                        4
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "VwF6f",
+                          "name": "Depth Indent",
+                          "width": 16,
+                          "height": 1,
+                          "fill": "#00000000"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "d4v3a2",
+                          "name": "Leaf Spacer",
+                          "width": 14,
+                          "height": 1,
+                          "fill": "#00000000"
+                        },
+                        {
+                          "type": "text",
+                          "id": "gw4E0",
+                          "name": "Chapter Label",
+                          "fill": "#52525b",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "Chapter 3 - On Horsell Common",
+                          "fontFamily": "Inter",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "SlUlN",
+                      "name": "TOC Child Row",
+                      "width": "fill_container",
+                      "height": 32,
+                      "fill": "#fafafa",
+                      "cornerRadius": 6,
+                      "gap": 8,
+                      "padding": [
+                        0,
+                        12,
+                        0,
+                        4
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "hmKcT",
+                          "name": "Depth Indent",
+                          "width": 16,
+                          "height": 1,
+                          "fill": "#00000000"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "SKdge",
+                          "name": "Leaf Spacer",
+                          "width": 14,
+                          "height": 1,
+                          "fill": "#00000000"
+                        },
+                        {
+                          "type": "text",
+                          "id": "T9KSA",
+                          "name": "Chapter Label",
+                          "fill": "#52525b",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "Chapter 4 - The Cylinder Opens",
+                          "fontFamily": "Inter",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "O5M79z",
+                      "name": "TOC Parent Row",
+                      "width": "fill_container",
+                      "height": 34,
+                      "fill": "#fafafa",
+                      "cornerRadius": 6,
+                      "gap": 8,
+                      "padding": [
+                        0,
+                        12,
+                        0,
+                        4
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "Afdj7",
+                          "name": "Depth Indent",
+                          "width": 16,
+                          "height": 1,
+                          "fill": "#00000000"
+                        },
+                        {
+                          "type": "icon",
+                          "id": "u9GvC",
+                          "name": "Expanded Chevron",
+                          "width": 14,
+                          "height": 14,
+                          "icon": "chevron-down",
+                          "library": "lucide",
+                          "fill": "#71717a"
+                        },
+                        {
+                          "type": "text",
+                          "id": "DbqW9",
+                          "name": "Chapter Label",
+                          "fill": "#3f3f46",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "Chapter 5 - The Heat-Ray",
+                          "fontFamily": "Inter",
+                          "fontSize": 12,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "j9KFr",
+                      "name": "TOC Child Row",
+                      "width": "fill_container",
+                      "height": 32,
+                      "fill": "#fafafa",
+                      "cornerRadius": 6,
+                      "gap": 8,
+                      "padding": [
+                        0,
+                        12,
+                        0,
+                        4
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "o6nEQ",
+                          "name": "Depth Indent",
+                          "width": 32,
+                          "height": 1,
+                          "fill": "#00000000"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "jKLDl",
+                          "name": "Leaf Spacer",
+                          "width": 14,
+                          "height": 1,
+                          "fill": "#00000000"
+                        },
+                        {
+                          "type": "text",
+                          "id": "YXGK6",
+                          "name": "Chapter Label",
+                          "fill": "#71717a",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "In the Chobham Road",
+                          "fontFamily": "Inter",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "VdbPV",
+                      "name": "TOC Child Row",
+                      "width": "fill_container",
+                      "height": 32,
+                      "fill": "#fafafa",
+                      "cornerRadius": 6,
+                      "gap": 8,
+                      "padding": [
+                        0,
+                        12,
+                        0,
+                        4
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "CZO69",
+                          "name": "Depth Indent",
+                          "width": 32,
+                          "height": 1,
+                          "fill": "#00000000"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "Ieyu1",
+                          "name": "Leaf Spacer",
+                          "width": 14,
+                          "height": 1,
+                          "fill": "#00000000"
+                        },
+                        {
+                          "type": "text",
+                          "id": "Do7M3",
+                          "name": "Chapter Label",
+                          "fill": "#71717a",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "How I Reached Home",
+                          "fontFamily": "Inter",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "m2d5NU",
+                      "name": "TOC Child Row",
+                      "width": "fill_container",
+                      "height": 32,
+                      "fill": "#fafafa",
+                      "cornerRadius": 6,
+                      "gap": 8,
+                      "padding": [
+                        0,
+                        12,
+                        0,
+                        4
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "NLgVX",
+                          "name": "Depth Indent",
+                          "width": 32,
+                          "height": 1,
+                          "fill": "#00000000"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "uXP4b",
+                          "name": "Leaf Spacer",
+                          "width": 14,
+                          "height": 1,
+                          "fill": "#00000000"
+                        },
+                        {
+                          "type": "text",
+                          "id": "v8PgHY",
+                          "name": "Chapter Label",
+                          "fill": "#71717a",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "Friday Night",
+                          "fontFamily": "Inter",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "t6HZv",
+                      "name": "TOC Parent Row",
+                      "width": "fill_container",
+                      "height": 34,
+                      "fill": "#fafafa",
+                      "cornerRadius": 6,
+                      "gap": 8,
+                      "padding": [
+                        0,
+                        12,
+                        0,
+                        4
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "yKyM3",
+                          "name": "Expanded Chevron",
+                          "width": 14,
+                          "height": 14,
+                          "icon": "chevron-down",
+                          "library": "lucide",
+                          "fill": "#71717a"
+                        },
+                        {
+                          "type": "text",
+                          "id": "U1Ly8",
+                          "name": "Chapter Label",
+                          "fill": "#3f3f46",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "Book Two: The Earth Under the Martians",
+                          "fontFamily": "Inter",
+                          "fontSize": 12,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "C2RF6",
+                      "name": "TOC Child Row",
+                      "width": "fill_container",
+                      "height": 32,
+                      "fill": "#fafafa",
+                      "cornerRadius": 6,
+                      "gap": 8,
+                      "padding": [
+                        0,
+                        12,
+                        0,
+                        4
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "tlDaI",
+                          "name": "Depth Indent",
+                          "width": 16,
+                          "height": 1,
+                          "fill": "#00000000"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "X4LO5",
+                          "name": "Leaf Spacer",
+                          "width": 14,
+                          "height": 1,
+                          "fill": "#00000000"
+                        },
+                        {
+                          "type": "text",
+                          "id": "DJ94U",
+                          "name": "Chapter Label",
+                          "fill": "#52525b",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "Chapter 21 - The Man on Putney Hill",
+                          "fontFamily": "Inter",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "cAQ5h",
+                      "name": "TOC Row Active",
+                      "width": "fill_container",
+                      "height": 32,
+                      "fill": "#f3e8ff",
+                      "cornerRadius": 6,
+                      "gap": 8,
+                      "padding": [
+                        0,
+                        12,
+                        0,
+                        0
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "Z4N26X",
+                          "name": "Active Indicator",
+                          "width": 3,
+                          "height": "fill_container",
+                          "fill": "#7c3aed",
+                          "cornerRadius": 2
+                        },
+                        {
+                          "type": "frame",
+                          "id": "n2CdXH",
+                          "name": "Depth Indent",
+                          "width": 16,
+                          "height": 1,
+                          "fill": "#00000000"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "d25Ts",
+                          "name": "Leaf Spacer",
+                          "width": 14,
+                          "height": 1,
+                          "fill": "#00000000"
+                        },
+                        {
+                          "type": "text",
+                          "id": "aWLMu",
+                          "name": "Chapter Label",
+                          "fill": "#6d28d9",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "Chapter 22 - Another Night",
+                          "fontFamily": "Inter",
+                          "fontSize": 13,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "C0QjM",
+                      "name": "TOC Child Row",
+                      "width": "fill_container",
+                      "height": 32,
+                      "fill": "#fafafa",
+                      "cornerRadius": 6,
+                      "gap": 8,
+                      "padding": [
+                        0,
+                        12,
+                        0,
+                        4
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "slydX",
+                          "name": "Depth Indent",
+                          "width": 16,
+                          "height": 1,
+                          "fill": "#00000000"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "WgE0S",
+                          "name": "Leaf Spacer",
+                          "width": 14,
+                          "height": 1,
+                          "fill": "#00000000"
+                        },
+                        {
+                          "type": "text",
+                          "id": "wPScJ",
+                          "name": "Chapter Label",
+                          "fill": "#52525b",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "Chapter 23 - The Wreckage",
+                          "fontFamily": "Inter",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "cdoe0",
+                      "name": "TOC Parent Row",
+                      "width": "fill_container",
+                      "height": 34,
+                      "fill": "#fafafa",
+                      "cornerRadius": 6,
+                      "gap": 8,
+                      "padding": [
+                        0,
+                        12,
+                        0,
+                        4
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "CEyXj",
+                          "name": "Collapsed Chevron",
+                          "width": 14,
+                          "height": 14,
+                          "icon": "chevron-right",
+                          "library": "lucide",
+                          "fill": "#71717a"
+                        },
+                        {
+                          "type": "text",
+                          "id": "PVzBO",
+                          "name": "Chapter Label",
+                          "fill": "#3f3f46",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "Back Matter",
+                          "fontFamily": "Inter",
+                          "fontSize": 12,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "ORV43",
+              "name": "Reader column",
+              "clip": true,
+              "width": "fill_container",
+              "height": "fill_container",
+              "fill": "$bg-surface",
+              "layout": "vertical",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "sl3AC",
+                  "name": "Reading area",
+                  "clip": true,
+                  "width": "fill_container",
+                  "height": "fill_container",
+                  "layout": "vertical",
+                  "gap": 20,
+                  "padding": [
+                    32,
+                    96,
+                    16,
+                    96
+                  ],
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "WETBI",
+                      "name": "p1",
+                      "fill": "$text-primary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "And one night in an uptown square park, another group of men poured gasoline around every tree and from tree to tree and set a perfect little forest fire. It was in the newspaper, how townhouse windows across the street from the fire melted, and parked cars farted and settled on melted flat tires.",
+                      "lineHeight": 1.6,
+                      "fontFamily": "Inter",
+                      "fontSize": 18,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "u7rwr",
+                      "name": "p2",
+                      "fill": "$text-primary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "    Tyler's rented house on Paper Street is a living thing wet on the inside from so many people sweating and breathing. So many people are moving inside, the house moves.",
+                      "lineHeight": 1.6,
+                      "fontFamily": "Inter",
+                      "fontSize": 18,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "K4b3o",
+                      "name": "p4",
+                      "fill": "$text-primary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "    And Tyler was a few of the space monkeys had Tyler drilling holes in their hand. Then those space monkeys are on the front porch to replace them.",
+                      "lineHeight": 1.6,
+                      "fontFamily": "Inter",
+                      "fontSize": 18,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "WqiIa",
+                      "name": "p3",
+                      "fill": "$text-primary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "    Another night that Tyler didn't come home, someone was drilling bank machines and lube fittings into the drilled holes... bank machines and pay telephones.",
+                      "lineHeight": 1.6,
+                      "fontFamily": "Inter",
+                      "fontSize": 18,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "J1z3qg",
+                      "name": "p5",
+                      "fill": "$text-primary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "    And every day in different cars. You never saw the same car twice. One evening, I hear Marla on the front",
+                      "lineHeight": 1.6,
+                      "fontFamily": "Inter",
+                      "fontSize": 18,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "I9Kvn",
+                  "name": "Bottom progress",
+                  "width": "fill_container",
+                  "fill": "$bg-surface",
+                  "layout": "vertical",
+                  "gap": 8,
+                  "padding": [
+                    0,
+                    24,
+                    8,
+                    24
+                  ],
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "QJ492",
+                      "name": "Progress track",
+                      "width": "fill_container",
+                      "height": 2,
+                      "fill": "$border",
+                      "cornerRadius": 9999,
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "cCXfn",
+                          "name": "Progress fill",
+                          "width": 760,
+                          "height": 2,
+                          "fill": "$accent",
+                          "cornerRadius": 9999
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "ZcO1x",
+                      "name": "Progress row",
+                      "width": "fill_container",
+                      "height": 32,
+                      "justifyContent": "space_between",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "J4x12",
+                          "name": "pageText",
+                          "fill": "$text-muted",
+                          "content": "Page 162 of 267",
+                          "fontFamily": "Inter",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "UKvDl",
+                          "name": "Nav arrows",
+                          "gap": 4,
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "HBm8K",
+                              "name": "leftArrow",
+                              "width": 24,
+                              "height": 24,
+                              "cornerRadius": 4,
+                              "justifyContent": "center",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "SaNic",
+                                  "name": "leftIcon",
+                                  "width": 16,
+                                  "height": 16,
+                                  "icon": "chevron-left",
+                                  "library": "lucide",
+                                  "fill": "$text-muted"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "text",
+                              "id": "eVFNC",
+                              "name": "pctText",
+                              "fill": "$text-muted",
+                              "content": "61%",
+                              "fontFamily": "Inter",
+                              "fontSize": 12,
+                              "fontWeight": "500"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "grCqR",
+                              "name": "rightArrow",
+                              "width": 24,
+                              "height": 24,
+                              "cornerRadius": 4,
+                              "justifyContent": "center",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "f82zL",
+                                  "name": "rightIcon",
+                                  "width": 16,
+                                  "height": 16,
+                                  "icon": "chevron-right",
+                                  "library": "lucide",
+                                  "fill": "$text-muted"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "skJ0o",
+                          "name": "leftText",
+                          "fill": "$text-muted",
+                          "content": "105 pages left",
+                          "fontFamily": "Inter",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "V12Gvm",
+              "name": "AI Panel",
+              "clip": true,
+              "width": 440,
+              "height": "fill_container",
+              "fill": "$bg-muted",
+              "stroke": "$border",
+              "strokeWidth": {
+                "left": 1
+              },
+              "strokeAlignment": "inner",
+              "layout": "vertical",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "gob8i",
+                  "name": "AI header",
+                  "width": "fill_container",
+                  "height": 63,
+                  "stroke": "$border",
+                  "strokeWidth": {
+                    "bottom": 1
+                  },
+                  "strokeAlignment": "inner",
+                  "padding": [
+                    0,
+                    16
+                  ],
+                  "justifyContent": "space_between",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "vzK3u",
+                      "name": "aiHeaderLeft",
+                      "gap": 10,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "bKEwp",
+                          "name": "aiHeaderIcon",
+                          "width": 20,
+                          "height": 20,
+                          "icon": "sparkles",
+                          "library": "lucide",
+                          "fill": "$text-muted"
+                        },
+                        {
+                          "type": "text",
+                          "id": "zInSA",
+                          "name": "aiHeaderTitle",
+                          "fill": "$text-primary",
+                          "content": "Tyler Explains Harsh Initiation Test",
+                          "fontFamily": "Inter",
+                          "fontSize": 15,
+                          "fontWeight": "600",
+                          "letterSpacing": -0.23
+                        },
+                        {
+                          "type": "icon",
+                          "id": "tWrZC",
+                          "name": "aiHeaderChevron",
+                          "width": 14,
+                          "height": 14,
+                          "icon": "chevron-down",
+                          "library": "lucide",
+                          "fill": "$text-muted"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "PxBpP",
+                      "name": "aiHeaderPlus",
+                      "width": 28,
+                      "height": 28,
+                      "cornerRadius": 8,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "lNVZ5",
+                          "name": "aiHeaderPlusIcon",
+                          "width": 16,
+                          "height": 16,
+                          "icon": "plus",
+                          "library": "lucide",
+                          "fill": "$text-muted"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "z0GzCp",
+                  "name": "Messages",
+                  "clip": true,
+                  "width": "fill_container",
+                  "height": "fill_container",
+                  "layout": "vertical",
+                  "gap": 12,
+                  "padding": 16,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "t3L2FL",
+                      "name": "User context msg",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 6,
+                      "alignItems": "end",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "zNfeI",
+                          "name": "Context quote",
+                          "stroke": "$lavender",
+                          "strokeWidth": {
+                            "left": 2
+                          },
+                          "strokeAlignment": "inner",
+                          "padding": [
+                            2,
+                            0,
+                            2,
+                            12
+                          ],
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "kyRee",
+                              "name": "userCtxText",
+                              "fill": "$text-muted",
+                              "textGrowth": "fixed-width",
+                              "width": 340,
+                              "content": "This is how Buddhist temples have tested applicants going back for bah-zillion years, Tyler says. You tell the applicant to go away, and if...",
+                              "lineHeight": 1.4,
+                              "fontFamily": "Inter",
+                              "fontSize": 12,
+                              "fontWeight": "normal",
+                              "fontStyle": "italic"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "cCAKU",
+                          "name": "Explain bubble",
+                          "fill": "$user-bubble",
+                          "cornerRadius": 8,
+                          "padding": 13,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "Z6Oa7",
+                              "name": "userExplainText",
+                              "fill": "$text-primary",
+                              "content": "Explain",
+                              "fontFamily": "Inter",
+                              "fontSize": 14,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "AYCs6",
+                      "name": "Assistant msg",
+                      "fill": "$bg-surface",
+                      "cornerRadius": 8,
+                      "stroke": "$border",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "layout": "vertical",
+                      "gap": 10,
+                      "padding": 13,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "De0GR",
+                          "name": "assistIntro",
+                          "fill": "$text-primary",
+                          "textGrowth": "fixed-width",
+                          "width": 344,
+                          "content": "In this passage, Tyler is justifying the harsh \"test\" he gives new recruits by comparing it to an old spiritual tradition.",
+                          "lineHeight": 1.4,
+                          "fontFamily": "Inter",
+                          "fontSize": 14,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "mn2Gu",
+                          "name": "assistH1",
+                          "fill": "$text-primary",
+                          "content": "What he's saying",
+                          "fontFamily": "Inter",
+                          "fontSize": 14,
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "text",
+                          "id": "oHauw",
+                          "name": "assistP1",
+                          "fill": "$text-primary",
+                          "textGrowth": "fixed-width",
+                          "width": 344,
+                          "content": "He claims Buddhist temples used to test people by rejecting them at first. Only if someone waited outside for days—hungry, uncomfortable, ignored—would they be accepted for training.",
+                          "lineHeight": 1.4,
+                          "fontFamily": "Inter",
+                          "fontSize": 14,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "U0mOFu",
+                          "name": "assistH2",
+                          "fill": "$text-primary",
+                          "content": "Why this matters in Fight Club",
+                          "fontFamily": "Inter",
+                          "fontSize": 14,
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "text",
+                          "id": "L839Ba",
+                          "name": "assistP2",
+                          "fill": "$text-primary",
+                          "textGrowth": "fixed-width",
+                          "width": 344,
+                          "content": "Tyler is using this idea to support his philosophy:",
+                          "lineHeight": 1.4,
+                          "fontFamily": "Inter",
+                          "fontSize": 14,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "RiavM",
+                          "name": "assistBullets",
+                          "fill": "$text-primary",
+                          "textGrowth": "fixed-width",
+                          "width": 344,
+                          "content": "Commitment must be proven through suffering\nOnly the truly devoted deserve entry\nEgo gets stripped away by humiliation and endurance",
+                          "lineHeight": 1.5,
+                          "fontFamily": "Inter",
+                          "fontSize": 14,
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "text",
+                          "id": "wk5pN",
+                          "name": "assistP3",
+                          "fill": "$text-primary",
+                          "textGrowth": "fixed-width",
+                          "width": 344,
+                          "content": "It turns Project Mayhem into something like a cult initiation: people must show total obedience before belonging.",
+                          "lineHeight": 1.4,
+                          "fontFamily": "Inter",
+                          "fontSize": 14,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "T2KFz",
+                          "name": "assistH3",
+                          "fill": "$text-primary",
+                          "content": "Tone / characterization",
+                          "fontFamily": "Inter",
+                          "fontSize": 14,
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "text",
+                          "id": "ulOY8",
+                          "name": "assistP4",
+                          "fill": "$text-primary",
+                          "textGrowth": "fixed-width",
+                          "width": 344,
+                          "content": "The \"bah-zillion years\" phrasing is sarcastic and exaggerated. It shows Tyler's charismatic, performative style — he mixes half-history, myth, and confidence to make extreme behavior sound meaningful and inevitable.",
+                          "lineHeight": 1.4,
+                          "fontFamily": "Inter",
+                          "fontSize": 14,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "Gi1DX",
+                      "name": "User msg 2",
+                      "width": "fill_container",
+                      "justifyContent": "end",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "PHOMZ",
+                          "name": "userMsg2",
+                          "fill": "$user-bubble",
+                          "cornerRadius": 8,
+                          "padding": 13,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "KjcFr",
+                              "name": "userMsg2Text",
+                              "fill": "$text-primary",
+                              "content": "Interesting a lot of current society",
+                              "fontFamily": "Inter",
+                              "fontSize": 14,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "TYtAf",
+                      "name": "Assistant msg 2",
+                      "fill": "$bg-surface",
+                      "cornerRadius": 8,
+                      "stroke": "$border",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "layout": "vertical",
+                      "gap": 6,
+                      "padding": 13,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "r3Iij",
+                          "name": "assist2P1",
+                          "fill": "$text-primary",
+                          "textGrowth": "fixed-width",
+                          "width": 344,
+                          "content": "Absolutely — you're picking up on one of the novel's biggest points.",
+                          "lineHeight": 1.4,
+                          "fontFamily": "Inter",
+                          "fontSize": 14,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "miKzI",
+                          "name": "assist2P2",
+                          "fill": "$text-primary",
+                          "textGrowth": "fixed-width",
+                          "width": 344,
+                          "content": "I think you're starting to say: a lot of current society still works like this—people are made to \"prove\" themselves through stress, rejection, and grind before they're accepted.",
+                          "lineHeight": 1.4,
+                          "fontFamily": "Inter",
+                          "fontSize": 14,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "BG7HE",
+                  "name": "AI input",
+                  "width": "fill_container",
+                  "fill": "$bg-muted",
+                  "stroke": "$border",
+                  "strokeWidth": {
+                    "top": 1
+                  },
+                  "strokeAlignment": "inner",
+                  "layout": "vertical",
+                  "gap": 8,
+                  "padding": [
+                    17,
+                    16,
+                    16,
+                    16
+                  ],
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "g2BYR3",
+                      "name": "aiInputRow",
+                      "width": "fill_container",
+                      "gap": 8,
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "S4mNeF",
+                          "name": "aiInputBox",
+                          "width": "fill_container",
+                          "height": 60,
+                          "fill": "$bg-input",
+                          "cornerRadius": 8,
+                          "layout": "vertical",
+                          "padding": [
+                            8,
+                            12
+                          ],
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "XUVur",
+                              "name": "aiInputPlaceholder",
+                              "fill": "$text-placeholder",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "Ask me anything about what you're reading...",
+                              "lineHeight": 1.4,
+                              "fontFamily": "Inter",
+                              "fontSize": 14,
+                              "fontWeight": "normal",
+                              "letterSpacing": -0.15
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "fqctX",
+                          "name": "Send",
+                          "width": 60,
+                          "height": 60,
+                          "fill": "$accent",
+                          "cornerRadius": 8,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "XjZgC",
+                              "name": "aiSendIcon",
+                              "width": 16,
+                              "height": 16,
+                              "icon": "send",
+                              "library": "lucide",
+                              "fill": "$white"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "dSwbT",
+                      "name": "aiHint",
+                      "fill": "$text-muted",
+                      "content": "Press Enter to send, Shift+Enter for new line",
+                      "fontFamily": "Inter",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
     }
   ],
   "variables": {
