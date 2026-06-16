@@ -881,6 +881,7 @@ export default function Reader() {
     const relayoutPdf = () => {
       const renderer = viewRef.current?.renderer as (HTMLElement & { relayout?: () => void }) | undefined;
       if (!renderer) return;
+      if (renderer.hasAttribute("resize-dragging")) return;
       if (typeof renderer.relayout === "function") {
         renderer.relayout();
         return;
