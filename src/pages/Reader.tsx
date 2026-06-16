@@ -460,6 +460,7 @@ export default function Reader() {
       if (cancelled) return;
 
       const view = document.createElement("foliate-view") as FoliateView;
+      view.style.display = "block";
       view.style.width = "100%";
       view.style.height = "100%";
       // Opt into the continuous-scroll PDF renderer before open(); view.js
@@ -874,6 +875,30 @@ export default function Reader() {
     return () => { cancelled = true; ro.disconnect(); };
   }, [bookReady, book?.format, readerSettings.readingMode, readerSettings.pageColumns]);
 
+  useEffect(() => {
+    if (!bookReady || book?.format !== "pdf" || !viewerRef.current) return;
+    let raf = 0;
+    const relayoutPdf = () => {
+      const renderer = viewRef.current?.renderer as (HTMLElement & { relayout?: () => void }) | undefined;
+      if (!renderer) return;
+      if (typeof renderer.relayout === "function") {
+        renderer.relayout();
+        return;
+      }
+      const value = zoomRef.current;
+      renderer.setAttribute("zoom", value === "fit" ? "fit-width" : String(value / 100));
+    };
+    const ro = new ResizeObserver(() => {
+      if (raf) cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(relayoutPdf);
+    });
+    ro.observe(viewerRef.current);
+    return () => {
+      if (raf) cancelAnimationFrame(raf);
+      ro.disconnect();
+    };
+  }, [bookReady, book?.format]);
+
   const togglePanel = (panel: "ai" | "bookmarks" | "vocab") => {
     setSidePanel((prev) => (prev === panel ? null : panel));
   };
@@ -932,57 +957,105 @@ export default function Reader() {
   const panelWidthRef = useRef(panelWidth);
   panelWidthRef.current = panelWidth;
 
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+  const handlePanelResizePointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
     e.preventDefault();
     isDragging.current = true;
+    const handle = e.currentTarget;
+    const pointerId = e.pointerId;
     const startX = e.clientX;
     const startWidth = panelWidthRef.current;
     let rafId = 0;
     let latestWidth = startWidth;
+    let finished = false;
 
     // Signal to foliate-js renderer to skip expensive re-renders during drag
     const renderer = (viewRef.current as unknown as HTMLElement)?.shadowRoot
-      ?.querySelector("foliate-paginator, foliate-fxl");
+      ?.querySelector("foliate-paginator, foliate-fxl, foliate-pdf-scroll");
     renderer?.setAttribute("resize-dragging", "");
 
-    const handleMouseMove = (e: MouseEvent) => {
-      if (!isDragging.current) return;
-      const delta = startX - e.clientX;
-      latestWidth = Math.min(
+    const widthFromClientX = (clientX: number) => {
+      const delta = startX - clientX;
+      return Math.min(
         PANEL_MAX_WIDTH,
         Math.max(PANEL_MIN_WIDTH, startWidth + delta)
       );
-      if (!rafId) {
-        rafId = requestAnimationFrame(() => {
-          if (panelRef.current) {
-            panelRef.current.style.width = `${latestWidth}px`;
-          }
-          rafId = 0;
-        });
-      }
     };
 
-    const handleMouseUp = (e: MouseEvent) => {
-      isDragging.current = false;
-      if (rafId) cancelAnimationFrame(rafId);
-      document.removeEventListener("mousemove", handleMouseMove);
-      document.removeEventListener("mouseup", handleMouseUp);
+    const schedulePanelWidth = (width: number) => {
+      latestWidth = width;
+      if (rafId) return;
+      rafId = requestAnimationFrame(() => {
+        if (panelRef.current) {
+          panelRef.current.style.width = `${latestWidth}px`;
+        }
+        rafId = 0;
+      });
+    };
+
+    const cleanup = () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+      window.removeEventListener("pointercancel", handlePointerCancel);
+      window.removeEventListener("blur", handleWindowBlur);
+      handle.removeEventListener("lostpointercapture", handleLostPointerCapture);
+      try {
+        if (handle.hasPointerCapture(pointerId)) {
+          handle.releasePointerCapture(pointerId);
+        }
+      } catch { /* pointer capture can already be gone */ }
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
-      const delta = startX - e.clientX;
-      const finalWidth = Math.min(
-        PANEL_MAX_WIDTH,
-        Math.max(PANEL_MIN_WIDTH, startWidth + delta)
-      );
       // Remove drag signal — triggers one final render via attributeChangedCallback
       renderer?.removeAttribute("resize-dragging");
-      setPanelWidth(finalWidth);
     };
+
+    const finishDrag = (clientX?: number) => {
+      if (finished) return;
+      finished = true;
+      isDragging.current = false;
+      if (typeof clientX === "number") {
+        latestWidth = widthFromClientX(clientX);
+      }
+      if (rafId) cancelAnimationFrame(rafId);
+      if (panelRef.current) {
+        panelRef.current.style.width = `${latestWidth}px`;
+      }
+      cleanup();
+      setPanelWidth(latestWidth);
+    };
+
+    function handlePointerMove(e: PointerEvent) {
+      if (!isDragging.current) return;
+      schedulePanelWidth(widthFromClientX(e.clientX));
+    }
+
+    function handlePointerUp(e: PointerEvent) {
+      finishDrag(e.clientX);
+    }
+
+    function handlePointerCancel() {
+      finishDrag();
+    }
+
+    function handleWindowBlur() {
+      finishDrag();
+    }
+
+    function handleLostPointerCapture() {
+      finishDrag();
+    }
 
     document.body.style.cursor = "col-resize";
     document.body.style.userSelect = "none";
-    document.addEventListener("mousemove", handleMouseMove);
-    document.addEventListener("mouseup", handleMouseUp);
+    try {
+      handle.setPointerCapture(pointerId);
+    } catch { /* pointer capture is best-effort */ }
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+    window.addEventListener("pointercancel", handlePointerCancel);
+    window.addEventListener("blur", handleWindowBlur);
+    handle.addEventListener("lostpointercapture", handleLostPointerCapture);
   }, []);
 
   const navigateToChapter = useCallback((href: string) => {
@@ -1345,17 +1418,9 @@ export default function Reader() {
 
         {sidePanel && (
           <div
-            onMouseDown={handleMouseDown}
-            className="w-0 relative shrink-0 cursor-col-resize z-10"
-          >
-            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-5 h-7 rounded-md bg-bg-surface border border-border shadow-sm flex items-center justify-center">
-              <svg width="6" height="10" viewBox="0 0 6 10" fill="currentColor" className="text-text-muted">
-                <circle cx="1" cy="1" r="1" /><circle cx="5" cy="1" r="1" />
-                <circle cx="1" cy="5" r="1" /><circle cx="5" cy="5" r="1" />
-                <circle cx="1" cy="9" r="1" /><circle cx="5" cy="9" r="1" />
-              </svg>
-            </div>
-          </div>
+            onPointerDown={handlePanelResizePointerDown}
+            className="w-1 h-full shrink-0 cursor-col-resize touch-none hover:bg-accent/30 transition-colors z-10"
+          />
         )}
         <div ref={panelRef} className={sidePanel ? "shrink-0 h-full" : "hidden"} style={{ width: panelWidth }}>
           <div className={sidePanel === "ai" ? "h-full" : "hidden"}>
