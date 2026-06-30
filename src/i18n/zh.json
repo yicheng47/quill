@@ -234,6 +234,7 @@
   "settings.tools.translateTo": "翻译为",
   "settings.tools.translateToHint": "段落翻译的目标语言",
   "settings.tools.sameAsLookup": "跟随查词",
+  "settings.tools.sameAsSelection": "跟随所选内容",
   "settings.tools.preview": "预览",
 
   "settings.librarySync.title": "iCloud 同步",

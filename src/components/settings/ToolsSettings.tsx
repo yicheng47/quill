@@ -100,7 +100,7 @@ export default function ToolsSettings({ settings, loading, save, showSavedToast 
 
   useEffect(() => {
     if (loading) return;
-    setLookupLanguage(settings.lookup_language || "en");
+    setLookupLanguage(settings.lookup_language || "selection");
     setLookupTranslationLanguage(settings.lookup_translation_language || settings.language || "en");
     setShowTranslation(settings.show_translation === "true");
     setExplainLanguage(settings.explain_language || "lookup");
@@ -111,6 +111,10 @@ export default function ToolsSettings({ settings, loading, save, showSavedToast 
 
   const shouldShowTranslation =
     showTranslation && lookupTranslationLanguage !== "" && lookupTranslationLanguage !== lookupLanguage;
+  const lookupLanguageOptions = [
+    { value: "selection", label: t("settings.tools.sameAsSelection") },
+    ...LANGUAGE_OPTIONS,
+  ];
   const explainLanguageOptions = [
     { value: "lookup", label: t("settings.tools.sameAsLookup") },
     ...LANGUAGE_OPTIONS,
@@ -151,14 +155,14 @@ export default function ToolsSettings({ settings, loading, save, showSavedToast 
                       subtitle={t("settings.tools.lookupLanguageHint")}
                     >
                       <Select
-                        className="w-[130px] shrink-0"
+                        className="w-[175px] shrink-0"
                         value={lookupLanguage}
                         onChange={(lang) => {
                           setLookupLanguage(lang);
                           save("lookup_language", lang);
                           showSavedToast();
                         }}
-                        options={LANGUAGE_OPTIONS}
+                        options={lookupLanguageOptions}
                       />
                     </SettingsRow>
                     <SettingsRow

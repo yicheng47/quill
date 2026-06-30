@@ -19,6 +19,10 @@ pub struct AiStreamChunk {
 
 const LOOKUP_TRANSLATION_MARKER: &str = "[[QUILL_TRANSLATION]]";
 
+/// Sentinel `lookup_language` value: respond in whatever language the
+/// selection is in, rather than a pinned target language.
+const LOOKUP_LANGUAGE_SELECTION: &str = "selection";
+
 fn language_name(code: &str) -> String {
     match code {
         "en" => "English",
@@ -31,6 +35,17 @@ fn language_name(code: &str) -> String {
         _ => code,
     }
     .to_string()
+}
+
+/// The "respond in X" clause for the main definition/context output. For the
+/// `selection` sentinel this instructs the model to mirror the selection's
+/// language; otherwise it resolves to a concrete language name.
+fn main_language_clause(language: &str) -> String {
+    if language == LOOKUP_LANGUAGE_SELECTION {
+        "the same language as the selected word/phrase".to_string()
+    } else {
+        language_name(language)
+    }
 }
 
 fn lookup_system_prompt(
@@ -51,23 +66,16 @@ fn lookup_system_prompt(
     } else {
         String::new()
     };
-    let definition_language_prefix = if language != "en" {
-        if should_show_translation {
-            format!("After that first line, respond entirely in {}.\n\n", language_name(language))
-        } else {
-            format!("Respond entirely in {}.\n\n", language_name(language))
-        }
+    let clause = main_language_clause(language);
+    let definition_language_prefix = if should_show_translation {
+        format!("After that first line, respond entirely in {}.\n\n", clause)
     } else {
-        String::new()
+        format!("Respond entirely in {}.\n\n", clause)
     };
-    let context_language_prefix = if language != "en" {
-        format!("Respond entirely in {}.\n\n", language_name(language))
-    } else {
-        String::new()
-    };
+    let context_language_prefix = format!("Respond entirely in {}.\n\n", clause);
 
     let def_prefix = format!("{translation_prefix}{definition_language_prefix}");
-    let ctx_prefix = if language != "en" { &context_language_prefix } else { "" };
+    let ctx_prefix = &context_language_prefix;
 
     match kind {
         "definition" => format!("{}You are a reading assistant embedded in an ebook reader. The user selected a word or phrase and wants a dictionary-style definition.\n\nGive: pronunciation in IPA (if English), part of speech, and a concise definition in 1–2 sentences.\n\nIf the selection is a proper noun (person, place, historical event), give a brief factual identification instead.\n\nBe concise. No headers or labels.", def_prefix),
@@ -101,8 +109,10 @@ pub async fn ai_lookup(
             .ok()
         };
         let sys_language = get("language").unwrap_or_else(|| "en".to_string());
-        // lookup_language overrides system language for lookup prompts
-        let lookup_language = get("lookup_language").unwrap_or(sys_language.clone());
+        // lookup_language drives the main definition/context language; unset
+        // falls back to the selection's own language.
+        let lookup_language =
+            get("lookup_language").unwrap_or_else(|| LOOKUP_LANGUAGE_SELECTION.to_string());
         let lookup_translation_language = get("lookup_translation_language")
             .map(|lang| lang.trim().to_string())
             .filter(|lang| !lang.is_empty())
@@ -215,15 +225,12 @@ pub async fn ai_lookup(
 /// word-level concept and makes no sense for a whole passage. The only
 /// language handling is the response-language directive.
 fn explain_system_prompt(language: &str) -> String {
-    let language_prefix = if language != "en" {
-        let lang_name = match language {
-            "zh" => "Chinese (Simplified)",
-            other => other,
-        };
-        format!("Respond entirely in {}.\n\n", lang_name)
+    let target = if language == LOOKUP_LANGUAGE_SELECTION {
+        "the same language as the selected passage".to_string()
     } else {
-        String::new()
+        language_name(language)
     };
+    let language_prefix = format!("Respond entirely in {}.\n\n", target);
 
     format!(
         "{}You are a reading assistant embedded in an ebook reader. The user selected a sentence or passage and wants to understand it in context.\n\nIn 2–3 sentences, explain what it means and why it matters here — clarify any difficult phrasing, allusion, or tone. Be direct and concise. Do not restate the passage, add headers or labels, or pad with preamble. Plain prose only.",
@@ -254,8 +261,8 @@ pub async fn ai_explain(
             )
             .ok()
         };
-        let sys_language = get("language").unwrap_or_else(|| "en".to_string());
-        let lookup_language = get("lookup_language").unwrap_or_else(|| sys_language.clone());
+        let lookup_language =
+            get("lookup_language").unwrap_or_else(|| LOOKUP_LANGUAGE_SELECTION.to_string());
         let explain_language = get("explain_language")
             .map(|lang| lang.trim().to_string())
             .filter(|lang| !lang.is_empty());
@@ -559,9 +566,9 @@ mod tests {
     }
 
     #[test]
-    fn explain_prompt_english_has_no_language_directive() {
+    fn explain_prompt_english_emits_english_directive() {
         let p = explain_system_prompt("en");
-        assert!(!p.contains("Respond entirely in"));
+        assert!(p.contains("Respond entirely in English."));
     }
 
     #[test]
@@ -570,7 +577,13 @@ mod tests {
         assert!(zh.starts_with("Respond entirely in Chinese (Simplified)."));
 
         let fr = explain_system_prompt("fr");
-        assert!(fr.starts_with("Respond entirely in fr."));
+        assert!(fr.starts_with("Respond entirely in French."));
+    }
+
+    #[test]
+    fn explain_selection_uses_source_language() {
+        let p = explain_system_prompt("selection");
+        assert!(p.contains("the same language as the selected passage"));
     }
 
     #[test]
@@ -617,5 +630,27 @@ mod tests {
     fn lookup_prompt_uses_lookup_language_names() {
         let zh = lookup_system_prompt("definition", "zh", "en", true);
         assert!(zh.contains("respond entirely in Chinese (Simplified)."));
+    }
+
+    #[test]
+    fn lookup_english_emits_explicit_english_directive() {
+        let p = lookup_system_prompt("definition", "en", "", false);
+        assert!(p.contains("Respond entirely in English."));
+    }
+
+    #[test]
+    fn lookup_selection_uses_source_language() {
+        let p = lookup_system_prompt("definition", "selection", "", false);
+        assert!(p.contains("the same language as the selected word/phrase"));
+        assert!(!p.contains("Respond entirely in selection."));
+    }
+
+    #[test]
+    fn lookup_selection_allows_gloss() {
+        let p = lookup_system_prompt("definition", "selection", "en", true);
+        assert!(p.contains(LOOKUP_TRANSLATION_MARKER));
+        assert!(p.contains(
+            "After that first line, respond entirely in the same language as the selected word/phrase."
+        ));
     }
 }

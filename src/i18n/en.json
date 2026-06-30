@@ -234,6 +234,7 @@
   "settings.tools.translateTo": "Translate to",
   "settings.tools.translateToHint": "Target language for passage translation",
   "settings.tools.sameAsLookup": "Same as Look Up",
+  "settings.tools.sameAsSelection": "Same as selection",
   "settings.tools.preview": "Preview",
 
   "settings.librarySync.title": "iCloud Sync",
