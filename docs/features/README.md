@@ -7,7 +7,7 @@ Specs for features that are in progress or planned. Shipped, dropped, or superse
 - [14 — Notes (AI-Assisted)](14-notes.md)
 - [25 — Collection Folders](25-collection-folders.md)
 - [27 — Reading Stats](27-reading-stats.md)
-- [32 — Library Backup](32-library-backup.md)
+- [32 — External Device Library Sync](32-library-backup.md)
 - [257 — Persist Explain results + Explanations tools page](257-persist-explanations.md)
 - [260 — TOC as Collapsible Left Side Panel](260-toc-side-panel.md)
 - [261 - Disable Sync Copy-to-Local Progress](261-disable-sync-copy-progress.md)
