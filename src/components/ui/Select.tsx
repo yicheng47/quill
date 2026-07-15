@@ -5,6 +5,7 @@ import { ChevronDown, Check } from "lucide-react";
 interface SelectOption {
   value: string;
   label: string;
+  detail?: string;
 }
 
 interface SelectProps {
@@ -87,8 +88,13 @@ export default function Select({ label, value, onChange, options, className = ""
         onClick={() => setOpen((v) => !v)}
         className="w-full h-9 bg-bg-input rounded-lg px-3 text-[13px] font-medium text-text-primary flex items-center justify-between cursor-pointer border border-transparent hover:border-border transition-colors"
       >
-        <span>{selected?.label ?? placeholder}</span>
-        <ChevronDown size={16} className={`text-text-muted transition-transform ${open ? "rotate-180" : ""}`} />
+        <span className="flex items-center gap-1.5 min-w-0">
+          <span className="truncate">{selected?.label ?? placeholder}</span>
+          {selected?.detail != null && (
+            <span className="text-[12px] text-text-muted shrink-0">{selected.detail}</span>
+          )}
+        </span>
+        <ChevronDown size={16} className={`text-text-muted shrink-0 transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
 
       {open && menuStyle &&
@@ -119,8 +125,15 @@ export default function Select({ label, value, onChange, options, className = ""
                       : "text-text-primary hover:bg-bg-input"
                   }`}
                 >
-                  <span>{option.label}</span>
-                  {isActive && <Check size={16} className="text-accent-text" />}
+                  <span className="truncate">{option.label}</span>
+                  <span className="flex items-center gap-2 shrink-0">
+                    {option.detail != null && (
+                      <span className={`text-[12px] ${isActive ? "text-accent-text" : "text-text-muted"}`}>
+                        {option.detail}
+                      </span>
+                    )}
+                    {isActive && <Check size={16} className="text-accent-text" />}
+                  </span>
                 </button>
               );
             })}

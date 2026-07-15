@@ -5,6 +5,7 @@ import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { X, Loader2, WandSparkles, Check, Copy, Settings } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import Markdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { LOOKUP_PROSE } from "./lookup-prose";
 
 interface ExplainPopoverProps {
@@ -216,7 +217,7 @@ export default function ExplainPopover({
           </div>
         ) : (
           <div className={`${LOOKUP_PROSE} text-[13px] text-text-primary pt-2.5`}>
-            <Markdown>{content}</Markdown>
+            <Markdown remarkPlugins={[remarkGfm]}>{content}</Markdown>
             {streaming && (
               <Loader2 size={12} className="inline-block ml-0.5 animate-spin text-text-muted" />
             )}

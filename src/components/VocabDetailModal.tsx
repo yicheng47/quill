@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ArrowRight, BookOpen, Trash2, X } from "lucide-react";
 import Markdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import type { DictionaryWord } from "../hooks/useDictionary";
 import { openReaderWindow } from "../utils/openReaderWindow";
 import { LOOKUP_PROSE } from "./lookup-prose";
@@ -194,7 +195,7 @@ export default function VocabDetailModal({
               {t("vocab.detail.definition")}
             </h3>
             <div className={`${LOOKUP_PROSE} text-[14px] text-text-primary`}>
-              <Markdown>{parsed.definition}</Markdown>
+              <Markdown remarkPlugins={[remarkGfm]}>{parsed.definition}</Markdown>
             </div>
             {contextExplanation && (
               <div className="mt-1 p-3 rounded-lg bg-bg-muted border border-border/50 flex flex-col gap-1.5">
@@ -202,7 +203,7 @@ export default function VocabDetailModal({
                   {t("vocab.detail.inContext")}
                 </span>
                 <div className={`${LOOKUP_PROSE} text-[13px] text-text-secondary`}>
-                  <Markdown>{contextExplanation}</Markdown>
+                  <Markdown remarkPlugins={[remarkGfm]}>{contextExplanation}</Markdown>
                 </div>
               </div>
             )}
