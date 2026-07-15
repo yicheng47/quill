@@ -151,3 +151,84 @@ body {
 [data-tauri-drag-region] {
   cursor: default;
 }
+
+/* Styling for react-markdown output (AI responses) */
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3 {
+  font-weight: 600;
+  margin: 12px 0 4px;
+}
+.markdown-body h1 {
+  font-size: 16px;
+}
+.markdown-body h2 {
+  font-size: 15px;
+}
+.markdown-body h3 {
+  font-size: 14px;
+  margin-top: 8px;
+}
+.markdown-body p {
+  margin: 6px 0;
+}
+.markdown-body ul,
+.markdown-body ol {
+  margin: 4px 0;
+}
+.markdown-body li {
+  margin: 2px 0;
+}
+.markdown-body blockquote {
+  border-left: 2px solid var(--color-border);
+  padding-left: 12px;
+  font-style: italic;
+  color: var(--color-text-muted);
+}
+.markdown-body code {
+  background: var(--color-bg-muted);
+  padding: 2px 4px;
+  border-radius: 4px;
+  font-size: 13px;
+}
+.markdown-body pre {
+  background: var(--color-bg-muted);
+  padding: 12px;
+  border-radius: var(--radius-lg);
+  overflow-x: auto;
+}
+.markdown-body strong {
+  font-weight: 600;
+}
+.markdown-body em {
+  font-style: italic;
+}
+.markdown-body del {
+  text-decoration: line-through;
+}
+.markdown-body hr {
+  border-color: var(--color-border);
+}
+.markdown-body a {
+  color: var(--color-accent);
+  text-decoration: underline;
+}
+.markdown-body table {
+  display: block;
+  margin: 8px 0;
+  overflow-x: auto;
+  border-collapse: collapse;
+}
+.markdown-body th,
+.markdown-body td {
+  border: 1px solid var(--color-border);
+  padding: 4px 8px;
+  font-size: 13px;
+}
+.markdown-body th {
+  text-align: left;
+  font-weight: 600;
+}
+.markdown-body td {
+  vertical-align: top;
+}

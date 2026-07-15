@@ -5,6 +5,7 @@ import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { X, Loader2, Sparkles, BookmarkPlus, Check, Copy, Settings } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import Markdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { LOOKUP_PROSE } from "./lookup-prose";
 
 const TRANSLATION_MARKER = "[[QUILL_TRANSLATION]]";
@@ -306,7 +307,7 @@ export default function LookupPopover({
               <p className="text-[13px] text-accent-text mb-1.5">{translationLine}</p>
             )}
             <div className={`${LOOKUP_PROSE} text-[13px] text-text-primary`}>
-              <Markdown>{definitionText}</Markdown>
+              <Markdown remarkPlugins={[remarkGfm]}>{definitionText}</Markdown>
               {definition.streaming && (
                 <Loader2 size={12} className="inline-block ml-0.5 animate-spin text-text-muted" />
               )}
@@ -327,7 +328,7 @@ export default function LookupPopover({
               </div>
             ) : (
               <div className={`${LOOKUP_PROSE} text-[13px] text-text-secondary`}>
-                <Markdown>{context.content}</Markdown>
+                <Markdown remarkPlugins={[remarkGfm]}>{context.content}</Markdown>
                 {context.streaming && (
                   <Loader2 size={12} className="inline-block ml-0.5 animate-spin text-text-muted" />
                 )}
