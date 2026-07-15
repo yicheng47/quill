@@ -49,6 +49,8 @@
   "reader.closeWindow": "关闭",
   "reader.downloadingFromICloud": "正在从 iCloud 下载...",
   "reader.downloadTimeout": "下载时间过长，请检查网络连接。",
+  "reader.openFailed": "无法打开这本书",
+  "reader.openFailedICloud": "无法从 iCloud 读取书籍文件，请检查 iCloud 云盘同步状态后重试。",
   "reader.zoom.fit": "适应",
   "reader.zoom.fitTooltip": "适应宽度",
 
