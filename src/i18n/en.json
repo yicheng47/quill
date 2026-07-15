@@ -49,6 +49,8 @@
   "reader.closeWindow": "Close",
   "reader.downloadingFromICloud": "Downloading from iCloud...",
   "reader.downloadTimeout": "Download is taking too long. Please check your internet connection.",
+  "reader.openFailed": "Couldn't open this book",
+  "reader.openFailedICloud": "The book file can't be read from iCloud. Check that iCloud Drive is syncing, then try again.",
   "reader.zoom.fit": "Fit",
   "reader.zoom.fitTooltip": "Fit to width",
 

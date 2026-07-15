@@ -201,6 +201,11 @@ fn default_true() -> bool {
 /// Resolve relative paths in a Book to absolute using data_dir,
 /// and check whether the book file is locally available.
 fn resolve_book_paths(book: &mut Book, db: &Db) {
+    resolve_paths(book, db);
+    book.available = icloud::is_file_downloaded(std::path::Path::new(&book.file_path));
+}
+
+fn resolve_paths(book: &mut Book, db: &Db) {
     if !std::path::Path::new(&book.file_path).is_absolute() {
         book.file_path = db
             .resolve_path(&book.file_path)
@@ -216,7 +221,6 @@ fn resolve_book_paths(book: &mut Book, db: &Db) {
             );
         }
     }
-    book.available = icloud::is_file_downloaded(std::path::Path::new(&book.file_path));
 }
 
 pub(crate) fn do_import_epub(
@@ -702,7 +706,22 @@ pub fn list_books(
         page_size,
     )?;
     for book in &mut page.books {
-        resolve_book_paths(book, &db);
+        resolve_paths(book, &db);
+    }
+    // The availability check probes readability with a bounded wait
+    // (unhealthy iCloud files exist but hang on read), so run the probes
+    // concurrently — a page of unreadable books costs one deadline, not
+    // one per book.
+    let probes: Vec<_> = page
+        .books
+        .iter()
+        .map(|book| {
+            let path = std::path::PathBuf::from(&book.file_path);
+            std::thread::spawn(move || icloud::is_file_downloaded(&path))
+        })
+        .collect();
+    for (book, probe) in page.books.iter_mut().zip(probes) {
+        book.available = probe.join().unwrap_or(false);
     }
     Ok(page)
 }

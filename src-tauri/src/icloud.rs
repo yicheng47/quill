@@ -7,7 +7,11 @@
 //!   `trigger_download_file`) for book and cover binaries that live in
 //!   iCloud Documents and may be evicted.
 
+use std::collections::HashSet;
+use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::{mpsc, Mutex};
+use std::time::Duration;
 
 #[cfg(target_os = "macos")]
 use objc2_foundation::{NSFileManager, NSString};
@@ -53,16 +57,71 @@ pub fn is_icloud_available() -> bool {
     false
 }
 
-/// Check whether a file is locally available (not an iCloud placeholder).
-///
-/// iCloud evicts files by replacing `foo.epub` with `.foo.epub.icloud`.
-/// Returns `true` if the real file exists on disk.
-pub fn is_file_downloaded(path: &Path) -> bool {
-    if path.exists() {
-        return true;
+const READ_PROBE_TIMEOUT: Duration = Duration::from_millis(300);
+
+/// Paths with a probe worker still blocked inside `open`/`read`.
+/// Checked before spawning: while the previous worker is stuck the path
+/// is reported unavailable immediately, so repeated availability checks
+/// (the reader polls every 2s; every library refresh probes each book)
+/// hold at most one blocked OS thread per path instead of accumulating
+/// one per call. The worker clears its entry when the read returns —
+/// on any outcome — so probing resumes once the kernel gives up. Same
+/// bound as `sync::replay`'s IN_FLIGHT; the stalled-backoff half of
+/// that pattern isn't needed for a 1-byte probe, which is cheap to
+/// retry once it actually returns.
+static PROBES_IN_FLIGHT: Mutex<Option<HashSet<PathBuf>>> = Mutex::new(None);
+
+/// Atomically mark `path` in-flight. Returns `false` if a probe worker
+/// is already blocked on it.
+fn try_mark_probe(path: &Path) -> bool {
+    let mut guard = PROBES_IN_FLIGHT.lock().unwrap_or_else(|e| e.into_inner());
+    guard
+        .get_or_insert_with(HashSet::new)
+        .insert(path.to_path_buf())
+}
+
+fn clear_probe(path: &Path) {
+    let mut guard = PROBES_IN_FLIGHT.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(set) = guard.as_mut() {
+        set.remove(path);
     }
-    // If the real file doesn't exist, it might be an iCloud placeholder — either way, not available.
-    false
+}
+
+#[cfg(test)]
+fn probe_in_flight(path: &Path) -> bool {
+    let guard = PROBES_IN_FLIGHT.lock().unwrap_or_else(|e| e.into_inner());
+    guard.as_ref().is_some_and(|set| set.contains(path))
+}
+
+/// Check whether a file is locally available (not an iCloud placeholder)
+/// and actually readable.
+///
+/// iCloud evicts files by replacing `foo.epub` with `.foo.epub.icloud`,
+/// so a missing real file means "not available". But an unhealthy iCloud
+/// container can also leave the directory entry in place while reads
+/// block for a minute before failing ("Operation timed out"), so mere
+/// existence isn't enough: probe the first byte on a worker thread with
+/// a hard deadline. A probe that outlives the deadline is abandoned and
+/// the file treated as not available; the path stays marked in-flight
+/// until that worker's read returns, and further checks short-circuit
+/// to "not available" instead of stacking more blocked threads.
+pub fn is_file_downloaded(path: &Path) -> bool {
+    if !path.exists() {
+        return false;
+    }
+    if !try_mark_probe(path) {
+        return false;
+    }
+    let (tx, rx) = mpsc::channel();
+    let owned = path.to_path_buf();
+    std::thread::spawn(move || {
+        let readable = std::fs::File::open(&owned)
+            .and_then(|mut f| f.read(&mut [0u8; 1]))
+            .is_ok();
+        clear_probe(&owned);
+        let _ = tx.send(readable);
+    });
+    rx.recv_timeout(READ_PROBE_TIMEOUT).unwrap_or(false)
 }
 
 /// Returns the iCloud placeholder path for a given file.
@@ -107,6 +166,7 @@ mod tests {
         let file = dir.path().join("book.epub");
         fs::write(&file, "epub data").unwrap();
         assert!(is_file_downloaded(&file));
+        assert!(!probe_in_flight(&file));
     }
 
     #[test]
@@ -124,6 +184,51 @@ mod tests {
         fs::write(&placeholder, "placeholder").unwrap();
         let file = dir.path().join("book.epub");
         assert!(!is_file_downloaded(&file));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_is_file_downloaded_unreadable_file() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = TempDir::new().unwrap();
+        let file = dir.path().join("book.epub");
+        fs::write(&file, "epub data").unwrap();
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o000)).unwrap();
+        assert!(!is_file_downloaded(&file));
+        // Worker failed fast and cleared its marker — probing can retry.
+        assert!(!probe_in_flight(&file));
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o644)).unwrap();
+    }
+
+    /// A FIFO with no writer blocks `open()` forever — stands in for an
+    /// iCloud read that hangs when sync is unhealthy. The probe must give
+    /// up at its deadline instead of hanging the caller, and repeated
+    /// checks of the same hanging path must short-circuit on the
+    /// in-flight marker instead of stacking another blocked worker.
+    #[cfg(unix)]
+    #[test]
+    fn test_is_file_downloaded_hanging_read_times_out_and_probes_once() {
+        let dir = TempDir::new().unwrap();
+        let fifo = dir.path().join("book.epub");
+        let status = std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .unwrap();
+        assert!(status.success());
+
+        let start = std::time::Instant::now();
+        assert!(!is_file_downloaded(&fifo));
+        assert!(start.elapsed() < Duration::from_secs(5));
+        // Worker is still blocked on open(); marker must persist.
+        assert!(probe_in_flight(&fifo));
+
+        // Simulates the reader's 2s availability poll: repeat checks must
+        // return immediately (no new worker waiting out a fresh deadline).
+        let start = std::time::Instant::now();
+        assert!(!is_file_downloaded(&fifo));
+        assert!(!is_file_downloaded(&fifo));
+        assert!(start.elapsed() < READ_PROBE_TIMEOUT);
+        assert!(probe_in_flight(&fifo));
     }
 
     // --- icloud_data_dir ---

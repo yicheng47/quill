@@ -4,8 +4,10 @@ import { useTranslation } from "react-i18next";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import {
+  AlertCircle,
   ArrowLeft,
   BookOpen,
+  CloudOff,
   List,
   Bookmark,
   Bot,
@@ -247,6 +249,7 @@ export default function Reader() {
   const backButtonTimerRef = useRef<number | null>(null);
   const [icloudDownloading, setIcloudDownloading] = useState(false);
   const [icloudTimeout, setIcloudTimeout] = useState(false);
+  const [initError, setInitError] = useState<"icloud" | "generic" | null>(null);
   const [contextMenu, setContextMenu] = useState<{
     x: number;
     y: number;
@@ -439,6 +442,7 @@ export default function Reader() {
     const container = viewerRef.current;
     container.innerHTML = "";
     setBookReady(false);
+    setInitError(null);
 
     let cancelled = false;
 
@@ -767,9 +771,14 @@ export default function Reader() {
       setBookReady(true);
     };
 
-    initFoliate().catch((err) => {
+    initFoliate().catch(async (err) => {
       console.error("Failed to initialize foliate-js:", err);
-      setBookReady(true); // Remove loading overlay even on error
+      // Distinguish "file can't be read" (broken iCloud sync/download)
+      // from a parse/render failure — the probe also nudges iCloud to
+      // re-download when the file is unreadable.
+      const available = await checkBookAvailable(book.id).catch(() => true);
+      if (cancelled) return;
+      setInitError(available ? "generic" : "icloud");
     });
 
     return () => {
@@ -1351,7 +1360,22 @@ export default function Reader() {
                 />
               ));
             })()}
-            {!bookReady && (
+            {initError && (
+              <div className="absolute inset-0 z-20 bg-bg-surface flex items-center justify-center">
+                <div className="flex flex-col items-center gap-3 max-w-[420px] px-8 text-center">
+                  {initError === "icloud" ? (
+                    <CloudOff size={24} className="text-text-muted" />
+                  ) : (
+                    <AlertCircle size={24} className="text-text-muted" />
+                  )}
+                  <span className="text-[14px] text-text-primary">{t("reader.openFailed")}</span>
+                  {initError === "icloud" && (
+                    <span className="text-[13px] text-text-muted">{t("reader.openFailedICloud")}</span>
+                  )}
+                </div>
+              </div>
+            )}
+            {!bookReady && !initError && (
               <div className="absolute inset-0 z-20 bg-bg-surface flex items-center justify-center">
                 <div className="flex flex-col items-center gap-3">
                   <Loader2 size={24} className="animate-spin text-text-muted" />
