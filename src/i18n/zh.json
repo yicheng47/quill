@@ -81,8 +81,6 @@
   "chats.detailEmptySub": "发送消息继续对话。",
   "chats.deleteTitle": "删除对话？",
   "chats.deleteMsg": "\"{{title}}\" 及其所有消息将被永久删除，此操作无法撤销。",
-  "chats.newest": "最新",
-  "chats.oldest": "最早",
 
   "vocab.title": "词汇",
   "vocab.search": "搜索单词、释义或书籍...",
@@ -95,9 +93,6 @@
   "vocab.openInReader": "在阅读器中打开",
   "vocab.goToPage": "跳转至第 {{page}} 页",
   "vocab.goToLocation": "跳转至位置",
-  "vocab.newest": "最新",
-  "vocab.oldest": "最早",
-  "vocab.az": "A-Z",
   "vocab.wordCount_one": "{{count}} 个单词",
   "vocab.wordCount_other": "{{count}} 个单词",
   "vocab.detail.source": "来源",

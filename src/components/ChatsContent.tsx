@@ -1,24 +1,14 @@
 import { useState, useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  Search,
-  BookOpen,
-  Sparkles,
-  MessageSquare,
-  ArrowDownWideNarrow,
-  ArrowUpWideNarrow,
-} from "lucide-react";
+import { Search, BookOpen, Sparkles, MessageSquare } from "lucide-react";
 import { useAllChats, type ChatSummary } from "../hooks/useChats";
 import { timeAgo } from "../utils/timeAgo";
 import ChatDetailView from "./ChatDetailView";
 import Select from "./ui/Select";
 
-type SortMode = "newest" | "oldest";
-
 export default function ChatsContent() {
   const { t } = useTranslation();
   const { chats, remove } = useAllChats();
-  const [sort, setSort] = useState<SortMode>("newest");
   const [search, setSearch] = useState("");
   const [bookFilter, setBookFilter] = useState<string | null>(null);
   const [selectedChat, setSelectedChat] = useState<ChatSummary | null>(null);
@@ -35,25 +25,17 @@ export default function ChatsContent() {
     return result;
   }, [chats, search, bookFilter]);
 
-  const sorted = useMemo(() => {
-    const copy = [...filtered];
-    if (sort === "oldest") {
-      copy.sort((a, b) => a.updated_at - b.updated_at);
-    }
-    return copy;
-  }, [filtered, sort]);
-
   // Group chats by book
   const groupedByBook = useMemo(() => {
     const map = new Map<string, { bookId: string; title: string; chats: ChatSummary[] }>();
-    for (const chat of sorted) {
+    for (const chat of filtered) {
       if (!map.has(chat.book_id)) {
         map.set(chat.book_id, { bookId: chat.book_id, title: chat.book_title || "Unknown Book", chats: [] });
       }
       map.get(chat.book_id)!.chats.push(chat);
     }
     return Array.from(map.values());
-  }, [sorted]);
+  }, [filtered]);
 
   const bookOptions = useMemo(() => {
     const map = new Map<string, { value: string; label: string; count: number }>();
@@ -119,34 +101,12 @@ export default function ChatsContent() {
             />
           </div>
           {!isEmpty && (
-            <>
-              <Select
-                value={bookFilter ?? ""}
-                onChange={(v) => setBookFilter(v || null)}
-                options={bookOptions}
-                className="w-[190px] shrink-0"
-              />
-              <div className="ml-auto flex items-center gap-1 shrink-0">
-                <button
-                  onClick={() => setSort("newest")}
-                  className={`flex items-center gap-1 h-7 px-2.5 rounded-lg text-[11px] font-medium cursor-pointer transition-colors ${
-                    sort === "newest" ? "text-accent-text" : "text-text-muted hover:text-text-primary"
-                  }`}
-                >
-                  <ArrowDownWideNarrow size={12} />
-                  {t("chats.newest")}
-                </button>
-                <button
-                  onClick={() => setSort("oldest")}
-                  className={`flex items-center gap-1 h-7 px-2.5 rounded-lg text-[11px] font-medium cursor-pointer transition-colors ${
-                    sort === "oldest" ? "text-accent-text" : "text-text-muted hover:text-text-primary"
-                  }`}
-                >
-                  <ArrowUpWideNarrow size={12} />
-                  {t("chats.oldest")}
-                </button>
-              </div>
-            </>
+            <Select
+              value={bookFilter ?? ""}
+              onChange={(v) => setBookFilter(v || null)}
+              options={bookOptions}
+              className="w-[190px] shrink-0"
+            />
           )}
         </div>
       </div>

@@ -9,9 +9,6 @@ import {
   Trash2,
   LayoutGrid,
   List,
-  ArrowDownAZ,
-  ArrowDownWideNarrow,
-  ArrowUpWideNarrow,
 } from "lucide-react";
 import Button from "./ui/Button";
 import Select from "./ui/Select";
@@ -19,13 +16,11 @@ import { useAllDictionary, type DictionaryWord } from "../hooks/useDictionary";
 import { timeAgo } from "../utils/timeAgo";
 import VocabDetailModal from "./VocabDetailModal";
 
-type SortMode = "newest" | "oldest" | "az";
 type ViewMode = "list" | "card";
 
 export default function DictionaryContent() {
   const { t } = useTranslation();
   const { words, remove } = useAllDictionary();
-  const [sort, setSort] = useState<SortMode>("newest");
   const [view, setView] = useState<ViewMode>("list");
   const [search, setSearch] = useState("");
   const [bookFilter, setBookFilter] = useState<string | null>(null);
@@ -45,13 +40,9 @@ export default function DictionaryContent() {
 
   const sorted = useMemo(() => {
     const copy = [...filtered];
-    if (sort === "oldest") {
-      copy.sort((a, b) => a.created_at - b.created_at);
-    } else if (sort === "az") {
-      copy.sort((a, b) => a.word.localeCompare(b.word, undefined, { sensitivity: "base" }));
-    }
+    copy.sort((a, b) => a.word.localeCompare(b.word, undefined, { sensitivity: "base" }));
     return copy;
-  }, [filtered, sort]);
+  }, [filtered]);
 
   const groupedByBook = useMemo(() => {
     const map = new Map<string, { title: string; words: DictionaryWord[] }>();
@@ -128,43 +119,12 @@ export default function DictionaryContent() {
             />
           </div>
           {!isEmpty && (
-            <>
-              <Select
-                value={bookFilter ?? ""}
-                onChange={(v) => setBookFilter(v || null)}
-                options={bookOptions}
-                className="w-[190px] shrink-0"
-              />
-              <div className="ml-auto flex items-center gap-1 shrink-0">
-                <button
-                  onClick={() => setSort("newest")}
-                  className={`flex items-center gap-1 h-7 px-2.5 rounded-lg text-[11px] font-medium cursor-pointer transition-colors ${
-                    sort === "newest" ? "text-accent-text" : "text-text-muted hover:text-text-primary"
-                  }`}
-                >
-                  <ArrowDownWideNarrow size={12} />
-                  {t("vocab.newest")}
-                </button>
-                <button
-                  onClick={() => setSort("oldest")}
-                  className={`flex items-center gap-1 h-7 px-2.5 rounded-lg text-[11px] font-medium cursor-pointer transition-colors ${
-                    sort === "oldest" ? "text-accent-text" : "text-text-muted hover:text-text-primary"
-                  }`}
-                >
-                  <ArrowUpWideNarrow size={12} />
-                  {t("vocab.oldest")}
-                </button>
-                <button
-                  onClick={() => { setSort("az"); setView("list"); }}
-                  className={`flex items-center gap-1 h-7 px-2.5 rounded-lg text-[11px] font-medium cursor-pointer transition-colors ${
-                    sort === "az" ? "text-accent-text" : "text-text-muted hover:text-text-primary"
-                  }`}
-                >
-                  <ArrowDownAZ size={12} />
-                  {t("vocab.az")}
-                </button>
-              </div>
-            </>
+            <Select
+              value={bookFilter ?? ""}
+              onChange={(v) => setBookFilter(v || null)}
+              options={bookOptions}
+              className="w-[190px] shrink-0"
+            />
           )}
         </div>
       </div>
