@@ -9,8 +9,5 @@ Specs for features that are in progress or planned. Shipped, dropped, or superse
 - [27 — Reading Stats](27-reading-stats.md)
 - [32 — External Device Library Sync](32-library-backup.md)
 - [257 — Persist Explain results + Explanations tools page](257-persist-explanations.md)
-- [260 — TOC as Collapsible Left Side Panel](260-toc-side-panel.md)
-- [261 - Disable Sync Copy-to-Local Progress](261-disable-sync-copy-progress.md)
 - [276 - Reset All App Data](276-reset-all-data.md)
 - [284 - MCP Batch Library and Collection Tools](284-mcp-batch-library-collection-tools.md)
-- [285 - Group Chats and Words under Memos](285-group-chats-and-words-under-memos.md)
