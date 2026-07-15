@@ -262,7 +262,7 @@ export default function Sidebar({ activeFilter, onFilterChange, bookCounts, coll
             <span className={`text-[14px] font-medium tracking-[-0.15px] ${
               activeFilter === "vocab" ? "text-accent-text" : "text-text-secondary"
             }`}>
-              {t("sidebar.words")}
+              {t("sidebar.vocab")}
             </span>
           </button>
         </div>

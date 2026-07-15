@@ -14,6 +14,7 @@ import {
   ArrowUpWideNarrow,
 } from "lucide-react";
 import Button from "./ui/Button";
+import Select from "./ui/Select";
 import { useAllDictionary, type DictionaryWord } from "../hooks/useDictionary";
 import { timeAgo } from "../utils/timeAgo";
 import VocabDetailModal from "./VocabDetailModal";
@@ -73,7 +74,7 @@ export default function DictionaryContent() {
     return Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b));
   }, [sorted]);
 
-  const bookPills = useMemo(() => {
+  const bookOptions = useMemo(() => {
     const map = new Map<string, { title: string; count: number }>();
     for (const w of words) {
       if (!map.has(w.book_id)) {
@@ -81,7 +82,13 @@ export default function DictionaryContent() {
       }
       map.get(w.book_id)!.count++;
     }
-    return Array.from(map.entries()).map(([id, { title, count }]) => ({ id, title, count }));
+    const books = Array.from(map.entries())
+      .map(([id, { title, count }]) => ({ id, title, count }))
+      .sort((a, b) => b.count - a.count);
+    return [
+      { value: "", label: t("common.allBooks"), detail: String(words.length) },
+      ...books.map((b) => ({ value: b.id, label: b.title, detail: String(b.count) })),
+    ];
   }, [words, t]);
 
   const isEmpty = words.length === 0;
@@ -89,7 +96,7 @@ export default function DictionaryContent() {
   return (
     <div className="flex-1 flex flex-col min-w-0">
       {/* Header */}
-      <div className="px-page pb-2 relative select-none">
+      <div className={`px-page pb-4 relative select-none ${!isEmpty ? "border-b border-border" : ""}`}>
         <div data-tauri-drag-region className="absolute top-0 left-0 right-0 h-11" />
         <div className="pt-11 flex items-center justify-between mb-6">
           <h1 className="text-[24px] font-semibold text-text-primary tracking-[0.07px]">
@@ -105,91 +112,65 @@ export default function DictionaryContent() {
           </div>
         </div>
 
-        <div className="flex items-center gap-2 h-9 px-3 rounded-lg bg-bg-input max-w-[448px]">
-          <Search size={16} className="text-text-muted shrink-0" />
-          <input
-            type="search"
-            placeholder={t("vocab.search")}
-            defaultValue=""
-            onInput={(e) => setSearch((e.target as HTMLInputElement).value)}
-            autoComplete="off"
-            autoCorrect="off"
-            autoCapitalize="off"
-            spellCheck={false}
-            className="flex-1 text-[14px] text-text-primary bg-transparent outline-none placeholder:text-text-placeholder [&::-webkit-search-cancel-button]:hidden"
-          />
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 h-9 px-3 rounded-lg bg-bg-input flex-1 min-w-0 max-w-[448px]">
+            <Search size={16} className="text-text-muted shrink-0" />
+            <input
+              type="search"
+              placeholder={t("vocab.search")}
+              defaultValue=""
+              onInput={(e) => setSearch((e.target as HTMLInputElement).value)}
+              autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="off"
+              spellCheck={false}
+              className="flex-1 text-[14px] text-text-primary bg-transparent outline-none placeholder:text-text-placeholder [&::-webkit-search-cancel-button]:hidden"
+            />
+          </div>
+          {!isEmpty && (
+            <>
+              <Select
+                value={bookFilter ?? ""}
+                onChange={(v) => setBookFilter(v || null)}
+                options={bookOptions}
+                className="w-[190px] shrink-0"
+              />
+              <div className="ml-auto flex items-center gap-1 shrink-0">
+                <button
+                  onClick={() => setSort("newest")}
+                  className={`flex items-center gap-1 h-7 px-2.5 rounded-lg text-[11px] font-medium cursor-pointer transition-colors ${
+                    sort === "newest" ? "text-accent-text" : "text-text-muted hover:text-text-primary"
+                  }`}
+                >
+                  <ArrowDownWideNarrow size={12} />
+                  {t("vocab.newest")}
+                </button>
+                <button
+                  onClick={() => setSort("oldest")}
+                  className={`flex items-center gap-1 h-7 px-2.5 rounded-lg text-[11px] font-medium cursor-pointer transition-colors ${
+                    sort === "oldest" ? "text-accent-text" : "text-text-muted hover:text-text-primary"
+                  }`}
+                >
+                  <ArrowUpWideNarrow size={12} />
+                  {t("vocab.oldest")}
+                </button>
+                <button
+                  onClick={() => { setSort("az"); setView("list"); }}
+                  className={`flex items-center gap-1 h-7 px-2.5 rounded-lg text-[11px] font-medium cursor-pointer transition-colors ${
+                    sort === "az" ? "text-accent-text" : "text-text-muted hover:text-text-primary"
+                  }`}
+                >
+                  <ArrowDownAZ size={12} />
+                  {t("vocab.az")}
+                </button>
+              </div>
+            </>
+          )}
         </div>
       </div>
 
-      {/* Book filter pills + sort */}
-      {!isEmpty && (
-        <div className="flex items-center gap-2 px-page pt-2 pb-4 overflow-x-auto border-b border-border">
-          <button
-            onClick={() => setBookFilter(null)}
-            className={`flex items-center gap-1.5 h-8 px-[13px] rounded-full text-[12px] font-medium cursor-pointer shrink-0 transition-colors border ${
-              bookFilter === null
-                ? "bg-accent-bg border-accent/30 text-accent-text"
-                : "bg-bg-surface border-border text-text-secondary hover:bg-bg-muted"
-            }`}
-          >
-            <BookOpen size={12} className={bookFilter === null ? "text-accent-text" : ""} />
-            {t("common.allBooks")}
-            <span className={`text-[11px] ${bookFilter === null ? "text-accent-text" : "text-text-muted"}`}>
-              {words.length}
-            </span>
-          </button>
-          {bookPills.map((pill) => (
-            <button
-              key={pill.id}
-              onClick={() => setBookFilter(bookFilter === pill.id ? null : pill.id)}
-              className={`flex items-center gap-1.5 h-8 px-[13px] rounded-full text-[12px] font-medium cursor-pointer shrink-0 transition-colors border ${
-                bookFilter === pill.id
-                  ? "bg-accent-bg border-accent/30 text-accent-text"
-                  : "bg-bg-surface border-border text-text-secondary hover:bg-bg-muted"
-              }`}
-            >
-              <BookOpen size={12} className={bookFilter === pill.id ? "text-accent-text" : ""} />
-              <span className="truncate max-w-[120px]">{pill.title}</span>
-              <span className={`text-[11px] ${bookFilter === pill.id ? "text-accent-text" : "text-text-muted"}`}>
-                {pill.count}
-              </span>
-            </button>
-          ))}
-
-          <div className="ml-auto flex items-center gap-1 shrink-0">
-            <button
-              onClick={() => setSort("newest")}
-              className={`flex items-center gap-1 h-7 px-2.5 rounded-lg text-[11px] font-medium cursor-pointer transition-colors ${
-                sort === "newest" ? "text-accent-text" : "text-text-muted hover:text-text-primary"
-              }`}
-            >
-              <ArrowDownWideNarrow size={12} />
-              {t("vocab.newest")}
-            </button>
-            <button
-              onClick={() => setSort("oldest")}
-              className={`flex items-center gap-1 h-7 px-2.5 rounded-lg text-[11px] font-medium cursor-pointer transition-colors ${
-                sort === "oldest" ? "text-accent-text" : "text-text-muted hover:text-text-primary"
-              }`}
-            >
-              <ArrowUpWideNarrow size={12} />
-              {t("vocab.oldest")}
-            </button>
-            <button
-              onClick={() => { setSort("az"); setView("list"); }}
-              className={`flex items-center gap-1 h-7 px-2.5 rounded-lg text-[11px] font-medium cursor-pointer transition-colors ${
-                sort === "az" ? "text-accent-text" : "text-text-muted hover:text-text-primary"
-              }`}
-            >
-              <ArrowDownAZ size={12} />
-              {t("vocab.az")}
-            </button>
-          </div>
-        </div>
-      )}
-
       {/* Content */}
-      <div className="flex-1 overflow-auto p-page pb-20">
+      <div className="flex-1 overflow-auto scrollbar-none p-page pb-20">
         {isEmpty ? (
           <div className="flex flex-col items-center justify-center h-full">
             <div className="size-16 rounded-full bg-bg-input flex items-center justify-center mb-4">
