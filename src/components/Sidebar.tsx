@@ -236,7 +236,7 @@ export default function Sidebar({ activeFilter, onFilterChange, bookCounts, coll
 
       <div className="flex flex-col gap-3">
         <h2 className="text-[12px] font-semibold uppercase tracking-[0.3px] text-text-muted">
-          {t("sidebar.chats")}
+          {t("sidebar.memos")}
         </h2>
         <div className="flex flex-col gap-1">
           <button
@@ -252,14 +252,6 @@ export default function Sidebar({ activeFilter, onFilterChange, bookCounts, coll
               {t("sidebar.chats")}
             </span>
           </button>
-        </div>
-      </div>
-
-      <div className="flex flex-col gap-3">
-        <h2 className="text-[12px] font-semibold uppercase tracking-[0.3px] text-text-muted">
-          {t("sidebar.saved")}
-        </h2>
-        <div className="flex flex-col gap-1">
           <button
             onClick={() => onFilterChange("vocab")}
             className={`flex items-center gap-2 px-3 h-9 rounded-lg w-full cursor-pointer ${
@@ -270,7 +262,7 @@ export default function Sidebar({ activeFilter, onFilterChange, bookCounts, coll
             <span className={`text-[14px] font-medium tracking-[-0.15px] ${
               activeFilter === "vocab" ? "text-accent-text" : "text-text-secondary"
             }`}>
-              {t("sidebar.vocab")}
+              {t("sidebar.words")}
             </span>
           </button>
         </div>
