@@ -38,32 +38,29 @@ export default function DictionaryContent() {
     return result;
   }, [words, search, bookFilter]);
 
-  const sorted = useMemo(() => {
-    const copy = [...filtered];
-    copy.sort((a, b) => a.word.localeCompare(b.word, undefined, { sensitivity: "base" }));
-    return copy;
-  }, [filtered]);
-
   const groupedByBook = useMemo(() => {
     const map = new Map<string, { title: string; words: DictionaryWord[] }>();
-    for (const w of sorted) {
+    for (const w of filtered) {
       if (!map.has(w.book_id)) {
         map.set(w.book_id, { title: w.book_title || t("common.unknownBook"), words: [] });
       }
       map.get(w.book_id)!.words.push(w);
     }
     return Array.from(map.entries()).map(([id, group]) => ({ id, ...group }));
-  }, [sorted, t]);
+  }, [filtered, t]);
 
   const groupedByLetter = useMemo(() => {
     const map = new Map<string, DictionaryWord[]>();
-    for (const w of sorted) {
+    for (const w of filtered) {
       const letter = w.word[0]?.toUpperCase() || "#";
       if (!map.has(letter)) map.set(letter, []);
       map.get(letter)!.push(w);
     }
+    for (const ws of map.values()) {
+      ws.sort((a, b) => a.word.localeCompare(b.word, undefined, { sensitivity: "base" }));
+    }
     return Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b));
-  }, [sorted]);
+  }, [filtered]);
 
   const bookOptions = useMemo(() => {
     const map = new Map<string, { title: string; count: number }>();
