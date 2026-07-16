@@ -53,7 +53,7 @@ export default function BookList({ books, hasMore, loadMore, loadingMore, active
         {books.map((book) => (
           <button
             key={book.id}
-            onClick={() => book.available !== false && openReaderWindow(book.id)}
+            onClick={() => openReaderWindow(book.id)}
             onContextMenu={(e) => handleContextMenu(e, book)}
             className={`flex items-start gap-4 p-4 border border-border rounded-lg text-left cursor-pointer hover:bg-bg-muted transition-colors ${book.available === false ? "opacity-60" : ""}`}
           >
