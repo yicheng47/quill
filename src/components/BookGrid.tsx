@@ -56,7 +56,7 @@ export default function BookGrid({ books, hasMore, loadMore, loadingMore, active
         {books.map((book) => (
           <button
             key={book.id}
-            onClick={() => book.available !== false && openReaderWindow(book.id)}
+            onClick={() => openReaderWindow(book.id)}
             onContextMenu={(e) => handleContextMenu(e, book)}
             className={`text-left cursor-pointer group ${book.available === false ? "opacity-60" : ""}`}
           >
