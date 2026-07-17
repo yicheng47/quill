@@ -706,22 +706,7 @@ pub fn list_books(
         page_size,
     )?;
     for book in &mut page.books {
-        resolve_paths(book, &db);
-    }
-    // The availability check probes readability with a bounded wait
-    // (unhealthy iCloud files exist but hang on read), so run the probes
-    // concurrently — a page of unreadable books costs one deadline, not
-    // one per book.
-    let probes: Vec<_> = page
-        .books
-        .iter()
-        .map(|book| {
-            let path = std::path::PathBuf::from(&book.file_path);
-            std::thread::spawn(move || icloud::is_file_downloaded(&path))
-        })
-        .collect();
-    for (book, probe) in page.books.iter_mut().zip(probes) {
-        book.available = probe.join().unwrap_or(false);
+        resolve_book_paths(book, &db);
     }
     Ok(page)
 }
@@ -771,6 +756,28 @@ pub fn check_book_available(id: String, db: State<'_, Db>) -> AppResult<bool> {
     }
 
     Ok(available)
+}
+
+/// Probe whether a book's file contents can actually be read. Used by
+/// the reader after a load failure to distinguish a broken book from
+/// broken iCloud sync; nudges iCloud to re-download when unreadable.
+#[tauri::command]
+pub fn check_book_readable(id: String, db: State<'_, Db>) -> AppResult<bool> {
+    let conn = db.reader();
+    let file_path: String = conn.query_row(
+        "SELECT file_path FROM books WHERE id = ?1",
+        params![id],
+        |row| row.get(0),
+    )?;
+
+    let abs_path = db.resolve_path(&file_path);
+    let readable = icloud::is_file_readable(&abs_path);
+
+    if !readable {
+        icloud::trigger_download_file(&abs_path);
+    }
+
+    Ok(readable)
 }
 
 pub(crate) fn do_delete_book(id: &str, db: &Db, sync: &SyncWriter) -> AppResult<()> {

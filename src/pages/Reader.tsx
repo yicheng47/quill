@@ -27,7 +27,7 @@ import ExplainPopover from "../components/ExplainPopover";
 import DictionaryPanel from "../components/DictionaryPanel";
 import TranslationPopover from "../components/TranslationPopover";
 import TableOfContents from "../components/TableOfContents";
-import { getBook, updateReadingProgress, checkBookAvailable, type Book } from "../hooks/useBooks";
+import { getBook, updateReadingProgress, checkBookAvailable, checkBookReadable, type Book } from "../hooks/useBooks";
 import { getAllSettings } from "../hooks/useSettings";
 import type { Highlight } from "../hooks/useBookmarks";
 
@@ -776,9 +776,9 @@ export default function Reader() {
       // Distinguish "file can't be read" (broken iCloud sync/download)
       // from a parse/render failure — the probe also nudges iCloud to
       // re-download when the file is unreadable.
-      const available = await checkBookAvailable(book.id).catch(() => true);
+      const readable = await checkBookReadable(book.id).catch(() => true);
       if (cancelled) return;
-      setInitError(available ? "generic" : "icloud");
+      setInitError(readable ? "generic" : "icloud");
     });
 
     return () => {

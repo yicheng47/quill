@@ -2,7 +2,7 @@
 //!
 //! - **Path helper** (`icloud_data_dir`) resolves the ubiquity
 //!   Documents directory using a deterministic path — no daemon query.
-//! - **Eviction handling** (`is_file_downloaded`,
+//! - **Eviction handling** (`is_file_downloaded`, `is_file_readable`,
 //!   `icloud_placeholder_path`, `has_icloud_placeholder`,
 //!   `trigger_download_file`) for book and cover binaries that live in
 //!   iCloud Documents and may be evicted.
@@ -61,14 +61,13 @@ const READ_PROBE_TIMEOUT: Duration = Duration::from_millis(300);
 
 /// Paths with a probe worker still blocked inside `open`/`read`.
 /// Checked before spawning: while the previous worker is stuck the path
-/// is reported unavailable immediately, so repeated availability checks
-/// (the reader polls every 2s; every library refresh probes each book)
-/// hold at most one blocked OS thread per path instead of accumulating
-/// one per call. The worker clears its entry when the read returns —
-/// on any outcome — so probing resumes once the kernel gives up. Same
-/// bound as `sync::replay`'s IN_FLIGHT; the stalled-backoff half of
-/// that pattern isn't needed for a 1-byte probe, which is cheap to
-/// retry once it actually returns.
+/// is reported unreadable immediately, so repeated probes hold at most
+/// one blocked OS thread per path instead of accumulating one per call.
+/// The worker clears its entry when the read returns — on any outcome —
+/// so probing resumes once the kernel gives up. Same bound as
+/// `sync::replay`'s IN_FLIGHT; the stalled-backoff half of that pattern
+/// isn't needed for a 1-byte probe, which is cheap to retry once it
+/// actually returns.
 static PROBES_IN_FLIGHT: Mutex<Option<HashSet<PathBuf>>> = Mutex::new(None);
 
 /// Atomically mark `path` in-flight. Returns `false` if a probe worker
@@ -93,19 +92,56 @@ fn probe_in_flight(path: &Path) -> bool {
     guard.as_ref().is_some_and(|set| set.contains(path))
 }
 
-/// Check whether a file is locally available (not an iCloud placeholder)
-/// and actually readable.
+/// Check whether a file's contents are materialized on disk — present
+/// and not evicted by iCloud.
 ///
-/// iCloud evicts files by replacing `foo.epub` with `.foo.epub.icloud`,
-/// so a missing real file means "not available". But an unhealthy iCloud
-/// container can also leave the directory entry in place while reads
-/// block for a minute before failing ("Operation timed out"), so mere
-/// existence isn't enough: probe the first byte on a worker thread with
-/// a hard deadline. A probe that outlives the deadline is abandoned and
-/// the file treated as not available; the path stays marked in-flight
-/// until that worker's read returns, and further checks short-circuit
-/// to "not available" instead of stacking more blocked threads.
+/// Metadata-only by design: every library refresh checks each book, and
+/// the file-read path through fileproviderd is slow even for healthy
+/// downloaded files (cold first-byte reads of 1–8s are routine), so
+/// availability must never touch contents. Eviction is visible in
+/// metadata alone:
+/// - legacy bird: `foo.epub` is renamed to `.foo.epub.icloud`, so the
+///   real path has no metadata at all;
+/// - FileProvider: the file stays in place but is marked SF_DATALESS.
+///
+/// Whether the contents can actually be *read* (an unhealthy container
+/// can hang reads for a minute before failing) is a separate, more
+/// expensive question answered by `is_file_readable`.
 pub fn is_file_downloaded(path: &Path) -> bool {
+    match std::fs::metadata(path) {
+        Ok(metadata) => !is_dataless(&metadata),
+        Err(_) => false,
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn is_dataless(metadata: &std::fs::Metadata) -> bool {
+    use std::os::macos::fs::MetadataExt;
+    const SF_DATALESS: u32 = 0x4000_0000;
+    metadata.st_flags() & SF_DATALESS != 0
+}
+
+#[cfg(not(target_os = "macos"))]
+fn is_dataless(_metadata: &std::fs::Metadata) -> bool {
+    false
+}
+
+/// Check whether a file's first byte can actually be read within a
+/// bounded wait.
+///
+/// An unhealthy iCloud container can leave a fully materialized file in
+/// place while reads block for a minute before failing ("Operation
+/// timed out"), so after a load failure the reader uses this to tell
+/// broken sync from a broken book. The read runs on a worker thread
+/// with a hard deadline; a probe that outlives the deadline is
+/// abandoned and the file treated as unreadable. The path stays marked
+/// in-flight until that worker's read returns, and further checks
+/// short-circuit to "unreadable" instead of stacking blocked threads.
+///
+/// Not for routine availability checks — cold first-byte reads through
+/// fileproviderd routinely exceed the deadline on healthy files (see
+/// `is_file_downloaded`).
+pub fn is_file_readable(path: &Path) -> bool {
     if !path.exists() {
         return false;
     }
@@ -166,7 +202,6 @@ mod tests {
         let file = dir.path().join("book.epub");
         fs::write(&file, "epub data").unwrap();
         assert!(is_file_downloaded(&file));
-        assert!(!probe_in_flight(&file));
     }
 
     #[test]
@@ -186,15 +221,26 @@ mod tests {
         assert!(!is_file_downloaded(&file));
     }
 
+    // --- is_file_readable ---
+
+    #[test]
+    fn test_is_file_readable_real_file() {
+        let dir = TempDir::new().unwrap();
+        let file = dir.path().join("book.epub");
+        fs::write(&file, "epub data").unwrap();
+        assert!(is_file_readable(&file));
+        assert!(!probe_in_flight(&file));
+    }
+
     #[cfg(unix)]
     #[test]
-    fn test_is_file_downloaded_unreadable_file() {
+    fn test_is_file_readable_unreadable_file() {
         use std::os::unix::fs::PermissionsExt;
         let dir = TempDir::new().unwrap();
         let file = dir.path().join("book.epub");
         fs::write(&file, "epub data").unwrap();
         fs::set_permissions(&file, fs::Permissions::from_mode(0o000)).unwrap();
-        assert!(!is_file_downloaded(&file));
+        assert!(!is_file_readable(&file));
         // Worker failed fast and cleared its marker — probing can retry.
         assert!(!probe_in_flight(&file));
         fs::set_permissions(&file, fs::Permissions::from_mode(0o644)).unwrap();
@@ -207,7 +253,7 @@ mod tests {
     /// in-flight marker instead of stacking another blocked worker.
     #[cfg(unix)]
     #[test]
-    fn test_is_file_downloaded_hanging_read_times_out_and_probes_once() {
+    fn test_is_file_readable_hanging_read_times_out_and_probes_once() {
         let dir = TempDir::new().unwrap();
         let fifo = dir.path().join("book.epub");
         let status = std::process::Command::new("mkfifo")
@@ -216,17 +262,21 @@ mod tests {
             .unwrap();
         assert!(status.success());
 
+        // Availability is metadata-only, so a hanging path still counts
+        // as downloaded — readability is the probe's job.
+        assert!(is_file_downloaded(&fifo));
+
         let start = std::time::Instant::now();
-        assert!(!is_file_downloaded(&fifo));
+        assert!(!is_file_readable(&fifo));
         assert!(start.elapsed() < Duration::from_secs(5));
         // Worker is still blocked on open(); marker must persist.
         assert!(probe_in_flight(&fifo));
 
-        // Simulates the reader's 2s availability poll: repeat checks must
-        // return immediately (no new worker waiting out a fresh deadline).
+        // Repeat probes of the hanging path must return immediately (no
+        // new worker waiting out a fresh deadline).
         let start = std::time::Instant::now();
-        assert!(!is_file_downloaded(&fifo));
-        assert!(!is_file_downloaded(&fifo));
+        assert!(!is_file_readable(&fifo));
+        assert!(!is_file_readable(&fifo));
         assert!(start.elapsed() < READ_PROBE_TIMEOUT);
         assert!(probe_in_flight(&fifo));
     }
