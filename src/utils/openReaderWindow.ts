@@ -37,6 +37,7 @@ export async function openReaderWindow(
   // Focus existing window if already open
   const existing = await WebviewWindow.getByLabel(label);
   if (existing) {
+    await existing.show();
     await existing.setFocus();
     return;
   }
@@ -64,5 +65,6 @@ export async function openReaderWindow(
     minHeight: MIN_HEIGHT,
     titleBarStyle: "overlay",
     hiddenTitle: true,
+    visible: false,
   });
 }

@@ -7,8 +7,20 @@ import Reader from "./pages/Reader";
 import { UpdateProvider } from "./contexts/UpdateContext";
 import UpdateToast from "./components/UpdateToast";
 import { reconcileLanguage } from "./i18n";
+import {
+  handleAppZoomShortcut,
+  restoreAppZoom,
+  syncTitlebarZoom,
+} from "./lib/appZoom";
+import {
+  readAppZoom,
+  snapAppZoom,
+  STORAGE_APP_ZOOM,
+  writeAppZoom,
+} from "./lib/settings";
 
-const isMainWindow = getCurrentWebviewWindow().label === "main";
+const appWindow = getCurrentWebviewWindow();
+const isMainWindow = appWindow.label === "main";
 
 function applyTheme(theme: string) {
   const root = document.documentElement;
@@ -24,11 +36,18 @@ function applyTheme(theme: string) {
 
 export default function App() {
   useEffect(() => {
-    invoke<Record<string, string>>("get_all_settings")
+    const cachedZoom = readAppZoom();
+    const cachedZoomReady = restoreAppZoom(cachedZoom);
+    void invoke<Record<string, string>>("get_all_settings")
       .then((settings) => {
         const theme = settings.theme ?? "system";
         applyTheme(theme);
         localStorage.setItem("quill-theme", theme);
+        const persistedZoom = snapAppZoom(settings.app_zoom);
+        writeAppZoom(persistedZoom);
+        if (persistedZoom !== cachedZoom) {
+          return restoreAppZoom(persistedZoom);
+        }
       })
       .catch(() => applyTheme("system"));
 
@@ -36,14 +55,11 @@ export default function App() {
     // the persisted DB value (and persist to the DB on first launch).
     reconcileLanguage();
 
-    // Tell the backend the UI has mounted so it can show the (currently
-    // hidden) main window. We don't wrap this in requestAnimationFrame —
-    // macOS pauses rAF for hidden windows, so the callback would never fire.
-    // useEffect runs after React commits the DOM, which is good enough; the
-    // OS composites the committed tree when window.show() is called.
-    if (isMainWindow) {
-      invoke("app_ready").catch(() => {});
-    }
+    // macOS pauses requestAnimationFrame for hidden windows, so reveal only
+    // after the synchronously cached zoom restore finishes.
+    void cachedZoomReady.finally(() => {
+      void invoke("app_ready").catch(() => {});
+    });
 
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
     const handler = () => {
@@ -53,6 +69,37 @@ export default function App() {
     };
     mq.addEventListener("change", handler);
     return () => mq.removeEventListener("change", handler);
+  }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      handleAppZoomShortcut(event);
+    };
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => window.removeEventListener("keydown", handleKeyDown, true);
+  }, []);
+
+  useEffect(() => {
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key !== STORAGE_APP_ZOOM || event.storageArea === null) return;
+      void restoreAppZoom(readAppZoom());
+    };
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
+  }, []);
+
+  useEffect(() => {
+    let timer: number | null = null;
+    const unlisten = appWindow.onResized(() => {
+      if (timer !== null) window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        void syncTitlebarZoom(readAppZoom());
+      }, 150);
+    });
+    return () => {
+      if (timer !== null) window.clearTimeout(timer);
+      void unlisten.then((stop) => stop()).catch(() => {});
+    };
   }, []);
 
   const content = (

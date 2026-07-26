@@ -10,3 +10,4 @@ pub mod settings;
 pub mod sync;
 pub mod translation;
 pub mod vocab;
+pub mod window;

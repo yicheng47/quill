@@ -3588,6 +3588,7 @@ dependencies = [
  "lopdf",
  "notify",
  "objc2",
+ "objc2-app-kit",
  "objc2-foundation",
  "pdfium-render",
  "rand 0.8.5",

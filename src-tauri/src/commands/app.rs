@@ -1,23 +1,19 @@
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 use tauri_plugin_opener::OpenerExt;
 
 use crate::error::{AppError, AppResult};
 use crate::resolve_log_dir;
 
 /// Called by the frontend after React has mounted and painted its first frame.
-/// Shows the main window — the window starts hidden so the user sees the dock
-/// bounce → fully-rendered window instead of a beach ball over a blank webview.
+/// Shows the calling window after its UI and cached zoom have been restored.
 #[tauri::command]
-pub fn app_ready(app: AppHandle) -> AppResult<()> {
-    let window = app
-        .get_webview_window("main")
-        .ok_or_else(|| AppError::Other("main window not found".into()))?;
-    window
-        .show()
-        .map_err(|e| AppError::Other(e.to_string()))?;
-    window
-        .set_focus()
-        .map_err(|e| AppError::Other(e.to_string()))?;
+pub fn app_ready(window: tauri::WebviewWindow) -> AppResult<()> {
+    window.show().map_err(|e| AppError::Other(e.to_string()))?;
+    if window.label() == "main" {
+        window
+            .set_focus()
+            .map_err(|e| AppError::Other(e.to_string()))?;
+    }
     Ok(())
 }
 
