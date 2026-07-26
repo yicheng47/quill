@@ -44,7 +44,7 @@ export default function MessageBubble({ msg, messages, streaming, onNavigateToCf
             {t("ai.thinking")}
           </span>
         ) : (
-          <div className="markdown-body text-[14px] text-text-primary leading-5 tracking-[-0.15px]">
+          <div className="markdown-body text-[15px] text-text-primary leading-[22px] tracking-[-0.15px]">
             <Markdown remarkPlugins={[remarkGfm]}>{msg.content}</Markdown>
             {streaming && msg.content && isLast && (
               <Loader2 size={14} className="inline-block ml-1 animate-spin text-text-muted" />
@@ -71,7 +71,7 @@ export default function MessageBubble({ msg, messages, streaming, onNavigateToCf
           </button>
         )}
         <div className="bg-[rgba(192,132,252,0.15)] rounded-lg px-[13px] py-[13px]">
-          <p className="text-[14px] text-text-primary leading-5 tracking-[-0.15px]">
+          <p className="text-[15px] text-text-primary leading-[22px] tracking-[-0.15px]">
             {msg.content}
           </p>
         </div>
