@@ -611,6 +611,7 @@ pub fn run() {
             // App lifecycle
             commands::app::app_ready,
             commands::app::reveal_logs,
+            commands::window::window_set_titlebar_zoom,
             // Books
             commands::books::import_book,
             commands::books::list_books,

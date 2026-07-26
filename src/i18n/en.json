@@ -378,6 +378,11 @@
   "settings.appearance.system": "System",
   "settings.appearance.light": "Light",
   "settings.appearance.dark": "Dark",
+  "settings.appearance.zoom": "App zoom",
+  "settings.appearance.zoomHint": "Scale the library, reader, and app controls",
+  "settings.appearance.zoomLevel": "{{percent}}%",
+  "settings.appearance.zoomIn": "Zoom in",
+  "settings.appearance.zoomOut": "Zoom out",
 
   "common.cancel": "Cancel",
   "common.delete": "Delete",

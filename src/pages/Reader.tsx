@@ -30,6 +30,7 @@ import TableOfContents from "../components/TableOfContents";
 import { getBook, updateReadingProgress, checkBookAvailable, type Book } from "../hooks/useBooks";
 import { getAllSettings } from "../hooks/useSettings";
 import type { Highlight } from "../hooks/useBookmarks";
+import { handleAppZoomShortcut } from "../lib/appZoom";
 
 // foliate-js <foliate-view> web component interface
 /* eslint-disable @typescript-eslint/no-explicit-any -- foliate-js has no TS definitions */
@@ -644,15 +645,25 @@ export default function Reader() {
           } else if ((ev.metaKey || ev.ctrlKey) && ev.key === "]") {
             ev.preventDefault();
             view.history.forward();
-          } else if (ev.key === "ArrowLeft") view.prev();
+          } else if (
+            book?.format === "pdf" &&
+            (ev.metaKey || ev.ctrlKey) &&
+            ev.shiftKey &&
+            ev.code === "Equal"
+          ) {
+            ev.preventDefault();
+            handleZoom(10);
+          } else if (
+            book?.format === "pdf" &&
+            (ev.metaKey || ev.ctrlKey) &&
+            ev.shiftKey &&
+            ev.code === "Minus"
+          ) {
+            ev.preventDefault();
+            handleZoom(-10);
+          } else if (handleAppZoomShortcut(ev)) return;
+          else if (ev.key === "ArrowLeft") view.prev();
           else if (ev.key === "ArrowRight") view.next();
-          else if ((ev.metaKey || ev.ctrlKey) && (ev.key === "=" || ev.key === "+")) {
-            ev.preventDefault();
-            if (book?.format === "pdf") handleZoom(10);
-          } else if ((ev.metaKey || ev.ctrlKey) && ev.key === "-") {
-            ev.preventDefault();
-            if (book?.format === "pdf") handleZoom(-10);
-          }
         });
 
         // Click to dismiss context menu and highlight toolbar
@@ -920,13 +931,22 @@ export default function Reader() {
       if (tag === "INPUT" || tag === "TEXTAREA") return;
       if (e.key === "ArrowLeft") viewRef.current?.prev();
       else if (e.key === "ArrowRight") viewRef.current?.next();
-      // Cmd+/Cmd- zoom for PDFs
-      else if ((e.metaKey || e.ctrlKey) && (e.key === "=" || e.key === "+")) {
+      else if (
+        book?.format === "pdf" &&
+        (e.metaKey || e.ctrlKey) &&
+        e.shiftKey &&
+        e.code === "Equal"
+      ) {
         e.preventDefault();
-        if (book?.format === "pdf") handleZoom(10);
-      } else if ((e.metaKey || e.ctrlKey) && e.key === "-") {
+        handleZoom(10);
+      } else if (
+        book?.format === "pdf" &&
+        (e.metaKey || e.ctrlKey) &&
+        e.shiftKey &&
+        e.code === "Minus"
+      ) {
         e.preventDefault();
-        if (book?.format === "pdf") handleZoom(-10);
+        handleZoom(-10);
       }
     };
     document.addEventListener("keydown", handleKeyDown);

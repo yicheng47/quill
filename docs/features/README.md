@@ -12,3 +12,4 @@ Specs for features that are in progress or planned. Shipped, dropped, or superse
 - [276 - Reset All App Data](276-reset-all-data.md)
 - [284 - MCP Batch Library and Collection Tools](284-mcp-batch-library-collection-tools.md)
 - [294 - Codex Subscription Model Picker](294-codex-model-picker.md)
+- [295 - App-Level UI Zoom](295-app-zoom.md)
