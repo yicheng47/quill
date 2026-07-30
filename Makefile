@@ -1,4 +1,4 @@
-.PHONY: dev dev-web build package lint typecheck clean install
+.PHONY: dev dev-web build package lint typecheck clean-rust-stale clean install
 
 # Start Tauri app (frontend + backend) with dev-mode config overlay
 dev:
@@ -30,6 +30,11 @@ typecheck:
 # Install dependencies
 install:
 	npm install
+
+# Remove accumulated Quill dev generations while keeping dependency
+# artifacts, so the next build stays warm
+clean-rust-stale:
+	cargo clean --manifest-path src-tauri/Cargo.toml -p quill --profile dev
 
 # Clean build artifacts
 clean:
