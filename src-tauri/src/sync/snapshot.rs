@@ -377,6 +377,21 @@ impl Snapshot {
         }
     }
 
+    /// Number of rows a full apply of this snapshot walks — tombstones plus
+    /// every entity row. Sizes the sync-progress denominator in the replay
+    /// tick; matches the `on_rows` call count in `apply_peer_with_progress`.
+    pub fn work_units(&self) -> usize {
+        self.state.tombstones.values().map(Vec::len).sum::<usize>()
+            + self.state.books.len()
+            + self.state.highlights.len()
+            + self.state.bookmarks.len()
+            + self.state.vocab_words.len()
+            + self.state.collections.len()
+            + self.state.collection_books.len()
+            + self.state.chats.len()
+            + self.state.chat_messages.len()
+    }
+
     /// Apply this snapshot into local SQLite. Idempotent under repeated
     /// application; tombstones in `state.tombstones` are written first so
     /// the entity rows that follow can short-circuit on the local-tombstone
@@ -387,6 +402,18 @@ impl Snapshot {
     /// the migration apply-back case (where the snapshot's `device` is the
     /// migrating device but `_replay_state` still treats it as a peer).
     pub fn apply_peer(&self, tx: &Transaction, peer_device: &str) -> AppResult<ApplyOutcome> {
+        self.apply_peer_with_progress(tx, peer_device, &mut |_| {})
+    }
+
+    /// Like `apply_peer`, but calls `on_rows` with the number of rows walked
+    /// as the apply advances — `work_units()` in total on a full apply, zero
+    /// when the watermark check short-circuits.
+    pub fn apply_peer_with_progress(
+        &self,
+        tx: &Transaction,
+        peer_device: &str,
+        on_rows: &mut dyn FnMut(usize),
+    ) -> AppResult<ApplyOutcome> {
         let prior: Option<(Option<String>, Option<String>)> = tx
             .query_row(
                 "SELECT last_snapshot_id, last_event_id
@@ -422,54 +449,63 @@ impl Snapshot {
         // removed pair, etc.
         for (entity, list) in &self.state.tombstones {
             for t in list {
+                on_rows(1);
                 merge::cascade_delete(tx, entity, &t.id, t.ts)?;
                 merge::insert_tombstone(tx, entity, &t.id, t.ts)?;
             }
         }
 
         for (id, row) in &self.state.books {
+            on_rows(1);
             if merge::is_tombstoned(tx, merge::entity::BOOK, id)? {
                 continue;
             }
             upsert_book(tx, id, row)?;
         }
         for (id, row) in &self.state.highlights {
+            on_rows(1);
             if merge::is_tombstoned(tx, merge::entity::HIGHLIGHT, id)? {
                 continue;
             }
             upsert_highlight(tx, id, row)?;
         }
         for (id, row) in &self.state.bookmarks {
+            on_rows(1);
             if merge::is_tombstoned(tx, merge::entity::BOOKMARK, id)? {
                 continue;
             }
             insert_bookmark(tx, id, row)?;
         }
         for (id, row) in &self.state.vocab_words {
+            on_rows(1);
             if merge::is_tombstoned(tx, merge::entity::VOCAB, id)? {
                 continue;
             }
             upsert_vocab(tx, id, row)?;
         }
         for (id, row) in &self.state.collections {
+            on_rows(1);
             if merge::is_tombstoned(tx, merge::entity::COLLECTION, id)? {
                 continue;
             }
             upsert_collection(tx, id, row)?;
         }
         for (key, row) in &self.state.collection_books {
+            on_rows(1);
             if merge::is_tombstoned(tx, merge::entity::COLLECTION_BOOK, key)? {
                 continue;
             }
             upsert_collection_book(tx, row)?;
         }
         for (id, row) in &self.state.chats {
+            on_rows(1);
             if merge::is_tombstoned(tx, merge::entity::CHAT, id)? {
                 continue;
             }
             upsert_chat(tx, id, row)?;
         }
         for (id, row) in &self.state.chat_messages {
+            on_rows(1);
             if merge::is_tombstoned(tx, merge::entity::CHAT_MESSAGE, id)? {
                 continue;
             }
@@ -1349,6 +1385,76 @@ mod tests {
             o
         };
         assert_eq!(outcome, ApplyOutcome::AlreadyApplied);
+    }
+
+    #[test]
+    fn work_units_counts_entity_rows_and_tombstones() {
+        let events = vec![
+            ev(1000, "dev-A", import("b1")),
+            ev(1050, "dev-A", import("b2")),
+            ev(
+                1100,
+                "dev-A",
+                EventBody::HighlightAdd(HighlightPayload {
+                    id: "h1".into(),
+                    book_id: "b1".into(),
+                    cfi_range: "cfi".into(),
+                    color: "yellow".into(),
+                    note: None,
+                    text_content: None,
+                }),
+            ),
+        ];
+        let mut snap = Snapshot::from_events("dev-A", &events).unwrap();
+        assert_eq!(snap.work_units(), 3);
+
+        snap.state
+            .tombstones
+            .entry(merge::entity::BOOK.to_string())
+            .or_default()
+            .push(TombstoneRow { id: "b9".into(), ts: 900 });
+        assert_eq!(snap.work_units(), 4);
+    }
+
+    #[test]
+    fn apply_peer_progress_walks_work_units_once_then_zero() {
+        let events = vec![
+            ev(1000, "dev-A", import("b1")),
+            ev(
+                1100,
+                "dev-A",
+                EventBody::HighlightAdd(HighlightPayload {
+                    id: "h1".into(),
+                    book_id: "b1".into(),
+                    cfi_range: "cfi".into(),
+                    color: "yellow".into(),
+                    note: None,
+                    text_content: None,
+                }),
+            ),
+        ];
+        let snap = Snapshot::from_events("dev-A", &events).unwrap();
+
+        let mut local = open_db();
+        let mut walked = 0usize;
+        {
+            let tx = local.transaction().unwrap();
+            snap.apply_peer_with_progress(&tx, "dev-A", &mut |n| walked += n)
+                .unwrap();
+            tx.commit().unwrap();
+        }
+        assert_eq!(walked, snap.work_units());
+
+        walked = 0;
+        {
+            let tx = local.transaction().unwrap();
+            let o = snap
+                .apply_peer_with_progress(&tx, "dev-A", &mut |n| walked += n)
+                .unwrap();
+            tx.commit().unwrap();
+            assert_eq!(o, ApplyOutcome::AlreadyApplied);
+        }
+        assert_eq!(walked, 0, "short-circuit must report no rows walked");
     }
 
     #[test]

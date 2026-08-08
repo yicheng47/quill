@@ -24,7 +24,7 @@ interface SidebarProps {
   };
   userName?: string;
   onOpenSettings?: () => void;
-  syncProgress?: { applied: number; total: number } | null;
+  syncProgress?: { percent: number | null } | null;
 }
 
 const SIDEBAR_MIN = 180;
@@ -187,9 +187,9 @@ export default function Sidebar({ activeFilter, onFilterChange, bookCounts, coll
         {syncProgress ? (
           <span className="ml-auto shrink-0 flex items-center gap-1.5 rounded-md bg-accent/10 px-2 py-1">
             <RefreshCw size={12} className="text-accent animate-spin" />
-            {syncProgress.total > 0 && (
+            {syncProgress.percent != null && (
               <span className="text-[11px] font-medium text-accent">
-                {syncProgress.applied}/{syncProgress.total}
+                {syncProgress.percent}%
               </span>
             )}
           </span>
