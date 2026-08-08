@@ -93,6 +93,24 @@ fn probe_in_flight(path: &Path) -> bool {
     guard.as_ref().is_some_and(|set| set.contains(path))
 }
 
+#[cfg(any(target_os = "macos", test))]
+fn is_dataless_metadata(blocks: u64, len: u64) -> bool {
+    blocks == 0 && len > 0
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn is_dataless_file(path: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+
+    std::fs::metadata(path)
+        .is_ok_and(|metadata| is_dataless_metadata(metadata.blocks(), metadata.len()))
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn is_dataless_file(_path: &Path) -> bool {
+    false
+}
+
 /// Check whether a file is locally available (not an iCloud placeholder)
 /// and actually readable.
 ///
@@ -157,6 +175,13 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::TempDir;
+
+    #[test]
+    fn test_is_dataless_metadata() {
+        assert!(is_dataless_metadata(0, 1));
+        assert!(!is_dataless_metadata(0, 0));
+        assert!(!is_dataless_metadata(8, 1));
+    }
 
     // --- is_file_downloaded ---
 
