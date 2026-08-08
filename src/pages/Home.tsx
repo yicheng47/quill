@@ -35,7 +35,7 @@ export default function Home() {
   const [importing, setImporting] = useState(false);
   const [importSlow, setImportSlow] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
-  const [syncProgress, setSyncProgress] = useState<{ applied: number; total: number } | null>(null);
+  const [syncProgress, setSyncProgress] = useState<{ percent: number | null } | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("general");
   const [userName, setUserName] = useState("");
@@ -150,14 +150,26 @@ export default function Home() {
   }, [importing]);
 
   useEffect(() => {
+    // `sync-progress` carries abstract work units (snapshot rows + raw log
+    // events), not book counts. The backend keeps the denominator fixed
+    // within a tick; the monotonic clamp is defense so the chip's percent
+    // still never walks backwards within one sync session.
+    let maxPercent = 0;
     const unlistenTick = listen("sync-initial-tick-done", () => {
+      maxPercent = 0;
       setSyncProgress(null);
       refreshRef.current();
       countsRefreshRef.current();
       collectionsRefreshRef.current();
     });
     const unlistenProgress = listen<{ applied: number; total: number }>("sync-progress", (e) => {
-      setSyncProgress(e.payload);
+      const { applied, total } = e.payload;
+      if (total > 0) {
+        maxPercent = Math.max(maxPercent, Math.min(100, Math.floor((applied / total) * 100)));
+        setSyncProgress({ percent: maxPercent });
+      } else {
+        setSyncProgress((prev) => prev ?? { percent: null });
+      }
     });
     return () => {
       unlistenTick.then((fn) => fn());

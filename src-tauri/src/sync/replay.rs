@@ -136,10 +136,85 @@ pub struct ReplayReport {
     pub peers_seen: usize,
 }
 
+/// Abstract work units for the sync chip — snapshot rows plus raw log
+/// events, not user-facing counts. The frontend renders `applied/total`
+/// as a percentage.
 #[derive(Clone, serde::Serialize)]
 struct SyncProgress {
     applied: usize,
     total: usize,
+}
+
+fn emit_progress(app_handle: Option<&tauri::AppHandle>, update: Option<(usize, usize)>) {
+    if let (Some(handle), Some((applied, total))) = (app_handle, update) {
+        let _ = handle.emit("sync-progress", SyncProgress { applied, total });
+    }
+}
+
+/// Emit `sync-progress` at most every this many snapshot rows, so a
+/// large snapshot doesn't flood the webview event loop.
+const PROGRESS_EMIT_EVERY: usize = 25;
+
+/// Work-unit bookkeeping for one tick's `sync-progress` stream. The
+/// denominator is fixed up front — every snapshot row plus every raw log
+/// event read in Phase A — so the reported fraction can only move
+/// forward; Phase B can never claim 100% while Phase C work remains.
+/// Log events the post-snapshot watermarks filter out are credited as
+/// completed work in `events_known` (the snapshot already covered them),
+/// and a short-circuited or failed peer snapshot is credited whole in
+/// `peer_done` — either way that share of the tick's work is behind us.
+/// Returned pairs are `(applied, total)` to emit; `None` means don't
+/// emit (throttled, or a tick with no work at all).
+struct SyncProgressLedger {
+    snapshot_units: usize,
+    raw_events: usize,
+    /// Completed units: finished peer snapshots + filtered/applied events.
+    done: usize,
+    /// Rows walked inside the current peer's snapshot apply.
+    in_flight: usize,
+    /// Rows since the last throttled emit.
+    since_emit: usize,
+}
+
+impl SyncProgressLedger {
+    fn new(snapshot_units: usize, raw_events: usize) -> Self {
+        Self { snapshot_units, raw_events, done: 0, in_flight: 0, since_emit: 0 }
+    }
+
+    fn total(&self) -> usize {
+        self.snapshot_units + self.raw_events
+    }
+
+    fn begin(&self) -> Option<(usize, usize)> {
+        (self.total() > 0).then(|| (0, self.total()))
+    }
+
+    fn snapshot_rows(&mut self, n: usize) -> Option<(usize, usize)> {
+        self.in_flight += n;
+        self.since_emit += n;
+        if self.since_emit < PROGRESS_EMIT_EVERY {
+            return None;
+        }
+        self.since_emit = 0;
+        Some((self.done + self.in_flight, self.total()))
+    }
+
+    fn peer_done(&mut self, units: usize) -> Option<(usize, usize)> {
+        self.done += units;
+        self.in_flight = 0;
+        self.since_emit = 0;
+        (self.total() > 0).then(|| (self.done, self.total()))
+    }
+
+    fn events_known(&mut self, surviving: usize) -> Option<(usize, usize)> {
+        self.done = self.snapshot_units + self.raw_events.saturating_sub(surviving);
+        (self.total() > 0).then(|| (self.done, self.total()))
+    }
+
+    fn event_applied(&mut self) -> Option<(usize, usize)> {
+        self.done += 1;
+        Some((self.done, self.total()))
+    }
 }
 
 pub struct ReplayEngine {
@@ -411,6 +486,10 @@ impl ReplayEngine {
         }
 
         // -- Phase B — apply snapshots (one write tx per peer). --
+        let snapshot_units: usize = snapshots.iter().map(|(_, s)| s.work_units()).sum();
+        let raw_events: usize = peer_logs.iter().map(|(_, events)| events.len()).sum();
+        let mut ledger = SyncProgressLedger::new(snapshot_units, raw_events);
+        emit_progress(app_handle, ledger.begin());
         let mut snapshots_applied = 0usize;
         for (device, snap) in &snapshots {
             let mut conn = db
@@ -418,7 +497,10 @@ impl ReplayEngine {
                 .lock()
                 .map_err(|e| AppError::Other(format!("db conn mutex: {e}")))?;
             let tx = conn.transaction()?;
-            match snap.apply_peer(&tx, device) {
+            let outcome = snap.apply_peer_with_progress(&tx, device, &mut |n| {
+                emit_progress(app_handle, ledger.snapshot_rows(n));
+            });
+            match outcome {
                 Ok(outcome) => {
                     tx.commit()?;
                     if matches!(
@@ -437,6 +519,7 @@ impl ReplayEngine {
                 }
             }
             drop(conn);
+            emit_progress(app_handle, ledger.peer_done(snap.work_units()));
         }
 
         // Read watermarks through the reader — no write lock needed.
@@ -459,12 +542,9 @@ impl ReplayEngine {
         all_events.sort_by(|a, b| (a.ts, &a.device).cmp(&(b.ts, &b.device)));
 
         let total_events = all_events.len();
+        emit_progress(app_handle, ledger.events_known(total_events));
         if total_events == 0 {
             return Ok((snapshots_applied, 0));
-        }
-
-        if let Some(handle) = app_handle {
-            let _ = handle.emit("sync-progress", SyncProgress { applied: 0, total: total_events });
         }
 
         // -- Phase C — apply events one at a time. --
@@ -490,12 +570,7 @@ impl ReplayEngine {
                     bump_event_watermark(&tx, &ev.device, &ev.id)?;
                     tx.commit()?;
                     events_applied += 1;
-                    if let Some(handle) = app_handle {
-                        let _ = handle.emit("sync-progress", SyncProgress {
-                            applied: events_applied,
-                            total: total_events,
-                        });
-                    }
+                    emit_progress(app_handle, ledger.event_applied());
                 }
                 Err(e) => {
                     ::log::warn!(
@@ -1500,6 +1575,75 @@ mod tests {
             .query_row("SELECT cover_data FROM books WHERE id = 'b1'", [], |r| r.get(0))
             .unwrap();
         assert!(blob.is_none(), "no bytes should be written from a placeholder");
+    }
+
+    /// Regression for #299: a tick with both snapshot rows and a log tail
+    /// must keep one fixed denominator across Phase B and Phase C, so the
+    /// fraction never hits 100% while events are still pending (a naive
+    /// per-phase denominator did, and the frontend's monotonic clamp then
+    /// pinned the chip at 100%).
+    #[test]
+    fn progress_ledger_holds_denominator_across_phases() {
+        // Issue-#299 shape: 382 snapshot rows, 300 raw log events of which
+        // 247 survive the post-snapshot watermark filter.
+        fn push(emits: &mut Vec<(usize, usize)>, update: Option<(usize, usize)>) {
+            if let Some(pair) = update {
+                emits.push(pair);
+            }
+        }
+        let mut ledger = SyncProgressLedger::new(382, 300);
+        let mut emits: Vec<(usize, usize)> = Vec::new();
+
+        push(&mut emits, ledger.begin());
+        for _ in 0..382 {
+            push(&mut emits, ledger.snapshot_rows(1));
+        }
+        push(&mut emits, ledger.peer_done(382));
+        let phase_b_emits = emits.len();
+        push(&mut emits, ledger.events_known(247));
+        for _ in 0..247 {
+            push(&mut emits, ledger.event_applied());
+        }
+
+        assert_eq!(emits.first(), Some(&(0, 682)));
+        assert_eq!(emits.last(), Some(&(682, 682)));
+        assert!(
+            emits[..phase_b_emits].iter().all(|(applied, _)| *applied < 682),
+            "Phase B alone must not reach 100%"
+        );
+        let mut prev = (0, 682);
+        for pair in &emits {
+            assert_eq!(pair.1, 682, "denominator must not move mid-tick");
+            assert!(pair.0 <= pair.1);
+            assert!(pair.0 >= prev.0, "applied must be monotonic: {prev:?} -> {pair:?}");
+            prev = *pair;
+        }
+    }
+
+    #[test]
+    fn progress_ledger_credits_short_circuits_and_filtered_events() {
+        let mut ledger = SyncProgressLedger::new(10, 5);
+        assert_eq!(ledger.begin(), Some((0, 15)));
+        // Peer snapshot short-circuits: no rows walked, whole credit on
+        // completion so the fraction doesn't stall.
+        assert_eq!(ledger.peer_done(10), Some((10, 15)));
+        // Every raw event is behind the watermark — credited as done.
+        assert_eq!(ledger.events_known(0), Some((15, 15)));
+    }
+
+    #[test]
+    fn progress_ledger_throttles_row_emits() {
+        let mut ledger = SyncProgressLedger::new(100, 0);
+        let emitted: Vec<_> = (0..100).filter_map(|_| ledger.snapshot_rows(1)).collect();
+        assert_eq!(emitted, vec![(25, 100), (50, 100), (75, 100), (100, 100)]);
+    }
+
+    #[test]
+    fn progress_ledger_no_work_emits_nothing() {
+        let ledger = SyncProgressLedger::new(0, 0);
+        assert_eq!(ledger.begin(), None);
+        assert_eq!(SyncProgressLedger::new(0, 0).peer_done(0), None);
+        assert_eq!(SyncProgressLedger::new(0, 0).events_known(0), None);
     }
 
 }
