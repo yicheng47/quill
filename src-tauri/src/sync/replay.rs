@@ -703,11 +703,12 @@ fn ingest_peer_covers(shared_dir: &Path, db: &Db) -> usize {
         Err(_) => return 0,
     };
 
-    // Phase 1: collect candidates — quick SQL check per file, no file I/O.
+    // Phase 1: collect candidates using quick SQL checks and metadata stats.
     // Recognizes both real files (foo.img) and iCloud placeholders (.foo.img.icloud).
-    let candidates: Vec<(String, std::path::PathBuf)> = {
+    let (candidates, deferred) = {
         let Ok(conn) = db.read_conn.lock() else { return 0 };
-        entries
+        let mut deferred = 0usize;
+        let candidates: Vec<(String, PathBuf)> = entries
             .flatten()
             .filter_map(|entry| {
                 let name = entry.file_name();
@@ -719,6 +720,7 @@ fn ingest_peer_covers(shared_dir: &Path, db: &Db) -> usize {
                     let id = inner.strip_suffix(".img")?.to_string();
                     let real_path = covers_dir.join(format!("{id}.img"));
                     crate::icloud::trigger_download_file(&real_path);
+                    deferred += 1;
                     return None; // skip this tick, file will be available next tick
                 } else {
                     return None;
@@ -730,35 +732,46 @@ fn ingest_peer_covers(shared_dir: &Path, db: &Db) -> usize {
                         |r| r.get(0),
                     )
                     .unwrap_or(true);
-                if has_cover { None } else { Some((book_id, path)) }
+                if has_cover {
+                    None
+                } else if crate::icloud::is_dataless_file(&path) {
+                    crate::icloud::trigger_download_file(&path);
+                    deferred += 1;
+                    None
+                } else {
+                    Some((book_id, path))
+                }
             })
-            .collect()
+            .collect();
+        (candidates, deferred)
     };
+
+    if deferred > 0 {
+        ::log::info!(
+            "sync: {deferred} cover(s) not yet downloaded — requested from iCloud"
+        );
+    }
 
     if candidates.is_empty() {
         return 0;
     }
 
-    // Phase 2: read files (no DB lock held — safe if iCloud stalls).
-    let loaded: Vec<(String, Vec<u8>)> = candidates
-        .into_iter()
-        .filter_map(|(id, path)| {
-            std::fs::read(&path).ok().filter(|b| !b.is_empty()).map(|b| (id, b))
-        })
-        .collect();
-
-    if loaded.is_empty() {
-        return 0;
-    }
-
-    // Phase 3: brief write lock to store covers.
-    let Ok(conn) = db.conn.lock() else { return 0 };
+    // Phases 2/3: read without a DB lock, then briefly lock to persist each cover.
     let mut ingested = 0usize;
-    for (book_id, bytes) in &loaded {
+    for (book_id, path) in candidates {
+        let Ok(bytes) = std::fs::read(&path) else {
+            continue;
+        };
+        if bytes.is_empty() {
+            continue;
+        }
+        let Ok(conn) = db.conn.lock() else {
+            return ingested;
+        };
         if conn
             .execute(
                 "UPDATE books SET cover_data = ?1 WHERE id = ?2 AND (cover_data IS NULL OR LENGTH(cover_data) = 0)",
-                rusqlite::params![bytes, book_id],
+                rusqlite::params![&bytes, &book_id],
             )
             .is_ok_and(|n| n > 0)
         {
@@ -1417,6 +1430,31 @@ mod tests {
             .query_row("SELECT cover_data FROM books WHERE id = 'b1'", [], |r| r.get(0))
             .unwrap();
         assert_eq!(blob, b"\x89PNG fake cover bytes");
+    }
+
+    #[test]
+    fn ingest_peer_covers_persists_each_materialized_cover() {
+        let env = setup("self");
+        insert_book_no_cover(&env.conn(), "b1");
+        insert_book_no_cover(&env.conn(), "b2");
+
+        let covers = env.shared.join("covers");
+        fs::create_dir_all(&covers).unwrap();
+        fs::write(covers.join("b1.img"), b"first cover").unwrap();
+        fs::write(covers.join("b2.img"), b"second cover").unwrap();
+
+        let ingested = ingest_peer_covers(&env.shared, &env.db);
+        assert_eq!(ingested, 2);
+
+        let conn = env.conn();
+        let first: Vec<u8> = conn
+            .query_row("SELECT cover_data FROM books WHERE id = 'b1'", [], |r| r.get(0))
+            .unwrap();
+        let second: Vec<u8> = conn
+            .query_row("SELECT cover_data FROM books WHERE id = 'b2'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(first, b"first cover");
+        assert_eq!(second, b"second cover");
     }
 
     #[test]
