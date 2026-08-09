@@ -88,6 +88,8 @@ export default function LibrarySyncSettings(_props: SettingsProps) {
   // Peer the user clicked the trash icon on; opens a confirmation
   // modal until cleared (cancel) or acted on (remove).
   const [pendingRemoval, setPendingRemoval] = useState<PeerInfo | null>(null);
+  // Rebuild-from-iCloud confirmation dialog (#300).
+  const [confirmRebuild, setConfirmRebuild] = useState(false);
   // Tick once a minute so "Last seen 2m ago" stays fresh while the modal
   // is open. Cheap; the component re-renders are bounded.
   const [now, setNow] = useState(Date.now());
@@ -211,6 +213,20 @@ export default function LibrarySyncSettings(_props: SettingsProps) {
     setError(null);
     try {
       await invoke("sync_remove_peer", { deviceUuid: peer.device_uuid });
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onRebuild = async () => {
+    setConfirmRebuild(false);
+    setBusy(true);
+    setError(null);
+    try {
+      await invoke<SyncNowResult>("sync_rebuild");
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -379,6 +395,30 @@ export default function LibrarySyncSettings(_props: SettingsProps) {
                 })}
               </p>
             </div>
+
+            {/* Rebuild from iCloud — danger row. Requires the engine,
+                same as Sync now / Compact: the wipe must never run
+                without a live replay to pull the data back. */}
+            <div className="h-px bg-border-light mt-2" />
+            <div className="flex items-center justify-between h-[73px]">
+              <div>
+                <p className="text-[14px] font-medium text-text-primary tracking-[-0.15px]">
+                  {t("settings.librarySync.rebuild")}
+                </p>
+                <p className="text-[12px] text-text-muted mt-0.5">
+                  {t("settings.librarySync.rebuildSub")}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setConfirmRebuild(true)}
+                disabled={busy || syncing || !engineRunning}
+                title={!engineRunning ? t("settings.librarySync.paused") : undefined}
+                className="bg-danger hover:bg-danger-hover text-white text-[13px] font-medium rounded-md h-8 px-3 shrink-0 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {t("settings.librarySync.rebuildCta")}
+              </button>
+            </div>
           </>
         )}
 
@@ -430,6 +470,33 @@ export default function LibrarySyncSettings(_props: SettingsProps) {
                 className="bg-danger hover:bg-danger-hover text-white text-[14px] font-medium rounded-md px-4 py-2 cursor-pointer"
               >
                 {t("settings.librarySync.remove")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Rebuild confirmation. Cancel is the default (autofocused)
+          action; the destructive button requires an explicit click. */}
+      {confirmRebuild && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-overlay">
+          <div className="bg-bg-surface rounded-xl shadow-lg w-[400px] p-6">
+            <h3 className="text-[18px] font-semibold text-text-primary mb-2">
+              {t("settings.librarySync.rebuildConfirmTitle")}
+            </h3>
+            <p className="text-[14px] text-text-secondary leading-5 mb-6">
+              {t("settings.librarySync.rebuildConfirmMsg")}
+            </p>
+            <div className="flex justify-end gap-3">
+              <Button variant="ghost" size="md" autoFocus onClick={() => setConfirmRebuild(false)}>
+                {t("common.cancel")}
+              </Button>
+              <button
+                type="button"
+                onClick={onRebuild}
+                className="bg-danger hover:bg-danger-hover text-white text-[14px] font-medium rounded-md px-4 py-2 cursor-pointer"
+              >
+                {t("settings.librarySync.rebuildConfirmCta")}
               </button>
             </div>
           </div>

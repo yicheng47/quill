@@ -13,6 +13,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use rusqlite::params;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
 
@@ -297,7 +298,7 @@ pub fn sync_enable(
     // every iCloud-side write between the move and the data_dir
     // update was a potential data-loss path.
 
-    publish_bootstrap_snapshot(&db, &icloud_dir, &device.device_uuid)?;
+    publish_bootstrap_snapshot_unless_rebuild_pending(&db, &icloud_dir, &device.device_uuid)?;
 
     peers::write_own_manifest(
         &icloud_dir,
@@ -373,7 +374,16 @@ pub fn sync_enable(
     std::thread::Builder::new()
         .name("sync-enable-tick".into())
         .spawn(move || {
-            let result = engine.tick_with_progress(&bg_db, Some(&bg_handle));
+            // Same rebuild-resume check as the boot path: a rebuild
+            // cancelled earlier this session followed by a disable /
+            // re-enable must still converge, not tick over a wiped
+            // library with a stranded marker.
+            let result = if rebuild_marker_set(&bg_db) {
+                log::info!("sync_enable: rebuild marker set — resuming rebuild from iCloud");
+                run_rebuild_replay(&bg_db, &engine, Some(&bg_handle))
+            } else {
+                engine.tick_with_progress(&bg_db, Some(&bg_handle))
+            };
             let _ = tauri::Emitter::emit(&bg_handle, "sync-initial-tick-done", ());
             if let Err(e) = result {
                 log::warn!("sync_enable: initial tick failed: {e}");
@@ -541,6 +551,11 @@ pub fn sync_cancel(
 ) -> AppResult<()> {
     if let Some(engine) = sync_state.engine_snapshot()? {
         engine.cancel();
+        // Operation-scoped cancel signal: the monotonic generation
+        // survives the tick-start flag reset, so a rebuild aborts (or
+        // keeps its resume marker) even when the cancel lands between
+        // its ticks — e.g. during the bootstrap publish.
+        engine.bump_cancel_generation();
     }
     let _ = tauri::Emitter::emit(&app, "sync-initial-tick-done", ());
     Ok(())
@@ -558,6 +573,37 @@ pub fn sync_now(
     let result = engine.tick_with_progress(&db, Some(&app));
     let _ = tauri::Emitter::emit(&app, "sync-initial-tick-done", ());
     Ok(result?.into())
+}
+
+/// Rebuild the local materialized view from the shared folder. A
+/// one-way pull: publish local state first (outbox drain + bootstrap
+/// snapshot) so it is durable in iCloud, then wipe the synced tables
+/// and every replay watermark, then replay everything from scratch.
+/// Nothing in the shared folder is deleted or rewritten beyond the
+/// device's own log/snapshot/manifest. See
+/// `docs/features/300-rebuild-from-icloud.md`.
+///
+/// Refuses when the engine is not running this session (queue-only
+/// mode included), matching `sync_now` / `sync_compact` — the wipe
+/// must never run without a live engine to replay the data back.
+#[tauri::command]
+pub async fn sync_rebuild(
+    app: tauri::AppHandle,
+    db: State<'_, Db>,
+    sync_state: State<'_, SyncState>,
+) -> AppResult<SyncNowResult> {
+    let engine = sync_state
+        .engine_snapshot()?
+        .ok_or_else(|| AppError::Other("sync is not enabled on this device".into()))?;
+    let db = db.inner().clone();
+
+    tokio::task::spawn_blocking(move || {
+        let result = run_rebuild(&db, &engine, Some(&app));
+        let _ = tauri::Emitter::emit(&app, "sync-initial-tick-done", ());
+        Ok(result?.into())
+    })
+    .await
+    .map_err(|e| AppError::Other(format!("sync_rebuild worker failed: {e}")))?
 }
 
 /// Manually trigger a compaction of the device's own log. Folds the
@@ -599,6 +645,238 @@ pub fn sync_remove_peer(
         .or_else(icloud::icloud_data_dir)
         .ok_or_else(|| AppError::Other("iCloud shared folder is not available".into()))?;
     peers::delete_peer(&shared_dir, &device_uuid, &device.device_uuid)
+}
+
+// ---------------------------------------------------------------------------
+// Rebuild-from-iCloud core. `pub(crate)` where lib.rs's boot path needs
+// to resume an interrupted rebuild; see the state machine in
+// `docs/impls/300-rebuild-from-icloud.md`.
+// ---------------------------------------------------------------------------
+
+/// `settings` KV key marking a rebuild whose wipe + full replay has not
+/// completed. The `settings` table is local-only and preserved by the
+/// wipe, so the marker survives a crash or quit at any point and never
+/// syncs to peers.
+const REBUILD_MARKER_KEY: &str = "sync_rebuild_pending";
+
+/// Serializes the whole rebuild state machine — marker check, publish
+/// half, wipe + replay — across the command and both resume entry
+/// points. Without it, two concurrent rebuilds could both pass the
+/// marker check, and the slower one would publish the already-wiped DB
+/// over the only complete recovery snapshot.
+static REBUILD_MUTEX: Mutex<()> = Mutex::new(());
+
+/// The synced tables the wipe clears, children before parents.
+/// `_replay_state` is cleared alongside them in the same transaction.
+/// Deliberately absent: `settings`, `book_settings`, `schema_version`,
+/// `_tombstones` (locally-deleted entities must not resurrect during
+/// the replay), `_pending_publish` (unflushed local writes must
+/// survive so the replay's Phase 0 can still publish them), and
+/// `translations` — a legacy table with no replay source (snapshots
+/// don't carry it and its events are no-ops since #263), so wiping it
+/// would be unrecoverable deletion; it's also already dropped on DBs
+/// stamped by the since-deleted dev migration 14.
+const WIPE_TABLES: [&str; 8] = [
+    "chat_messages",
+    "chats",
+    "collection_books",
+    "collections",
+    "vocab_words",
+    "bookmarks",
+    "highlights",
+    "books",
+];
+
+pub(crate) fn rebuild_marker_set(db: &Db) -> bool {
+    db.reader()
+        .query_row(
+            "SELECT value FROM settings WHERE key = ?1",
+            params![REBUILD_MARKER_KEY],
+            |r| r.get::<_, String>(0),
+        )
+        .map(|v| v == "true")
+        .unwrap_or(false)
+}
+
+fn set_rebuild_marker(db: &Db) -> AppResult<()> {
+    let conn = db
+        .conn
+        .lock()
+        .map_err(|e| AppError::Other(format!("db conn mutex: {e}")))?;
+    conn.execute(
+        "INSERT INTO settings (key, value) VALUES (?1, 'true')
+         ON CONFLICT(key) DO UPDATE SET value = 'true'",
+        params![REBUILD_MARKER_KEY],
+    )?;
+    Ok(())
+}
+
+fn clear_rebuild_marker(db: &Db) -> AppResult<()> {
+    let conn = db
+        .conn
+        .lock()
+        .map_err(|e| AppError::Other(format!("db conn mutex: {e}")))?;
+    conn.execute(
+        "DELETE FROM settings WHERE key = ?1",
+        params![REBUILD_MARKER_KEY],
+    )?;
+    Ok(())
+}
+
+/// One write transaction clearing the synced tables and every replay
+/// watermark. Runs under the tick lock so a concurrent tick can't
+/// interleave: a tick's per-event watermark bump landing after our
+/// deletes would record ids for rows we just removed, and the rebuild
+/// replay would then skip those events forever.
+///
+/// The write connection runs with `PRAGMA foreign_keys=OFF` (see
+/// `Db::init_split`; the merge engine does its cascades explicitly),
+/// so `DELETE FROM books` cannot cascade into the preserved
+/// `book_settings`.
+pub(crate) fn wipe_synced_tables(db: &Db) -> AppResult<()> {
+    replay::with_tick_lock(|| {
+        let mut conn = db
+            .conn
+            .lock()
+            .map_err(|e| AppError::Other(format!("db conn mutex: {e}")))?;
+        let tx = conn.transaction()?;
+        for table in WIPE_TABLES {
+            tx.execute(&format!("DELETE FROM {table}"), [])?;
+        }
+        tx.execute("DELETE FROM _replay_state", [])?;
+        tx.commit()?;
+        Ok(())
+    })
+}
+
+/// The wipe + replay half of a rebuild. Shared by `sync_rebuild` and
+/// the boot-path resume (a set marker means a prior rebuild's publish
+/// is already durable in the shared folder, so resuming only needs
+/// this half). Clears the marker only when the replay ran to
+/// completion — an error or a `sync_cancel` mid-replay leaves it set
+/// so the next launch resumes.
+pub(crate) fn run_rebuild_replay(
+    db: &Db,
+    engine: &ReplayEngine,
+    app_handle: Option<&AppHandle>,
+) -> AppResult<ReplayReport> {
+    let _flight = REBUILD_MUTEX
+        .lock()
+        .map_err(|e| AppError::Other(format!("rebuild mutex: {e}")))?;
+    let cancel_gen = engine.cancel_generation();
+    run_rebuild_replay_locked(db, engine, app_handle, cancel_gen)
+}
+
+/// `cancel_gen` is the generation captured when this operation entered
+/// the serialized state machine. A cancel landing anywhere after that
+/// capture — including the window between the last pre-marker gate and
+/// the replay tick's start, where the tick's own flag reset would
+/// launder it — bumps the generation and forces the cancelled verdict,
+/// so the marker is retained and the rebuild resumes on next launch.
+fn run_rebuild_replay_locked(
+    db: &Db,
+    engine: &ReplayEngine,
+    app_handle: Option<&AppHandle>,
+    cancel_gen: u64,
+) -> AppResult<ReplayReport> {
+    // Ask any in-flight watcher tick to wind down so the wipe isn't
+    // queued behind a long replay. Our own tick below resets the flag;
+    // this internal interrupt deliberately does not bump the user
+    // cancel generation.
+    engine.cancel();
+    wipe_synced_tables(db)?;
+    let mut report = engine.tick_with_progress(db, app_handle)?;
+    if engine.cancel_generation() != cancel_gen {
+        report.cancelled = true;
+    }
+    settle_rebuild_marker(db, &report)?;
+    Ok(report)
+}
+
+/// Marker decision after the rebuild replay. Reads the cancellation
+/// verdict from the tick's own report — captured while the tick still
+/// held TICK_MUTEX — never from the engine-global flag: the own-log
+/// and snapshot writes queue a watcher tick that resets that flag the
+/// moment our tick releases the mutex, which would let a cancelled
+/// rebuild clear its marker and lose the resume.
+fn settle_rebuild_marker(db: &Db, report: &ReplayReport) -> AppResult<()> {
+    if report.cancelled {
+        return Ok(());
+    }
+    clear_rebuild_marker(db)
+}
+
+/// Full rebuild sequence: fold + publish → set the marker → wipe +
+/// replay, single-flight under `REBUILD_MUTEX`.
+///
+/// The publish half starts with a full tick rather than a bare outbox
+/// flush: a local delete whose event has not yet been *applied*
+/// locally (still queued, or flushed to the own log by the background
+/// worker but not yet replayed) has no `_tombstones` row, and absence
+/// from the bootstrap snapshot does not encode deletion — the
+/// snapshot's watermark would mask the delete event while an older
+/// peer `*.add` resurrects the row. The tick materializes those
+/// tombstones in bulk, and the snapshot itself is then published via
+/// `publish_with_own_state_settled`, which seals the own log and folds
+/// any event that raced in between — no own event below the snapshot
+/// id can be left unapplied.
+///
+/// When the marker is already set, a prior rebuild's publish is
+/// already durable and the local DB may be wiped or partial —
+/// re-publishing would overwrite the only complete recovery snapshot
+/// with that partial state. Every entry point therefore skips
+/// straight to the wipe + replay half.
+///
+/// User cancellation is tracked by the engine's monotonic cancel
+/// generation, captured once the operation holds `REBUILD_MUTEX`. Any
+/// increment observed afterwards (`sync_cancel` bumps it) means this
+/// operation was cancelled — the tick-scoped flag is reset at every
+/// tick start and would launder a cancel landing during the publish,
+/// and a resettable boolean could be cleared by a second queued
+/// rebuild request. Cancels from before the capture are stale and
+/// ignored. Both pre-marker gates abort with nothing wiped and no
+/// marker set; a cancel after the marker is written retains it.
+pub(crate) fn run_rebuild(
+    db: &Db,
+    engine: &ReplayEngine,
+    app_handle: Option<&AppHandle>,
+) -> AppResult<ReplayReport> {
+    let _flight = REBUILD_MUTEX
+        .lock()
+        .map_err(|e| AppError::Other(format!("rebuild mutex: {e}")))?;
+    let cancel_gen = engine.cancel_generation();
+    if !rebuild_marker_set(db) {
+        let pre = engine.tick_with_progress(db, app_handle)?;
+        if pre.cancelled || engine.cancel_generation() != cancel_gen {
+            return Ok(ReplayReport { cancelled: true, ..pre });
+        }
+        replay::publish_with_own_state_settled(db, &engine.own_log, || {
+            publish_bootstrap_snapshot(db, &engine.shared_dir, &engine.self_device)
+        })?;
+        // The publish can be slow (full-DB dump + coordinated write);
+        // last exit before the marker commits us to the wipe.
+        if engine.cancel_generation() != cancel_gen {
+            return Ok(ReplayReport { cancelled: true, ..pre });
+        }
+        set_rebuild_marker(db)?;
+    }
+    run_rebuild_replay_locked(db, engine, app_handle, cancel_gen)
+}
+
+/// `sync_enable`'s bootstrap publish, gated on the rebuild marker.
+/// Enabling while a rebuild is pending (cancel → disable → re-enable)
+/// must not snapshot the wiped/partial DB over the pre-wipe snapshot;
+/// the enable-tick thread's resume completes the rebuild instead.
+fn publish_bootstrap_snapshot_unless_rebuild_pending(
+    db: &Db,
+    shared_dir: &Path,
+    device_uuid: &str,
+) -> AppResult<()> {
+    if rebuild_marker_set(db) {
+        log::info!("sync_enable: rebuild pending — keeping the pre-wipe bootstrap snapshot");
+        return Ok(());
+    }
+    publish_bootstrap_snapshot(db, shared_dir, device_uuid)
 }
 
 // ---------------------------------------------------------------------------
@@ -1235,5 +1513,721 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM books", [], |r| r.get(0))
             .unwrap();
         assert_eq!(n, 2, "peer should see both pre- and post-disable books");
+    }
+
+    // -----------------------------------------------------------------------
+    // Rebuild from iCloud (#300)
+    // -----------------------------------------------------------------------
+
+    use crate::sync::events::{
+        BookImportPayload, Event, EventBody, HighlightPayload, EVENT_SCHEMA_VERSION,
+    };
+    use rusqlite::Connection;
+
+    /// Same harness shape as `replay.rs`'s `Env`: temp shared dir +
+    /// in-memory Db + own EventLog + engine.
+    struct RebuildEnv {
+        _dir: TempDir,
+        shared: PathBuf,
+        db: Db,
+        engine: ReplayEngine,
+    }
+
+    impl RebuildEnv {
+        fn conn(&self) -> std::sync::MutexGuard<'_, Connection> {
+            self.db.conn.lock().unwrap()
+        }
+
+        fn count(&self, table: &str) -> i64 {
+            self.conn()
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))
+                .unwrap()
+        }
+    }
+
+    fn rebuild_setup(self_device: &str) -> RebuildEnv {
+        let dir = TempDir::new().unwrap();
+        let shared = dir.path().join("shared");
+        fs::create_dir_all(shared.join("logs")).unwrap();
+
+        let conn = Connection::open_in_memory().unwrap();
+        Db::run_migrations_on(&conn).unwrap();
+        let conn = Arc::new(Mutex::new(conn));
+        let db = Db {
+            read_conn: conn.clone(),
+            conn,
+            data_dir: Arc::new(Mutex::new(dir.path().to_path_buf())),
+        };
+
+        let own_log_path = shared.join("logs").join(format!("{self_device}.jsonl"));
+        let own_log = Arc::new(EventLog::open(&own_log_path, self_device, false).unwrap());
+        let engine = ReplayEngine::new(shared.clone(), self_device.to_string(), own_log);
+        RebuildEnv { _dir: dir, shared, db, engine }
+    }
+
+    fn ev(ts: i64, device: &str, body: EventBody) -> Event {
+        Event {
+            id: format!("01HYZX0000000000000000{:04X}", ts as u16),
+            ts,
+            device: device.to_string(),
+            v: EVENT_SCHEMA_VERSION,
+            body,
+            extra: serde_json::Map::new(),
+        }
+    }
+
+    fn import(id: &str) -> EventBody {
+        EventBody::BookImport(BookImportPayload {
+            id: id.into(),
+            title: format!("Book {id}"),
+            author: "Author".into(),
+            description: None,
+            cover_path: None,
+            file_path: format!("books/{id}.epub"),
+            format: "epub".into(),
+            genre: None,
+            pages: Some(100),
+        })
+    }
+
+    fn write_peer_log(shared: &Path, peer: &str, events: &[Event]) {
+        let p = shared.join("logs").join(format!("{peer}.jsonl"));
+        let mut bytes = Vec::new();
+        for e in events {
+            bytes.extend_from_slice(&serde_json::to_vec(e).unwrap());
+            bytes.push(b'\n');
+        }
+        fs::write(p, bytes).unwrap();
+    }
+
+    fn insert_book(conn: &Connection, id: &str, title: &str, ts: i64) {
+        conn.execute(
+            "INSERT INTO books
+             (id, title, author, file_path, format, status, progress,
+              created_at, updated_at, updated_by_device)
+             VALUES (?1, ?2, 'Author', ?3, 'epub', 'unread', 0, ?4, ?4, 'self')",
+            params![id, title, format!("books/{id}.epub"), ts],
+        )
+        .unwrap();
+    }
+
+    fn queue_event(conn: &Connection, ts: i64, body: &EventBody) {
+        conn.execute(
+            "INSERT INTO _pending_publish (id, ts, body_json, created_at)
+             VALUES (?1, ?2, ?3, ?2)",
+            params![
+                uuid::Uuid::new_v4().to_string(),
+                ts,
+                serde_json::to_string(body).unwrap(),
+            ],
+        )
+        .unwrap();
+    }
+
+    /// Spec test 1: the outbox drain and bootstrap snapshot land in the
+    /// shared folder before the wipe, so both a queued-but-unflushed
+    /// row and a row that was never queued at all survive the rebuild.
+    #[test]
+    fn rebuild_publishes_local_state_before_wiping() {
+        let env = rebuild_setup("self");
+        {
+            let conn = env.conn();
+            insert_book(&conn, "b-queued", "Queued", 1000);
+            queue_event(&conn, 1000, &import("b-queued"));
+            insert_book(&conn, "b-direct", "Never Queued", 1100);
+        }
+
+        run_rebuild(&env.db, &env.engine, None).unwrap();
+
+        // The queued event reached the device's own log...
+        let log_events = env.engine.own_log.read_all().unwrap();
+        assert_eq!(log_events.len(), 1, "outbox must drain into the own log");
+        // ...and the outbox is empty.
+        assert_eq!(env.count("_pending_publish"), 0);
+        // The bootstrap snapshot exists in the shared folder.
+        assert!(env.shared.join("logs/self.snapshot.json").exists());
+
+        // Both rows came back through the shared folder.
+        let titles: Vec<String> = {
+            let conn = env.conn();
+            let mut stmt = conn
+                .prepare("SELECT title FROM books ORDER BY id")
+                .unwrap();
+            let rows = stmt
+                .query_map([], |r| r.get(0))
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap();
+            rows
+        };
+        assert_eq!(titles, vec!["Never Queued".to_string(), "Queued".to_string()]);
+        assert!(!rebuild_marker_set(&env.db), "marker clears after a complete rebuild");
+    }
+
+    /// Spec test 2: `settings`, `book_settings`, and `_tombstones`
+    /// survive the rebuild, and a locally-deleted book stays deleted
+    /// even though a peer log still carries its `book.import`.
+    #[test]
+    fn rebuild_preserves_local_tables_and_locally_deleted_books_stay_deleted() {
+        let env = rebuild_setup("self");
+        write_peer_log(
+            &env.shared,
+            "peer-A",
+            &[
+                ev(1000, "peer-A", import("b-keep")),
+                ev(1100, "peer-A", import("b-del")),
+            ],
+        );
+        env.engine.tick(&env.db).unwrap();
+        assert_eq!(env.count("books"), 2);
+
+        {
+            let conn = env.conn();
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES ('reader_theme', 'dark')",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO book_settings (book_id, key, value)
+                 VALUES ('b-keep', 'font_size', '24')",
+                [],
+            )
+            .unwrap();
+            // Local delete, the `do_delete_book` way: SQL delete plus a
+            // queued `book.delete` event.
+            conn.execute("DELETE FROM books WHERE id = 'b-del'", []).unwrap();
+            queue_event(&conn, 2000, &EventBody::BookDelete { id: "b-del".into() });
+        }
+        // Tick lands the tombstone: the flush appends the delete to the
+        // own log and the replay applies it back.
+        env.engine.tick(&env.db).unwrap();
+        let tombstoned: i64 = env
+            .conn()
+            .query_row(
+                "SELECT COUNT(*) FROM _tombstones WHERE entity = 'book' AND id = 'b-del'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(tombstoned, 1, "own delete event must land a tombstone");
+
+        run_rebuild(&env.db, &env.engine, None).unwrap();
+
+        let conn = env.conn();
+        let theme: String = conn
+            .query_row(
+                "SELECT value FROM settings WHERE key = 'reader_theme'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(theme, "dark", "settings must survive the rebuild");
+        let font: String = conn
+            .query_row(
+                "SELECT value FROM book_settings WHERE book_id = 'b-keep' AND key = 'font_size'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(font, "24", "book_settings must survive the rebuild");
+        let n_books: i64 = conn
+            .query_row("SELECT COUNT(*) FROM books", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n_books, 1, "only b-keep should exist");
+        let survivor: String = conn
+            .query_row("SELECT id FROM books", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(survivor, "b-keep");
+        let tombstoned: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM _tombstones WHERE entity = 'book' AND id = 'b-del'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(tombstoned, 1, "tombstone must survive the wipe");
+    }
+
+    /// Spec test 3: the wipe clears the nine synced tables and every
+    /// `_replay_state` watermark, and nothing else.
+    #[test]
+    fn wipe_clears_synced_tables_and_watermarks_only() {
+        let env = rebuild_setup("self");
+        {
+            let conn = env.conn();
+            insert_book(&conn, "b1", "B1", 1000);
+            conn.execute(
+                "INSERT INTO highlights
+                 (id, book_id, cfi_range, color, created_at, updated_at, updated_by_device)
+                 VALUES ('h1', 'b1', 'cfi', 'yellow', 1000, 1000, 'self')",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO bookmarks (id, book_id, cfi, created_at, updated_at)
+                 VALUES ('bm1', 'b1', 'cfi', 1000, 1000)",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO vocab_words
+                 (id, book_id, word, definition, created_at, updated_at, updated_by_device)
+                 VALUES ('v1', 'b1', 'word', 'def', 1000, 1000, 'self')",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO translations
+                 (id, book_id, source_text, translated_text, target_language, created_at, updated_at)
+                 VALUES ('t1', 'b1', 'src', 'dst', 'zh', 1000, 1000)",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO collections (id, name, created_at, updated_at, updated_by_device)
+                 VALUES ('c1', 'Shelf', 1000, 1000, 'self')",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO collection_books (collection_id, book_id, created_at, updated_at, updated_by_device)
+                 VALUES ('c1', 'b1', 1000, 1000, 'self')",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO chats (id, book_id, title, created_at, updated_at, updated_by_device)
+                 VALUES ('ch1', 'b1', 'Chat', 1000, 1000, 'self')",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO chat_messages (id, chat_id, role, content, created_at, updated_at)
+                 VALUES ('m1', 'ch1', 'user', 'hi', 1000, 1000)",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO _replay_state (peer_device, last_event_id, updated_at)
+                 VALUES ('peer-A', 'e99', 1000), ('peer-B', 'e42', 1000)",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO _tombstones (entity, id, ts) VALUES ('book', 'gone', 500)",
+                [],
+            )
+            .unwrap();
+            queue_event(&conn, 1000, &import("b-pending"));
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES ('language', 'zh')",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO book_settings (book_id, key, value) VALUES ('b1', 'font', 'inter')",
+                [],
+            )
+            .unwrap();
+        }
+
+        wipe_synced_tables(&env.db).unwrap();
+
+        for table in WIPE_TABLES {
+            assert_eq!(env.count(table), 0, "{table} must be wiped");
+        }
+        assert_eq!(env.count("_replay_state"), 0, "all watermarks must be cleared");
+        assert_eq!(env.count("_tombstones"), 1, "_tombstones must survive");
+        assert_eq!(env.count("_pending_publish"), 1, "_pending_publish must survive");
+        assert_eq!(env.count("settings"), 1, "settings must survive");
+        assert_eq!(env.count("book_settings"), 1, "book_settings must survive");
+        // Legacy table with no replay source — wiping it would be
+        // unrecoverable deletion, so it is preserved. Also naturally
+        // absent on dev DBs stamped by the deleted migration 14; the
+        // smoke-test failure ("no such table: translations") is why it
+        // left WIPE_TABLES.
+        assert_eq!(env.count("translations"), 1, "legacy translations must survive");
+    }
+
+    /// Spec test 4: a rebuild over an already-healthy library converges
+    /// to the same end state — same row counts, same content, cover
+    /// blob re-ingested.
+    #[test]
+    fn rebuild_over_healthy_library_converges_to_same_state() {
+        let env = rebuild_setup("self");
+        write_peer_log(
+            &env.shared,
+            "peer-A",
+            &[
+                ev(1000, "peer-A", import("b-peer")),
+                ev(
+                    1100,
+                    "peer-A",
+                    EventBody::HighlightAdd(HighlightPayload {
+                        id: "h1".into(),
+                        book_id: "b-peer".into(),
+                        cfi_range: "cfi".into(),
+                        color: "yellow".into(),
+                        note: Some("note".into()),
+                        text_content: None,
+                    }),
+                ),
+            ],
+        );
+        let covers = env.shared.join("covers");
+        fs::create_dir_all(&covers).unwrap();
+        fs::write(covers.join("b-peer.img"), b"cover bytes").unwrap();
+        {
+            let conn = env.conn();
+            insert_book(&conn, "b-own", "Own Book", 900);
+        }
+        env.engine.tick(&env.db).unwrap();
+
+        let state_before: Vec<(String, String, Option<Vec<u8>>)> = {
+            let conn = env.conn();
+            let mut stmt = conn
+                .prepare("SELECT id, title, cover_data FROM books ORDER BY id")
+                .unwrap();
+            let rows = stmt
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap();
+            rows
+        };
+        assert_eq!(state_before.len(), 2);
+        assert_eq!(
+            state_before[1].2.as_deref(),
+            Some(b"cover bytes".as_slice()),
+            "healthy library has the peer cover ingested"
+        );
+        let highlights_before = env.count("highlights");
+
+        run_rebuild(&env.db, &env.engine, None).unwrap();
+
+        let state_after: Vec<(String, String, Option<Vec<u8>>)> = {
+            let conn = env.conn();
+            let mut stmt = conn
+                .prepare("SELECT id, title, cover_data FROM books ORDER BY id")
+                .unwrap();
+            let rows = stmt
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap();
+            rows
+        };
+        assert_eq!(state_after, state_before, "rebuild must converge to the same library");
+        assert_eq!(env.count("highlights"), highlights_before);
+        assert!(!rebuild_marker_set(&env.db));
+    }
+
+    /// Spec test 5: a rebuild interrupted after the wipe resumes on the
+    /// next launch and converges; the marker clears exactly once.
+    #[test]
+    fn interrupted_rebuild_resumes_on_next_launch() {
+        let env = rebuild_setup("self");
+        write_peer_log(&env.shared, "peer-A", &[ev(1000, "peer-A", import("b1"))]);
+        env.engine.tick(&env.db).unwrap();
+        assert_eq!(env.count("books"), 1);
+
+        // Crash simulation: fold tick + publish + marker + wipe ran,
+        // the replay never did.
+        env.engine.tick(&env.db).unwrap();
+        publish_bootstrap_snapshot(&env.db, &env.shared, "self").unwrap();
+        set_rebuild_marker(&env.db).unwrap();
+        wipe_synced_tables(&env.db).unwrap();
+        assert_eq!(env.count("books"), 0, "half-finished rebuild: library is wiped");
+        assert!(rebuild_marker_set(&env.db), "marker survives the wipe");
+
+        // "Next launch": the boot path sees the marker and resumes the
+        // wipe + replay half.
+        run_rebuild_replay(&env.db, &env.engine, None).unwrap();
+        assert_eq!(env.count("books"), 1, "resume must converge");
+        assert!(
+            !rebuild_marker_set(&env.db),
+            "marker clears after the resumed replay completes"
+        );
+
+        // A second launch finds no marker — the plain tick path runs
+        // and the library stays converged.
+        env.engine.tick(&env.db).unwrap();
+        assert_eq!(env.count("books"), 1);
+        assert!(!rebuild_marker_set(&env.db));
+    }
+
+    /// Review finding 1: retrying an interrupted rebuild must not
+    /// re-publish a bootstrap snapshot from the wiped/partial DB —
+    /// that would overwrite the only complete recovery snapshot and
+    /// permanently lose local-only rows. With the marker set,
+    /// `run_rebuild` skips straight to the wipe + replay half.
+    #[test]
+    fn rebuild_retry_after_interruption_does_not_republish_partial_state() {
+        let env = rebuild_setup("self");
+        write_peer_log(&env.shared, "peer-A", &[ev(1000, "peer-A", import("b-peer"))]);
+        env.engine.tick(&env.db).unwrap();
+        {
+            // Local-only row: never queued, never logged — its only
+            // durable copy is the pre-wipe bootstrap snapshot.
+            let conn = env.conn();
+            insert_book(&conn, "b-local", "Local Only", 1100);
+        }
+
+        // First rebuild, interrupted right after the wipe.
+        env.engine.tick(&env.db).unwrap();
+        publish_bootstrap_snapshot(&env.db, &env.shared, "self").unwrap();
+        set_rebuild_marker(&env.db).unwrap();
+        wipe_synced_tables(&env.db).unwrap();
+        assert_eq!(env.count("books"), 0);
+
+        // Retry through the real entry point.
+        run_rebuild(&env.db, &env.engine, None).unwrap();
+
+        let titles: Vec<String> = {
+            let conn = env.conn();
+            let mut stmt = conn.prepare("SELECT title FROM books ORDER BY id").unwrap();
+            let rows = stmt
+                .query_map([], |r| r.get(0))
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap();
+            rows
+        };
+        assert_eq!(
+            titles,
+            vec!["Local Only".to_string(), "Book b-peer".to_string()],
+            "retry must restore from the pre-wipe snapshot, not a re-published partial one",
+        );
+        assert!(!rebuild_marker_set(&env.db));
+    }
+
+    /// Review finding 1, sync_enable variant: enabling sync while a
+    /// rebuild is pending (cancel → disable → re-enable) must keep the
+    /// pre-wipe bootstrap snapshot instead of snapshotting the
+    /// wiped/partial DB over it.
+    #[test]
+    fn enable_publish_is_skipped_while_rebuild_pending() {
+        use crate::sync::snapshot::Snapshot;
+
+        let env = rebuild_setup("self");
+        {
+            let conn = env.conn();
+            insert_book(&conn, "b-local", "Local Only", 1000);
+        }
+        publish_bootstrap_snapshot(&env.db, &env.shared, "self").unwrap();
+        let snap_path = env.shared.join("logs/self.snapshot.json");
+        let good_id = Snapshot::read_from(&snap_path).unwrap().id;
+
+        set_rebuild_marker(&env.db).unwrap();
+        wipe_synced_tables(&env.db).unwrap();
+
+        // What sync_enable now calls in its Phase 2.
+        publish_bootstrap_snapshot_unless_rebuild_pending(&env.db, &env.shared, "self").unwrap();
+        assert_eq!(
+            Snapshot::read_from(&snap_path).unwrap().id,
+            good_id,
+            "the pre-wipe snapshot must not be overwritten while the marker is set",
+        );
+
+        // The enable-tick thread's resume then completes the rebuild.
+        run_rebuild_replay(&env.db, &env.engine, None).unwrap();
+        assert_eq!(env.count("books"), 1, "local-only book restored from the kept snapshot");
+        assert!(!rebuild_marker_set(&env.db));
+    }
+
+    /// Review finding 2: a local delete whose event has NOT been
+    /// applied locally yet — still queued in the outbox, or already
+    /// flushed to the own log by the background worker — must stay
+    /// deleted through a rebuild. The pre-wipe fold tick materializes
+    /// the tombstones before the bootstrap snapshot is generated.
+    #[test]
+    fn rebuild_right_after_delete_keeps_books_deleted_without_prior_tick() {
+        let env = rebuild_setup("self");
+        write_peer_log(
+            &env.shared,
+            "peer-A",
+            &[
+                ev(1000, "peer-A", import("b-del-queued")),
+                ev(1100, "peer-A", import("b-del-logged")),
+            ],
+        );
+        env.engine.tick(&env.db).unwrap();
+        assert_eq!(env.count("books"), 2);
+
+        {
+            let conn = env.conn();
+            // Delete #1: event still sitting in the outbox.
+            conn.execute("DELETE FROM books WHERE id = 'b-del-queued'", []).unwrap();
+            queue_event(&conn, 2000, &EventBody::BookDelete { id: "b-del-queued".into() });
+            // Delete #2: event already flushed to the own log (the
+            // background flush worker ran) but never replayed locally.
+            conn.execute("DELETE FROM books WHERE id = 'b-del-logged'", []).unwrap();
+        }
+        env.engine
+            .own_log
+            .append_batch_varied(vec![(EventBody::BookDelete { id: "b-del-logged".into() }, 2100)])
+            .unwrap();
+        // No tick here — neither delete has a tombstone yet.
+
+        run_rebuild(&env.db, &env.engine, None).unwrap();
+
+        assert_eq!(
+            env.count("books"),
+            0,
+            "peer imports must not resurrect locally-deleted books",
+        );
+        let tombstones: i64 = env
+            .conn()
+            .query_row(
+                "SELECT COUNT(*) FROM _tombstones WHERE entity = 'book'
+                 AND id IN ('b-del-queued', 'b-del-logged')",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(tombstones, 2, "the fold tick must land both tombstones pre-snapshot");
+    }
+
+    /// Re-review finding 2: `run_rebuild` is single-flight. Two
+    /// concurrent callers must serialize through the whole marker
+    /// check → publish → wipe + replay state machine — otherwise the
+    /// slower one can publish the already-wiped DB over the only
+    /// complete recovery snapshot. (The mid-tick cancel-capture test
+    /// lives in `replay.rs`, next to the tick internals it needs.)
+    #[test]
+    fn concurrent_rebuilds_serialize_and_keep_the_recovery_snapshot() {
+        use crate::sync::snapshot::Snapshot;
+
+        let env = rebuild_setup("self");
+        write_peer_log(&env.shared, "peer-A", &[ev(1000, "peer-A", import("b-peer"))]);
+        env.engine.tick(&env.db).unwrap();
+        {
+            let conn = env.conn();
+            insert_book(&conn, "b-local", "Local Only", 1100);
+        }
+
+        std::thread::scope(|s| {
+            let a = s.spawn(|| run_rebuild(&env.db, &env.engine, None));
+            let b = s.spawn(|| run_rebuild(&env.db, &env.engine, None));
+            a.join().unwrap().unwrap();
+            b.join().unwrap().unwrap();
+        });
+
+        assert_eq!(env.count("books"), 2, "both books survive two overlapping rebuilds");
+        assert!(!rebuild_marker_set(&env.db));
+        let snap = Snapshot::read_from(&env.shared.join("logs/self.snapshot.json"))
+            .unwrap();
+        assert!(
+            snap.state.books.contains_key("b-local"),
+            "the published snapshot must never be a wiped/partial DB",
+        );
+    }
+
+    /// Round-4 finding 1: the pre-rebuild tick skips a failing own
+    /// event while a later success still max-bumps the self watermark
+    /// past it (a hole). The sealed publish must not trust the
+    /// watermark — it re-applies the full own log and fails closed, so
+    /// the hole aborts the rebuild before any snapshot, marker, or
+    /// wipe.
+    #[test]
+    fn rebuild_aborts_when_the_own_log_has_an_unapplied_hole() {
+        let env = rebuild_setup("self");
+        env.engine
+            .own_log
+            .append_batch_varied(vec![
+                (
+                    // Wrong value type — fails to apply, in the pre-tick
+                    // and in the seal alike.
+                    EventBody::BookMetadataSet {
+                        book: "bX".into(),
+                        field: "title".into(),
+                        value: serde_json::json!(42),
+                    },
+                    2000,
+                ),
+                (import("b-later"), 2100),
+            ])
+            .unwrap();
+
+        let result = run_rebuild(&env.db, &env.engine, None);
+
+        assert!(result.is_err(), "the own-log hole must abort the rebuild");
+        assert!(!rebuild_marker_set(&env.db), "no marker set");
+        assert_eq!(
+            env.count("books"),
+            1,
+            "the pre-tick applied the good event and nothing was wiped",
+        );
+        assert!(
+            !env.shared.join("logs/self.snapshot.json").exists(),
+            "no bootstrap snapshot may be published over the hole",
+        );
+    }
+
+    /// Round-3 finding 2: cancels from before the rebuild entered the
+    /// serialized state machine are stale — the generation captured at
+    /// entry already includes them, so the rebuild proceeds. (This is
+    /// what lets a fresh rebuild request supersede an old cancel with
+    /// no clearable state for a second request to race on.)
+    #[test]
+    fn stale_cancel_before_rebuild_is_ignored() {
+        let env = rebuild_setup("self");
+        write_peer_log(&env.shared, "peer-A", &[ev(1000, "peer-A", import("b1"))]);
+        env.engine.tick(&env.db).unwrap();
+
+        env.engine.cancel();
+        env.engine.bump_cancel_generation();
+
+        let report = run_rebuild(&env.db, &env.engine, None).unwrap();
+        assert!(!report.cancelled, "a cancel from before the request is stale");
+        assert_eq!(env.count("books"), 1);
+        assert!(!rebuild_marker_set(&env.db));
+    }
+
+    /// Round-3 finding 2, post-marker window: a cancel landing after
+    /// the last pre-marker gate — where the replay tick's flag reset
+    /// would launder the tick-scoped signal — must still force the
+    /// cancelled verdict via the generation compare, retaining the
+    /// marker so the next launch resumes.
+    #[test]
+    fn cancel_after_the_final_gate_retains_the_marker() {
+        let env = rebuild_setup("self");
+        write_peer_log(&env.shared, "peer-A", &[ev(1000, "peer-A", import("b1"))]);
+        env.engine.tick(&env.db).unwrap();
+        publish_bootstrap_snapshot(&env.db, &env.shared, "self").unwrap();
+        set_rebuild_marker(&env.db).unwrap();
+
+        // The operation captured this generation at entry; the cancel
+        // bumps it before the destructive replay runs.
+        let cancel_gen = env.engine.cancel_generation();
+        env.engine.bump_cancel_generation();
+
+        let report = run_rebuild_replay_locked(&env.db, &env.engine, None, cancel_gen).unwrap();
+        assert!(report.cancelled, "generation change must force the cancelled verdict");
+        assert!(rebuild_marker_set(&env.db), "marker retained — resume on next launch");
+        assert_eq!(env.count("books"), 1, "the replay itself converged");
+
+        // Next launch resumes with a fresh capture and clears the marker.
+        let resumed = run_rebuild_replay(&env.db, &env.engine, None).unwrap();
+        assert!(!resumed.cancelled);
+        assert!(!rebuild_marker_set(&env.db));
+    }
+
+    /// Review finding 3, decision half: the marker outcome is decided
+    /// by the replay tick's own report — cancelled keeps the marker
+    /// for resume, completed clears it.
+    #[test]
+    fn settle_rebuild_marker_follows_the_tick_report() {
+        let env = rebuild_setup("self");
+
+        set_rebuild_marker(&env.db).unwrap();
+        let cancelled = ReplayReport { cancelled: true, ..Default::default() };
+        settle_rebuild_marker(&env.db, &cancelled).unwrap();
+        assert!(rebuild_marker_set(&env.db), "cancelled replay must keep the marker");
+
+        let completed = ReplayReport::default();
+        settle_rebuild_marker(&env.db, &completed).unwrap();
+        assert!(!rebuild_marker_set(&env.db), "completed replay must clear the marker");
     }
 }
