@@ -35,11 +35,11 @@ export default function Home() {
   const [importing, setImporting] = useState(false);
   const [importSlow, setImportSlow] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
-  const [syncProgress, setSyncProgress] = useState<{ percent: number | null } | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("general");
   const [userName, setUserName] = useState("");
   const collections = useCollections();
+  const refreshCollections = collections.refresh;
 
   // Load user name
   useEffect(() => {
@@ -107,7 +107,7 @@ export default function Home() {
 
   const searchParam = debouncedSearchQuery || undefined;
 
-  const { books, loading, hasMore, loadMore, loadingMore, refresh } = useBooks(statusFilter, searchParam, collectionId);
+  const { books, loading, hasMore, loadMore, loadingMore, refreshSilently } = useBooks(statusFilter, searchParam, collectionId);
 
   // Book counts for sidebar badges — lightweight, no book data loaded.
   const [bookCounts, setBookCounts] = useState({ all: 0, reading: 0, finished: 0 });
@@ -122,12 +122,12 @@ export default function Home() {
   useEffect(() => { refreshCounts(); }, [refreshCounts]);
 
   // Keep stable refs for refresh functions so the drag-drop effect doesn't re-register
-  const refreshRef = useRef(refresh);
+  const silentRefreshRef = useRef(refreshSilently);
   const countsRefreshRef = useRef(refreshCounts);
-  const collectionsRefreshRef = useRef(collections.refresh);
-  useEffect(() => { refreshRef.current = refresh; }, [refresh]);
+  const collectionsRefreshRef = useRef(refreshCollections);
+  useEffect(() => { silentRefreshRef.current = refreshSilently; }, [refreshSilently]);
   useEffect(() => { countsRefreshRef.current = refreshCounts; }, [refreshCounts]);
-  useEffect(() => { collectionsRefreshRef.current = collections.refresh; }, [collections.refresh]);
+  useEffect(() => { collectionsRefreshRef.current = refreshCollections; }, [refreshCollections]);
 
   // Auto-dismiss import error after 10s
   useEffect(() => {
@@ -150,37 +150,13 @@ export default function Home() {
   }, [importing]);
 
   useEffect(() => {
-    // `sync-progress` carries abstract work units (snapshot rows + raw log
-    // events), not book counts. The backend keeps the denominator fixed
-    // within a tick; the monotonic clamp is defense so the chip's percent
-    // still never walks backwards within one sync session.
-    let maxPercent = 0;
     const unlistenTick = listen("sync-initial-tick-done", () => {
-      maxPercent = 0;
-      setSyncProgress(null);
-      refreshRef.current();
+      silentRefreshRef.current();
       countsRefreshRef.current();
       collectionsRefreshRef.current();
     });
-    const unlistenProgress = listen<{ applied: number; total: number }>("sync-progress", (e) => {
-      const { applied, total } = e.payload;
-      if (applied === 0) {
-        // A new tick's stream is starting — Rebuild from iCloud runs
-        // two back-to-back ticks (fold, then replay), and holding the
-        // first tick's 100% clamp would pin the chip there for the
-        // entire second one.
-        maxPercent = 0;
-      }
-      if (total > 0) {
-        maxPercent = Math.max(maxPercent, Math.min(100, Math.floor((applied / total) * 100)));
-        setSyncProgress({ percent: maxPercent });
-      } else {
-        setSyncProgress((prev) => prev ?? { percent: null });
-      }
-    });
     return () => {
       unlistenTick.then((fn) => fn());
-      unlistenProgress.then((fn) => fn());
     };
   }, []);
 
@@ -193,14 +169,14 @@ export default function Home() {
     const unlistenBooks = listen("mcp:books-changed", () => {
       if (mcpDebounce) clearTimeout(mcpDebounce);
       mcpDebounce = setTimeout(() => {
-        refreshRef.current();
+        silentRefreshRef.current();
         countsRefreshRef.current();
         collectionsRefreshRef.current();
       }, 500);
     });
     const unlistenCollections = listen("mcp:collections-changed", () => {
       collectionsRefreshRef.current();
-      refreshRef.current();
+      silentRefreshRef.current();
       countsRefreshRef.current();
     });
     return () => {
@@ -218,7 +194,7 @@ export default function Home() {
     let coverDebounce: ReturnType<typeof setTimeout> | null = null;
     const unlisten = listen("sync-covers-ingested", () => {
       if (coverDebounce) clearTimeout(coverDebounce);
-      coverDebounce = setTimeout(() => refreshRef.current(), 500);
+      coverDebounce = setTimeout(() => silentRefreshRef.current(), 500);
     });
     return () => {
       if (coverDebounce) clearTimeout(coverDebounce);
@@ -249,7 +225,7 @@ export default function Home() {
                 setImportError(`${filePath.split("/").pop()}: ${formatError(err)}`);
               }
             }
-            refreshRef.current();
+            silentRefreshRef.current();
             countsRefreshRef.current();
           } finally {
             setImporting(false);
@@ -280,7 +256,7 @@ export default function Home() {
             setImportError(`${filePath.split("/").pop()}: ${formatError(err)}`);
           }
         }
-        refreshRef.current();
+        silentRefreshRef.current();
         countsRefreshRef.current();
       } finally {
         setImporting(false);
@@ -300,7 +276,7 @@ export default function Home() {
       try {
         const book = await importBookDialog.importFile(selected);
         if (book) {
-          refresh();
+          refreshSilently();
           refreshCounts();
         }
       } finally {
@@ -312,6 +288,12 @@ export default function Home() {
       setImportError(name ? `${name}: ${formatError(err)}` : formatError(err));
     }
   };
+
+  const handleBooksChanged = useCallback(() => {
+    refreshSilently();
+    refreshCounts();
+    refreshCollections();
+  }, [refreshSilently, refreshCounts, refreshCollections]);
 
   const title =
     activeFilter === "all"
@@ -333,7 +315,6 @@ export default function Home() {
         collections={collections}
         userName={userName}
         onOpenSettings={() => setSettingsOpen(true)}
-        syncProgress={syncProgress}
       />
 
       {activeFilter === "vocab" ? (
@@ -399,9 +380,9 @@ export default function Home() {
                 )}
               </div>
             ) : viewMode === "grid" ? (
-              <BookGrid books={displayBooks} hasMore={hasMore} loadMore={loadMore} loadingMore={loadingMore} activeCollectionId={isCollectionFilter ? activeFilter.replace("collection:", "") : undefined} onBooksChanged={() => { refresh(); refreshCounts(); collections.refresh();}} />
+              <BookGrid books={displayBooks} hasMore={hasMore} loadMore={loadMore} loadingMore={loadingMore} activeCollectionId={collectionId} onBooksChanged={handleBooksChanged} />
             ) : (
-              <BookList books={displayBooks} hasMore={hasMore} loadMore={loadMore} loadingMore={loadingMore} activeCollectionId={isCollectionFilter ? activeFilter.replace("collection:", "") : undefined} onBooksChanged={() => { refresh(); refreshCounts(); collections.refresh();}} />
+              <BookList books={displayBooks} hasMore={hasMore} loadMore={loadMore} loadingMore={loadingMore} activeCollectionId={collectionId} onBooksChanged={handleBooksChanged} />
             )}
           </div>
 

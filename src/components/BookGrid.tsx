@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { memo, useState, useEffect, useRef } from "react";
 import { Loader2 } from "lucide-react";
 import type { Book } from "../hooks/useBooks";
 import { openReaderWindow } from "../utils/openReaderWindow";
@@ -36,7 +36,7 @@ interface BookGridProps {
   onBooksChanged?: () => void;
 }
 
-export default function BookGrid({ books, hasMore, loadMore, loadingMore, activeCollectionId, onBooksChanged }: BookGridProps) {
+function BookGrid({ books, hasMore, loadMore, loadingMore, activeCollectionId, onBooksChanged }: BookGridProps) {
   const { t } = useTranslation();
   const [contextMenu, setContextMenu] = useState<{
     x: number;
@@ -142,6 +142,8 @@ export default function BookGrid({ books, hasMore, loadMore, loadingMore, active
     </>
   );
 }
+
+export default memo(BookGrid);
 
 function LoadMoreSentinel({ loadMore, loadingMore }: { loadMore?: () => void; loadingMore?: boolean }) {
   const ref = useRef<HTMLDivElement>(null);

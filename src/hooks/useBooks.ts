@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 
@@ -27,6 +27,8 @@ interface BookPage {
   total: number;
 }
 
+const DEFAULT_PAGE_SIZE = 20;
+
 export function useBooks(filter?: string, search?: string, collectionId?: string) {
   const [books, setBooks] = useState<Book[]>([]);
   const [total, setTotal] = useState(0);
@@ -34,16 +36,21 @@ export function useBooks(filter?: string, search?: string, collectionId?: string
   const [loadingMore, setLoadingMore] = useState(false);
   const [cursor, setCursor] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(false);
+  const booksLengthRef = useRef(0);
 
-  const refresh = useCallback(async () => {
-    setLoading(true);
+  useEffect(() => {
+    booksLengthRef.current = books.length;
+  }, [books.length]);
+
+  const runRefresh = useCallback(async (showLoading: boolean) => {
+    if (showLoading) setLoading(true);
     try {
       const page = await invoke<BookPage>("list_books", {
         filter: filter || null,
         search: search || null,
         collectionId: collectionId || null,
         cursor: null,
-        limit: null,
+        limit: showLoading ? null : Math.max(booksLengthRef.current, DEFAULT_PAGE_SIZE),
       });
       setBooks(page.books);
       setTotal(page.total);
@@ -52,9 +59,12 @@ export function useBooks(filter?: string, search?: string, collectionId?: string
     } catch (err) {
       console.error("Failed to load books:", err);
     } finally {
-      setLoading(false);
+      if (showLoading) setLoading(false);
     }
   }, [filter, search, collectionId]);
+
+  const refresh = useCallback(() => runRefresh(true), [runRefresh]);
+  const refreshSilently = useCallback(() => runRefresh(false), [runRefresh]);
 
   const loadMore = useCallback(async () => {
     if (!cursor || loadingMore) return;
@@ -81,7 +91,7 @@ export function useBooks(filter?: string, search?: string, collectionId?: string
     refresh();
   }, [refresh]);
 
-  return { books, total, loading, loadingMore, hasMore, loadMore, refresh };
+  return { books, total, loading, loadingMore, hasMore, loadMore, refresh, refreshSilently };
 }
 
 async function pickFile(): Promise<string | null> {
