@@ -164,6 +164,13 @@ export default function Home() {
     });
     const unlistenProgress = listen<{ applied: number; total: number }>("sync-progress", (e) => {
       const { applied, total } = e.payload;
+      if (applied === 0) {
+        // A new tick's stream is starting — Rebuild from iCloud runs
+        // two back-to-back ticks (fold, then replay), and holding the
+        // first tick's 100% clamp would pin the chip there for the
+        // entire second one.
+        maxPercent = 0;
+      }
       if (total > 0) {
         maxPercent = Math.max(maxPercent, Math.min(100, Math.floor((applied / total) * 100)));
         setSyncProgress({ percent: maxPercent });

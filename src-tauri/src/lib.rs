@@ -298,7 +298,16 @@ fn boot_sync_engine(
     std::thread::Builder::new()
         .name("sync-initial-tick".into())
         .spawn(move || {
-            let result = bg_engine.tick_with_progress(&bg_db, Some(&bg_handle));
+            // A set rebuild marker means a prior "Rebuild from iCloud"
+            // was interrupted after its publish step — re-run its wipe
+            // + replay half instead of the plain initial tick, so the
+            // library converges instead of staying half-populated.
+            let result = if commands::sync::rebuild_marker_set(&bg_db) {
+                log::info!("sync: rebuild marker set — resuming rebuild from iCloud");
+                commands::sync::run_rebuild_replay(&bg_db, &bg_engine, Some(&bg_handle))
+            } else {
+                bg_engine.tick_with_progress(&bg_db, Some(&bg_handle))
+            };
             if let Err(e) = result {
                 log::warn!("sync: initial replay tick failed: {e}");
             }
@@ -692,6 +701,7 @@ pub fn run() {
             commands::sync::sync_now,
             commands::sync::sync_cancel,
             commands::sync::sync_compact,
+            commands::sync::sync_rebuild,
             commands::sync::sync_remove_peer,
         ])
         .build(tauri::generate_context!())

@@ -55,6 +55,16 @@ pub fn tick_mutex_wait() {
     let _guard = TICK_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
 }
 
+/// Run `f` while holding TICK_MUTEX, so no replay tick can interleave
+/// with it. The rebuild wipe runs under this lock: a tick caught
+/// between the wipe's table clears and its own per-event watermark
+/// bump would record event ids for rows the wipe just deleted, and the
+/// rebuild replay would then skip those events forever.
+pub fn with_tick_lock<T>(f: impl FnOnce() -> T) -> T {
+    let _guard = TICK_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+    f()
+}
+
 /// Process-wide lock that serializes `flush_outbox` callers so the
 /// outbox drain stays exactly-once. Without it, `SyncWriter::with_tx`'s
 /// background flush worker and a concurrent watcher tick could both
@@ -134,6 +144,12 @@ pub struct ReplayReport {
     pub snapshots_applied: usize,
     pub events_applied: usize,
     pub peers_seen: usize,
+    /// True when `cancel()` cut this tick short. Captured while the
+    /// tick still holds TICK_MUTEX — the engine-global flag is reset
+    /// by whichever tick starts next, so callers deciding on
+    /// completion (the rebuild's marker clear) must read this field,
+    /// never the live flag.
+    pub cancelled: bool,
 }
 
 /// Abstract work units for the sync chip — snapshot rows plus raw log
@@ -233,6 +249,15 @@ pub struct ReplayEngine {
     /// Checked between events in Phase C so a `sync_disable` doesn't
     /// have to wait for a long replay to finish.
     cancelled: std::sync::atomic::AtomicBool,
+    /// Monotonic count of user cancel requests (`sync_cancel`).
+    /// Unlike `cancelled`, this is never reset: the rebuild captures
+    /// the value when it enters its serialized state machine and
+    /// compares at safe boundaries — any increment observed
+    /// mid-operation means the user cancelled *this* operation. A
+    /// tick starting cannot launder it, and a later rebuild request
+    /// cannot erase a cancel aimed at the active one (the flaws of a
+    /// resettable boolean).
+    cancel_generation: std::sync::atomic::AtomicU64,
 }
 
 impl ReplayEngine {
@@ -243,6 +268,7 @@ impl ReplayEngine {
             own_log,
             app_handle: None,
             cancelled: std::sync::atomic::AtomicBool::new(false),
+            cancel_generation: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
@@ -260,6 +286,15 @@ impl ReplayEngine {
 
     fn is_cancelled(&self) -> bool {
         self.cancelled.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    pub fn bump_cancel_generation(&self) {
+        self.cancel_generation
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    pub fn cancel_generation(&self) -> u64 {
+        self.cancel_generation.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// Run a single replay pass.
@@ -394,6 +429,10 @@ impl ReplayEngine {
             snapshots_applied,
             events_applied,
             peers_seen,
+            // Still under TICK_MUTEX (`_guard` lives to the end of this
+            // function): no other tick can have reset the flag between
+            // the Phase C break and this read.
+            cancelled: self.is_cancelled(),
         })
     }
 
@@ -606,6 +645,64 @@ pub fn flush_outbox(db: &Db, log: &EventLog) -> AppResult<usize> {
     let _guard = FLUSH_OUTBOX_MUTEX
         .lock()
         .map_err(|e| AppError::Other(format!("flush outbox mutex poisoned: {e}")))?;
+    flush_outbox_locked(db, log)
+}
+
+/// Drain the outbox, re-apply the device's own log, and run `publish`
+/// — all under `FLUSH_OUTBOX_MUTEX`, so no other flush can append to
+/// the own log mid-sequence. Used by the rebuild's bootstrap publish:
+/// the snapshot it writes mints an id newer than every event in the
+/// own log, and `apply_peer` advances the self watermark to that id —
+/// any own event still unapplied at that point (a delete whose
+/// tombstone hasn't landed) would be masked forever. Sealing the log
+/// while settling and publishing guarantees no such event can exist
+/// below the snapshot id. Events queued to the outbox during the seal
+/// are safe: they get ULIDs newer than the snapshot id when
+/// eventually flushed, so the replay applies them normally.
+///
+/// The full log is re-applied rather than the tail above the self
+/// watermark: a normal tick skips events that fail to apply while a
+/// later success still max-bumps the watermark, so the watermark can
+/// sit past a failed event (a hole) and is not proof of application.
+/// Own-event re-application is idempotent (LWW + tombstones) and the
+/// log is compaction-bounded, so the full pass is cheap.
+pub fn publish_with_own_state_settled(
+    db: &Db,
+    own_log: &EventLog,
+    publish: impl FnOnce() -> AppResult<()>,
+) -> AppResult<()> {
+    let _guard = FLUSH_OUTBOX_MUTEX
+        .lock()
+        .map_err(|e| AppError::Other(format!("flush outbox mutex poisoned: {e}")))?;
+    flush_outbox_locked(db, own_log)?;
+
+    let mut events = own_log.read_all()?;
+    events.sort_by(|a, b| (a.ts, &a.id).cmp(&(b.ts, &b.id)));
+    for ev in &events {
+        let mut conn = db
+            .conn
+            .lock()
+            .map_err(|e| AppError::Other(format!("db conn mutex: {e}")))?;
+        let tx = conn.transaction()?;
+        if let Err(e) = merge::apply_event(&tx, ev) {
+            // Fail closed: skipping and publishing anyway would mint a
+            // snapshot whose id masks this still-unapplied event —
+            // the exact resurrection class the seal exists to prevent.
+            // The caller aborts before any marker/wipe.
+            let _ = tx.rollback();
+            return Err(AppError::Other(format!(
+                "rebuild fold: own event {} failed to apply — aborting before publish: {e}",
+                ev.id
+            )));
+        }
+        bump_event_watermark(&tx, &ev.device, &ev.id)?;
+        tx.commit()?;
+    }
+
+    publish()
+}
+
+fn flush_outbox_locked(db: &Db, log: &EventLog) -> AppResult<usize> {
     let pending = {
         let conn = db
             .conn
@@ -1644,6 +1741,160 @@ mod tests {
         assert_eq!(ledger.begin(), None);
         assert_eq!(SyncProgressLedger::new(0, 0).peer_done(0), None);
         assert_eq!(SyncProgressLedger::new(0, 0).events_known(0), None);
+    }
+
+    // -----------------------------------------------------------------------
+    // Rebuild support (#300): per-invocation cancel verdict + sealed publish
+    // -----------------------------------------------------------------------
+
+    /// A cancel landing mid-tick must be captured in that tick's
+    /// report while it still holds the tick mutex — a follow-up tick
+    /// resetting the engine-global flag (the watcher race) must not
+    /// launder the verdict.
+    ///
+    /// Seam: a large peer log makes Phase C long; polling the books
+    /// count observes committed per-event transactions, so once a row
+    /// is visible the tick is provably past its flag reset and mid
+    /// Phase C — the cancel cannot be swallowed, and thousands of
+    /// events remain for it to break on.
+    #[test]
+    fn cancel_mid_tick_is_captured_in_the_report() {
+        const TOTAL: usize = 20_000;
+        let env = setup("self");
+        let events: Vec<Event> = (0..TOTAL)
+            .map(|i| ev(1000 + i as i64, "peer-A", import(&format!("b{i}"))))
+            .collect();
+        write_peer_log(&env.shared, "peer-A", &events);
+
+        let report = std::thread::scope(|s| {
+            let handle = s.spawn(|| env.engine.tick(&env.db));
+            // Bounded, fail-fast wait: break when Phase C is observably
+            // applying, fail loudly if the worker exits first (early
+            // tick error, or it raced through all 20k events) or if
+            // nothing happens within the deadline — never hang.
+            let started = std::time::Instant::now();
+            loop {
+                assert!(
+                    !handle.is_finished(),
+                    "tick finished before the cancel could land — seam broken",
+                );
+                let n: i64 = env
+                    .conn()
+                    .query_row("SELECT COUNT(*) FROM books", [], |r| r.get(0))
+                    .unwrap();
+                if n > 0 {
+                    break;
+                }
+                assert!(
+                    started.elapsed() < std::time::Duration::from_secs(60),
+                    "tick never started applying events",
+                );
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            env.engine.cancel();
+            handle.join().unwrap()
+        })
+        .unwrap();
+
+        assert!(report.cancelled, "mid-tick cancel must be captured in the report");
+        assert!(
+            report.events_applied < TOTAL,
+            "Phase C must break early ({} applied)",
+            report.events_applied
+        );
+
+        // The follow-up tick resets the engine flag, finishes the
+        // remainder, and the captured verdict is unaffected.
+        let follow_up = env.engine.tick(&env.db).unwrap();
+        assert!(!follow_up.cancelled);
+        assert_eq!(report.events_applied + follow_up.events_applied, TOTAL);
+        assert!(report.cancelled);
+    }
+
+    /// The rebuild's sealed publish must fold every own event that is
+    /// not yet applied locally — still queued in the outbox, or already
+    /// in the own log — before the publish closure runs, so tombstones
+    /// for recent deletes exist when the bootstrap snapshot is minted.
+    #[test]
+    fn publish_with_own_state_settled_folds_unapplied_own_events() {
+        let env = setup("self");
+        {
+            let conn = env.conn();
+            insert_book_no_cover(&conn, "b1");
+            insert_book_no_cover(&conn, "b2");
+            conn.execute("DELETE FROM books WHERE id = 'b1'", []).unwrap();
+            conn.execute("DELETE FROM books WHERE id = 'b2'", []).unwrap();
+        }
+        // b1's delete already reached the own log (the flush worker
+        // ran); b2's is still queued in the outbox. Neither has been
+        // applied locally, so neither has a tombstone yet.
+        env.engine
+            .own_log
+            .append_batch_varied(vec![(EventBody::BookDelete { id: "b1".into() }, 2000)])
+            .unwrap();
+        env.conn()
+            .execute(
+                "INSERT INTO _pending_publish (id, ts, body_json, created_at)
+                 VALUES (?1, 2100, ?2, 2100)",
+                params![
+                    uuid::Uuid::new_v4().to_string(),
+                    serde_json::to_string(&EventBody::BookDelete { id: "b2".into() }).unwrap(),
+                ],
+            )
+            .unwrap();
+
+        publish_with_own_state_settled(&env.db, &env.engine.own_log, || {
+            let conn = env.db.conn.lock().unwrap();
+            let n: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM _tombstones WHERE entity = 'book'
+                     AND id IN ('b1', 'b2')",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(n, 2, "both tombstones must exist before the publish runs");
+            Ok(())
+        })
+        .unwrap();
+
+        let outbox: i64 = env
+            .conn()
+            .query_row("SELECT COUNT(*) FROM _pending_publish", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(outbox, 0, "the seal drains the outbox first");
+        assert_eq!(env.engine.own_log.read_all().unwrap().len(), 2);
+    }
+
+    /// Round-3 finding 1: an own event that fails to apply must abort
+    /// the sealed publish — publishing anyway would mint a snapshot
+    /// whose id masks the still-unapplied event, the resurrection
+    /// class the seal exists to prevent.
+    #[test]
+    fn sealed_publish_aborts_on_own_event_apply_failure() {
+        let env = setup("self");
+        // Wrong value type — merge::apply_event returns Err (same
+        // shape as malformed_event_is_skipped_and_good_events_still_apply).
+        env.engine
+            .own_log
+            .append_batch_varied(vec![(
+                EventBody::BookMetadataSet {
+                    book: "b1".into(),
+                    field: "title".into(),
+                    value: serde_json::json!(42),
+                },
+                2000,
+            )])
+            .unwrap();
+
+        let published = std::cell::Cell::new(false);
+        let result = publish_with_own_state_settled(&env.db, &env.engine.own_log, || {
+            published.set(true);
+            Ok(())
+        });
+
+        assert!(result.is_err(), "an apply failure must abort the sealed publish");
+        assert!(!published.get(), "the publish closure must not run");
     }
 
 }
