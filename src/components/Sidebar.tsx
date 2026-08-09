@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useTranslation } from "react-i18next";
+import { listen } from "@tauri-apps/api/event";
 import { Library, BookOpen, CheckCircle2, FolderClosed, BookA, Plus, MessageSquare, Pencil, Trash2, GripVertical, RefreshCw } from "lucide-react";
 import Button from "./ui/Button";
 import QuillLogo from "./QuillLogo";
@@ -24,7 +25,6 @@ interface SidebarProps {
   };
   userName?: string;
   onOpenSettings?: () => void;
-  syncProgress?: { percent: number | null } | null;
 }
 
 const SIDEBAR_MIN = 180;
@@ -41,9 +41,10 @@ function getStoredWidth(): number {
   return SIDEBAR_DEFAULT;
 }
 
-export default function Sidebar({ activeFilter, onFilterChange, bookCounts, collections: collectionsHook, userName, onOpenSettings, syncProgress }: SidebarProps) {
+export default function Sidebar({ activeFilter, onFilterChange, bookCounts, collections: collectionsHook, userName, onOpenSettings }: SidebarProps) {
   const { t } = useTranslation();
   const [sidebarWidth, setSidebarWidth] = useState(getStoredWidth);
+  const [syncProgress, setSyncProgress] = useState<{ percent: number | null } | null>(null);
   const resizingRef = useRef(false);
 
   const libraryFilters = [
@@ -137,6 +138,38 @@ export default function Sidebar({ activeFilter, onFilterChange, bookCounts, coll
     await remove(id);
     setContextMenu(null);
   };
+
+  useEffect(() => {
+    // `sync-progress` carries abstract work units (snapshot rows + raw log
+    // events), not book counts. The backend keeps the denominator fixed
+    // within a tick; the monotonic clamp is defense so the chip's percent
+    // still never walks backwards within one sync session.
+    let maxPercent = 0;
+    const unlistenTick = listen("sync-initial-tick-done", () => {
+      maxPercent = 0;
+      setSyncProgress(null);
+    });
+    const unlistenProgress = listen<{ applied: number; total: number }>("sync-progress", (e) => {
+      const { applied, total } = e.payload;
+      if (applied === 0) {
+        // A new tick's stream is starting — Rebuild from iCloud runs
+        // two back-to-back ticks (fold, then replay), and holding the
+        // first tick's 100% clamp would pin the chip there for the
+        // entire second one.
+        maxPercent = 0;
+      }
+      if (total > 0) {
+        maxPercent = Math.max(maxPercent, Math.min(100, Math.floor((applied / total) * 100)));
+        setSyncProgress({ percent: maxPercent });
+      } else {
+        setSyncProgress((prev) => prev ?? { percent: null });
+      }
+    });
+    return () => {
+      unlistenTick.then((fn) => fn());
+      unlistenProgress.then((fn) => fn());
+    };
+  }, []);
 
   // Dismiss context menu on outside click
   useEffect(() => {
