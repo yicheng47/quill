@@ -2,6 +2,7 @@ import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { emitTo } from "@tauri-apps/api/event";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import {
   AlertCircle,
@@ -425,6 +426,7 @@ export default function Reader() {
           // Re-fetch book to get updated available flag
           const updated = await getBook(book.id).catch(() => null);
           if (updated) setBook(updated);
+          emitTo("main", "book-availability-changed", book.id).catch(() => {});
           setIcloudDownloading(false);
           return;
         }

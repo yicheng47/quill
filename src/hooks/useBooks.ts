@@ -65,6 +65,9 @@ export function useBooks(filter?: string, search?: string, collectionId?: string
 
   const refresh = useCallback(() => runRefresh(true), [runRefresh]);
   const refreshSilently = useCallback(() => runRefresh(false), [runRefresh]);
+  const patchBook = useCallback((id: string, partial: Partial<Book>) => {
+    setBooks((prev) => prev.map((book) => book.id === id ? { ...book, ...partial } : book));
+  }, []);
 
   const loadMore = useCallback(async () => {
     if (!cursor || loadingMore) return;
@@ -91,7 +94,7 @@ export function useBooks(filter?: string, search?: string, collectionId?: string
     refresh();
   }, [refresh]);
 
-  return { books, total, loading, loadingMore, hasMore, loadMore, refresh, refreshSilently };
+  return { books, total, loading, loadingMore, hasMore, loadMore, refresh, refreshSilently, patchBook };
 }
 
 async function pickFile(): Promise<string | null> {
