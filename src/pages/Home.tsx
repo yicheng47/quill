@@ -107,7 +107,16 @@ export default function Home() {
 
   const searchParam = debouncedSearchQuery || undefined;
 
-  const { books, loading, hasMore, loadMore, loadingMore, refreshSilently } = useBooks(statusFilter, searchParam, collectionId);
+  const { books, loading, hasMore, loadMore, loadingMore, refreshSilently, patchBook } = useBooks(statusFilter, searchParam, collectionId);
+
+  useEffect(() => {
+    const unlisten = getCurrentWebview().listen<string>("book-availability-changed", (event) => {
+      patchBook(event.payload, { available: true });
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, [patchBook]);
 
   // Book counts for sidebar badges — lightweight, no book data loaded.
   const [bookCounts, setBookCounts] = useState({ all: 0, reading: 0, finished: 0 });

@@ -169,4 +169,20 @@ describe("useBooks refresh modes", () => {
     });
     expect(current.books.map((loadedBook) => loadedBook.title)).toEqual(allTitles);
   });
+
+  it("patches one book in place without reloading unchanged books", async () => {
+    const initialPage = booksPage(["First", "Second"]);
+    initialPage.books[0] = { ...initialPage.books[0], available: false };
+    mocks.invoke.mockResolvedValueOnce(initialPage);
+
+    await act(async () => root.render(<HookHarness />));
+    const originalBooks = current.books;
+
+    act(() => current.patchBook("first", { available: true }));
+
+    expect(current.books).not.toBe(originalBooks);
+    expect(current.books[0]).toEqual({ ...originalBooks[0], available: true });
+    expect(current.books[1]).toBe(originalBooks[1]);
+    expect(mocks.invoke).toHaveBeenCalledTimes(1);
+  });
 });
