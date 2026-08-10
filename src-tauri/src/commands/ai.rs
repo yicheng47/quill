@@ -19,6 +19,29 @@ pub struct AiStreamChunk {
 
 const LOOKUP_TRANSLATION_MARKER: &str = "[[QUILL_TRANSLATION]]";
 
+/// Effort-tier setting key governing each AI entry point (spec 294):
+/// quick = lookup + title generation, deep = chat + explain + translate.
+pub(crate) fn effort_tier_key(call: &str) -> &'static str {
+    match call {
+        "lookup" | "generate_title" => "ai_effort_quick",
+        _ => "ai_effort_deep",
+    }
+}
+
+/// Map a stored effort setting to a request value. Missing key, empty
+/// string, or "default" is the inherit-server-default sentinel → `None`,
+/// which keeps the `reasoning` key out of the request body entirely.
+pub(crate) fn effort_from_setting(value: Option<String>) -> Option<String> {
+    value.filter(|v| !v.is_empty() && v != "default")
+}
+
+#[tauri::command]
+pub async fn list_codex_models(
+    secrets: State<'_, Secrets>,
+) -> AppResult<crate::ai::codex_models::CodexModelList> {
+    Ok(crate::ai::codex_models::list_models(&secrets).await)
+}
+
 /// Sentinel `lookup_language` value: respond in whatever language the
 /// selection is in, rather than a pinned target language.
 const LOOKUP_LANGUAGE_SELECTION: &str = "selection";
@@ -98,7 +121,7 @@ pub async fn ai_lookup(
     secrets: State<'_, Secrets>,
 ) -> AppResult<()> {
     // Read provider settings
-    let (provider, model, base_url, keep_alive, auth_mode, language, lookup_translation_language, show_translation) = {
+    let (provider, model, base_url, keep_alive, auth_mode, language, lookup_translation_language, show_translation, effort) = {
         let conn = db.reader();
         let get = |key: &str| -> Option<String> {
             conn.query_row(
@@ -126,6 +149,7 @@ pub async fn ai_lookup(
             lookup_language,
             lookup_translation_language,
             get("show_translation").unwrap_or_else(|| "false".to_string()),
+            effort_from_setting(get(effort_tier_key("lookup"))),
         )
     };
 
@@ -193,7 +217,7 @@ pub async fn ai_lookup(
             }
             _ if use_responses_api => {
                 let url = "https://chatgpt.com/backend-api/codex".to_string();
-                crate::ai::openai_responses::stream_chat(&app_clone, &url, &api_key, &model, &messages, oauth_account_id.as_deref(), &event_name).await
+                crate::ai::openai_responses::stream_chat(&app_clone, &url, &api_key, &model, &messages, oauth_account_id.as_deref(), effort.as_deref(), &event_name).await
             }
             _ => {
                 let url = base_url.unwrap_or_else(|| "http://localhost:11434".to_string());
@@ -251,7 +275,7 @@ pub async fn ai_explain(
     secrets: State<'_, Secrets>,
 ) -> AppResult<()> {
     // Read provider settings
-    let (provider, model, base_url, keep_alive, auth_mode, language) = {
+    let (provider, model, base_url, keep_alive, auth_mode, language, effort) = {
         let conn = db.reader();
         let get = |key: &str| -> Option<String> {
             conn.query_row(
@@ -277,6 +301,7 @@ pub async fn ai_explain(
             get("ai_keep_alive").unwrap_or_else(|| "30m".to_string()),
             get("ai_auth_mode").unwrap_or_else(|| "api_key".to_string()),
             language,
+            effort_from_setting(get(effort_tier_key("explain"))),
         )
     };
 
@@ -333,7 +358,7 @@ pub async fn ai_explain(
             }
             _ if use_responses_api => {
                 let url = "https://chatgpt.com/backend-api/codex".to_string();
-                crate::ai::openai_responses::stream_chat(&app_clone, &url, &api_key, &model, &messages, oauth_account_id.as_deref(), &event_name).await
+                crate::ai::openai_responses::stream_chat(&app_clone, &url, &api_key, &model, &messages, oauth_account_id.as_deref(), effort.as_deref(), &event_name).await
             }
             _ => {
                 let url = base_url.unwrap_or_else(|| "http://localhost:11434".to_string());
@@ -366,7 +391,7 @@ pub async fn ai_generate_title(
     db: State<'_, Db>,
     secrets: State<'_, Secrets>,
 ) -> AppResult<()> {
-    let (provider, model, base_url, keep_alive, auth_mode, language) = {
+    let (provider, model, base_url, keep_alive, auth_mode, language, effort) = {
         let conn = db.reader();
         let get = |key: &str| -> Option<String> {
             conn.query_row(
@@ -383,6 +408,7 @@ pub async fn ai_generate_title(
             get("ai_keep_alive").unwrap_or_else(|| "30m".to_string()),
             get("ai_auth_mode").unwrap_or_else(|| "api_key".to_string()),
             get("language").unwrap_or_else(|| "en".to_string()),
+            effort_from_setting(get(effort_tier_key("generate_title"))),
         )
     };
 
@@ -421,7 +447,7 @@ pub async fn ai_generate_title(
             }
             _ if use_responses_api => {
                 let url = "https://chatgpt.com/backend-api/codex".to_string();
-                crate::ai::openai_responses::stream_chat(&app_clone, &url, &api_key, &model, &messages, oauth_account_id.as_deref(), &event_name).await
+                crate::ai::openai_responses::stream_chat(&app_clone, &url, &api_key, &model, &messages, oauth_account_id.as_deref(), effort.as_deref(), &event_name).await
             }
             _ => {
                 let url = base_url.unwrap_or_else(|| "http://localhost:11434".to_string());
@@ -455,7 +481,7 @@ pub async fn ai_chat(
     secrets: State<'_, Secrets>,
 ) -> AppResult<()> {
     // Read provider settings
-    let (provider, model, base_url, temperature, keep_alive, auth_mode, language) = {
+    let (provider, model, base_url, temperature, keep_alive, auth_mode, language, effort) = {
         let conn = db.reader();
         let get = |key: &str| -> Option<String> {
             conn.query_row(
@@ -475,6 +501,7 @@ pub async fn ai_chat(
             get("ai_keep_alive").unwrap_or_else(|| "30m".to_string()),
             get("ai_auth_mode").unwrap_or_else(|| "api_key".to_string()),
             get("language").unwrap_or_else(|| "en".to_string()),
+            effort_from_setting(get(effort_tier_key("chat"))),
         )
     };
 
@@ -529,7 +556,7 @@ pub async fn ai_chat(
             }
             _ if use_responses_api => {
                 let url = "https://chatgpt.com/backend-api/codex".to_string();
-                crate::ai::openai_responses::stream_chat(&app_clone, &url, &api_key, &model, &api_messages, oauth_account_id.as_deref(), "ai-stream-chunk").await
+                crate::ai::openai_responses::stream_chat(&app_clone, &url, &api_key, &model, &api_messages, oauth_account_id.as_deref(), effort.as_deref(), "ai-stream-chunk").await
             }
             _ => {
                 let url = base_url.unwrap_or_else(|| "http://localhost:11434".to_string());
@@ -652,5 +679,27 @@ mod tests {
         assert!(p.contains(
             "After that first line, respond entirely in the same language as the selected word/phrase."
         ));
+    }
+
+    #[test]
+    fn effort_tier_mapping_matches_spec() {
+        // Quick tier: lookup + title generation
+        assert_eq!(effort_tier_key("lookup"), "ai_effort_quick");
+        assert_eq!(effort_tier_key("generate_title"), "ai_effort_quick");
+        // Deep tier: chat + explain + translate
+        assert_eq!(effort_tier_key("chat"), "ai_effort_deep");
+        assert_eq!(effort_tier_key("explain"), "ai_effort_deep");
+        assert_eq!(effort_tier_key("translate"), "ai_effort_deep");
+    }
+
+    #[test]
+    fn effort_setting_sentinel_yields_none() {
+        assert_eq!(effort_from_setting(None), None);
+        assert_eq!(effort_from_setting(Some(String::new())), None);
+        assert_eq!(effort_from_setting(Some("default".to_string())), None);
+        assert_eq!(
+            effort_from_setting(Some("xhigh".to_string())),
+            Some("xhigh".to_string())
+        );
     }
 }

@@ -665,6 +665,7 @@ pub fn run() {
             commands::ai::ai_lookup,
             commands::ai::ai_explain,
             commands::ai::ai_generate_title,
+            commands::ai::list_codex_models,
             // OAuth
             commands::oauth::openai_oauth_login,
             commands::oauth::openai_oauth_status,

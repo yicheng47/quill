@@ -50,7 +50,7 @@ pub async fn ai_translate_passage(
     db: State<'_, Db>,
     secrets: State<'_, Secrets>,
 ) -> AppResult<()> {
-    let (target_lang, provider, model, base_url, keep_alive, auth_mode) = {
+    let (target_lang, provider, model, base_url, keep_alive, auth_mode, effort) = {
         let conn = db.reader();
         let get = |key: &str| -> Option<String> {
             conn.query_row(
@@ -72,6 +72,9 @@ pub async fn ai_translate_passage(
             get("ai_base_url"),
             get("ai_keep_alive").unwrap_or_else(|| "30m".to_string()),
             get("ai_auth_mode").unwrap_or_else(|| "api_key".to_string()),
+            crate::commands::ai::effort_from_setting(get(
+                crate::commands::ai::effort_tier_key("translate"),
+            )),
         )
     };
 
@@ -132,7 +135,7 @@ pub async fn ai_translate_passage(
             }
             _ if use_responses_api => {
                 let url = "https://chatgpt.com/backend-api/codex".to_string();
-                crate::ai::openai_responses::stream_chat(&app_clone, &url, &api_key, &model, &messages, oauth_account_id.as_deref(), &event_name).await
+                crate::ai::openai_responses::stream_chat(&app_clone, &url, &api_key, &model, &messages, oauth_account_id.as_deref(), effort.as_deref(), &event_name).await
             }
             _ => {
                 let url = base_url.unwrap_or_else(|| "http://localhost:11434".to_string());
