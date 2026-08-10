@@ -6,6 +6,7 @@ interface SelectOption {
   value: string;
   label: string;
   detail?: string;
+  description?: string;
 }
 
 interface SelectProps {
@@ -19,6 +20,7 @@ interface SelectProps {
 
 const MENU_GAP = 4;
 const OPTION_HEIGHT = 40;
+const DESCRIBED_OPTION_HEIGHT = 52;
 const VIEWPORT_MARGIN = 8;
 
 export default function Select({ label, value, onChange, options, className = "", placeholder = "" }: SelectProps) {
@@ -56,12 +58,16 @@ export default function Select({ label, value, onChange, options, className = ""
     };
   }, [open, handleClickOutside]);
 
+  const menuHeight = options.reduce(
+    (h, o) => h + (o.description != null ? DESCRIBED_OPTION_HEIGHT : OPTION_HEIGHT),
+    2,
+  );
+
   // The menu is portaled to <body> so it can't be clipped by overflow
   // containers (settings modal scroll area, accordion animations).
   useLayoutEffect(() => {
     if (!open || !buttonRef.current) return;
     const rect = buttonRef.current.getBoundingClientRect();
-    const menuHeight = options.length * OPTION_HEIGHT + 2;
     const spaceBelow = window.innerHeight - rect.bottom - MENU_GAP - VIEWPORT_MARGIN;
     const spaceAbove = rect.top - MENU_GAP - VIEWPORT_MARGIN;
     const openUp = menuHeight > spaceBelow && spaceAbove > spaceBelow;
@@ -73,7 +79,7 @@ export default function Select({ label, value, onChange, options, className = ""
         ? { bottom: window.innerHeight - rect.top + MENU_GAP }
         : { top: rect.bottom + MENU_GAP }),
     });
-  }, [open, options.length]);
+  }, [open, menuHeight]);
 
   return (
     <div className={`relative ${className}`} ref={ref}>
@@ -119,13 +125,26 @@ export default function Select({ label, value, onChange, options, className = ""
                     onChange(option.value);
                     setOpen(false);
                   }}
-                  className={`w-full flex items-center justify-between px-4 h-10 text-[14px] cursor-pointer transition-colors ${
+                  className={`w-full flex items-center justify-between px-4 text-[14px] cursor-pointer transition-colors ${
+                    option.description != null ? "h-13 py-1.5" : "h-10"
+                  } ${
                     isActive
                       ? "bg-accent-bg text-accent-text"
                       : "text-text-primary hover:bg-bg-input"
                   }`}
                 >
-                  <span className="truncate">{option.label}</span>
+                  <span className="min-w-0 text-left">
+                    <span className="block truncate">{option.label}</span>
+                    {option.description != null && (
+                      <span
+                        className={`block truncate text-[12px] ${
+                          isActive ? "text-accent-text/80" : "text-text-muted"
+                        }`}
+                      >
+                        {option.description}
+                      </span>
+                    )}
+                  </span>
                   <span className="flex items-center gap-2 shrink-0">
                     {option.detail != null && (
                       <span className={`text-[12px] ${isActive ? "text-accent-text" : "text-text-muted"}`}>

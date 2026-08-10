@@ -13,6 +13,24 @@ interface AiSettingsProps extends SettingsProps {
   onDirtyChange?: (dirty: boolean) => void;
 }
 
+interface CodexModel {
+  slug: string;
+  display_name: string;
+  description: string;
+  supported_reasoning_levels: string[];
+}
+
+interface CodexModelList {
+  models: CodexModel[];
+  from_fallback: boolean;
+}
+
+// Union of effort levels across Codex models, used when the selected model
+// is custom/unknown or doesn't report its supported levels.
+const EFFORT_LEVELS_UNION = ["low", "medium", "high", "xhigh", "max", "ultra"];
+
+const CUSTOM_MODEL = "__custom__";
+
 export default function AiSettings({ settings, loading, saveBulk, showSavedToast, onSaveRef, onDirtyChange }: AiSettingsProps) {
   const { t } = useTranslation();
   const [aiDirty, setAiDirty] = useState(false);
@@ -31,6 +49,15 @@ export default function AiSettings({ settings, loading, saveBulk, showSavedToast
   const [oauthLoading, setOauthLoading] = useState(false);
   const [oauthError, setOauthError] = useState<string | null>(null);
 
+  // Codex model card + reasoning effort (OpenAI OAuth path only)
+  const [codexModels, setCodexModels] = useState<CodexModel[]>([]);
+  const [modelsFromFallback, setModelsFromFallback] = useState(false);
+  const [customModel, setCustomModel] = useState(false);
+  const [effortQuick, setEffortQuick] = useState("default");
+  const [effortDeep, setEffortDeep] = useState("default");
+
+  const isCodexPath = provider === "openai" && authMode === "oauth";
+
   // Load saved settings
   useEffect(() => {
     if (loading) return;
@@ -41,6 +68,8 @@ export default function AiSettings({ settings, loading, saveBulk, showSavedToast
     if (settings.ai_temperature) setTemperature(parseFloat(settings.ai_temperature));
     if (settings.ai_keep_alive) setKeepAlive(settings.ai_keep_alive);
     if (settings.ai_auth_mode) setAuthMode(settings.ai_auth_mode as "api_key" | "oauth");
+    if (settings.ai_effort_quick) setEffortQuick(settings.ai_effort_quick);
+    if (settings.ai_effort_deep) setEffortDeep(settings.ai_effort_deep);
   }, [settings, loading]);
 
   // Fetch OAuth status when provider is OpenAI
@@ -51,6 +80,27 @@ export default function AiSettings({ settings, loading, saveBulk, showSavedToast
         .catch(() => setOauthStatus({ connected: false, account_id: null }));
     }
   }, [provider]);
+
+  // Fetch the Codex model list on the OAuth path; refetched when the OAuth
+  // connection state flips so a fresh login upgrades fallback → live list.
+  useEffect(() => {
+    if (!isCodexPath) return;
+    let stale = false;
+    invoke<CodexModelList>("list_codex_models")
+      .then((list) => {
+        if (stale) return;
+        setCodexModels(list.models);
+        setModelsFromFallback(list.from_fallback);
+      })
+      .catch(() => {
+        if (stale) return;
+        setCodexModels([]);
+        setModelsFromFallback(true);
+      });
+    return () => {
+      stale = true;
+    };
+  }, [isCodexPath, oauthStatus.connected]);
 
   // Expose dirty state and save handler to parent
   useEffect(() => {
@@ -72,6 +122,8 @@ export default function AiSettings({ settings, loading, saveBulk, showSavedToast
         ai_temperature: String(temperature),
         ai_keep_alive: keepAlive,
         ai_auth_mode: authMode,
+        ai_effort_quick: effortQuick,
+        ai_effort_deep: effortDeep,
       });
       setAiDirty(false);
       showSavedToast(t("settings.ai.savedToast"));
@@ -95,6 +147,8 @@ export default function AiSettings({ settings, loading, saveBulk, showSavedToast
         ai_temperature: String(temperature),
         ai_keep_alive: keepAlive,
         ai_auth_mode: authMode,
+        ai_effort_quick: effortQuick,
+        ai_effort_deep: effortDeep,
       });
       setAiDirty(false);
       showSavedToast(t("settings.ai.oauthSuccess"));
@@ -114,6 +168,44 @@ export default function AiSettings({ settings, loading, saveBulk, showSavedToast
     }
   };
 
+  // A saved model absent from the fetched list renders as the Custom value —
+  // never silently switched to something else.
+  const modelInList = codexModels.some((m) => m.slug === model);
+  const isCustomModel = customModel || !modelInList;
+
+  const modelOptions = [
+    ...codexModels.map((m) => ({
+      value: m.slug,
+      label: m.display_name,
+      description: m.description || undefined,
+    })),
+    { value: CUSTOM_MODEL, label: t("settings.ai.modelCustom") },
+  ];
+
+  const effortLabel = (level: string) => {
+    const key = `settings.ai.effort.${level}`;
+    const label = t(key);
+    return label === key ? level : label;
+  };
+
+  // Effort options come from the selected model; a saved level the model
+  // doesn't support stays visible rather than being silently coerced.
+  const selectedCodexModel = codexModels.find((m) => m.slug === model);
+  const effortLevels =
+    selectedCodexModel && selectedCodexModel.supported_reasoning_levels.length > 0
+      ? selectedCodexModel.supported_reasoning_levels
+      : EFFORT_LEVELS_UNION;
+  const effortOptions = (saved: string) => {
+    const options = [
+      { value: "default", label: t("settings.ai.effortDefault") },
+      ...effortLevels.map((level) => ({ value: level, label: effortLabel(level) })),
+    ];
+    if (saved !== "default" && !options.some((o) => o.value === saved)) {
+      options.push({ value: saved, label: effortLabel(saved) });
+    }
+    return options;
+  };
+
   return (
     <div className="space-y-0">
       {/* Provider */}
@@ -129,6 +221,7 @@ export default function AiSettings({ settings, loading, saveBulk, showSavedToast
             onChange={(p) => {
               setProvider(p);
               setApiKey("");
+              setCustomModel(false);
               setAiDirty(true);
               if (p === "ollama") {
                 setBaseUrl("http://localhost:11434"); setModel("qwen3.5");
@@ -163,7 +256,7 @@ export default function AiSettings({ settings, loading, saveBulk, showSavedToast
                   ? "bg-accent text-white"
                   : "bg-bg-page text-text-secondary hover:bg-bg-input"
               }`}
-              onClick={() => { setAuthMode("api_key"); setModel("gpt-4o"); setAiDirty(true); }}
+              onClick={() => { setAuthMode("api_key"); setModel("gpt-4o"); setCustomModel(false); setAiDirty(true); }}
             >
               <KeyRound size={14} />
               {t("settings.ai.apiKey")}
@@ -175,7 +268,7 @@ export default function AiSettings({ settings, loading, saveBulk, showSavedToast
                   ? "bg-accent text-white"
                   : "bg-bg-page text-text-secondary hover:bg-bg-input"
               }`}
-              onClick={() => { setAuthMode("oauth"); setModel("gpt-5.3-codex"); setAiDirty(true); }}
+              onClick={() => { setAuthMode("oauth"); setModel("gpt-5.3-codex"); setCustomModel(false); setAiDirty(true); }}
             >
               <Shield size={14} />
               {t("settings.ai.oauthLogin")}
@@ -279,20 +372,89 @@ export default function AiSettings({ settings, loading, saveBulk, showSavedToast
         <p className="text-[14px] font-medium text-text-primary mb-1.5">
           {t("settings.ai.model")}
         </p>
-        <Input
-          value={model}
-          onChange={(e) => { setModel(e.target.value); setAiDirty(true); }}
-          placeholder={
-            provider === "ollama" ? "qwen3.5" :
-            provider === "anthropic" ? "claude-sonnet-4-20250514" :
-            (provider === "openai" && authMode === "oauth") ? "gpt-5.3-codex" :
-            "gpt-4o"
-          }
-        />
-        <p className="text-[12px] text-text-muted mt-1.5">
-          {t("settings.ai.modelHint")}
-        </p>
+        {isCodexPath && codexModels.length > 0 ? (
+          <>
+            <Select
+              value={isCustomModel ? CUSTOM_MODEL : model}
+              onChange={(v) => {
+                if (v === CUSTOM_MODEL) {
+                  setCustomModel(true);
+                } else {
+                  setCustomModel(false);
+                  setModel(v);
+                }
+                setAiDirty(true);
+              }}
+              options={modelOptions}
+            />
+            {isCustomModel && (
+              <Input
+                className="mt-2"
+                value={model}
+                onChange={(e) => { setModel(e.target.value); setAiDirty(true); }}
+                placeholder="gpt-5.3-codex"
+              />
+            )}
+            <p className="text-[12px] text-text-muted mt-1.5">
+              {modelsFromFallback && oauthStatus.connected
+                ? t("settings.ai.modelListFallbackHint")
+                : isCustomModel
+                  ? t("settings.ai.modelHint")
+                  : t("settings.ai.modelPickerHint")}
+            </p>
+          </>
+        ) : (
+          <>
+            <Input
+              value={model}
+              onChange={(e) => { setModel(e.target.value); setAiDirty(true); }}
+              placeholder={
+                provider === "ollama" ? "qwen3.5" :
+                provider === "anthropic" ? "claude-sonnet-4-20250514" :
+                (provider === "openai" && authMode === "oauth") ? "gpt-5.3-codex" :
+                "gpt-4o"
+              }
+            />
+            <p className="text-[12px] text-text-muted mt-1.5">
+              {t("settings.ai.modelHint")}
+            </p>
+          </>
+        )}
       </div>
+
+      {/* Reasoning effort tiers (OpenAI OAuth path only) */}
+      {isCodexPath && (
+        <>
+          <div className="py-3 border-b border-border">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-[14px] font-medium text-text-primary">{t("settings.ai.effortQuick")}</p>
+                <p className="text-[12px] text-text-muted mt-0.5">{t("settings.ai.effortQuickHint")}</p>
+              </div>
+              <Select
+                className="w-[160px] shrink-0"
+                value={effortQuick}
+                onChange={(v) => { setEffortQuick(v); setAiDirty(true); }}
+                options={effortOptions(effortQuick)}
+              />
+            </div>
+          </div>
+          <div className="py-3 border-b border-border">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-[14px] font-medium text-text-primary">{t("settings.ai.effortDeep")}</p>
+                <p className="text-[12px] text-text-muted mt-0.5">{t("settings.ai.effortDeepHint")}</p>
+              </div>
+              <Select
+                className="w-[160px] shrink-0"
+                value={effortDeep}
+                onChange={(v) => { setEffortDeep(v); setAiDirty(true); }}
+                options={effortOptions(effortDeep)}
+              />
+            </div>
+          </div>
+        </>
+      )}
 
       {/* Temperature */}
       <div className="py-3 border-b border-border">
