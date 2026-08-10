@@ -31,7 +31,7 @@ import TableOfContents from "../components/TableOfContents";
 import { getBook, updateReadingProgress, checkBookAvailable, checkBookReadable, type Book } from "../hooks/useBooks";
 import { getAllSettings } from "../hooks/useSettings";
 import type { Highlight } from "../hooks/useBookmarks";
-import { handleAppZoomShortcut } from "../lib/appZoom";
+import { handleAppZoomShortcut, refreshAppZoom } from "../lib/appZoom";
 
 // foliate-js <foliate-view> web component interface
 /* eslint-disable @typescript-eslint/no-explicit-any -- foliate-js has no TS definitions */
@@ -310,6 +310,8 @@ export default function Reader() {
   const viewerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<FoliateView | null>(null);
   const isDragging = useRef(false);
+  const readerSettingsRef = useRef(readerSettings);
+  readerSettingsRef.current = readerSettings;
   const chaptersRef = useRef<TocChapter[]>([]);
   const selectedTextRef = useRef<{ text: string; cfi: string } | null>(null);
   const tocChapters = useMemo(() => chapters.map((chapter, i) => ({
@@ -582,9 +584,11 @@ export default function Reader() {
         }
       });
 
-      // Handle section loads — text selection, keyboard, highlights
+      // Handle section loads — styles, zoom, text selection, keyboard, highlights
       view.addEventListener("load", ((e: CustomEvent) => {
         const { doc, index } = e.detail;
+        view.renderer.setStyles?.(getReaderCSS(readerSettingsRef.current));
+        if (book.format === "epub") void refreshAppZoom();
 
         // Text selection tracking
         doc.addEventListener("mouseup", () => {

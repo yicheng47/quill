@@ -28,6 +28,7 @@ import {
   applyAppZoom,
   handleAppZoomShortcut,
   nudgeAppZoom,
+  refreshAppZoom,
   syncTitlebarZoom,
 } from "./appZoom";
 import {
@@ -67,6 +68,17 @@ describe("app zoom", () => {
     expect(mocks.invoke).toHaveBeenCalledWith("window_set_titlebar_zoom", {
       zoom: 0.8,
     });
+  });
+
+  it("pulses native zoom to refresh newly loaded frames", async () => {
+    localStorage.setItem(STORAGE_APP_ZOOM, "1.1");
+
+    await refreshAppZoom();
+
+    expect(mocks.setZoom).toHaveBeenNthCalledWith(1, 1.101);
+    expect(mocks.setZoom).toHaveBeenNthCalledWith(2, 1.1);
+    expect(mocks.invoke).not.toHaveBeenCalled();
+    expect(localStorage.getItem(STORAGE_APP_ZOOM)).toBe("1.1");
   });
 
   it("snaps stored values without writing them back", () => {

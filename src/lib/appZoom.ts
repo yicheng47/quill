@@ -27,6 +27,22 @@ export function restoreAppZoom(zoom: number): Promise<void> {
   return Promise.all([titlebarZoom, webviewZoom]).then(() => {});
 }
 
+export function refreshAppZoom(): Promise<void> {
+  const zoom = readAppZoom();
+  if (zoom === 1) return Promise.resolve();
+  try {
+    const webview = getCurrentWebview();
+    const refreshZoom = zoom === ZOOM_STEPS[ZOOM_STEPS.length - 1]
+      ? zoom - 0.001
+      : zoom + 0.001;
+    return webview.setZoom(refreshZoom)
+      .then(() => webview.setZoom(zoom))
+      .catch(() => {});
+  } catch {
+    return Promise.resolve();
+  }
+}
+
 export function applyAppZoom(next: number): void {
   writeAppZoom(next);
   try {
