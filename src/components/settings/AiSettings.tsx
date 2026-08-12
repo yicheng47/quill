@@ -6,6 +6,7 @@ import Button from "../ui/Button";
 import Select from "../ui/Select";
 import Input from "../ui/Input";
 import Slider from "../ui/Slider";
+import { CODEX_EFFORT_LEVELS, CURATED_CODEX_MODELS, type CodexModel } from "./codexModels";
 import type { SettingsProps } from "./types";
 
 interface AiSettingsProps extends SettingsProps {
@@ -13,21 +14,10 @@ interface AiSettingsProps extends SettingsProps {
   onDirtyChange?: (dirty: boolean) => void;
 }
 
-interface CodexModel {
-  slug: string;
-  display_name: string;
-  description: string;
-  supported_reasoning_levels: string[];
-}
-
 interface CodexModelList {
   models: CodexModel[];
   from_fallback: boolean;
 }
-
-// Union of effort levels across Codex models, used when the selected model
-// is custom/unknown or doesn't report its supported levels.
-const EFFORT_LEVELS_UNION = ["low", "medium", "high", "xhigh", "max", "ultra"];
 
 const CUSTOM_MODEL = "__custom__";
 
@@ -38,7 +28,7 @@ export default function AiSettings({ settings, loading, saveBulk, showSavedToast
   // AI config
   const [provider, setProvider] = useState("openai");
   const [apiKey, setApiKey] = useState("");
-  const [model, setModel] = useState("gpt-5.3-codex");
+  const [model, setModel] = useState("gpt-5.6-sol");
   const [baseUrl, setBaseUrl] = useState("https://api.openai.com");
   const [temperature, setTemperature] = useState(0.3);
   const [keepAlive, setKeepAlive] = useState("30m");
@@ -50,7 +40,7 @@ export default function AiSettings({ settings, loading, saveBulk, showSavedToast
   const [oauthError, setOauthError] = useState<string | null>(null);
 
   // Codex model card + reasoning effort (OpenAI OAuth path only)
-  const [codexModels, setCodexModels] = useState<CodexModel[]>([]);
+  const [codexModels, setCodexModels] = useState<CodexModel[]>(CURATED_CODEX_MODELS);
   const [modelsFromFallback, setModelsFromFallback] = useState(false);
   const [customModel, setCustomModel] = useState(false);
   const [effortQuick, setEffortQuick] = useState("default");
@@ -89,12 +79,12 @@ export default function AiSettings({ settings, loading, saveBulk, showSavedToast
     invoke<CodexModelList>("list_codex_models")
       .then((list) => {
         if (stale) return;
-        setCodexModels(list.models);
         setModelsFromFallback(list.from_fallback);
+        setCodexModels(list.models);
       })
       .catch(() => {
         if (stale) return;
-        setCodexModels([]);
+        setCodexModels(CURATED_CODEX_MODELS);
         setModelsFromFallback(true);
       });
     return () => {
@@ -194,7 +184,7 @@ export default function AiSettings({ settings, loading, saveBulk, showSavedToast
   const effortLevels =
     selectedCodexModel && selectedCodexModel.supported_reasoning_levels.length > 0
       ? selectedCodexModel.supported_reasoning_levels
-      : EFFORT_LEVELS_UNION;
+      : CODEX_EFFORT_LEVELS;
   const effortOptions = (saved: string) => {
     const options = [
       { value: "default", label: t("settings.ai.effortDefault") },
@@ -226,7 +216,7 @@ export default function AiSettings({ settings, loading, saveBulk, showSavedToast
               if (p === "ollama") {
                 setBaseUrl("http://localhost:11434"); setModel("qwen3.5");
               } else if (p === "openai") {
-                setBaseUrl("https://api.openai.com"); setModel("gpt-5.3-codex"); setAuthMode("oauth");
+                setBaseUrl("https://api.openai.com"); setModel("gpt-5.6-sol"); setAuthMode("oauth");
               } else if (p === "anthropic") {
                 setBaseUrl(""); setModel("claude-sonnet-4-20250514");
               } else {
@@ -268,7 +258,7 @@ export default function AiSettings({ settings, loading, saveBulk, showSavedToast
                   ? "bg-accent text-white"
                   : "bg-bg-page text-text-secondary hover:bg-bg-input"
               }`}
-              onClick={() => { setAuthMode("oauth"); setModel("gpt-5.3-codex"); setCustomModel(false); setAiDirty(true); }}
+              onClick={() => { setAuthMode("oauth"); setModel("gpt-5.6-sol"); setCustomModel(false); setAiDirty(true); }}
             >
               <Shield size={14} />
               {t("settings.ai.oauthLogin")}
@@ -372,7 +362,7 @@ export default function AiSettings({ settings, loading, saveBulk, showSavedToast
         <p className="text-[14px] font-medium text-text-primary mb-1.5">
           {t("settings.ai.model")}
         </p>
-        {isCodexPath && codexModels.length > 0 ? (
+        {isCodexPath ? (
           <>
             <Select
               value={isCustomModel ? CUSTOM_MODEL : model}
@@ -392,7 +382,7 @@ export default function AiSettings({ settings, loading, saveBulk, showSavedToast
                 className="mt-2"
                 value={model}
                 onChange={(e) => { setModel(e.target.value); setAiDirty(true); }}
-                placeholder="gpt-5.3-codex"
+                placeholder="gpt-5.6-sol"
               />
             )}
             <p className="text-[12px] text-text-muted mt-1.5">
@@ -411,7 +401,7 @@ export default function AiSettings({ settings, loading, saveBulk, showSavedToast
               placeholder={
                 provider === "ollama" ? "qwen3.5" :
                 provider === "anthropic" ? "claude-sonnet-4-20250514" :
-                (provider === "openai" && authMode === "oauth") ? "gpt-5.3-codex" :
+                (provider === "openai" && authMode === "oauth") ? "gpt-5.6-sol" :
                 "gpt-4o"
               }
             />

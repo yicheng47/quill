@@ -86,23 +86,60 @@ fn parse_models_response(body: &str) -> AppResult<Vec<CodexModel>> {
         .collect())
 }
 
-/// Bundled list used before OAuth connect or when the fetch fails. Empty
-/// `supported_reasoning_levels` makes the frontend fall back to the effort
-/// union.
+/// Bundled list used before OAuth connect or when the fetch fails.
+/// Keep in sync with src/components/settings/codexModels.ts.
 fn fallback_models() -> Vec<CodexModel> {
-    [
-        ("gpt-5.3-codex", "GPT-5.3 Codex"),
-        ("gpt-5.2-codex", "GPT-5.2 Codex"),
-        ("gpt-5.1-codex-max", "GPT-5.1 Codex Max"),
-    ]
-    .into_iter()
-    .map(|(slug, name)| CodexModel {
+    let model = |slug: &str, display_name: &str, description: &str, levels: &[&str]| CodexModel {
         slug: slug.to_string(),
-        display_name: name.to_string(),
-        description: String::new(),
-        supported_reasoning_levels: Vec::new(),
-    })
-    .collect()
+        display_name: display_name.to_string(),
+        description: description.to_string(),
+        supported_reasoning_levels: levels.iter().map(|level| (*level).to_string()).collect(),
+    };
+
+    vec![
+        model(
+            "gpt-5.6-sol",
+            "GPT-5.6-Sol",
+            "Latest frontier agentic coding model.",
+            &["low", "medium", "high", "xhigh", "max", "ultra"],
+        ),
+        model(
+            "gpt-5.6-terra",
+            "GPT-5.6-Terra",
+            "Balanced agentic coding model for everyday work.",
+            &["low", "medium", "high", "xhigh", "max", "ultra"],
+        ),
+        model(
+            "gpt-5.6-luna",
+            "GPT-5.6-Luna",
+            "Fast and affordable agentic coding model.",
+            &["low", "medium", "high", "xhigh", "max"],
+        ),
+        model(
+            "gpt-5.5",
+            "GPT-5.5",
+            "Frontier model for complex coding, research, and real-world work.",
+            &["low", "medium", "high", "xhigh"],
+        ),
+        model(
+            "gpt-5.4",
+            "GPT-5.4",
+            "Strong model for everyday coding.",
+            &["low", "medium", "high", "xhigh"],
+        ),
+        model(
+            "gpt-5.4-mini",
+            "GPT-5.4-Mini",
+            "Small, fast, and cost-efficient model for simpler coding tasks.",
+            &["low", "medium", "high", "xhigh"],
+        ),
+        model(
+            "gpt-5.3-codex-spark",
+            "GPT-5.3-Codex-Spark",
+            "Ultra-fast coding model.",
+            &["low", "medium", "high", "xhigh"],
+        ),
+    ]
 }
 
 /// Cache entries are scoped to the OAuth account they were fetched for, so
@@ -397,11 +434,65 @@ mod tests {
     }
 
     #[test]
-    fn fallback_contains_default_model() {
+    fn fallback_catalog_has_curated_content() {
         let models = fallback_models();
-        assert!(models.iter().any(|m| m.slug == "gpt-5.3-codex"));
-        // Bundled entries carry no levels — the frontend uses the union
-        assert!(models.iter().all(|m| m.supported_reasoning_levels.is_empty()));
+        let expected: &[(&str, &str, &str, &[&str])] = &[
+            (
+                "gpt-5.6-sol",
+                "GPT-5.6-Sol",
+                "Latest frontier agentic coding model.",
+                &["low", "medium", "high", "xhigh", "max", "ultra"],
+            ),
+            (
+                "gpt-5.6-terra",
+                "GPT-5.6-Terra",
+                "Balanced agentic coding model for everyday work.",
+                &["low", "medium", "high", "xhigh", "max", "ultra"],
+            ),
+            (
+                "gpt-5.6-luna",
+                "GPT-5.6-Luna",
+                "Fast and affordable agentic coding model.",
+                &["low", "medium", "high", "xhigh", "max"],
+            ),
+            (
+                "gpt-5.5",
+                "GPT-5.5",
+                "Frontier model for complex coding, research, and real-world work.",
+                &["low", "medium", "high", "xhigh"],
+            ),
+            (
+                "gpt-5.4",
+                "GPT-5.4",
+                "Strong model for everyday coding.",
+                &["low", "medium", "high", "xhigh"],
+            ),
+            (
+                "gpt-5.4-mini",
+                "GPT-5.4-Mini",
+                "Small, fast, and cost-efficient model for simpler coding tasks.",
+                &["low", "medium", "high", "xhigh"],
+            ),
+            (
+                "gpt-5.3-codex-spark",
+                "GPT-5.3-Codex-Spark",
+                "Ultra-fast coding model.",
+                &["low", "medium", "high", "xhigh"],
+            ),
+        ];
+
+        assert_eq!(models.len(), expected.len());
+        for (model, (slug, display_name, description, levels)) in models.iter().zip(expected) {
+            assert_eq!(model.slug, *slug);
+            assert_eq!(model.display_name, *display_name);
+            assert_eq!(model.description, *description);
+            let actual_levels: Vec<&str> = model
+                .supported_reasoning_levels
+                .iter()
+                .map(String::as_str)
+                .collect();
+            assert_eq!(actual_levels, *levels);
+        }
     }
 
     fn save_test_tokens(secrets: &Secrets, account_id: &str) {
