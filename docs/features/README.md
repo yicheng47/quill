@@ -11,3 +11,4 @@ Specs for features that are in progress or planned. Shipped, dropped, or superse
 - [276 - Reset All App Data](276-reset-all-data.md)
 - [284 - MCP Batch Library and Collection Tools](284-mcp-batch-library-collection-tools.md)
 - [294 - Codex Model Card + Two-Tier Reasoning Effort](294-codex-model-and-effort.md)
+- [316 — Chats Infinite Scroll with Backend Pagination](316-chats-pagination.md)
