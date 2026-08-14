@@ -738,9 +738,18 @@ pub fn run() {
                 }
             }
         }
-        // On non-macOS, closing the main window quits the app (close-all-windows
-        // convention). On macOS the main window is hidden instead (handled above
-        // in on_window_event), so this branch is a no-op there.
+        // Remove label-scoped titlebar state so recreated reader windows can install
+        // a fresh resize observer.
+        #[cfg(target_os = "macos")]
+        tauri::RunEvent::WindowEvent {
+            label,
+            event: tauri::WindowEvent::Destroyed,
+            ..
+        } => {
+            commands::window::uninstall_titlebar_resize_observer(label);
+        }
+        // On non-macOS, closing the main window quits the app by closing every
+        // remaining window.
         #[cfg(not(target_os = "macos"))]
         tauri::RunEvent::WindowEvent {
             label,
