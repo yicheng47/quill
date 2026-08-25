@@ -20,7 +20,14 @@ import {
 import Button from "../components/ui/Button";
 import AiPanel from "../components/AiPanel";
 import BookmarksPanel from "../components/BookmarksPanel";
-import ReaderSettings, { type ReaderSettingsState, getFontFamily, getThemeStyles, getDefaultReaderTheme } from "../components/ReaderSettings";
+import ReaderSettings, {
+  getDefaultReaderTheme,
+  getFontFamily,
+  getStoredReaderSettings,
+  getThemeStyles,
+  nudgeFontSize,
+  type ReaderSettingsState,
+} from "../components/ReaderSettings";
 import ReaderContextMenu from "../components/ReaderContextMenu";
 import HighlightToolbar from "../components/HighlightToolbar";
 import LookupPopover from "../components/LookupPopover";
@@ -31,7 +38,11 @@ import TableOfContents from "../components/TableOfContents";
 import { getBook, updateReadingProgress, checkBookAvailable, checkBookReadable, type Book } from "../hooks/useBooks";
 import { getAllSettings } from "../hooks/useSettings";
 import type { Highlight } from "../hooks/useBookmarks";
-import { handleAppZoomShortcut, refreshAppZoom } from "../lib/appZoom";
+import {
+  handleAppZoomShortcut,
+  refreshAppZoom,
+  zoomShortcutActionForEvent,
+} from "../lib/appZoom";
 
 // foliate-js <foliate-view> web component interface
 /* eslint-disable @typescript-eslint/no-explicit-any -- foliate-js has no TS definitions */
@@ -197,6 +208,7 @@ const highlightColorMap: Record<string, string> = {
 };
 
 const appWindow = getCurrentWebviewWindow();
+const isMainWindow = appWindow.label === "main";
 const isStandaloneWindow = appWindow.label.startsWith("reader-");
 
 // One-time migration of `reader-zoom-${bookId}` keys written by PR #199.
@@ -305,6 +317,7 @@ export default function Reader() {
     wordSpacing: 0,
     margins: 0,
   }));
+  const [hasFontSizeOverride, setHasFontSizeOverride] = useState(false);
 
   const settingsAnchorRef = useRef<HTMLButtonElement>(null);
   const viewerRef = useRef<HTMLDivElement>(null);
@@ -312,6 +325,7 @@ export default function Reader() {
   const isDragging = useRef(false);
   const readerSettingsRef = useRef(readerSettings);
   readerSettingsRef.current = readerSettings;
+  const globalFontSizeRef = useRef(readerSettings.fontSize);
   const chaptersRef = useRef<TocChapter[]>([]);
   const selectedTextRef = useRef<{ text: string; cfi: string } | null>(null);
   const tocChapters = useMemo(() => chapters.map((chapter, i) => ({
@@ -338,13 +352,16 @@ export default function Reader() {
       const saved = localStorage.getItem(`reader-settings-${bookId}`);
       const bookSettings = saved ? JSON.parse(saved) as Partial<ReaderSettingsState> : {};
       const g = globalSettings;
+      const globalFontSize = g.font_size ? parseInt(g.font_size) : readerSettingsRef.current.fontSize;
+      globalFontSizeRef.current = globalFontSize;
+      setHasFontSizeOverride(bookSettings.fontSize !== undefined);
       setReaderSettings((prev) => ({
         ...prev,
         theme: bookSettings.theme || (g.reader_theme as ReaderSettingsState["theme"]) || prev.theme,
         brightness: bookSettings.brightness ?? (g.brightness ? parseInt(g.brightness) : prev.brightness),
         pageColumns: bookSettings.pageColumns ?? (g.page_columns ? parseInt(g.page_columns) as ReaderSettingsState["pageColumns"] : prev.pageColumns),
         font: bookSettings.font || (g.font_family as ReaderSettingsState["font"]) || prev.font,
-        fontSize: bookSettings.fontSize ?? (g.font_size ? parseInt(g.font_size) : prev.fontSize),
+        fontSize: bookSettings.fontSize ?? globalFontSize,
         readingMode: bookSettings.readingMode || (g.reading_mode as ReaderSettingsState["readingMode"]) || prev.readingMode,
         lineSpacing: bookSettings.lineSpacing ?? (g.line_spacing ? parseFloat(g.line_spacing) : prev.lineSpacing),
         charSpacing: bookSettings.charSpacing ?? (g.char_spacing ? parseInt(g.char_spacing) : prev.charSpacing),
@@ -369,8 +386,9 @@ export default function Reader() {
   const dbSettingsLoaded = useRef(false);
   useEffect(() => {
     if (!dbSettingsLoaded.current) return;
-    localStorage.setItem(`reader-settings-${bookId}`, JSON.stringify(readerSettings));
-  }, [readerSettings]);
+    const storedSettings = getStoredReaderSettings(readerSettings, hasFontSizeOverride);
+    localStorage.setItem(`reader-settings-${bookId}`, JSON.stringify(storedSettings));
+  }, [readerSettings, bookId, hasFontSizeOverride]);
 
   // Persist per-book PDF zoom after load. Debounce to avoid thrashing during
   // rapid zoom-button clicks; only write once the user settles.
@@ -652,22 +670,10 @@ export default function Reader() {
             ev.preventDefault();
             view.history.forward();
           } else if (
-            book?.format === "pdf" &&
-            (ev.metaKey || ev.ctrlKey) &&
-            ev.shiftKey &&
-            ev.code === "Equal"
-          ) {
-            ev.preventDefault();
-            handleZoom(10);
-          } else if (
-            book?.format === "pdf" &&
-            (ev.metaKey || ev.ctrlKey) &&
-            ev.shiftKey &&
-            ev.code === "Minus"
-          ) {
-            ev.preventDefault();
-            handleZoom(-10);
-          } else if (handleAppZoomShortcut(ev)) return;
+            isMainWindow
+              ? handleAppZoomShortcut(ev)
+              : handleReaderZoomShortcut(ev, book.format)
+          ) return;
           else if (ev.key === "ArrowLeft") view.prev();
           else if (ev.key === "ArrowRight") view.next();
         });
@@ -874,6 +880,53 @@ export default function Reader() {
     setZoom(next);
   }, [applyZoom]);
 
+  const resetPdfZoom = useCallback(() => {
+    applyZoom("fit");
+    setZoom("fit");
+  }, [applyZoom]);
+
+  const nudgeEpubFontSize = useCallback((direction: 1 | -1) => {
+    setHasFontSizeOverride(true);
+    setReaderSettings((current) => ({
+      ...current,
+      fontSize: nudgeFontSize(current.fontSize, direction),
+    }));
+  }, []);
+
+  const resetEpubFontSize = useCallback(() => {
+    setHasFontSizeOverride(false);
+    setReaderSettings((current) => ({
+      ...current,
+      fontSize: globalFontSizeRef.current,
+    }));
+  }, []);
+
+  const handleReaderZoomShortcut = useCallback((
+    event: KeyboardEvent,
+    format: Book["format"],
+  ): boolean => {
+    const action = zoomShortcutActionForEvent(event);
+    if (action === null) return false;
+    event.preventDefault();
+    event.stopPropagation();
+    if (format === "pdf") {
+      if (action === "reset") resetPdfZoom();
+      else handleZoom(action * 10);
+    } else if (action === "reset") {
+      resetEpubFontSize();
+    } else {
+      nudgeEpubFontSize(action);
+    }
+    return true;
+  }, [handleZoom, nudgeEpubFontSize, resetEpubFontSize, resetPdfZoom]);
+
+  const handleReaderSettingsChange = useCallback((settings: ReaderSettingsState) => {
+    if (settings.fontSize !== readerSettingsRef.current.fontSize) {
+      setHasFontSizeOverride(true);
+    }
+    setReaderSettings(settings);
+  }, []);
+
   // Track the current fit-width scale so +/- from fit mode lands near the
   // visible size. Observes the renderer and sums the natural widths of the
   // pages in a single row — one page in single mode, two in spread mode —
@@ -933,33 +986,17 @@ export default function Reader() {
   // Keyboard navigation — parent document listener
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (!isMainWindow && book?.format && handleReaderZoomShortcut(e, book.format)) return;
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA") return;
       if (e.key === "ArrowLeft") viewRef.current?.prev();
       else if (e.key === "ArrowRight") viewRef.current?.next();
-      else if (
-        book?.format === "pdf" &&
-        (e.metaKey || e.ctrlKey) &&
-        e.shiftKey &&
-        e.code === "Equal"
-      ) {
-        e.preventDefault();
-        handleZoom(10);
-      } else if (
-        book?.format === "pdf" &&
-        (e.metaKey || e.ctrlKey) &&
-        e.shiftKey &&
-        e.code === "Minus"
-      ) {
-        e.preventDefault();
-        handleZoom(-10);
-      }
     };
     document.addEventListener("keydown", handleKeyDown);
     return () => {
       document.removeEventListener("keydown", handleKeyDown);
     };
-  }, [book?.format, handleZoom]);
+  }, [book?.format, handleReaderZoomShortcut]);
 
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     const selection = window.getSelection();
@@ -1303,7 +1340,7 @@ export default function Reader() {
             onClose={() => setSettingsOpen(false)}
             anchorRef={settingsAnchorRef}
             settings={readerSettings}
-            onSettingsChange={setReaderSettings}
+            onSettingsChange={handleReaderSettingsChange}
             bookFormat={book.format}
           />
 
@@ -1446,7 +1483,7 @@ export default function Reader() {
                     </Button>
                     <button
                       type="button"
-                      onClick={() => { applyZoom("fit"); setZoom("fit"); }}
+                      onClick={resetPdfZoom}
                       title={t("reader.zoom.fitTooltip")}
                       className={`text-[12px] font-medium min-w-[36px] px-1 text-center tabular-nums hover:opacity-100 ${isStandaloneWindow ? "opacity-60" : "text-text-muted"} ${zoom === "fit" ? "" : "cursor-pointer"}`}
                     >

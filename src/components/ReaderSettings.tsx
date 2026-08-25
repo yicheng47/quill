@@ -43,6 +43,19 @@ export interface ReaderSettingsState {
   margins: number; // pixels, 0 = none
 }
 
+export function nudgeFontSize(fontSize: number, direction: 1 | -1): number {
+  return Math.min(FONT_SIZE_MAX, Math.max(FONT_SIZE_MIN, fontSize + direction * 2));
+}
+
+export function getStoredReaderSettings(
+  settings: ReaderSettingsState,
+  hasFontSizeOverride: boolean,
+): Partial<ReaderSettingsState> {
+  const storedSettings: Partial<ReaderSettingsState> = { ...settings };
+  if (!hasFontSizeOverride) delete storedSettings.fontSize;
+  return storedSettings;
+}
+
 interface ReaderSettingsProps {
   open: boolean;
   onClose: () => void;
@@ -126,7 +139,7 @@ export default function ReaderSettings({ open, onClose, anchorRef, settings, onS
       {/* Font size toggle */}
       {bookFormat !== "pdf" && (<div className="flex items-center h-[60px] px-4 border-b border-border-light">
         <button
-          onClick={() => update({ fontSize: Math.max(FONT_SIZE_MIN, settings.fontSize - 2) })}
+          onClick={() => update({ fontSize: nudgeFontSize(settings.fontSize, -1) })}
           className="flex-1 flex items-center justify-center h-7 border-r border-border cursor-pointer text-text-primary hover:bg-bg-input"
         >
           <span className="text-[14px] font-medium">A-</span>
@@ -135,7 +148,7 @@ export default function ReaderSettings({ open, onClose, anchorRef, settings, onS
           {settings.fontSize}px
         </span>
         <button
-          onClick={() => update({ fontSize: Math.min(FONT_SIZE_MAX, settings.fontSize + 2) })}
+          onClick={() => update({ fontSize: nudgeFontSize(settings.fontSize, 1) })}
           className="flex-1 flex items-center justify-center h-9 border-l border-border cursor-pointer text-text-primary hover:bg-bg-input"
         >
           <span className="text-[20px] font-medium tracking-[-0.45px]">A+</span>

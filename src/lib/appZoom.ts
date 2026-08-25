@@ -72,7 +72,7 @@ export function nudgeAppZoom(direction: 1 | -1 | "reset"): void {
   applyAppZoom(ZOOM_STEPS[nextIndex]);
 }
 
-export function appZoomActionForEvent(
+export function zoomShortcutActionForEvent(
   event: Pick<
     KeyboardEvent,
     "altKey" | "code" | "ctrlKey" | "metaKey" | "shiftKey"
@@ -87,7 +87,7 @@ export function appZoomActionForEvent(
 }
 
 export function handleAppZoomShortcut(event: KeyboardEvent): boolean {
-  const action = appZoomActionForEvent(event);
+  const action = zoomShortcutActionForEvent(event);
   if (action === null) return false;
   event.preventDefault();
   event.stopPropagation();
