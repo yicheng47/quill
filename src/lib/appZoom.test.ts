@@ -24,12 +24,12 @@ vi.mock("@tauri-apps/api/webview", () => ({
 }));
 
 import {
-  appZoomActionForEvent,
   applyAppZoom,
   handleAppZoomShortcut,
   nudgeAppZoom,
   refreshAppZoom,
   syncTitlebarZoom,
+  zoomShortcutActionForEvent,
 } from "./appZoom";
 import {
   readAppZoom,
@@ -113,12 +113,12 @@ describe("app zoom", () => {
       code: "Equal",
     };
 
-    expect(appZoomActionForEvent(event)).toBe(1);
-    expect(appZoomActionForEvent({ ...event, shiftKey: true })).toBeNull();
-    expect(appZoomActionForEvent({ ...event, code: "Minus" })).toBe(-1);
-    expect(appZoomActionForEvent({ ...event, code: "Digit0" })).toBe("reset");
+    expect(zoomShortcutActionForEvent(event)).toBe(1);
+    expect(zoomShortcutActionForEvent({ ...event, shiftKey: true })).toBeNull();
+    expect(zoomShortcutActionForEvent({ ...event, code: "Minus" })).toBe(-1);
+    expect(zoomShortcutActionForEvent({ ...event, code: "Digit0" })).toBe("reset");
     expect(
-      appZoomActionForEvent({ ...event, code: "Minus", shiftKey: true }),
+      zoomShortcutActionForEvent({ ...event, code: "Minus", shiftKey: true }),
     ).toBeNull();
   });
 

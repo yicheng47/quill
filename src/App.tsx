@@ -73,7 +73,7 @@ export default function App() {
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      handleAppZoomShortcut(event);
+      if (isMainWindow) handleAppZoomShortcut(event);
     };
     window.addEventListener("keydown", handleKeyDown, true);
     return () => window.removeEventListener("keydown", handleKeyDown, true);
