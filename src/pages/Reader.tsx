@@ -18,6 +18,7 @@ import {
   Plus,
 } from "lucide-react";
 import Button from "../components/ui/Button";
+import TitlebarDragRegion from "../components/ui/TitlebarDragRegion";
 import AiPanel from "../components/AiPanel";
 import BookmarksPanel from "../components/BookmarksPanel";
 import ReaderSettings, {
@@ -1234,7 +1235,7 @@ export default function Reader() {
           borderBottom: `1px solid ${getThemeStyles(readerSettings.theme).text}1a`,
         } : undefined}
       >
-        <div data-tauri-drag-region className="absolute top-0 left-0 right-0 h-8" />
+        <TitlebarDragRegion height={32} />
 
         {/* Left section */}
         <div className="flex items-center gap-3">

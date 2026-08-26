@@ -5,6 +5,7 @@ import { useAiChat } from "../hooks/useAiChat";
 import { openReaderWindow } from "../utils/openReaderWindow";
 import type { ChatSummary } from "../hooks/useChats";
 import Button from "./ui/Button";
+import TitlebarDragRegion from "./ui/TitlebarDragRegion";
 import MessageBubble from "./MessageBubble";
 
 interface ChatDetailViewProps {
@@ -85,7 +86,8 @@ export default function ChatDetailView({ chat, onBack, onChatDeleted, onChatRena
   return (
     <div className="flex-1 flex flex-col min-w-0 bg-bg-muted">
       {/* Header */}
-      <div className="flex items-center justify-between px-6 pt-11 pb-3 bg-bg-surface border-b border-border shrink-0">
+      <div className="flex items-center justify-between px-6 pt-11 pb-3 bg-bg-surface border-b border-border shrink-0 relative">
+        <TitlebarDragRegion />
         <div className="flex items-center gap-3 min-w-0">
           <button
             onClick={onBack}
@@ -183,12 +185,12 @@ export default function ChatDetailView({ chat, onBack, onChatDeleted, onChatRena
             autoCorrect="off"
             autoCapitalize="off"
             rows={2}
-            className="flex-1 h-[60px] bg-bg-input rounded-lg px-3 py-2 text-[15px] text-text-primary placeholder:text-text-placeholder tracking-[-0.15px] leading-5 outline-none border border-transparent focus:border-accent resize-none"
+            className="flex-1 h-[64px] bg-bg-input rounded-lg px-3 py-2 text-[15px] text-text-primary placeholder:text-text-placeholder tracking-[-0.15px] leading-5 outline-none border border-transparent focus:border-accent resize-none overflow-x-hidden overflow-y-auto"
           />
           <button
             onClick={handleSend}
             disabled={!input.trim() || streaming || initializing}
-            className={`size-[60px] shrink-0 rounded-lg flex items-center justify-center cursor-pointer bg-accent text-white ${
+            className={`w-[60px] h-[64px] shrink-0 rounded-lg flex items-center justify-center cursor-pointer bg-accent text-white ${
               !input.trim() || streaming || initializing ? "opacity-50" : ""
             }`}
           >

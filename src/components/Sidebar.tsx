@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
 import { Library, BookOpen, CheckCircle2, FolderClosed, BookA, Plus, MessageSquare, Pencil, Trash2, GripVertical, RefreshCw } from "lucide-react";
 import Button from "./ui/Button";
+import TitlebarDragRegion from "./ui/TitlebarDragRegion";
 import QuillLogo from "./QuillLogo";
 import type { Collection } from "../hooks/useCollections";
 
@@ -211,7 +212,7 @@ export default function Sidebar({ activeFilter, onFilterChange, bookCounts, coll
 
   return (
     <aside style={{ width: sidebarWidth }} className="shrink-0 bg-bg-muted border-r border-border h-full flex flex-col gap-6 px-4 relative select-none overflow-hidden">
-      <div data-tauri-drag-region className="absolute top-0 left-0 right-0 h-11" />
+      <TitlebarDragRegion />
       <div className="flex items-center gap-2.5 pb-2 pt-11">
         <QuillLogo size={28} />
         <span className="text-[18px] font-semibold tracking-[0.5px] text-text-primary">

@@ -17,6 +17,7 @@ import {
 import { useAllDictionary, type DictionaryWord } from "../hooks/useDictionary";
 import { timeAgo } from "../utils/timeAgo";
 import VocabDetailModal from "../components/VocabDetailModal";
+import TitlebarDragRegion from "../components/ui/TitlebarDragRegion";
 
 type SortMode = "newest" | "oldest" | "az";
 type ViewMode = "list" | "card";
@@ -100,7 +101,7 @@ export default function DictionaryPage() {
     <div className="flex flex-col h-screen bg-bg-surface">
       {/* Header */}
       <header className="flex items-center justify-between px-section pt-11 pb-4 shrink-0 relative">
-        <div data-tauri-drag-region className="absolute top-0 left-0 right-0 h-11" />
+        <TitlebarDragRegion />
         <div className="flex items-center gap-3">
           <button
             onClick={() => navigate("/")}

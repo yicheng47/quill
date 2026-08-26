@@ -287,12 +287,12 @@ export default function AiPanel({ bookId, bookTitle, bookAuthor, currentChapter,
             autoCorrect="off"
             autoCapitalize="off"
             rows={2}
-            className="flex-1 h-[60px] bg-bg-input rounded-lg px-3 py-2 text-[15px] text-text-primary placeholder:text-text-placeholder tracking-[-0.15px] leading-5 outline-none border border-transparent focus:border-accent resize-none"
+            className="flex-1 h-[64px] bg-bg-input rounded-lg px-3 py-2 text-[15px] text-text-primary placeholder:text-text-placeholder tracking-[-0.15px] leading-5 outline-none border border-transparent focus:border-accent resize-none overflow-x-hidden overflow-y-auto"
           />
           <button
             onClick={handleSend}
             disabled={!input.trim() || streaming || initializing}
-            className={`size-[60px] shrink-0 rounded-lg flex items-center justify-center cursor-pointer bg-accent text-white ${
+            className={`w-[60px] h-[64px] shrink-0 rounded-lg flex items-center justify-center cursor-pointer bg-accent text-white ${
               !input.trim() || streaming || initializing ? "opacity-50" : ""
             }`}
           >

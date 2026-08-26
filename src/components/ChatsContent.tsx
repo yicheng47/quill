@@ -5,6 +5,7 @@ import { useAllChats, useChatCounts, type ChatSummary } from "../hooks/useChats"
 import { timeAgo } from "../utils/timeAgo";
 import ChatDetailView from "./ChatDetailView";
 import Select from "./ui/Select";
+import TitlebarDragRegion from "./ui/TitlebarDragRegion";
 
 export default function ChatsContent() {
   const { t } = useTranslation();
@@ -76,7 +77,7 @@ export default function ChatsContent() {
   return (
     <div className="flex-1 flex flex-col min-w-0">
       <div className={`px-page pb-4 relative select-none ${globalTotal > 0 ? "border-b border-border" : ""}`}>
-        <div data-tauri-drag-region className="absolute top-0 left-0 right-0 h-11" />
+        <TitlebarDragRegion />
         <div className="pt-11 flex items-center justify-between mb-6">
           <h1 className="text-[24px] font-semibold text-text-primary tracking-[0.07px]">
             {t("chats.title")}

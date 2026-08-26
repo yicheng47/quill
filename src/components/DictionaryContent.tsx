@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import Button from "./ui/Button";
 import Select from "./ui/Select";
+import TitlebarDragRegion from "./ui/TitlebarDragRegion";
 import { useAllDictionary, type DictionaryWord } from "../hooks/useDictionary";
 import { timeAgo } from "../utils/timeAgo";
 import VocabDetailModal from "./VocabDetailModal";
@@ -85,7 +86,7 @@ export default function DictionaryContent() {
     <div className="flex-1 flex flex-col min-w-0">
       {/* Header */}
       <div className={`px-page pb-4 relative select-none ${!isEmpty ? "border-b border-border" : ""}`}>
-        <div data-tauri-drag-region className="absolute top-0 left-0 right-0 h-11" />
+        <TitlebarDragRegion />
         <div className="pt-11 flex items-center justify-between mb-6">
           <h1 className="text-[24px] font-semibold text-text-primary tracking-[0.07px]">
             {t("vocab.title")}
