@@ -17,6 +17,7 @@ Create a new versioned release for Quill.
    - Use the Edit tool to replace the version in `package.json`, `src-tauri/tauri.conf.json`, and `src-tauri/Cargo.toml`.
    - After editing, verify all three files show the correct new version.
    - Run `cargo check` in `src-tauri/` to update `Cargo.lock`.
+   - Run `npm install --package-lock-only --ignore-scripts` to update the root `version` in `package-lock.json`.
    - Check if `public/foliate-js` submodule has changes. If so, commit and push the submodule, then stage the updated reference.
    - Stage everything and commit with message `chore: bump version to v{version}`.
 
