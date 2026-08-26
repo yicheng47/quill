@@ -125,7 +125,7 @@ export default function Select({ label, value, onChange, options, className = ""
                     onChange(option.value);
                     setOpen(false);
                   }}
-                  className={`w-full flex items-center justify-between px-4 text-[14px] cursor-pointer transition-colors ${
+                  className={`w-full flex items-center justify-between gap-3 px-4 text-[14px] cursor-pointer transition-colors ${
                     option.description != null ? "h-13 py-1.5" : "h-10"
                   } ${
                     isActive
