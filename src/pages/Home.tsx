@@ -12,6 +12,7 @@ import ChatsContent from "../components/ChatsContent";
 import SettingsModal, { type SettingsSection } from "../components/SettingsModal";
 import Button from "../components/ui/Button";
 import Input from "../components/ui/Input";
+import TitlebarDragRegion from "../components/ui/TitlebarDragRegion";
 import { useBooks, importBookDialog } from "../hooks/useBooks";
 import { useCollections } from "../hooks/useCollections";
 
@@ -333,7 +334,7 @@ export default function Home() {
       ) : (
         <main className="flex-1 flex flex-col min-w-0">
           <div className="border-b border-border px-page pb-section relative select-none">
-            <div data-tauri-drag-region className="absolute top-0 left-0 right-0 h-11" />
+            <TitlebarDragRegion />
             <div className="pt-11 flex items-center justify-between mb-4">
               <h1 className="text-[24px] font-semibold text-text-primary tracking-[0.07px]">
                 {title}

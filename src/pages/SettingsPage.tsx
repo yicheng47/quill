@@ -8,6 +8,7 @@ import Select from "../components/ui/Select";
 import Input from "../components/ui/Input";
 import Toggle from "../components/ui/Toggle";
 import Slider from "../components/ui/Slider";
+import TitlebarDragRegion from "../components/ui/TitlebarDragRegion";
 import { LANGUAGE_OPTIONS } from "../components/settings/languageOptions";
 import { getDefaultReaderTheme, type ReaderTheme } from "../components/ReaderSettings";
 import { useSettings } from "../hooks/useSettings";
@@ -261,7 +262,7 @@ export default function SettingsPage() {
     <div className="flex flex-col h-screen bg-bg-page">
       {/* Header */}
       <header className="flex items-center justify-between px-page pt-8 pb-2 bg-bg-surface border-b border-border shrink-0 relative select-none">
-        <div data-tauri-drag-region className="absolute top-0 left-0 right-0 h-8" />
+        <TitlebarDragRegion height={32} />
         <div className="flex items-center gap-4">
           <Button variant="icon" size="md" onClick={() => navigate(-1)}>
             <ArrowLeft size={16} />
