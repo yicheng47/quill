@@ -11,9 +11,10 @@ interface ChatDetailViewProps {
   chat: ChatSummary;
   onBack: () => void;
   onChatDeleted: (id: string) => void;
+  onChatRenamed: (id: string, title: string) => void;
 }
 
-export default function ChatDetailView({ chat, onBack, onChatDeleted }: ChatDetailViewProps) {
+export default function ChatDetailView({ chat, onBack, onChatDeleted, onChatRenamed }: ChatDetailViewProps) {
   const { t } = useTranslation();
   const {
     messages, streaming, send, initialize,
@@ -57,16 +58,26 @@ export default function ChatDetailView({ chat, onBack, onChatDeleted }: ChatDeta
     }
   };
 
-  const handleTitleSubmit = () => {
-    if (titleDraft.trim() && chatId) {
-      renameChat(chatId, titleDraft.trim());
-    }
+  const handleTitleSubmit = async () => {
+    const title = titleDraft.trim();
     setEditingTitle(false);
+    if (title && chatId) {
+      try {
+        await renameChat(chatId, title);
+        onChatRenamed(chatId, title);
+      } catch (err) {
+        console.error("Failed to rename chat:", err);
+      }
+    }
   };
 
-  const handleDelete = () => {
-    deleteChat(chat.id);
-    onChatDeleted(chat.id);
+  const handleDelete = async () => {
+    try {
+      await deleteChat(chat.id);
+      onChatDeleted(chat.id);
+    } catch (err) {
+      console.error("Failed to delete chat:", err);
+    }
   };
 
   const currentTitle = chats.find((c) => c.id === chatId)?.title || chat.title;

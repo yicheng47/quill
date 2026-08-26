@@ -1,3 +1,4 @@
+use base64::Engine;
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -36,6 +37,54 @@ pub struct ChatMsg {
     pub metadata: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ChatPage {
+    pub chats: Vec<Chat>,
+    pub next_cursor: Option<String>,
+    pub total: usize,
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
+struct ChatCursor {
+    pinned: bool,
+    updated_at: i64,
+    id: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ChatBookCount {
+    pub book_id: String,
+    pub book_title: Option<String>,
+    pub count: usize,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ChatCounts {
+    pub total: usize,
+    pub by_book: Vec<ChatBookCount>,
+}
+
+fn encode_chat_cursor(cursor: &ChatCursor) -> String {
+    let json = serde_json::to_vec(cursor).expect("chat cursor serialization cannot fail");
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(json)
+}
+
+fn decode_chat_cursor(cursor: &str) -> Option<ChatCursor> {
+    let json = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(cursor)
+        .ok()?;
+    serde_json::from_slice(&json).ok()
+}
+
+fn chat_search_pattern(search: &str) -> String {
+    let escaped = search
+        .to_lowercase()
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_");
+    format!("%{escaped}%")
 }
 
 fn row_to_chat(row: &rusqlite::Row) -> rusqlite::Result<Chat> {
@@ -147,20 +196,144 @@ pub fn list_chats(book_id: String, db: State<'_, Db>) -> AppResult<Vec<Chat>> {
 }
 
 #[tauri::command]
-pub fn list_all_chats(db: State<'_, Db>) -> AppResult<Vec<Chat>> {
+pub fn list_all_chats(
+    search: Option<String>,
+    book_id: Option<String>,
+    cursor: Option<String>,
+    limit: Option<usize>,
+    db: State<'_, Db>,
+) -> AppResult<ChatPage> {
+    query_all_chats(
+        &db,
+        search.as_deref(),
+        book_id.as_deref(),
+        cursor.as_deref(),
+        limit.unwrap_or(DEFAULT_PAGE_SIZE).max(1),
+    )
+}
+
+const DEFAULT_PAGE_SIZE: usize = 20;
+
+pub(crate) fn query_all_chats(
+    db: &Db,
+    search: Option<&str>,
+    book_id: Option<&str>,
+    cursor: Option<&str>,
+    limit: usize,
+) -> AppResult<ChatPage> {
     let conn = db.reader();
-    let mut stmt = conn.prepare(
+
+    let mut count_conditions: Vec<String> = Vec::new();
+    let mut count_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+    if let Some(search) = search.filter(|search| !search.is_empty()) {
+        count_conditions.push("LOWER(c.title) LIKE ? ESCAPE '\\'".to_string());
+        count_values.push(Box::new(chat_search_pattern(search)));
+    }
+    if let Some(book_id) = book_id {
+        count_conditions.push("c.book_id = ?".to_string());
+        count_values.push(Box::new(book_id.to_string()));
+    }
+    let count_where = if count_conditions.is_empty() {
+        String::new()
+    } else {
+        format!(" WHERE {}", count_conditions.join(" AND "))
+    };
+    let count_refs: Vec<&dyn rusqlite::types::ToSql> =
+        count_values.iter().map(|value| value.as_ref()).collect();
+    let total = conn.query_row(
+        &format!("SELECT COUNT(*) FROM chats c{count_where}"),
+        count_refs.as_slice(),
+        |row| row.get(0),
+    )?;
+
+    let mut conditions: Vec<String> = Vec::new();
+    let mut values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+    if let Some(search) = search.filter(|search| !search.is_empty()) {
+        conditions.push("LOWER(c.title) LIKE ? ESCAPE '\\'".to_string());
+        values.push(Box::new(chat_search_pattern(search)));
+    }
+    if let Some(book_id) = book_id {
+        conditions.push("c.book_id = ?".to_string());
+        values.push(Box::new(book_id.to_string()));
+    }
+    if let Some(cursor) = cursor.and_then(decode_chat_cursor) {
+        conditions.push(
+            "(c.pinned < ? OR (c.pinned = ? AND (c.updated_at < ? OR (c.updated_at = ? AND c.id > ?))))"
+                .to_string(),
+        );
+        let pinned = i64::from(cursor.pinned);
+        values.push(Box::new(pinned));
+        values.push(Box::new(pinned));
+        values.push(Box::new(cursor.updated_at));
+        values.push(Box::new(cursor.updated_at));
+        values.push(Box::new(cursor.id));
+    }
+    let where_clause = if conditions.is_empty() {
+        String::new()
+    } else {
+        format!(" WHERE {}", conditions.join(" AND "))
+    };
+    values.push(Box::new((limit + 1) as i64));
+    let value_refs: Vec<&dyn rusqlite::types::ToSql> =
+        values.iter().map(|value| value.as_ref()).collect();
+    let sql = format!(
         "SELECT c.id, c.book_id, c.title, c.model, c.pinned, c.metadata, c.created_at, c.updated_at,
                 b.title,
                 (SELECT COUNT(*) FROM chat_messages WHERE chat_id = c.id),
                 (SELECT content FROM chat_messages WHERE chat_id = c.id ORDER BY created_at DESC, rowid DESC LIMIT 1)
          FROM chats c LEFT JOIN books b ON c.book_id = b.id
-         ORDER BY c.pinned DESC, c.updated_at DESC",
-    )?;
-    let chats = stmt
-        .query_map([], row_to_chat_with_extras)?
+         {where_clause}
+         ORDER BY c.pinned DESC, c.updated_at DESC, c.id ASC
+         LIMIT ?"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let mut chats = stmt
+        .query_map(value_refs.as_slice(), row_to_chat_with_extras)?
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(chats)
+
+    let next_cursor = if chats.len() > limit {
+        chats.truncate(limit);
+        let last = &chats[limit - 1];
+        Some(encode_chat_cursor(&ChatCursor {
+            pinned: last.pinned,
+            updated_at: last.updated_at,
+            id: last.id.clone(),
+        }))
+    } else {
+        None
+    };
+
+    Ok(ChatPage {
+        chats,
+        next_cursor,
+        total,
+    })
+}
+
+pub(crate) fn query_chat_counts(db: &Db) -> AppResult<ChatCounts> {
+    let conn = db.reader();
+    let total = conn.query_row("SELECT COUNT(*) FROM chats", [], |row| row.get(0))?;
+    let mut stmt = conn.prepare(
+        "SELECT c.book_id, b.title, COUNT(*)
+         FROM chats c LEFT JOIN books b ON c.book_id = b.id
+         GROUP BY c.book_id, b.title
+         ORDER BY COUNT(*) DESC, COALESCE(b.title, '') COLLATE NOCASE ASC, c.book_id ASC",
+    )?;
+    let by_book = stmt
+        .query_map([], |row| {
+            Ok(ChatBookCount {
+                book_id: row.get(0)?,
+                book_title: row.get(1)?,
+                count: row.get(2)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(ChatCounts { total, by_book })
+}
+
+#[tauri::command]
+pub fn get_chat_counts(db: State<'_, Db>) -> AppResult<ChatCounts> {
+    query_chat_counts(&db)
 }
 
 #[tauri::command]
@@ -316,13 +489,31 @@ mod tests {
     }
 
     fn insert_chat(db: &Db, id: &str, book_id: &str, title: &str) {
+        insert_chat_at(
+            db,
+            id,
+            book_id,
+            title,
+            false,
+            chrono::Utc::now().timestamp_millis(),
+        );
+    }
+
+    fn insert_chat_at(
+        db: &Db,
+        id: &str,
+        book_id: &str,
+        title: &str,
+        pinned: bool,
+        updated_at: i64,
+    ) {
         let conn = db.conn.lock().unwrap();
-        let now = chrono::Utc::now().timestamp_millis();
         conn.execute(
             "INSERT INTO chats (id, book_id, title, pinned, created_at, updated_at)
-             VALUES (?1, ?2, ?3, 0, ?4, ?4)",
-            params![id, book_id, title, now],
-        ).unwrap();
+             VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
+            params![id, book_id, title, pinned, updated_at],
+        )
+        .unwrap();
     }
 
     fn insert_msg(db: &Db, chat_id: &str, role: &str, content: &str) {
@@ -440,23 +631,213 @@ mod tests {
         insert_msg(&db, "c1", "user", "Hello");
         insert_msg(&db, "c1", "assistant", "Hi there!");
 
-        let conn = db.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT c.id, c.book_id, c.title, c.model, c.pinned, c.metadata, c.created_at, c.updated_at,
-                    b.title,
-                    (SELECT COUNT(*) FROM chat_messages WHERE chat_id = c.id),
-                    (SELECT content FROM chat_messages WHERE chat_id = c.id ORDER BY created_at DESC, rowid DESC LIMIT 1)
-             FROM chats c LEFT JOIN books b ON c.book_id = b.id
-             ORDER BY c.updated_at DESC",
-        ).unwrap();
-        let chats: Vec<Chat> = stmt
-            .query_map([], row_to_chat_with_extras).unwrap()
-            .collect::<Result<Vec<_>, _>>().unwrap();
+        let page = query_all_chats(&db, None, None, None, 20).unwrap();
 
-        assert_eq!(chats.len(), 1);
-        assert_eq!(chats[0].book_title, Some("Test Book".to_string()));
-        assert_eq!(chats[0].message_count, Some(2));
-        assert_eq!(chats[0].last_message, Some("Hi there!".to_string()));
+        assert_eq!(page.chats.len(), 1);
+        assert_eq!(page.chats[0].book_title, Some("Test Book".to_string()));
+        assert_eq!(page.chats[0].message_count, Some(2));
+        assert_eq!(page.chats[0].last_message, Some("Hi there!".to_string()));
+    }
+
+    #[test]
+    fn test_chat_cursor_round_trip() {
+        let cursor = ChatCursor {
+            pinned: true,
+            updated_at: 1704067200123,
+            id: "chat:id/with symbols".to_string(),
+        };
+
+        assert_eq!(
+            decode_chat_cursor(&encode_chat_cursor(&cursor)),
+            Some(cursor)
+        );
+    }
+
+    #[test]
+    fn test_list_all_chats_page_boundaries_and_pinned_order() {
+        let (_dir, db) = setup();
+        insert_chat_at(&db, "p2", "book1", "Pinned older", true, 200);
+        insert_chat_at(&db, "u1", "book1", "Unpinned newer", false, 500);
+        insert_chat_at(&db, "p1", "book1", "Pinned newer", true, 400);
+        insert_chat_at(&db, "u2", "book1", "Unpinned older", false, 100);
+
+        let first = query_all_chats(&db, None, None, None, 2).unwrap();
+        assert_eq!(first.total, 4);
+        assert_eq!(
+            first
+                .chats
+                .iter()
+                .map(|chat| chat.id.as_str())
+                .collect::<Vec<_>>(),
+            ["p1", "p2"]
+        );
+
+        let second = query_all_chats(&db, None, None, first.next_cursor.as_deref(), 2).unwrap();
+        assert_eq!(second.total, 4);
+        assert_eq!(
+            second
+                .chats
+                .iter()
+                .map(|chat| chat.id.as_str())
+                .collect::<Vec<_>>(),
+            ["u1", "u2"]
+        );
+        assert!(second.next_cursor.is_none());
+    }
+
+    #[test]
+    fn test_list_all_chats_uses_id_tiebreaker_across_pages() {
+        let (_dir, db) = setup();
+        insert_chat_at(&db, "c3", "book1", "Third", false, 100);
+        insert_chat_at(&db, "c1", "book1", "First", false, 100);
+        insert_chat_at(&db, "c2", "book1", "Second", false, 100);
+
+        let first = query_all_chats(&db, None, None, None, 2).unwrap();
+        let second = query_all_chats(&db, None, None, first.next_cursor.as_deref(), 2).unwrap();
+
+        assert_eq!(
+            first
+                .chats
+                .iter()
+                .map(|chat| chat.id.as_str())
+                .collect::<Vec<_>>(),
+            ["c1", "c2"]
+        );
+        assert_eq!(second.chats[0].id, "c3");
+    }
+
+    #[test]
+    fn test_list_all_chats_walks_large_history_without_gaps() {
+        let (_dir, db) = setup();
+        for index in 0..45 {
+            let id = format!("c{index:02}");
+            insert_chat_at(&db, &id, "book1", &id, false, index);
+        }
+
+        let mut cursor = None;
+        let mut ids = Vec::new();
+        loop {
+            let page = query_all_chats(&db, None, None, cursor.as_deref(), 20).unwrap();
+            ids.extend(page.chats.into_iter().map(|chat| chat.id));
+            let Some(next_cursor) = page.next_cursor else {
+                break;
+            };
+            cursor = Some(next_cursor);
+        }
+
+        assert_eq!(ids.len(), 45);
+        assert_eq!(ids.iter().collect::<std::collections::HashSet<_>>().len(), 45);
+        assert_eq!(ids.first().unwrap(), "c44");
+        assert_eq!(ids.last().unwrap(), "c00");
+    }
+
+    #[test]
+    fn test_list_all_chats_search_matches_across_page_boundary() {
+        let (_dir, db) = setup();
+        insert_chat_at(&db, "c4", "book1", "Needle newest", false, 400);
+        insert_chat_at(&db, "c3", "book1", "Unrelated", false, 300);
+        insert_chat_at(&db, "c2", "book2", "Another unrelated", false, 200);
+        insert_chat_at(&db, "c1", "book2", "Old NEEDLE result", false, 100);
+        insert_msg(&db, "c3", "user", "needle only appears in this message");
+
+        let first = query_all_chats(&db, Some("needle"), None, None, 1).unwrap();
+        assert_eq!(first.total, 2);
+        assert_eq!(first.chats[0].id, "c4");
+
+        let second =
+            query_all_chats(&db, Some("needle"), None, first.next_cursor.as_deref(), 1).unwrap();
+        assert_eq!(second.chats.len(), 1);
+        assert_eq!(second.chats[0].id, "c1");
+    }
+
+    #[test]
+    fn test_list_all_chats_search_treats_like_metacharacters_literally() {
+        let (_dir, db) = setup();
+        insert_chat_at(&db, "percent", "book1", "100% useful", false, 500);
+        insert_chat_at(&db, "plain-percent", "book1", "100 percent useful", false, 400);
+        insert_chat_at(&db, "underscore", "book1", "Chat_1", false, 300);
+        insert_chat_at(&db, "plain-underscore", "book1", "ChatA1", false, 200);
+        insert_chat_at(&db, "backslash", "book1", "Path \\ notes", false, 100);
+
+        let percent = query_all_chats(&db, Some("%"), None, None, 20).unwrap();
+        let underscore = query_all_chats(&db, Some("_"), None, None, 20).unwrap();
+        let backslash = query_all_chats(&db, Some("\\"), None, None, 20).unwrap();
+
+        assert_eq!(percent.total, 1);
+        assert_eq!(percent.chats[0].id, "percent");
+        assert_eq!(underscore.total, 1);
+        assert_eq!(underscore.chats[0].id, "underscore");
+        assert_eq!(backslash.total, 1);
+        assert_eq!(backslash.chats[0].id, "backslash");
+    }
+
+    #[test]
+    fn test_list_all_chats_filters_by_book_before_pagination() {
+        let (_dir, db) = setup();
+        insert_chat_at(&db, "c3", "book1", "Other book", false, 300);
+        insert_chat_at(&db, "c2", "book2", "First match", false, 200);
+        insert_chat_at(&db, "c1", "book2", "Second match", false, 100);
+
+        let page = query_all_chats(&db, None, Some("book2"), None, 20).unwrap();
+
+        assert_eq!(page.total, 2);
+        assert_eq!(
+            page.chats
+                .iter()
+                .map(|chat| chat.id.as_str())
+                .collect::<Vec<_>>(),
+            ["c2", "c1"]
+        );
+    }
+
+    #[test]
+    fn test_list_all_chats_stays_stable_when_loaded_chat_is_touched() {
+        let (_dir, db) = setup();
+        insert_chat_at(&db, "c4", "book1", "Newest", false, 400);
+        insert_chat_at(&db, "c3", "book1", "Second", false, 300);
+        insert_chat_at(&db, "c2", "book1", "Third", false, 200);
+        insert_chat_at(&db, "c1", "book1", "Oldest", false, 100);
+
+        let first = query_all_chats(&db, None, None, None, 2).unwrap();
+        let conn = db.conn.lock().unwrap();
+        conn.execute("UPDATE chats SET updated_at = 500 WHERE id = 'c4'", [])
+            .unwrap();
+        drop(conn);
+
+        let second = query_all_chats(&db, None, None, first.next_cursor.as_deref(), 2).unwrap();
+        assert_eq!(
+            second
+                .chats
+                .iter()
+                .map(|chat| chat.id.as_str())
+                .collect::<Vec<_>>(),
+            ["c2", "c1"]
+        );
+    }
+
+    #[test]
+    fn test_get_chat_counts_empty() {
+        let (_dir, db) = setup();
+
+        let counts = query_chat_counts(&db).unwrap();
+
+        assert_eq!(counts.total, 0);
+        assert!(counts.by_book.is_empty());
+    }
+
+    #[test]
+    fn test_get_chat_counts_includes_missing_book() {
+        let (_dir, db) = setup();
+        insert_chat_at(&db, "c1", "missing-book", "Orphaned", false, 100);
+        insert_chat_at(&db, "c2", "missing-book", "Also orphaned", false, 200);
+
+        let counts = query_chat_counts(&db).unwrap();
+
+        assert_eq!(counts.total, 2);
+        assert_eq!(counts.by_book.len(), 1);
+        assert_eq!(counts.by_book[0].book_id, "missing-book");
+        assert_eq!(counts.by_book[0].book_title, None);
+        assert_eq!(counts.by_book[0].count, 2);
     }
 
     // --- delete_chat (transaction) ---

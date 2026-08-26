@@ -19,6 +19,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (11, include_str!("../migrations/011_lww_tiebreak_and_outbox.sql")),
     (12, include_str!("../migrations/012_vocab_context_explanation.sql")),
     (13, include_str!("../migrations/013_covers_in_db.sql")),
+    (14, include_str!("../migrations/014_chats_pagination_index.sql")),
 ];
 
 /// SQLite handle for the local materialized view.
@@ -439,7 +440,7 @@ mod tests {
         let conn = db.conn.lock().unwrap();
         let version: i64 =
             conn.query_row("SELECT version FROM schema_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 13);
+        assert_eq!(version, 14);
     }
 
     #[test]
@@ -475,7 +476,7 @@ mod tests {
         Db::run_migrations_on(&conn).unwrap();
         let version: i64 =
             conn.query_row("SELECT version FROM schema_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 13);
+        assert_eq!(version, 14);
     }
 
     #[test]
@@ -503,6 +504,27 @@ mod tests {
         let count: i64 =
             conn.query_row("SELECT COUNT(*) FROM schema_version", [], |r| r.get(0)).unwrap();
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn test_chats_pagination_index_order() {
+        let (_dir, db) = setup();
+        let conn = db.conn.lock().unwrap();
+        let columns = conn
+            .prepare(
+                "SELECT name, \"desc\" FROM pragma_index_xinfo('idx_chats_pinned_updated')
+                 WHERE key = 1 ORDER BY seqno",
+            )
+            .unwrap()
+            .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, bool>(1)?)))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+
+        assert_eq!(
+            columns,
+            [("pinned".to_string(), true), ("updated_at".to_string(), true), ("id".to_string(), false)]
+        );
     }
 
     // -----------------------------------------------------------------------
