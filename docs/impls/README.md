@@ -4,4 +4,4 @@ Detailed implementation plans for features and bug fixes. Numbers match the corr
 
 ## Plans
 
-_No active plans — see [`archive/`](archive/) for shipped ones._
+- [316 — Chats Infinite Scroll with Backend Pagination](316-chats-pagination.md)

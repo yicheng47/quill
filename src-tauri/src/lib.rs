@@ -683,6 +683,7 @@ pub fn run() {
             commands::chats::create_chat,
             commands::chats::list_chats,
             commands::chats::list_all_chats,
+            commands::chats::get_chat_counts,
             commands::chats::get_chat,
             commands::chats::delete_chat,
             commands::chats::rename_chat,
