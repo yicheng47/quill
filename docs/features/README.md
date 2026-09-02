@@ -14,5 +14,6 @@ Specs of features in development. A feature is filed as a GitHub issue only; its
 - [316 — Chats Infinite Scroll with Backend Pagination](316-chats-pagination.md)
 - [318 — Reader Content Zoom vs App Zoom](318-reader-content-zoom.md)
 - [322 — Vocab List Only + Scrollbars on Long Lists](322-vocab-list-and-scrollbars.md)
+- [325 — OpenAI OAuth Session Expiry → Re-login Prompt](325-oauth-session-expiry.md)
 - [326 — Agent Connections (Codex App Server + Claude Code)](326-agent-connections.md)
 - [327 — Electron Shell](327-electron-shell.md)
