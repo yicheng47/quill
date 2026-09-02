@@ -34,11 +34,17 @@ export async function openReaderWindow(
 ): Promise<void> {
   const label = `reader-${bookId}`;
 
-  // Focus existing window if already open
-  const existing = await WebviewWindow.getByLabel(label);
-  if (existing) {
-    await existing.show();
-    await existing.setFocus();
+  try {
+    // Focus existing window if already open
+    const existing = await WebviewWindow.getByLabel(label);
+    if (existing) {
+      await existing.show();
+      await existing.unminimize();
+      await existing.setFocus();
+      return;
+    }
+  } catch (err) {
+    console.error("Failed to open reader window:", err);
     return;
   }
 
