@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
@@ -26,8 +27,13 @@ export default defineConfig(async () => ({
         }
       : undefined,
     watch: {
-      // 3. tell Vite to ignore watching `src-tauri`
-      ignored: ["**/src-tauri/**"],
+      // 3. tell Vite to ignore watching `src-tauri`, and other branches' worktrees
+      ignored: ["**/src-tauri/**", "**/.worktrees/**"],
     },
+  },
+  test: {
+    // Vitest globs dot-directories, so without this a run would pick up
+    // the tests of every worktree nested under `.worktrees/`.
+    include: ["src/**/*.{test,spec}.{ts,tsx}"],
   },
 }));
