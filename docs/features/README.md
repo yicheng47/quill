@@ -1,8 +1,8 @@
 # Feature Specs
 
-Specs for features that are in progress or planned. Shipped, dropped, or superseded specs are moved to [`archive/`](archive/). Bug and feature tracking lives in [GitHub Issues](https://github.com/yicheng47/quill/issues).
+Specs of features in development. A feature is filed as a GitHub issue only; its spec is written when development starts, on the feature's branch, and lands in the same pull request as the code. A spec's number is its tracking issue number. Priorities and milestones live on the [issues](https://github.com/yicheng47/quill/issues). At a release sweep, default to deleting completed specs; retain only major features or consequential migration/compatibility records in [`archive/`](archive/) under the [archive policy](../README.md#archive-policy).
 
-## In progress / Planned
+## Active
 
 - [14 — Notes (AI-Assisted)](14-notes.md)
 - [25 — Collection Folders](25-collection-folders.md)
