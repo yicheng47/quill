@@ -23,15 +23,19 @@ Platforms are macOS (`mac`) and Windows (`win`). A `win` instance runs on Jason'
 
 ## Test corpus
 
-Kept outside the repo where Jason chooses; every run uses the same files:
+Seven public-domain books in `~/QuillTestCorpus/`, outside the repo. Every run uses the same files, and because none is copyrighted they may appear in run records and screenshots. To rebuild the folder on another machine, download each source and check its SHA-256 prefix.
 
-- a plain English EPUB
-- an EPUB with CJK text and vertical writing
-- an EPUB with images, footnotes and embedded fonts
-- an EPUB over 5 MB
-- a text PDF
-- a scanned PDF
-- a PDF of 1000+ pages
+| File | Covers | Source | SHA-256 |
+|---|---|---|---|
+| `01-plain-frankenstein.epub` | a plain English EPUB | [Standard Ebooks](https://standardebooks.org/ebooks/mary-shelley/frankenstein/downloads/mary-shelley_frankenstein.epub?source=download) | `0b5c070e2cde4d8b` |
+| `02-cjk-vertical-kusamakura.epub` | Japanese vertical writing, right-to-left page order, an embedded font | [EPUB 3 samples](https://github.com/IDPF/epub3-samples/releases/download/20230704/kusamakura-japanese-vertical-writing.epub), 17.9 MB | `6d4d4ed5eda3f612` |
+| `03-notes-fonts-wasteland.epub` | 50 footnotes and three embedded fonts | [EPUB 3 samples](https://github.com/IDPF/epub3-samples/releases/download/20230704/wasteland-otf.epub) | `d99ea3b847d713a8` |
+| `04-large-pride-and-prejudice-illustrated.epub` | an EPUB over 5 MB with 164 images | [Project Gutenberg](https://www.gutenberg.org/ebooks/1342.epub3.images), 24.9 MB | `fd519471687295a8` |
+| `05-text-us-constitution.pdf` | a text PDF, 85 pages | [govinfo](https://www.govinfo.gov/content/pkg/CDOC-110hdoc50/pdf/CDOC-110hdoc50.pdf) | `7f29c4a79e310cc7` |
+| `06-scanned-alice-1901.pdf` | a scanned PDF with an OCR layer, 290 pages | [Internet Archive](https://archive.org/download/adventuresalices00carrrich/adventuresalices00carrrich.pdf) | `7454835757666fd7` |
+| `07-1000-pages-us-budget-2025-appendix.pdf` | a PDF of 1000+ pages: 1,298 | [govinfo](https://www.govinfo.gov/content/pkg/BUDGET-2025-APP/pdf/BUDGET-2025-APP.pdf) | `878f0fd2950f06a2` |
+
+The case descriptions name these files by what they cover: "the 1000-page PDF" is file 07, "the 5 MB EPUB" is file 04, and so on.
 
 ## Cases
 
@@ -95,7 +99,7 @@ Use an inexpensive model with tiny prompts.
 
 ### MCP
 
-The integration toggles write the same `quill` entry into `~/.claude.json` and `~/.codex/config.toml` that the installed Quill uses, so the development app's toggles repoint Jason's real integration. Back up both files before these cases and restore them afterwards, then confirm the entry points at the installed app again.
+The integration toggles write the same `quill` entry into `~/.claude.json` and `~/.codex/config.toml` that the installed Quill uses, so the development app's toggles repoint Jason's real integration, and turning one off removes the entry. Record both `quill` entries before these cases and put them back afterwards, changing nothing else in either file: running Claude Code sessions rewrite `~/.claude.json` all the time, so restoring a whole-file backup would lose their changes. Then confirm with `claude mcp list` and `codex mcp list` that the entry runs the installed app again.
 
 | ID | Tier | Platforms | Env | Check |
 |---|---|---|---|---|

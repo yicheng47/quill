@@ -61,7 +61,7 @@ Workspace after phase 3:
 
 1. **A permanent suite.** The [regression suite](../../tests/regression/README.md) lives in `docs/tests/regression/` and outlasts #327: `AGENTS.md`'s Test Scope selects live checks from it, and every release runs its smoke tier. The [upgrade cases](#upgrade-cases), which matter only for this migration, stay in this plan. A doc-only commit to `main` before the baseline runs.
 2. **Vitest in CI.** The frontend job in `ci.yaml` runs `npm test`. CI runs only `tsc` and lint today, so the 30 Vitest tests never run there, and phase 2's gate relies on them. A one-line pull request, done inline.
-3. **Test corpus.** Assemble the files the suite names, kept outside the repo where Jason chooses.
+3. **Test corpus.** Seven public-domain books in `~/QuillTestCorpus/`, listed in the suite with their sources and checksums. Assembled on 2026-11-10.
 4. **Baseline run.** Pin one commit on `main` as the candidate, and run the suite against the Tauri development app built from it:
    - every `dev` case on macOS, through computer use
    - the `win` instances on the Windows machine
@@ -201,7 +201,7 @@ Workspace after phase 3:
 **Gate:**
 
 - Automated: unit tests for the config rewrite, covering present, absent, already current and foreign entries, and the existing `mcp.rs` tests. An end-to-end test for MCP-02's second half: a book added through `quill-mcp` against the test data directory appears in the running app.
-- Live checks: MCP-01 and MCP-02 with a real `claude` and `codex`, and both a fresh config and a Tauri-written one, with both config files backed up and restored as the suite describes.
+- Live checks: MCP-01 and MCP-02 with a real `claude` and `codex`, and both a fresh config and a Tauri-written one, with both `quill` entries restored as the suite describes.
 
 **Crew:** claude trio. Label: `risk-medium`.
 
@@ -313,4 +313,3 @@ These matter only for this migration, so they live here instead of the regressio
 - **Cutover version.** 2.0.0 is suggested.
 - **Intel Macs.** Keep separate arm64 and x64 builds, as today, or ship one universal build?
 - **Test environments.** A separate macOS user account or VM for signed candidates and upgrade tests, so the real library is never touched. A Windows machine for the Windows cases. An iCloud setup for the sync cases.
-- **Test corpus.** Where the corpus lives, and whether it comes from the NAS library or from public-domain books.
