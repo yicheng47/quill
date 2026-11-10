@@ -6,23 +6,25 @@ The spec says *what* and *why*; this plan says how each phase lands, what it tou
 
 ## Delivery model
 
-**Phases land on `main`, one pull request each; there is no long-lived umbrella branch.** This replaces the umbrella branch proposed in the #327 decision comment. Phases 1 and 2 are behavior-preserving refactors of the shipping app. The Electron shell in phases 3–6 lives in `electron/` and its crates, and is built by CI but not released. Until phase 8, `main` always ships the Tauri app, so Tauri releases and bug fixes continue during the migration, and no giant final merge has to be reviewed at once.
+**Phases land on the umbrella branch `feat/327-electron`, one pull request each, while `main` keeps shipping 1.x.** Jason chose this on 2026-11-10, so that `main` stays free for minor fixes and 1.x Tauri releases for the whole migration. Every phase PR targets the umbrella. At the cutover, once phase 8 passes, the umbrella merges into `main` in one pull request and the Electron release ships from `main`.
 
-- **Docs.** The spec, this plan and the regression suite landed on `main` in one doc-only commit before phase 0, so every phase branch starts from them (Jason, 2026-11-10). A phase updates the plan in its own PR when its work changes it.
-- **Branches.** Each phase gets its own branch and worktree from `origin/main` (`AGENTS.md`, Worktrees), named `feat/327-p<N>-<slug>`, such as `feat/327-p1-core`. The phase's mission brief goes in `docs/impls/briefs/327-p<N>-<slug>.md` on that branch.
+- **Docs.** The spec, this plan and the regression suite landed on `main` before the umbrella was cut. From then on, the plan's current copy lives on the umbrella: a phase updates it in its own PR, and `main`'s copy catches up at the cutover.
+- **Branches.** The umbrella's worktree is `.worktrees/feat-327-electron`. Each phase gets its own branch and worktree from `origin/feat/327-electron` instead of `origin/main`, named `feat/327-p<N>-<slug>`, such as `feat/327-p1-core`. Its PR targets the umbrella, and it catches up by rebasing onto `origin/feat/327-electron`. The phase's mission brief goes in `docs/impls/briefs/327-p<N>-<slug>.md` on that branch.
+- **Syncing from `main`.** `main` is merged into the umbrella, never rebased onto: phase PRs have already merged into the umbrella, so rewriting it would break every open phase branch. This is the exception to the rebase rule in `AGENTS.md`. Sync after every 1.x release, before each phase starts, and whenever `main` changes code an open phase is moving. A sync is a `sync/327-<YYYY-MM-DD>` branch cut from the umbrella with `origin/main` merged into it, opened as a PR into the umbrella so CI runs; `ci.yaml` checks pull requests into the umbrella as well as `main`. A sync that resolves conflicts in the core gets the codex reviewer; a clean one merges once CI is green.
+- **1.x on `main`.** Fixes and 1.x releases continue as usual. Keep them small, because every change to files a phase has moved costs a conflict at the next sync. A command added on `main` must be registered in the Electron dispatcher in the sync that brings it over; the parity test fails that sync until it is.
+- **Cutover.** Phase 8 starts with a final sync, and `main` then freezes: anything urgent still lands on `main`, syncs again, and phase 8 reruns the cases it affects. The release candidate is built from the umbrella's head. Once phase 8 passes, the umbrella merges into `main` as a merge commit, so `main` holds exactly the tree that was tested, and the release is tagged on `main`.
 - **Gates.** A phase merges only when its automated gate is green and its live checks have passed. Each phase below lists both. Live checks use case IDs from the regression suite, and a phase records its results in `docs/tests/runs/` (see the suite). From phase 3, each phase also adds Playwright end-to-end tests for the cases it touches that a test can judge, and those run in its automated gate.
 - **Crews.** Each phase is one mission, and Jason confirms the crew before each start (`AGENTS.md`, Crew Missions). Any phase with live checks runs as the claude trio. Phase 0's baseline and phase 8 are qa-only missions.
-- **Labels.** Phase PRs that touch data-directory resolution, sync boot or secrets carry `core-review`: phases 1, 3 and 7.
-- **Freeze.** Phases 1 and 2 touch nearly every command and every frontend call site. Merge them quickly and avoid large parallel refactors of the same files while they are open. Features keep landing, but a new command must be registered in both shells from phase 3 on; a test enforces this.
+- **Labels.** Phase PRs that touch data-directory resolution, sync boot or secrets carry `core-review`: phases 1, 3 and 7. The cutover PR carries `core-review` and `risk-high`.
 
 ```
-P0 ──┐
-P1 ──┼──► P3 ──┬──► P4 ──┐
-P2 ──┘         └──► P5 ──┼──► P6 ──► P7 ──► P8 ──► release ──► P9
-                         │
+main               ─┬── P0 ─ 1.x fixes and releases ──────────────────────┬──► release ──► P9
+                    │              │ sync             │ sync              ▲
+                    │              ▼                  ▼                   │ cutover PR
+feat/327-electron   └── P1 ∥ P2 ──► P3 ──► P4 ∥ P5 ──► P6 ──► P7 ──► P8 ──┘
 ```
 
-Phases 0, 1 and 2 run in parallel. Phases 4 and 5 run in parallel after phase 3.
+Phase 0 runs on `main`, since the baseline is today's app. Phases 1 and 2 run in parallel on the umbrella, and phases 4 and 5 run in parallel after phase 3. Phase 9 lands on `main` after the release.
 
 ## Target architecture
 
@@ -217,7 +219,7 @@ Workspace after phase 3:
 - **electron-builder on Windows:** an NSIS installer for x64, with `pdfium.dll`. Windows signing stays as it is today, which is unsigned unless Jason decides otherwise.
 - **File associations** for EPUB and PDF, carried over from today's config.
 - **Updates:** Electron's updater reads GitHub releases. Prove it between two candidate builds against a staging feed, not the public one.
-- **CI:** a release workflow that builds the Electron artifacts into a draft release, alongside the existing Tauri `release.yml` until phase 7 switches them over. The end-to-end job also runs against the packaged, unsigned app, which catches what only packaging breaks: native module loading, bundled paths and the file protocol.
+- **CI:** a release workflow that builds the Electron artifacts into a draft release, alongside the existing Tauri `release.yml` until phase 7 switches them over. The end-to-end job also runs against the packaged, unsigned app, which catches what only packaging breaks: native module loading, bundled paths and the file protocol. Candidates build from the umbrella, so they cannot use `workflow_dispatch`, which runs only workflows on the default branch. They build from a pre-release tag such as `v2.0.0-rc.1` on an umbrella commit instead, and since `release.yml` fires on every `v*` tag, it must skip `rc` tags until phase 7 replaces it.
 - **Measurements:** app size, memory and cold start, compared with the phase 0 baseline.
 
 **Gate:**
@@ -252,7 +254,7 @@ Workspace after phase 3:
 
 ## Phase 8 — Final QA
 
-**Goal:** prove the release candidate against the whole suite before Jason publishes it.
+**Goal:** prove the release candidate against the whole suite before Jason publishes it. The phase opens with the final sync and the freeze on `main`, and closes with the cutover PR (see [Delivery model](#delivery-model)).
 
 **Work:** run every required case in the regression suite on the signed release candidate:
 
@@ -299,7 +301,8 @@ These matter only for this migration, so they live here instead of the regressio
 - **iCloud under Electron.** Entitlements and the provisioning profile must be on the main executable, which loads the core in-process. Phase 6's entitlement check and phase 8's sync cases cover this. A helper process was rejected for this reason.
 - **Main-process stalls.** A synchronous napi call would block every window. `quill-node` exposes no synchronous command entry point: every command goes through the async dispatcher on the core's tokio runtime (phase 3).
 - **Silent IPC drift.** Argument casing or error shapes that differ from Tauri's would break call sites quietly. The phase 3 golden tests and parity test catch this.
-- **Two shells on `main`.** Every new command and platform call needs both implementations until phase 9. The parity test and the ESLint rule enforce it. Keep phases 3–8 moving rather than letting the window stretch.
+- **Umbrella drift.** The longer the umbrella lives, the more 1.x work it has to absorb. Phase 1 moves every Rust file and phase 2 rewrites every Tauri import, so a sync after them can conflict wherever `main` touched the same code. Frequent small syncs, small 1.x changes, and phases 3–8 kept moving keep this bounded.
+- **Two shells on the umbrella.** Every new command and platform call needs both implementations until phase 9, including those that arrive from `main` in a sync. The parity test and the ESLint rule enforce it.
 - **Windows upgrade path.** This is the least known part. Phase 7 investigates before it builds.
 - **Size and memory.** Electron is larger. Phase 6 measures, and the spec treats this as something to report rather than a gate.
 - **Chromium upgrades.** After the cutover, every Electron bump is a deliberate change with its own smoke-tier run, which is the point of the migration. The end-to-end screenshots turn most of that run into a CI result.

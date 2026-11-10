@@ -22,7 +22,7 @@ In scope:
 - **Same platforms as today:** macOS on Apple Silicon and Intel, and Windows x64.
 - **A pinned engine.** Electron's version is pinned exactly; Chromium changes only when Quill bumps it, and that bump gets its own regression pass.
 - **Automated end-to-end tests.** Playwright can drive the Electron app, which nothing can do for the Tauri app on macOS. From phase 3, the regression cases a test can judge run in CI on macOS and Windows, and after the cutover they guard every pull request.
-- **Phased delivery.** Each phase lands on `main` behind its own gate, and the Tauri app keeps shipping until the cutover release. The phases, gates and crews are in the plan.
+- **Phased delivery.** Each phase lands on the umbrella branch `feat/327-electron` behind its own gate. `main` keeps shipping 1.x Tauri fixes and releases, and the umbrella merges into `main` at the cutover. The phases, gates, crews and the branch mechanics are in the plan.
 
 Out of scope:
 
