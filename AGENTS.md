@@ -44,6 +44,7 @@ Core vocabulary:
 - `docs/arch/`: architecture references.
 - `docs/features/`: specs of features in development, named `{tracking-issue}-{slug}.md`. A feature is only an issue until its development starts; its spec is then written on the feature's branch and lands with the code. Retained shipped records live in `docs/features/archive/`.
 - `docs/impls/`: implementation plans, written on the feature's branch; mission briefs in `docs/impls/briefs/`; retained shipped plans in `docs/impls/archive/`.
+- `docs/tests/`: the live [regression suite](docs/tests/regression/README.md) in `regression/`, and dated run records in `runs/`.
 - `docs/guide/`: implementation guides. `docs/roadmap/`: milestone plans.
 
 ## Development Commands
@@ -59,7 +60,7 @@ Prefer the smallest check that covers the change. For frontend changes, run type
 
 ## Test Scope
 
-Feature validation covers the behavior changed by the diff and regressions directly affected by it. Before testing, list the changed behaviors and the selected checks, with a concrete reason connecting each check to the change. Unchanged sync, AI providers, the reader engine, import and other shared behavior are not automatic feature checks merely because the tested screen contains them.
+Feature validation covers the behavior changed by the diff and regressions directly affected by it. Before testing, list the changed behaviors and the selected checks, with a concrete reason connecting each check to the change. Unchanged sync, AI providers, the reader engine, import and other shared behavior are not automatic feature checks merely because the tested screen contains them. Take the checks from the [regression suite](docs/tests/regression/README.md) where one of its cases covers the behavior, by ID, and write feature-specific checks for the rest.
 
 Broaden coverage for major changes, such as a sync or storage rewrite, a schema migration or a refactor affecting behavior across the app, or when Jason explicitly requests broader testing. State why the change needs that coverage. CI and the automated checks still apply. An unavailable prerequisite blocks an in-scope check; an unrelated check is outside scope, not a feature blocker. A feature pass means every selected required check passed, and must not be described as a full regression pass. Preserve failures and record any later scope change explicitly.
 

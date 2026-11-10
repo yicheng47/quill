@@ -5,3 +5,4 @@ An impl plan is tactical: the spec says *what*, the plan says how a change lands
 ## Plans
 
 - [316 — Chats Infinite Scroll with Backend Pagination](316-chats-pagination.md)
+- [327 — Electron Migration](327-electron/plan.md)

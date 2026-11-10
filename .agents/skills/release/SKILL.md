@@ -19,6 +19,7 @@ An explicit request to `run` authorizes the bump commit, the push, the tag, and 
    - `<version>` must match `^[0-9]+\.[0-9]+\.[0-9]+$` and be greater than the current tag from `gh release list`.
    - `git fetch origin`; require branch `main`, a clean tree, and `git rev-parse main origin/main` equal. Everything meant for the release is already merged.
    - CI on `origin/main` is green: `gh run list --branch main --workflow ci.yaml --limit 1 --json conclusion`.
+   - The smoke tier of the [regression suite](../../../docs/tests/regression/README.md) has passed on macOS for the `main` commit being released, in a run recorded in `docs/tests/runs/`, unless Jason waives it for this release. If no such run exists, stop and propose the qa mission that runs it.
    - No release run is in flight: `gh run list --workflow release.yml --limit 3 --json status`.
 2. **Bump.** Do not use `sed` for the version. Read each file first to confirm the current version, then edit it in `package.json`, `src-tauri/tauri.conf.json` and `src-tauri/Cargo.toml`, and check all three show the new version. Run `cargo check` in `src-tauri/` to refresh `Cargo.lock`, and `npm install --package-lock-only --ignore-scripts` to refresh the root `version` in `package-lock.json`. If the `public/foliate-js` submodule moved, push the submodule commit first and stage the updated pointer. Commit as `chore: bump version to v<version>` and push `main`.
 3. **Tag.** `git tag -a v<version> -m "v<version>" && git push origin v<version>`. The push starts `release.yml`.

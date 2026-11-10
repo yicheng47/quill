@@ -7,6 +7,7 @@ Project markdown lives here. Keep repo docs close to the code; the memory repo h
 - [`arch/`](./arch/) — architecture references: how the system works today.
 - [`features/`](./features/README.md) — specs of features in development, `{issue}-{slug}.md`. The number **is** the spec's GitHub tracking issue. A feature is only an issue until its development starts; its spec is then written on the feature's branch and lands in the same pull request as the code.
 - [`impls/`](./impls/README.md) — implementation plans for concrete build slices, named after their feature and written on its branch; [mission briefs](impls/briefs/README.md) live in `impls/briefs/`.
+- [`tests/`](./tests/regression/README.md) — the live regression suite in `tests/regression/`, and the record of each run in `tests/runs/`.
 - [`guide/`](./guide/README.md) — implementation guides.
 - [`roadmap/`](./roadmap/README.md) — milestone plans.
 - [`privacy.md`](./privacy.md) — the privacy policy.
