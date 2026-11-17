@@ -33,6 +33,12 @@ export default defineConfig({
   },
   renderer: mergeConfig(sharedRenderer, {
     root: ".",
+    plugins: [{
+      name: "quill-app-base",
+      enforce: "post",
+      // electron-vite forces "./" in production; reader routes need origin-relative assets.
+      config: () => ({ base: "/" }),
+    }],
     build: {
       outDir: "out/renderer",
       rollupOptions: {
