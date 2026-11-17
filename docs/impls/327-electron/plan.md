@@ -30,11 +30,15 @@ Phase 0 runs on `main`, since the baseline is today's app. Phases 1 and 2 run in
 
 ```
 Electron main process (TypeScript, electron/main/)
- ├─ windows, menus, lifecycle, protocol, updater, dialogs, shell
- ├─ ipcMain.handle("quill:invoke")  ──►  quill-node (napi-rs, Rust)
- │                                        └─ quill-core: commands, db, sync, ai, mcp
- │   events  ◄── EventSink callback ──────┘   (one tokio runtime, off the JS thread)
- └─ quill-file:// protocol ──► book and cover files in the data and iCloud dirs
+ ├─ windows, menus, lifecycle, protocols, updater, dialogs, shell
+ ├─ ipcMain.handle("quill:invoke")
+ │   ├─ shell window commands (app_ready, window_set_titlebar_zoom)
+ │   └─ core commands ──► quill-node (napi-rs, Rust)
+ │                         └─ quill-core: commands, db, sync, ai, mcp
+ │   host callbacks ◄── ShellHost (emit, emit_to, open_url, reveal_path)
+ │                      (one tokio runtime, off the JS thread)
+ ├─ quill-app:// protocol  ──► bundled renderer + foliate-js with SPA fallback
+ └─ quill-file:// protocol ──► book and cover files in local_dir and icloud_dir
 
 Renderer (React, unchanged) ──► src/platform (interface)
                                  ├─ electron impl ── contextBridge preload (electron/preload/)
@@ -81,12 +85,12 @@ Workspace after phase 3:
 
 **Work:**
 
-1. Turn `src-tauri/` into a Cargo workspace member, and move `db`, `secrets`, `sync`, `ai`, `mcp`, `epub`, `pdfium`, `icloud`, `error` and the command bodies into `crates/quill-core`.
-2. Replace `tauri::AppHandle` with a small `EventSink` trait in the core. It has two methods: `emit(event, payload)` for everything, and `emit_to(window, event, payload)` for window-scoped events such as `open-settings` and `book-availability-changed`. Today `AppHandle` reaches the core only to emit events: in the AI providers, `sync/replay.rs`, `mcp/notify.rs`, and the ai, sync, oauth, settings, translation and app commands.
-3. Replace Tauri's managed state with a `Core` struct that owns `Db`, `Secrets`, `DeviceIdentity`, `SyncWriter`, `SyncState` and `LocalDir`. Core command functions take `&Core` and typed arguments.
-4. Move app setup out of `lib.rs` (`run()` → `setup`) into `quill_core::boot(config)`. That covers resolving local and data directories, the stale-marker self-heal, the sync boot thread, the cover writer and the MCP notify watcher. The shell passes in what used to come from Tauri: the app-data base directory, the log directory, and whether this is a development build. Today `cfg!(debug_assertions)` decides the `-dev` suffix; from now on the shell decides.
-5. Keep each `#[tauri::command]` as a thin wrapper that calls the core function. The handler list in `generate_handler!` stays identical.
-6. Move `quill mcp` into the `crates/quill-mcp` binary. The app binary keeps its `mcp` argument, which delegates to the same function, so existing configs keep working.
+1. Turn `src-tauri/` into a Cargo workspace member, and move `db`, `secrets`, `sync`, `ai`, `mcp`, `epub`, `pdfium`, `icloud`, `error` and the core command bodies into `crates/quill-core`. Move `ensure_pdfium` out of `src-tauri/build.rs` into `crates/quill-core/build.rs` so `PDFIUM_DEV_LIB_PATH` still resolves during `cargo test` and `make electron-dev` (where `current_exe()` is the Electron binary), while continuing to publish `src-tauri/binaries/<os>/` for Tauri builds until phase 9.
+2. Replace `tauri::AppHandle` in the core with a small `ShellHost` trait: `emit(event, payload)` for global events, `emit_to(window, event, payload)` for window-scoped events such as `open-settings` and `book-availability-changed`, `open_url(url)` for `openai_oauth_login` (`commands/oauth.rs`), and `reveal_path(path)` for `reveal_logs` (`commands/app.rs`). Leave `app_ready` (`commands/app.rs`) and `window_set_titlebar_zoom` (`commands/window.rs`) in the shell: both act on the caller's window handle (`tauri::WebviewWindow`) rather than `&Core`, so `src-tauri` keeps them now and Electron's `ipcMain` handles them directly in phase 3.
+3. Replace Tauri's managed state with a `Core` struct that owns `Db`, `Secrets`, `DeviceIdentity`, `SyncWriter`, `SyncState`, `LocalDir` and the shell host. Core command functions take `&Core` and typed arguments.
+4. Move app setup out of `lib.rs` (`run()` → `setup`) into `quill_core::boot(config)`. That covers resolving local and data directories, the stale-marker self-heal, the sync boot thread, the cover writer and the MCP notify watcher. `BootConfig` receives what used to come from Tauri or `current_exe()`: the app-data base directory, the log directory, whether this is a development build, the `quill-mcp` binary path (used by `commands/mcp.rs` instead of `std::env::current_exe()`, which under Electron is Electron itself), and an optional `pdfium` library path override. Today `cfg!(debug_assertions)` decides the `-dev` suffix for the GUI app; from now on the shell decides.
+5. Keep each `#[tauri::command]` as a thin wrapper that calls the core function (or runs the shell window logic for `app_ready` and `window_set_titlebar_zoom`). The handler list in `generate_handler!` stays identical.
+6. Move `quill mcp` into the `crates/quill-mcp` binary. Because `quill-mcp` runs standalone with no GUI shell, it keeps its own `cfg!(debug_assertions)` dev/prod data-directory suffix, honors a `QUILL_TEST_DATA_DIR` environment override for phase 5's isolated end-to-end test, and accepts an optional ignored `mcp` argument so both `quill-mcp` and `quill-mcp mcp` invocations work. The Tauri app binary keeps its `mcp` argument, delegating to the same entry point so existing configs keep working.
 
 **Gate:**
 
@@ -102,8 +106,8 @@ Workspace after phase 3:
 **Work:**
 
 1. Add `src/platform/` with a typed interface covering everything the 26 Tauri-importing files use:
-   - `invoke` and `listen`, both global and for the current window
-   - windows: open or focus a reader window by label, get or focus the main window, show, unminimize, set title, start dragging, close
+   - `invoke`, `listen` (global and current-window) and `emitTo(label, event, payload)` (`Reader.tsx` emits `book-availability-changed` to `main`)
+   - windows: a **synchronous** `getWindowLabel()` (`App.tsx` and `Reader.tsx` read `.label` at module load time), open or focus a reader window by label, get or focus the main window, show, unminimize, set title, close, and `onWindowResized(cb)` delivering logical CSS pixels (abstracting Tauri's physical-pixel `onResized` + `scaleFactor()` in `Reader.tsx` and `App.tsx`)
    - webview zoom
    - file drag and drop
    - the open-file dialog
@@ -112,6 +116,8 @@ Workspace after phase 3:
    - the updater: check, download and install, relaunch
    - file URLs, replacing `convertFileSrc`
    - menu events
+
+   Window titlebar dragging stays declarative through `data-tauri-drag-region` rather than an imperative platform call, and `@tauri-apps/plugin-fs` has no imports in `src/`, so `src/platform/` adds no filesystem wrapper.
 2. Add `src/platform/tauri/`, implemented with today's calls, and switch every call site over. Leave the 112 `invoke` and `listen` call sites' command names and arguments untouched; only their import changes.
 3. Add an ESLint `no-restricted-imports` rule that forbids `@tauri-apps/*` outside `src/platform/tauri/`.
 4. Move the Vitest mocks from `@tauri-apps/api` to `src/platform`.
@@ -129,20 +135,21 @@ Workspace after phase 3:
 
 **Work:**
 
-1. **Tooling.** Pin an exact Electron version. Use electron-vite for the main, preload and renderer builds, with the renderer reusing `vite.config.ts`, and electron-builder for packaging, which phase 6 configures fully. Add `make electron-dev`, and give the Electron dev server a fixed port. It shares development data with the Tauri dev app, so only one of them runs at a time.
+1. **Tooling.** Pin an exact Electron version, and pin an `electron-vite` version that supports Vite 7 (`"vite": "^7.0.4"` in `package.json`) and `@tailwindcss/vite` 4, with the renderer reusing `vite.config.ts` and `electron-builder` wired for phase 6. Add `make electron-dev`, and give the Electron dev server a fixed port. It shares development data with the Tauri dev app, so only one of them runs at a time. In `ci.yaml`, align Node to version 22 (matching `release.yml` and Electron's bundled Node) and add `submodules: true` to `actions/checkout` so `public/foliate-js/` is checked out for end-to-end tests.
 2. **`quill-node`.** A napi-rs module exposing:
-   - `init(config)`, which runs `quill_core::boot`
+   - `init(config, hostCallbacks)`, which wires `ShellHost` (`emit`, `emit_to`, `open_url` via `shell.openExternal`, `reveal_path` via `shell.openPath`) through thread-safe functions and runs `quill_core::boot`
    - `invoke(command, argsJson)`, which returns a Promise of JSON
-   - `subscribe(callback)`, which delivers events through a thread-safe function
 
    The dispatcher must accept exactly what Tauri accepts. Arguments arrive with camelCase keys, as Tauri 2 converts them by default. Return values use the same serde output. Errors must serialize to the same shape the frontend already parses, including codes such as `AI_NOT_CONFIGURED`. Every command runs on the core's tokio runtime, never on the JS thread. Panics are caught at the dispatcher boundary and returned as errors, so a bug cannot take down the main process.
-3. **Parity test.** A Rust test asserts that the dispatcher's command table equals the Tauri `generate_handler!` list, so a command added to one shell and not the other fails CI. Golden tests check argument casing and error shapes on a few commands.
+3. **Parity test.** A Rust test asserts that `quill-node`'s core command table plus the explicit two-item shell command list (`app_ready`, `window_set_titlebar_zoom`) equals the Tauri `generate_handler!` list, so a command added to one shell and not the other fails CI. Golden tests check argument casing and error shapes on a few commands.
 4. **Main process.**
-   - Create the main window and reader windows, keyed by the same labels: `main` and `reader-*`.
-   - Handle `ipcMain` for invoke.
-   - Route events: global events go to every window; `emit_to` events go to the window with that label.
-   - Register a privileged `quill-file://` protocol in place of Tauri's asset protocol. Serve only files inside the app-data and iCloud directories, as the current asset scope does, and support range requests for large PDFs.
+   - Create the main window and reader windows, keyed by the same labels (`main` and `reader-*`), passing `--quill-window-label=<label>` in `webPreferences.additionalArguments` so preload can expose `getWindowLabel()` synchronously at module load.
+   - Handle `ipcMain` for invoke, intercepting `app_ready` and `window_set_titlebar_zoom` against `BrowserWindow.fromWebContents(event.sender)` and forwarding everything else to `quill-node`.
+   - Route events, including renderer-originated `emitTo`: global events go to every window; window-targeted events go to the window with that label.
+   - Register a privileged `quill-app://` protocol (`standard`, `secure`, `supportFetchAPI`, `corsEnabled`) to serve the built renderer and `foliate-js/` assets with SPA fallback to `index.html`, mirroring `tauri://localhost`. Never load packaged windows over `file://` (`loadFile`), which breaks `<BrowserRouter>` routes (`/reader/:bookId`) and root-relative `/foliate-js/view.js` module loads.
+   - Register a privileged `quill-file://` protocol in place of Tauri's asset protocol. Canonicalize requested paths (`realpath`) before verifying containment inside the app-data and iCloud directories so `..` or symlinks cannot escape the scope, and support range requests for large PDFs (noting `Reader.tsx` currently buffers via `response.blob()`, while range support keeps the protocol ready for streaming).
    - Keep Chromium's own profile (`userData`) in its own directory, never inside the core's data directory. The development build gets a separate profile.
+   - Avoid a one-time light-mode flash on first launch with an empty Chromium `localStorage`: in `App.tsx`, when `quill-theme` is not yet cached in `localStorage` (such as first launch after upgrading from Tauri in dark mode), wait for `get_all_settings` to apply the persisted theme before calling `app_ready`, bounded by a short timeout.
 5. **Preload and `src/platform/electron/`.** A minimal `contextBridge` surface with context isolation on, the renderer sandboxed and no Node integration in the renderer. Select the platform implementation at build time.
 6. **Data directory.** The core receives the same base path Tauri used: `~/Library/Application Support/com.wycstudios.quill` on macOS and `%APPDATA%\com.wycstudios.quill` on Windows, with `-dev` for the development build. A test pins both paths against the values `lib.rs` resolves today.
 7. **End-to-end tests.** Playwright drives the Electron app through its Electron support (`_electron.launch`), from `e2e/`, with a `make e2e` target.
@@ -167,7 +174,7 @@ Workspace after phase 3:
 **Work:**
 
 - **Menus:** the default app, Edit, View and Window menus; "Check for Updates…" next to About on macOS and under Help on Windows; "Reveal Logs" under Help. Keep the English-at-boot behavior unless localizing is trivial in Electron.
-- **macOS window chrome:** a hidden-inset titlebar with traffic lights repositioned for app zoom, replacing `window_set_titlebar_zoom` and its `objc2-app-kit` observer. Windows use the same drag regions (#321).
+- **Window chrome and drag regions:** on macOS, use `titleBarStyle: "hiddenInset"` with traffic lights repositioned for app zoom, replacing `window_set_titlebar_zoom` and its `objc2-app-kit` observer; on Windows, keep the native OS titlebar (`titleBarStyle: "default"`), matching Tauri today. Map `[data-tauri-drag-region]` to `-webkit-app-region: drag` in CSS (#321) **and** set `-webkit-app-region: no-drag` on interactive descendants (`button, input, select, textarea, a, [role="button"]`), because `Home.tsx` wraps the Grid/List toggle buttons inside a `data-tauri-drag-region` container whose clicks Chromium would otherwise swallow.
 - **Window lifecycle:**
   - On macOS, closing the main window hides it, the dock click reopens it, and ⌘Q quits.
   - On Windows, closing the main window closes every window.
@@ -175,10 +182,10 @@ Workspace after phase 3:
 - **File opening:**
   - On macOS, `open-file` events (file associations, dropping a file on the dock) feed the existing `file-open` event.
   - On Windows, a second-instance launch with file arguments does the same, under a single-instance lock.
-  - Drag and drop onto the library window, replacing `onDragDropEvent`.
+  - Drag and drop onto the library window, replacing `onDragDropEvent`. Because Electron 32+ removed `File.path` on DOM `drop` events and the renderer runs sandboxed with context isolation, resolve dropped paths through `webUtils.getPathForFile(file)` in the preload script, and track drag enter/leave depth at the window level so hovering child elements does not flicker the drop overlay.
 - **Zoom:** app zoom and reader zoom, scoped per window as today (#318, #319), through `webContents` zoom.
 - **Logging:** the Rust log keeps the same log directory, rotation and file name. The panic hook stays in the core. Main-process errors go to the same log.
-- **Security:** a strict CSP for the renderer, navigation and new-window blocking (links open through `openUrl`), and no remote content.
+- **Security:** a strict CSP for the renderer (`quill-app:` and `quill-file:`), navigation and new-window blocking (links open through `openUrl`), and no remote content.
 
 **Gate:**
 
@@ -193,14 +200,14 @@ Workspace after phase 3:
 
 **Work:**
 
-- Bundle `quill-mcp` inside the app: in `Contents/MacOS/` on macOS and next to the executable on Windows. The integration toggles and the config snippet write its path. They no longer use `current_exe() mcp`, because under Electron `current_exe()` is Electron itself.
-- **Shim for old configs.** Configs written by the Tauri app run `/Applications/Quill.app/Contents/MacOS/quill mcp`. Under Electron, that path launches the Electron executable with `mcp`. On a case-insensitive volume `quill` resolves to `Quill`; otherwise the bundle keeps a `quill` executable name. The main process detects `mcp` before creating any window or dock icon and hands stdio to `quill-mcp`.
+- Bundle `quill-mcp` inside the app (`Contents/MacOS/quill-mcp` on macOS and next to the executable on Windows) and pass its resolved path into `quill_core::boot` (`BootConfig::mcp_binary_path`). The integration toggles and the config snippet write that path instead of `current_exe() mcp`, because under Electron `current_exe()` is Electron itself.
+- **Shim for old configs.** Configs written by the Tauri app run `/Applications/Quill.app/Contents/MacOS/quill mcp`. Under Electron, that path launches the Electron executable with `mcp`. On a case-insensitive volume `quill` resolves to `Quill`; otherwise the bundle keeps a `quill` executable name. When the main process sees `mcp` in `process.argv`, it hides the dock icon synchronously (`app.dock?.hide()`) before `app.whenReady()`, skips `quill-node` initialization and window creation, spawns `quill-mcp` with `stdio: "inherit"` forwarding its exit code, and writes nothing to `stdout` so JSON-RPC framing stays clean.
 - **Repair on first launch.** When Quill's entry in `~/.claude.json` or the Codex config points at an old Quill path, rewrite it to `quill-mcp`. The shim is then only a safety net. Only the production build repairs: the development build writes the same `quill` entry, so a repair from it would repoint Jason's real integration at the development app.
 - The MCP notify watcher still pushes changes made through MCP into the open app.
 
 **Gate:**
 
-- Automated: unit tests for the config rewrite, covering present, absent, already current and foreign entries, and the existing `mcp.rs` tests. An end-to-end test for MCP-02's second half: a book added through `quill-mcp` against the test data directory appears in the running app.
+- Automated: unit tests for the config rewrite, covering present, absent, already current and foreign entries, and the existing `mcp.rs` tests. An end-to-end test for MCP-02's second half: a book added through `quill-mcp` (pointed at `QUILL_TEST_DATA_DIR`) appears in the running app.
 - Live checks: MCP-01 and MCP-02 with a real `claude` and `codex`, and both a fresh config and a Tauri-written one, with both `quill` entries restored as the suite describes.
 
 **Crew:** claude trio. Label: `risk-medium`.
@@ -213,42 +220,45 @@ Workspace after phase 3:
 
 - **electron-builder on macOS:**
   - DMG and zip for arm64 and x64; Electron's updater needs the zip.
-  - Hardened runtime, `Entitlements.plist` with the iCloud container, and the embedded provisioning profile, mirroring today's `tauri.conf.json` bundle settings.
+  - Hardened runtime and `embedded.provisionprofile`, with **two separate entitlement files** rather than reusing `src-tauri/Entitlements.plist` directly:
+    1. `entitlements.mac.plist` for the outer `Quill.app` only: today's iCloud/ubiquity, `application-identifier` and `team-identifier` keys **plus** `com.apple.security.cs.allow-jit` (and `com.apple.security.cs.allow-unsigned-executable-memory` if V8/Wasm requires it).
+    2. `entitlements.mac.inherit.plist` (`entitlementsInherit`) for the `Quill Helper*.app` bundles and `quill-mcp`: V8 JIT entitlements only, with **no** iCloud or `application-identifier` keys. `embedded.provisionprofile` covers only `com.wycstudios.quill`, so inheriting profile-restricted keys onto helper bundles or `quill-mcp` causes `amfid` to `SIGKILL` them on launch.
   - Notarization.
-  - `libpdfium.dylib`, the `.node` module and `quill-mcp` signed inside the bundle.
+  - `libpdfium.dylib`, the `.node` module and `quill-mcp` signed inside the bundle with the same Team ID.
 - **electron-builder on Windows:** an NSIS installer for x64, with `pdfium.dll`. Windows signing stays as it is today, which is unsigned unless Jason decides otherwise.
 - **File associations** for EPUB and PDF, carried over from today's config.
-- **Updates:** Electron's updater reads GitHub releases. Prove it between two candidate builds against a staging feed, not the public one.
-- **CI:** a release workflow that builds the Electron artifacts into a draft release, alongside the existing Tauri `release.yml` until phase 7 switches them over. The end-to-end job also runs against the packaged, unsigned app, which catches what only packaging breaks: native module loading, bundled paths and the file protocol. Candidates build from the umbrella, so they cannot use `workflow_dispatch`, which runs only workflows on the default branch. They build from a pre-release tag such as `v2.0.0-rc.1` on an umbrella commit instead, and since `release.yml` fires on every `v*` tag, it must skip `rc` tags until phase 7 replaces it.
+- **Updates:** Electron's updater reads GitHub releases (`latest-mac.yml` + zip on macOS, `latest.yml` + NSIS installer on Windows). Prove it between two candidate builds against a staging feed, not the public one.
+- **CI:** a release workflow that builds the Electron artifacts into a draft release, alongside the existing Tauri `release.yml` until phase 7 switches them over. The end-to-end job also runs against the packaged, unsigned app, which catches what only packaging breaks: native module loading, bundled paths, `quill-app://` and `quill-file://`. Candidates build from the umbrella, so they cannot use `workflow_dispatch`, which runs only workflows on the default branch. They build from a pre-release tag such as `v2.0.0-rc.1` on an umbrella commit instead; because GitHub Actions evaluates tag triggers against the tagged commit's workflow files, land `tags-ignore: ["*-rc.*"]` in `release.yml` on the umbrella *before* pushing the first `rc` tag.
 - **Measurements:** app size, memory and cold start, compared with the phase 0 baseline.
 
 **Gate:**
 
-- Automated: the CI workflow produces every artifact.
-- Signing checks: `codesign --verify --deep --strict`, `spctl -a -vv` and `codesign -d --entitlements -` show the iCloud container on the candidate.
+- Automated: the CI workflow produces every artifact, and packaged end-to-end tests pass.
+- Signing checks: `codesign --verify --deep --strict`, `spctl -a -vv`, and `codesign -d --entitlements -` confirm the iCloud container on `Quill.app`, its absence on `Quill Helper*.app` and `quill-mcp`, and clean helper/`quill-mcp` launch under `amfid`.
 - Live checks, in the environment Jason prepares for signed builds (see the suite): APP-01, APP-06 (Electron to Electron update), LIB-04, and one case each from RDR and AI on the installed candidate.
 
 **Crew:** claude trio, with Jason for the signing secrets and the test environment. Label: `risk-high`.
 
 ## Phase 7 — Upgrade bridge from Tauri
 
-**Goal:** a user on the last Tauri release upgrades in place through the update they are already offered, and lands in the Electron app with everything intact.
+**Goal:** a user on the last Tauri release upgrades in place through the update they are already offered, lands in the Electron app with everything intact, and remains on Electron's normal update track thereafter.
 
 **Work:**
 
-- **macOS.** The Tauri updater reads `latest.json`, downloads the `.app.tar.gz`, checks its minisign signature against the key in `tauri.conf.json`, and replaces the app bundle. The cutover release publishes a `latest.json` whose macOS entries point at the Electron app as a `.app.tar.gz`, signed with the same minisign key, so the installed Tauri app installs Electron as an ordinary update.
-- **Windows.** The Tauri updater runs the installer named in `latest.json`. The Electron installer must take over the Tauri install: the same install directory or a clean removal of the old one, no duplicate Start-menu or uninstall entries, and the same app-data directory. Investigate the two installers' defaults first, and record the chosen path here.
+- **Dual update feeds.** Every release during the bridge window (cutover through phase 9) publishes **both** `latest-mac.yml` + `.zip` / `latest.yml` + `.exe` (for `electron-updater`) **and** `latest.json` + minisign-signed `Quill.app.tar.gz` / Windows `.exe` (for Tauri 1.x updaters).
+- **macOS.** The Tauri updater reads `latest.json`, downloads the `.app.tar.gz`, checks its minisign signature against the key in `tauri.conf.json`, and replaces the app bundle. Build `Quill.app.tar.gz` with `Quill.app/` at the archive root and **without** dereferencing symlinks (`tar -czf`, never `-h`), so `Electron Framework.framework` symlinks and nested code signatures survive Tauri's tar extractor and remain valid for subsequent `Squirrel.Mac` (`ShipIt`) updates.
+- **Windows.** The Tauri updater runs the installer named in `latest.json`. Tauri's default NSIS installs per-user to `%LOCALAPPDATA%\Quill` under its own `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall` key, whereas `electron-builder` NSIS defaults to `%LOCALAPPDATA%\Programs\quill` with a GUID `appId` key. Reconcile the two (either matching install location/key or silently uninstalling the old Tauri binary and Start-menu/Uninstall entries via a custom NSIS `include.nsh` macro while guaranteeing `%APPDATA%\com.wycstudios.quill` is untouched), and record the exact mechanics here before shipping.
 - **First launch of the Electron build:**
   - the MCP config repair from phase 5
   - a one-time check that the data directory, `secrets.db` and the sync marker were found where Tauri left them, logged so a failed upgrade is diagnosable
   - no data copy or move of any kind
-- **Release pipeline.** `release.yml` switches to the Electron build. The cutover version is Jason's call; a runtime change suggests 2.0.0.
+- **Release pipeline.** `release.yml` switches to the Electron build (emitting both update feeds). The cutover version is Jason's call; a runtime change suggests 2.0.0.
 - **Docs.** `AGENTS.md` (Stack, Development Commands), `docs/arch/overview.md` (runtime picture, boot sequence, MCP), and the README.
 
 **Gate:**
 
 - Automated: tests for the `latest.json` generation and for the first-launch checks.
-- Live checks, in Jason's test environment, from an installed Tauri 1.3.x with a populated library: the [upgrade cases](#upgrade-cases), UPG-01, UPG-02 and UPG-04 on macOS, and UPG-01 and UPG-03 on Windows.
+- Live checks, in Jason's test environment, from an installed Tauri 1.3.x with a populated library: the [upgrade cases](#upgrade-cases), UPG-01, UPG-02, UPG-04 and UPG-05 on macOS, and UPG-01, UPG-03 and UPG-05 on Windows.
 
 **Crew:** claude trio, with Jason. Labels: `core-review` and `risk-high`.
 
@@ -279,7 +289,7 @@ Once the Electron release is live and its first patch window has passed without 
 - the Tauri parity test
 - the Tauri release jobs
 
-For at least one release after the cutover, keep publishing a Tauri-format `latest.json` that points at the current Electron build, and keep the minisign key. That way Tauri installs that skipped the cutover release still get bridged.
+For at least one release after the cutover, keep publishing a Tauri-format `latest.json` (plus the minisign-signed `.app.tar.gz` and Windows `.exe`) alongside `latest-mac.yml` and `latest.yml`, and keep the minisign key. That way Tauri installs that skipped the cutover release still get bridged.
 
 **Gate:** CI green, including the end-to-end tests; the smoke cases they do not cover, on the Electron development app. **Crew:** claude duo. Label: `risk-medium`.
 
@@ -291,25 +301,28 @@ These matter only for this migration, so they live here instead of the regressio
 
 | ID | Platforms | Check |
 |---|---|---|
-| UPG-01 | mac, win | From an installed Tauri 1.3.x with a populated library, update in-app. Electron opens with the same books, progress, highlights, bookmarks, vocabulary, chats, collections and settings, and AI works without re-entering API keys or signing in again. |
+| UPG-01 | mac, win | From an installed Tauri 1.3.x with a populated library, update in-app. Electron opens with the same books, progress, highlights, bookmarks, vocabulary, chats, collections and settings (with no light-mode flash when upgrading in dark mode), and AI works without re-entering API keys or signing in again. |
 | UPG-02 | mac | An MCP integration enabled before the upgrade still answers afterwards, and its config now points at `quill-mcp`. |
 | UPG-03 | win | On Windows, the old install is replaced: one app, one Start-menu entry, one uninstall entry, and the data is intact. |
 | UPG-04 | mac | A sync-enabled install upgrades and keeps syncing with a second device, with no duplicate events and no re-copy of the library. |
+| UPG-05 | mac, win | Chained update handoff: taking the Electron install produced by UPG-01, `codesign --verify --deep --strict /Applications/Quill.app` passes on macOS, and a subsequent in-app update to a newer Electron candidate (`latest-mac.yml` / `latest.yml`) downloads, installs and relaunches cleanly. |
 
 ## Risks
 
-- **iCloud under Electron.** Entitlements and the provisioning profile must be on the main executable, which loads the core in-process. Phase 6's entitlement check and phase 8's sync cases cover this. A helper process was rejected for this reason.
+- **iCloud and macOS helper entitlements.** Profile-restricted iCloud entitlements and `embedded.provisionprofile` belong on the outer `Quill.app` only (which loads the core in-process); helper `.app` bundles and `quill-mcp` must inherit only V8 JIT entitlements (`entitlements.mac.inherit.plist`) or `amfid` kills them on launch. Phase 6's signing checks and phase 8's sync cases cover both halves. A helper process for the core was rejected for the same reason.
+- **Packaged renderer origin.** Loading a packaged Electron window over `file://` (`loadFile`) breaks `<BrowserRouter>` routes and root-relative `/foliate-js/view.js` imports while `make electron-dev` (`http://localhost`) still passes. Phase 3's `quill-app://` protocol and phase 6's packaged E2E job guard against this.
+- **Tauri-to-Squirrel handoff.** If Tauri's `.app.tar.gz` extraction alters framework symlinks or signatures inside `Quill.app`, the bridged app launches once but `Squirrel.Mac` (`ShipIt`) refuses future 2.0.x updates. Phase 7's `UPG-05` chained update check proves the full handoff.
 - **Main-process stalls.** A synchronous napi call would block every window. `quill-node` exposes no synchronous command entry point: every command goes through the async dispatcher on the core's tokio runtime (phase 3).
 - **Silent IPC drift.** Argument casing or error shapes that differ from Tauri's would break call sites quietly. The phase 3 golden tests and parity test catch this.
 - **Umbrella drift.** The longer the umbrella lives, the more 1.x work it has to absorb. Phase 1 moves every Rust file and phase 2 rewrites every Tauri import, so a sync after them can conflict wherever `main` touched the same code. Frequent small syncs, small 1.x changes, and phases 3–8 kept moving keep this bounded.
 - **Two shells on the umbrella.** Every new command and platform call needs both implementations until phase 9, including those that arrive from `main` in a sync. The parity test and the ESLint rule enforce it.
-- **Windows upgrade path.** This is the least known part. Phase 7 investigates before it builds.
+- **Windows upgrade path.** Default install directories and Uninstall registry keys differ between Tauri NSIS (`%LOCALAPPDATA%\Quill`) and `electron-builder` NSIS (`%LOCALAPPDATA%\Programs\quill`). Phase 7 reconciles them in a custom NSIS script and verifies `UPG-03` before cutover.
 - **Size and memory.** Electron is larger. Phase 6 measures, and the spec treats this as something to report rather than a gate.
 - **Chromium upgrades.** After the cutover, every Electron bump is a deliberate change with its own smoke-tier run, which is the point of the migration. The end-to-end screenshots turn most of that run into a CI result.
 - **Playwright's Electron support is labeled experimental.** The tests add to the live checks and replace none of them until they have proven stable in CI; computer use remains the fallback for any case.
 
 ## Open questions for Jason
 
-- **Cutover version.** 2.0.0 is suggested.
-- **Intel Macs.** Keep separate arm64 and x64 builds, as today, or ship one universal build?
-- **Test environments.** A separate macOS user account or VM for signed candidates and upgrade tests, so the real library is never touched. A Windows machine for the Windows cases. An iCloud setup for the sync cases.
+- **Cutover version.** **2.0.0** is recommended: swapping the shell/rendering engine and resetting `localStorage` UI state is a clear major boundary, and `v2.0.0-rc.N` tags fit phase 6–8 candidates cleanly.
+- **Intel Macs.** **Keep separate `arm64` and `x64` builds** (recommended over universal): a universal Electron bundle roughly doubles the ~100 MB+ Chromium payload, requires lipo-ing `quill-node.node`, `quill-mcp` and `libpdfium.dylib`, and complicates the per-arch `latest.json` bridge from Tauri.
+- **Test environments.** A **separate macOS local user account** is recommended over a VM for signed candidates and upgrade tests (native GPU/WindowServer fidelity while keeping the real `com.wycstudios.quill` data untouched), alongside a dedicated test Apple ID for iCloud sync cases and the Windows machine for `win` cases.
