@@ -3632,6 +3632,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "quill-mcp"
+version = "1.3.4"
+dependencies = [
+ "quill-core",
+ "rusqlite",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "quote"
 version = "1.0.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"

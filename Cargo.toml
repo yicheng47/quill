@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "crates/quill-core",
+  "crates/quill-mcp",
   "src-tauri",
 ]
 resolver = "2"
