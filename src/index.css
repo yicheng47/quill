@@ -148,19 +148,12 @@ body {
   display: none;
 }
 
-[data-tauri-drag-region],
 [data-drag-region] {
   cursor: default;
   -webkit-app-region: drag;
   app-region: drag;
 }
 
-[data-tauri-drag-region] button,
-[data-tauri-drag-region] a,
-[data-tauri-drag-region] input,
-[data-tauri-drag-region] select,
-[data-tauri-drag-region] textarea,
-[data-tauri-drag-region] [role="button"],
 [data-drag-region] button,
 [data-drag-region] a,
 [data-drag-region] input,

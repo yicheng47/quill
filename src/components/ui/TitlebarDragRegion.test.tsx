@@ -6,7 +6,7 @@ describe("TitlebarDragRegion", () => {
   it("renders the 44px drag strip by default", () => {
     const markup = renderToStaticMarkup(<TitlebarDragRegion />);
 
-    expect(markup).toContain("data-tauri-drag-region");
+    expect(markup).toContain("data-drag-region");
     expect(markup).toContain('class="absolute top-0 left-0 right-0 h-11"');
   });
 

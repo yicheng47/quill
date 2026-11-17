@@ -1117,7 +1117,7 @@ mod tests {
     }
 
     #[test]
-    fn command_table_has_no_duplicates_and_covers_frontend_and_tauri() {
+    fn command_table_has_no_duplicates_and_covers_frontend() {
         let core_set: BTreeSet<&str> = CORE_COMMAND_NAMES.iter().copied().collect();
         assert_eq!(
             core_set.len(),
@@ -1126,39 +1126,10 @@ mod tests {
         );
         assert_eq!(CORE_COMMAND_NAMES.len(), 74);
 
-        let shell_only: BTreeSet<&str> = ["app_ready", "window_set_titlebar_zoom"].into_iter().collect();
-
         let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .and_then(|p| p.parent())
             .expect("workspace root");
-
-        // Verify parity with Tauri's generate_handler! while src-tauri still exists.
-        let tauri_lib = workspace_root.join("src-tauri/src/lib.rs");
-        if tauri_lib.exists() {
-            let content = std::fs::read_to_string(&tauri_lib).expect("read src-tauri/src/lib.rs");
-            let marker = "tauri::generate_handler![";
-            let start = content.find(marker).expect("generate_handler! in lib.rs") + marker.len();
-            let rest = &content[start..];
-            let end = rest.find("])").expect("closing ])");
-            let handler_block = &rest[..end];
-
-            let mut tauri_cmds = BTreeSet::new();
-            for line in handler_block.lines() {
-                let line = line.split("//").next().unwrap_or("").trim().trim_end_matches(',');
-                if line.is_empty() {
-                    continue;
-                }
-                let cmd = line.rsplit("::").next().unwrap_or(line);
-                if !shell_only.contains(cmd) {
-                    tauri_cmds.insert(cmd);
-                }
-            }
-            assert_eq!(
-                core_set, tauri_cmds,
-                "CORE_COMMAND_NAMES drifted from src-tauri generate_handler!"
-            );
-        }
 
         // Scan frontend src/ (excluding unit tests and dead SettingsPage.tsx) for command names.
         fn collect_ts_files(dir: &Path, out: &mut Vec<PathBuf>) {
@@ -1210,7 +1181,7 @@ mod tests {
 
         for cmd in &invoked {
             assert!(
-                core_set.contains(cmd.as_str()) || shell_only.contains(cmd.as_str()),
+                core_set.contains(cmd.as_str()),
                 "frontend invokes unknown command `{cmd}` missing from CORE_COMMAND_NAMES"
             );
         }

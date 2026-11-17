@@ -17,6 +17,7 @@ const DARK_BG = "#151518";
 
 const windowsByLabel = new Map<string, BrowserWindow>();
 const labelByWebContentsId = new Map<number, string>();
+const titlebarZoomByLabel = new Map<string, number>();
 let quitting = false;
 
 export function markQuitting(): void {
@@ -59,14 +60,47 @@ export function sendEventToWindow(label: string, event: string, payload: unknown
   }
 }
 
-export function setTitlebarZoomForWindow(label: string, zoom: number): void {
-  if (process.platform !== "darwin") return;
-  const win = getWindow(label);
-  if (!win || win.isFullScreen()) return;
+export function scaledTitlebarHeight(
+  label: string,
+  zoom: number,
+  fullscreen: boolean,
+): number | null {
+  if (fullscreen) return null;
   const baseHeight = label === "main" ? 44 : 32;
+  return baseHeight * zoom;
+}
+
+export function trafficLightPositionFor(
+  label: string,
+  zoom: number,
+  fullscreen: boolean,
+): { x: number; y: number } | null {
+  const height = scaledTitlebarHeight(label, zoom, fullscreen);
+  if (height === null) return null;
   const buttonHeight = 14;
-  const y = Math.max(4, Math.round((baseHeight * zoom - buttonHeight) / 2));
-  win.setWindowButtonPosition({ x: 16, y });
+  return {
+    x: 16,
+    y: Math.max(4, Math.round((height - buttonHeight) / 2)),
+  };
+}
+
+export function getTitlebarZoomForWindow(label: string): number | undefined {
+  return titlebarZoomByLabel.get(label);
+}
+
+export function setTitlebarZoomForWindow(
+  label: string,
+  zoom: number,
+  platform: NodeJS.Platform = process.platform,
+): void {
+  if (platform !== "darwin") return;
+  titlebarZoomByLabel.set(label, zoom);
+  const win = getWindow(label);
+  if (!win) return;
+  const pos = trafficLightPositionFor(label, zoom, win.isFullScreen());
+  if (pos) {
+    win.setWindowButtonPosition(pos);
+  }
 }
 
 export function focusManagedWindow(label: string): boolean {
@@ -155,6 +189,15 @@ function createWindow(options: {
     win.webContents.send("quill:window-resized", { width, height });
   });
 
+  if (isMac) {
+    win.on("leave-full-screen", () => {
+      const saved = titlebarZoomByLabel.get(options.label);
+      if (saved !== undefined) {
+        setTitlebarZoomForWindow(options.label, saved, process.platform);
+      }
+    });
+  }
+
   if (isMac && isMain) {
     win.on("close", (event) => {
       if (!quitting) {
@@ -167,6 +210,7 @@ function createWindow(options: {
   win.on("closed", () => {
     windowsByLabel.delete(options.label);
     labelByWebContentsId.delete(wcId);
+    titlebarZoomByLabel.delete(options.label);
     if (!isMac && isMain) {
       for (const other of getAllManagedWindows()) {
         other.close();

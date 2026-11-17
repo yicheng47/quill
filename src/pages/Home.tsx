@@ -337,7 +337,7 @@ export default function Home() {
               <h1 className="text-[24px] font-semibold text-text-primary tracking-[0.07px]">
                 {title}
               </h1>
-              <div data-tauri-drag-region className="flex items-center gap-0">
+              <div data-drag-region className="flex items-center gap-0">
                 <Button
                   variant="icon"
                   size="md"

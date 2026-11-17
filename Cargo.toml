@@ -3,7 +3,6 @@ members = [
   "crates/quill-core",
   "crates/quill-mcp",
   "crates/quill-node",
-  "src-tauri",
 ]
 resolver = "2"
 

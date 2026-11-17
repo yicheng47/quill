@@ -30,7 +30,6 @@ out
 .claude/worktrees/
 .worktrees/
 .nvmrc
-src-tauri/embedded.provisionprofile
 /target/
 /crates/quill-core/binaries/
 crates/quill-node/index.d.ts
