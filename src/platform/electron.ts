@@ -6,8 +6,14 @@ import type {
   ReaderWindowParams,
   UnlistenFn,
   UpdateHandle,
+  UpdateProgressEvent,
   WindowSize,
 } from "./types";
+
+interface AvailableUpdateInfo {
+  version: string;
+  body?: string;
+}
 
 interface QuillShellBridge {
   getWindowLabel(): string;
@@ -28,6 +34,10 @@ interface QuillShellBridge {
   openFileDialog(options: OpenFileDialogOptions): Promise<string | null>;
   openUrl(url: string): Promise<void>;
   getAppVersion(): Promise<string>;
+  checkForUpdate(): Promise<AvailableUpdateInfo | null>;
+  downloadUpdate(): Promise<void>;
+  onUpdateProgress(handler: (event: UpdateProgressEvent) => void): UnlistenFn;
+  relaunch(): Promise<void>;
   getPathForFile(file: File): string;
 }
 
@@ -178,11 +188,28 @@ export const electronPlatform: Platform = {
     return bridge().getAppVersion();
   },
 
-  checkForUpdate(): Promise<UpdateHandle | null> {
-    return Promise.resolve(null);
+  async checkForUpdate(): Promise<UpdateHandle | null> {
+    const info = await bridge().checkForUpdate();
+    if (!info) {
+      return null;
+    }
+    return {
+      version: info.version,
+      body: info.body,
+      async downloadAndInstall(onEvent?: (event: UpdateProgressEvent) => void): Promise<void> {
+        const unsubscribe = onEvent
+          ? bridge().onUpdateProgress((event) => onEvent(event))
+          : undefined;
+        try {
+          await bridge().downloadUpdate();
+        } finally {
+          unsubscribe?.();
+        }
+      },
+    };
   },
 
   relaunch(): Promise<void> {
-    return Promise.resolve();
+    return bridge().relaunch();
   },
 };

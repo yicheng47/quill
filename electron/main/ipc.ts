@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import { findRepoRoot, type QuillCoreInstance } from "./core";
+import type { AvailableUpdateInfo, QuillUpdaterService } from "./updater";
 import { isSafeHttpUrl } from "./urlSecurity";
 import {
   appReadyForWindow,
@@ -9,6 +10,7 @@ import {
   focusManagedWindow,
   getWindow,
   labelForWebContents,
+  markQuitting,
   resolveInitialDark,
   sendEventToWindow,
   setTitlebarZoomForWindow,
@@ -55,6 +57,7 @@ export async function readInitialDark(
 export function registerIpcHandlers(
   core: QuillCoreInstance,
   onFirstReady?: () => void,
+  updater?: Pick<QuillUpdaterService, "checkForUpdate" | "downloadAndInstall" | "relaunchAndInstall">,
 ): void {
   let firstReadyFired = false;
 
@@ -157,4 +160,61 @@ export function registerIpcHandlers(
       return app.getVersion();
     }
   });
+
+  ipcMain.handle(
+    "quill:check-for-update",
+    async (): Promise<{ ok: true; data: AvailableUpdateInfo | null } | { ok: false; error: string }> => {
+      if (!updater) {
+        return { ok: true, data: null };
+      }
+      try {
+        const update = await updater.checkForUpdate();
+        return { ok: true, data: update };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { ok: false, error: msg };
+      }
+    },
+  );
+
+  ipcMain.handle(
+    "quill:download-update",
+    async (event): Promise<{ ok: true; data: null } | { ok: false; error: string }> => {
+      if (!updater) {
+        return { ok: false, error: "Updater is not configured" };
+      }
+      try {
+        await updater.downloadAndInstall((progressEvent) => {
+          if (!event.sender.isDestroyed()) {
+            event.sender.send("quill:update-progress", progressEvent);
+          }
+        });
+        return { ok: true, data: null };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { ok: false, error: msg };
+      }
+    },
+  );
+
+  ipcMain.handle(
+    "quill:relaunch",
+    async (): Promise<{ ok: true } | { ok: false; error: string }> => {
+      try {
+        if (updater) {
+          await updater.relaunchAndInstall();
+          return { ok: true };
+        }
+        if (app.isPackaged) {
+          markQuitting();
+          app.relaunch();
+          app.exit(0);
+        }
+        return { ok: true };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { ok: false, error: msg };
+      }
+    },
+  );
 }

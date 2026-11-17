@@ -2,14 +2,23 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { electronPlatform } from "./electron";
+import type { UpdateProgressEvent } from "./types";
 
 describe("electronPlatform", () => {
   const getPathForFile = vi.fn<(file: File) => string>();
   const invokeMock = vi.fn();
+  const checkForUpdateMock = vi.fn();
+  const downloadUpdateMock = vi.fn();
+  const relaunchMock = vi.fn();
+  const progressListeners = new Set<(event: UpdateProgressEvent) => void>();
 
   beforeEach(() => {
     getPathForFile.mockReset();
     invokeMock.mockReset();
+    checkForUpdateMock.mockReset();
+    downloadUpdateMock.mockReset();
+    relaunchMock.mockReset();
+    progressListeners.clear();
     window.quillShell = {
       getWindowLabel: () => "main",
       invoke: invokeMock,
@@ -25,7 +34,16 @@ describe("electronPlatform", () => {
       setTitlebarZoom: async () => {},
       openFileDialog: async () => null,
       openUrl: async () => {},
-      getAppVersion: async () => "1.3.4",
+      getAppVersion: async () => "2.0.0",
+      checkForUpdate: checkForUpdateMock,
+      downloadUpdate: downloadUpdateMock,
+      onUpdateProgress: (handler) => {
+        progressListeners.add(handler);
+        return () => {
+          progressListeners.delete(handler);
+        };
+      },
+      relaunch: relaunchMock,
       getPathForFile,
     };
   });
@@ -83,5 +101,32 @@ describe("electronPlatform", () => {
   it("defaults getCurrentWindowLabel to main outside Electron", () => {
     delete window.quillShell;
     expect(electronPlatform.getCurrentWindowLabel()).toBe("main");
+  });
+
+  it("bridges checkForUpdate null, UpdateHandle download progress, and relaunch", async () => {
+    checkForUpdateMock.mockResolvedValueOnce(null);
+    await expect(electronPlatform.checkForUpdate()).resolves.toBeNull();
+
+    checkForUpdateMock.mockResolvedValueOnce({ version: "2.0.1", body: "Notes" });
+    downloadUpdateMock.mockImplementationOnce(async () => {
+      for (const listener of progressListeners) {
+        listener({ event: "Started", data: { contentLength: 100, chunkLength: 0 } });
+        listener({ event: "Progress", data: { chunkLength: 100 } });
+        listener({ event: "Finished", data: { chunkLength: 0 } });
+      }
+    });
+
+    const handle = await electronPlatform.checkForUpdate();
+    expect(handle?.version).toBe("2.0.1");
+    expect(handle?.body).toBe("Notes");
+
+    const received: UpdateProgressEvent[] = [];
+    await handle!.downloadAndInstall((ev) => received.push(ev));
+    expect(received).toHaveLength(3);
+    expect(progressListeners.size).toBe(0);
+
+    relaunchMock.mockResolvedValueOnce(undefined);
+    await electronPlatform.relaunch();
+    expect(relaunchMock).toHaveBeenCalledTimes(1);
   });
 });

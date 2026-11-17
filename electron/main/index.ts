@@ -5,6 +5,7 @@ import { bootQuillCore, getLogDir, type QuillCoreInstance } from "./core";
 import { registerIpcHandlers, readInitialDark } from "./ipc";
 import { installAppMenu } from "./menu";
 import { registerProtocols } from "./protocols";
+import { createElectronUpdaterService } from "./updater";
 import {
   broadcastEvent,
   createMainWindow,
@@ -117,14 +118,24 @@ if (!gotSingleInstanceLock) {
           sendEventToWindow(windowLabel, event, payload),
       });
 
-      registerProtocols(core, path.join(__dirname, "../renderer"));
-      registerIpcHandlers(core, () => {
-        mainWindowReady = true;
-        if (pendingOpenFiles.length > 0) {
-          const batch = pendingOpenFiles.splice(0, pendingOpenFiles.length);
-          broadcastEvent("file-open", batch);
-        }
+      const updater = createElectronUpdaterService({
+        isPackaged: () => app.isPackaged,
+        getVersion: () => app.getVersion(),
+        markQuitting,
       });
+
+      registerProtocols(core, path.join(__dirname, "../renderer"));
+      registerIpcHandlers(
+        core,
+        () => {
+          mainWindowReady = true;
+          if (pendingOpenFiles.length > 0) {
+            const batch = pendingOpenFiles.splice(0, pendingOpenFiles.length);
+            broadcastEvent("file-open", batch);
+          }
+        },
+        updater,
+      );
       installAppMenu(core, () => readInitialDark(core!));
 
       const initialDark = await readInitialDark(core);

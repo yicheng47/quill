@@ -43,11 +43,18 @@ interface QuillNodeModule {
 const require = createRequire(import.meta.url);
 
 function loadQuillNode(): QuillNodeModule {
+  if (app.isPackaged) {
+    const packagedPath = path.join(process.resourcesPath ?? "", "quill-node/index.node");
+    if (fs.existsSync(packagedPath)) {
+      return require(packagedPath) as QuillNodeModule;
+    }
+    throw new Error(`Unable to locate packaged quill-node native addon at ${packagedPath}`);
+  }
+
   const repoRoot = findRepoRoot([__dirname, process.cwd(), app.getAppPath()]);
   const candidates = [
     path.join(repoRoot, "crates/quill-node/index.node"),
     path.resolve(__dirname, "../../crates/quill-node/index.node"),
-    path.join(process.resourcesPath ?? "", "quill-node/index.node"),
   ];
   for (const candidate of candidates) {
     if (candidate && fs.existsSync(candidate)) {

@@ -115,6 +115,56 @@ const bridge = {
     return ipcRenderer.invoke("quill:get-app-version");
   },
 
+  async checkForUpdate(): Promise<{ version: string; body?: string } | null> {
+    const res = (await ipcRenderer.invoke("quill:check-for-update")) as
+      | { ok: true; data: { version: string; body?: string } | null }
+      | { ok: false; error: string };
+    if (!res.ok) {
+      throw new Error(res.error);
+    }
+    return res.data;
+  },
+
+  async downloadUpdate(): Promise<void> {
+    const res = (await ipcRenderer.invoke("quill:download-update")) as
+      | { ok: true; data: null }
+      | { ok: false; error: string };
+    if (!res.ok) {
+      throw new Error(res.error);
+    }
+  },
+
+  onUpdateProgress(
+    handler: (event: {
+      event: "Started" | "Progress" | "Finished";
+      data: { contentLength?: number; chunkLength: number };
+    }) => void,
+  ): () => void {
+    const listener = (
+      _e: unknown,
+      event: {
+        event: "Started" | "Progress" | "Finished";
+        data: { contentLength?: number; chunkLength: number };
+      },
+    ) => {
+      handler(event);
+    };
+    ipcRenderer.on("quill:update-progress", listener);
+    return () => {
+      ipcRenderer.removeListener("quill:update-progress", listener);
+    };
+  },
+
+  async relaunch(): Promise<void> {
+    const res = (await ipcRenderer.invoke("quill:relaunch")) as
+      | { ok: true }
+      | { ok: false; error: string }
+      | undefined;
+    if (res && !res.ok) {
+      throw new Error(res.error);
+    }
+  },
+
   getPathForFile(file: File): string {
     return webUtils.getPathForFile(file);
   },

@@ -10,7 +10,9 @@ export default defineConfig({
   main: {
     build: {
       outDir: "out/main",
-      externalizeDeps: true,
+      externalizeDeps: {
+        include: ["electron-updater"],
+      },
       rollupOptions: {
         input: path.resolve(__dirname, "electron/main/index.ts"),
       },
