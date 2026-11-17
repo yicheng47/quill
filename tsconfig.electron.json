@@ -12,5 +12,5 @@
     "allowSyntheticDefaultImports": true,
     "noEmit": true
   },
-  "include": ["electron.vite.config.ts", "electron/**/*.ts"]
+  "include": ["electron.vite.config.ts", "electron-builder.ts", "electron/**/*.ts"]
 }

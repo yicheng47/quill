@@ -1,7 +1,7 @@
 {
   "name": "quill",
   "private": true,
-  "version": "1.3.4",
+  "version": "2.0.0",
   "type": "module",
   "main": "out/main/index.js",
   "scripts": {
@@ -11,11 +11,11 @@
     "build": "tsc && tsc -p tsconfig.electron.json && electron-vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "lint": "eslint src/ electron/",
+    "lint": "eslint src/ electron/ scripts/",
     "postinstall": "node -e \"if (require('fs').existsSync('node_modules/electron/install.js')) require('./node_modules/electron/install.js')\""
   },
   "dependencies": {
-    "@tailwindcss/vite": "^4.2.1",
+    "electron-updater": "6.8.11",
     "i18next": "^25.10.5",
     "lucide-react": "^0.577.0",
     "react": "^19.1.0",
@@ -23,21 +23,25 @@
     "react-i18next": "^16.6.2",
     "react-markdown": "^10.1.0",
     "react-router-dom": "^7.13.1",
-    "remark-gfm": "^4.0.1",
-    "tailwindcss": "^4.2.1"
+    "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
     "@napi-rs/cli": "3.10.12",
+    "@tailwindcss/vite": "^4.2.1",
+    "@types/js-yaml": "4.0.9",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^4.6.0",
     "electron": "45.3.3",
+    "electron-builder": "26.18.0",
     "electron-vite": "6.0.0",
     "eslint": "^9.39.4",
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.5.2",
+    "js-yaml": "4.1.1",
     "jsdom": "26.1.0",
+    "tailwindcss": "^4.2.1",
     "typescript": "~5.8.3",
     "typescript-eslint": "^8.56.1",
     "vite": "^7.0.4",

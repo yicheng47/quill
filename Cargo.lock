@@ -1771,7 +1771,7 @@ checksum = "e0c5ccf5294c6ccd63a74f1565028353830a9c2f5eb0c682c355c471726a6e3f"
 
 [[package]]
 name = "quill-core"
-version = "1.3.4"
+version = "2.0.0"
 dependencies = [
  "base64",
  "block2",
@@ -1805,7 +1805,7 @@ dependencies = [
 
 [[package]]
 name = "quill-mcp"
-version = "1.3.4"
+version = "2.0.0"
 dependencies = [
  "quill-core",
  "rusqlite",
@@ -1815,7 +1815,7 @@ dependencies = [
 
 [[package]]
 name = "quill-node"
-version = "1.3.4"
+version = "2.0.0"
 dependencies = [
  "log",
  "napi",

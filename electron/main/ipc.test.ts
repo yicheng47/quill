@@ -5,7 +5,7 @@ const state = vi.hoisted(() => ({
 }));
 
 vi.mock("electron", () => ({
-  app: { isPackaged: false, getVersion: () => "1.3.4", getAppPath: () => process.cwd() },
+  app: { isPackaged: false, getVersion: () => "2.0.0", getAppPath: () => process.cwd() },
   BrowserWindow: vi.fn(),
   dialog: { showOpenDialog: vi.fn() },
   ipcMain: { on: vi.fn(), handle: vi.fn() },

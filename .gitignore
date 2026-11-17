@@ -9,10 +9,13 @@ lerna-debug.log*
 
 node_modules
 dist
+dist-electron
 dist-ssr
 out
 *.node
 *.local
+build/embedded.provisionprofile
+*.provisionprofile
 
 # Editor directories and files
 .vscode/*
