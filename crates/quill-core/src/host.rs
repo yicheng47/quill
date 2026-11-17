@@ -134,6 +134,8 @@ pub fn boot(config: BootConfig, host: Arc<dyn ShellHost>) -> AppResult<Arc<Core>
     let mcp_notify_path = local_dir.join(".mcp-notify");
     mcp::notify::spawn_watcher(mcp_notify_path, Arc::clone(&host));
 
+    crate::commands::mcp::repair_legacy_mcp_configs(config.is_dev, &config.mcp_binary_path);
+
     let core = Arc::new(Core {
         local_dir: local_dir.clone(),
         log_dir: config.log_dir,
