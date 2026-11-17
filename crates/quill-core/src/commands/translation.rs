@@ -1,9 +1,8 @@
-use tauri::{AppHandle, Emitter, State};
+use std::sync::Arc;
 
 use crate::commands::ai::{AiStreamChunk, ChatMessage};
-use crate::db::Db;
 use crate::error::{AppError, AppResult};
-use crate::secrets::Secrets;
+use crate::host::Core;
 
 fn lang_display_name(code: &str) -> &str {
     match code {
@@ -37,21 +36,17 @@ fn configured_translation_language(
 
 /// Stream a translation from the AI provider. Translation results are ephemeral
 /// and are discarded when the frontend popover closes.
-#[allow(clippy::too_many_arguments)]
-#[tauri::command]
 pub async fn ai_translate_passage(
+    core: &Core,
     text: String,
     context: Option<String>,
     #[allow(unused_variables)]
     book_id: String,
     target_language: Option<String>,
     request_id: String,
-    app: AppHandle,
-    db: State<'_, Db>,
-    secrets: State<'_, Secrets>,
 ) -> AppResult<()> {
     let (target_lang, provider, model, base_url, keep_alive, auth_mode, effort) = {
-        let conn = db.reader();
+        let conn = core.db.reader();
         let get = |key: &str| -> Option<String> {
             conn.query_row(
                 "SELECT value FROM settings WHERE key = ?1",
@@ -78,10 +73,10 @@ pub async fn ai_translate_passage(
         )
     };
 
-    let api_key = secrets.get("ai_api_key").unwrap_or_default();
+    let api_key = core.secrets.get("ai_api_key").unwrap_or_default();
 
     let (api_key, oauth_account_id) = if auth_mode == "oauth" && provider == "openai" {
-        let (token, acct_id) = crate::ai::oauth::get_valid_token(&secrets).await?;
+        let (token, acct_id) = crate::ai::oauth::get_valid_token(&core.secrets).await?;
         (token, acct_id)
     } else {
         if api_key.is_empty() && provider != "ollama" {
@@ -125,30 +120,30 @@ pub async fn ai_translate_passage(
 
     let event_name = format!("ai-translate-chunk-{}", request_id);
     let use_responses_api = auth_mode == "oauth" && provider == "openai";
-    let app_clone = app.clone();
+    let host = Arc::clone(&core.host);
 
-    tauri::async_runtime::spawn(async move {
+    tokio::spawn(async move {
         let result = match provider.as_str() {
             "anthropic" => {
                 let url = base_url.unwrap_or_else(|| "https://api.anthropic.com".to_string());
-                crate::ai::anthropic::stream_chat(&app_clone, &url, &api_key, &model, 0.3, &messages, false, &event_name, None).await
+                crate::ai::anthropic::stream_chat(host.as_ref(), &url, &api_key, &model, 0.3, &messages, false, &event_name, None).await
             }
             _ if use_responses_api => {
                 let url = "https://chatgpt.com/backend-api/codex".to_string();
-                crate::ai::openai_responses::stream_chat(&app_clone, &url, &api_key, &model, &messages, oauth_account_id.as_deref(), effort.as_deref(), &event_name).await
+                crate::ai::openai_responses::stream_chat(host.as_ref(), &url, &api_key, &model, &messages, oauth_account_id.as_deref(), effort.as_deref(), &event_name).await
             }
             _ => {
                 let url = base_url.unwrap_or_else(|| "http://localhost:11434".to_string());
                 let ka = if provider == "ollama" { Some(keep_alive.clone()) } else { None };
-                crate::ai::openai_compat::stream_chat(&app_clone, &url, &api_key, &model, 0.3, &messages, ka.as_deref(), &event_name, None).await
+                crate::ai::openai_compat::stream_chat(host.as_ref(), &url, &api_key, &model, 0.3, &messages, ka.as_deref(), &event_name, None).await
             }
         };
         if let Err(e) = result {
-            let _ = app_clone.emit(&event_name, AiStreamChunk {
+            host.emit_json(&event_name, &AiStreamChunk {
                 delta: format!("Error: {}", e),
                 done: false,
             });
-            let _ = app_clone.emit(&event_name, AiStreamChunk {
+            host.emit_json(&event_name, &AiStreamChunk {
                 delta: String::new(),
                 done: true,
             });

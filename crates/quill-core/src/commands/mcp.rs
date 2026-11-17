@@ -28,14 +28,12 @@ use std::path::{Path, PathBuf};
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tauri::State;
 
-use crate::db::Db;
 use crate::error::{AppError, AppResult};
+use crate::host::Core;
 
 /// Snapshot returned to the settings UI. `binary_path` is the absolute
-/// path of *this* Quill binary — `current_exe()` at runtime — so the
-/// snippet always points at the build the user is actually running.
+/// path of the `quill-mcp` binary supplied via `BootConfig`.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct McpIntegrationStatus {
     pub claude_code: bool,
@@ -44,7 +42,7 @@ pub struct McpIntegrationStatus {
     pub binary_path: String,
 }
 
-/// Which client we're toggling. Kept as a string in the Tauri command
+/// Which client we're toggling. Kept as a string in the command
 /// signature so the frontend doesn't need to know an enum mapping;
 /// parsed into this enum internally.
 enum Client {
@@ -62,10 +60,6 @@ impl Client {
             ))),
         }
     }
-}
-
-fn current_binary_path() -> AppResult<PathBuf> {
-    std::env::current_exe().map_err(|e| AppError::Other(format!("resolve current_exe: {e}")))
 }
 
 fn home_dir() -> AppResult<PathBuf> {
@@ -222,10 +216,9 @@ pub(crate) fn codex_write_at(
     Ok(())
 }
 
-// --- Tauri commands -------------------------------------------------
+// --- Commands -------------------------------------------------------
 
-#[tauri::command]
-pub fn mcp_integration_status(db: State<'_, Db>) -> AppResult<McpIntegrationStatus> {
+pub fn mcp_integration_status(core: &Core) -> AppResult<McpIntegrationStatus> {
     let claude_code = claude_code_path()
         .and_then(|p| claude_code_is_enabled_at(&p))
         .unwrap_or(false);
@@ -233,7 +226,7 @@ pub fn mcp_integration_status(db: State<'_, Db>) -> AppResult<McpIntegrationStat
         .and_then(|p| codex_is_enabled_at(&p))
         .unwrap_or(false);
     let write_enabled = {
-        let conn = db.reader();
+        let conn = core.db.reader();
         conn.query_row(
             "SELECT value FROM settings WHERE key = 'mcp_write_enabled'",
             [],
@@ -246,22 +239,24 @@ pub fn mcp_integration_status(db: State<'_, Db>) -> AppResult<McpIntegrationStat
         claude_code,
         codex,
         write_enabled,
-        binary_path: current_binary_path()?.to_string_lossy().into_owned(),
+        binary_path: core.mcp_binary_path.to_string_lossy().into_owned(),
     })
 }
 
-#[tauri::command]
-pub fn mcp_set_integration(client: String, enabled: bool) -> AppResult<()> {
-    let bin = current_binary_path()?.to_string_lossy().into_owned();
+pub fn mcp_set_integration(core: &Core, client: String, enabled: bool) -> AppResult<()> {
+    let bin = core.mcp_binary_path.to_string_lossy().into_owned();
     match Client::parse(&client)? {
         Client::ClaudeCode => claude_code_write_at(&claude_code_path()?, enabled, &bin),
         Client::Codex => codex_write_at(&codex_path()?, enabled, &bin),
     }
 }
 
-#[tauri::command]
-pub fn mcp_set_write_access(enabled: bool, db: State<'_, Db>) -> AppResult<()> {
-    let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
+pub fn mcp_set_write_access(core: &Core, enabled: bool) -> AppResult<()> {
+    let conn = core
+        .db
+        .conn
+        .lock()
+        .map_err(|e| AppError::Other(e.to_string()))?;
     conn.execute(
         "INSERT INTO settings (key, value) VALUES ('mcp_write_enabled', ?1)
          ON CONFLICT(key) DO UPDATE SET value = ?1",
@@ -270,9 +265,8 @@ pub fn mcp_set_write_access(enabled: bool, db: State<'_, Db>) -> AppResult<()> {
     Ok(())
 }
 
-#[tauri::command]
-pub fn mcp_config_snippet() -> AppResult<String> {
-    let bin = current_binary_path()?.to_string_lossy().into_owned();
+pub fn mcp_config_snippet(core: &Core) -> AppResult<String> {
+    let bin = core.mcp_binary_path.to_string_lossy().into_owned();
     let snippet = json!({
         "mcpServers": {
             "quill": { "command": bin, "args": ["mcp"] }

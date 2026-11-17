@@ -1,11 +1,10 @@
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
-use tauri::State;
 
 use crate::db::Db;
 use crate::error::AppResult;
+use crate::host::Core;
 use crate::sync::events::{BookmarkPayload, EventBody, HighlightPayload};
-use crate::sync::writer::SyncWriter;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Bookmark {
@@ -29,13 +28,11 @@ pub struct Highlight {
     pub updated_at: i64,
 }
 
-#[tauri::command]
 pub fn add_bookmark(
+    core: &Core,
     book_id: String,
     cfi: String,
     label: Option<String>,
-    db: State<'_, Db>,
-    sync: State<'_, SyncWriter>,
 ) -> AppResult<Bookmark> {
     let id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().timestamp_millis();
@@ -49,7 +46,7 @@ pub fn add_bookmark(
         updated_at: now,
     };
 
-    sync.with_tx(&db, now, |tx, events| {
+    core.sync_writer.with_tx(&core.db, now, |tx, events| {
         tx.execute(
             "INSERT INTO bookmarks (id, book_id, cfi, label, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
             params![id, book_id, cfi, label, now],
@@ -66,21 +63,16 @@ pub fn add_bookmark(
     Ok(bookmark)
 }
 
-#[tauri::command]
-pub fn remove_bookmark(
-    id: String,
-    db: State<'_, Db>,
-    sync: State<'_, SyncWriter>,
-) -> AppResult<()> {
+pub fn remove_bookmark(core: &Core, id: String) -> AppResult<()> {
     let now = chrono::Utc::now().timestamp_millis();
-    sync.with_tx(&db, now, |tx, events| {
+    core.sync_writer.with_tx(&core.db, now, |tx, events| {
         tx.execute("DELETE FROM bookmarks WHERE id = ?1", params![id])?;
         events.push(EventBody::BookmarkDelete { id: id.clone() });
         Ok(())
     })
 }
 
-/// Shared query helper. Same shape as `list_bookmarks` — both the Tauri
+/// Shared query helper. Same shape as `list_bookmarks` — both the app
 /// command and the MCP `get_bookmarks` tool call this so the column
 /// list lives in exactly one place.
 pub(crate) fn query_bookmarks(db: &Db, book_id: &str) -> AppResult<Vec<Bookmark>> {
@@ -103,20 +95,17 @@ pub(crate) fn query_bookmarks(db: &Db, book_id: &str) -> AppResult<Vec<Bookmark>
     Ok(bookmarks)
 }
 
-#[tauri::command]
-pub fn list_bookmarks(book_id: String, db: State<'_, Db>) -> AppResult<Vec<Bookmark>> {
-    query_bookmarks(&db, &book_id)
+pub fn list_bookmarks(core: &Core, book_id: String) -> AppResult<Vec<Bookmark>> {
+    query_bookmarks(&core.db, &book_id)
 }
 
-#[tauri::command]
 pub fn add_highlight(
+    core: &Core,
     book_id: String,
     cfi_range: String,
     color: Option<String>,
     note: Option<String>,
     text_content: Option<String>,
-    db: State<'_, Db>,
-    sync: State<'_, SyncWriter>,
 ) -> AppResult<Highlight> {
     let id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().timestamp_millis();
@@ -135,8 +124,8 @@ pub fn add_highlight(
         updated_at: now,
     };
 
-    let device = sync.self_device().to_string();
-    sync.with_tx(&db, now, |tx, events| {
+    let device = core.sync_writer.self_device().to_string();
+    core.sync_writer.with_tx(&core.db, now, |tx, events| {
         tx.execute(
             "INSERT INTO highlights (id, book_id, cfi_range, color, note, text_content, created_at, updated_at, updated_by_device)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7, ?8)",
@@ -156,14 +145,9 @@ pub fn add_highlight(
     Ok(highlight)
 }
 
-#[tauri::command]
-pub fn remove_highlight(
-    id: String,
-    db: State<'_, Db>,
-    sync: State<'_, SyncWriter>,
-) -> AppResult<()> {
+pub fn remove_highlight(core: &Core, id: String) -> AppResult<()> {
     let now = chrono::Utc::now().timestamp_millis();
-    sync.with_tx(&db, now, |tx, events| {
+    core.sync_writer.with_tx(&core.db, now, |tx, events| {
         tx.execute("DELETE FROM highlights WHERE id = ?1", params![id])?;
         events.push(EventBody::HighlightDelete { id: id.clone() });
         Ok(())
@@ -194,21 +178,14 @@ pub(crate) fn query_highlights(db: &Db, book_id: &str) -> AppResult<Vec<Highligh
     Ok(highlights)
 }
 
-#[tauri::command]
-pub fn list_highlights(book_id: String, db: State<'_, Db>) -> AppResult<Vec<Highlight>> {
-    query_highlights(&db, &book_id)
+pub fn list_highlights(core: &Core, book_id: String) -> AppResult<Vec<Highlight>> {
+    query_highlights(&core.db, &book_id)
 }
 
-#[tauri::command]
-pub fn update_highlight_note(
-    id: String,
-    note: String,
-    db: State<'_, Db>,
-    sync: State<'_, SyncWriter>,
-) -> AppResult<()> {
+pub fn update_highlight_note(core: &Core, id: String, note: String) -> AppResult<()> {
     let now = chrono::Utc::now().timestamp_millis();
-    let device = sync.self_device().to_string();
-    sync.with_tx(&db, now, |tx, events| {
+    let device = core.sync_writer.self_device().to_string();
+    core.sync_writer.with_tx(&core.db, now, |tx, events| {
         tx.execute(
             "UPDATE highlights SET note = ?1, updated_at = ?2, updated_by_device = ?3 WHERE id = ?4",
             params![note, now, device, id],
@@ -221,16 +198,10 @@ pub fn update_highlight_note(
     })
 }
 
-#[tauri::command]
-pub fn update_highlight_color(
-    id: String,
-    color: String,
-    db: State<'_, Db>,
-    sync: State<'_, SyncWriter>,
-) -> AppResult<()> {
+pub fn update_highlight_color(core: &Core, id: String, color: String) -> AppResult<()> {
     let now = chrono::Utc::now().timestamp_millis();
-    let device = sync.self_device().to_string();
-    sync.with_tx(&db, now, |tx, events| {
+    let device = core.sync_writer.self_device().to_string();
+    core.sync_writer.with_tx(&core.db, now, |tx, events| {
         tx.execute(
             "UPDATE highlights SET color = ?1, updated_at = ?2, updated_by_device = ?3 WHERE id = ?4",
             params![color, now, device, id],

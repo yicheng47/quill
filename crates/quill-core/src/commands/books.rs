@@ -7,11 +7,11 @@ use image::ImageFormat;
 use pdfium_render::prelude::*;
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
-use tauri::State;
 
 use crate::db::Db;
 use crate::epub;
 use crate::error::{AppError, AppResult};
+use crate::host::Core;
 use crate::icloud;
 use crate::pdfium;
 use crate::sync::events::{BookImportPayload, EventBody};
@@ -391,12 +391,7 @@ fn do_insert_book(book: &Book, cover_bytes: Option<&[u8]>, db: &Db, sync: &SyncW
     Ok(())
 }
 
-#[tauri::command]
-pub async fn import_book(
-    file_path: String,
-    db: State<'_, Db>,
-    sync: State<'_, SyncWriter>,
-) -> AppResult<Book> {
+pub fn import_book(core: &Core, file_path: String) -> AppResult<Book> {
     let ext = file_path
         .rsplit('.')
         .next()
@@ -404,10 +399,10 @@ pub async fn import_book(
         .to_lowercase();
     log::info!("import_book: start file={file_path} format={ext}");
     let mut book = match ext.as_str() {
-        "pdf" => do_import_pdf(&file_path, &db, &sync)?,
-        _ => do_import_epub(&file_path, &db, &sync)?,
+        "pdf" => do_import_pdf(&file_path, &core.db, &core.sync_writer)?,
+        _ => do_import_epub(&file_path, &core.db, &core.sync_writer)?,
     };
-    resolve_book_paths(&mut book, &db);
+    resolve_book_paths(&mut book, &core.db);
     Ok(book)
 }
 
@@ -687,18 +682,17 @@ pub(crate) fn query_books_lite(
 
 const DEFAULT_PAGE_SIZE: usize = 20;
 
-#[tauri::command]
 pub fn list_books(
+    core: &Core,
     filter: Option<String>,
     search: Option<String>,
     collection_id: Option<String>,
     cursor: Option<String>,
     limit: Option<usize>,
-    db: State<'_, Db>,
 ) -> AppResult<BookPage> {
     let page_size = limit.unwrap_or(DEFAULT_PAGE_SIZE);
     let mut page = query_books(
-        &db,
+        &core.db,
         filter.as_deref(),
         search.as_deref(),
         collection_id.as_deref(),
@@ -706,7 +700,7 @@ pub fn list_books(
         page_size,
     )?;
     for book in &mut page.books {
-        resolve_book_paths(book, &db);
+        resolve_book_paths(book, &core.db);
     }
     Ok(page)
 }
@@ -718,9 +712,8 @@ pub struct BookCounts {
     pub finished: usize,
 }
 
-#[tauri::command]
-pub fn get_book_counts(db: State<'_, Db>) -> AppResult<BookCounts> {
-    let conn = db.reader();
+pub fn get_book_counts(core: &Core) -> AppResult<BookCounts> {
+    let conn = core.db.reader();
     let all: usize = conn.query_row("SELECT COUNT(*) FROM books", [], |r| r.get(0))?;
     let reading: usize = conn.query_row(
         "SELECT COUNT(*) FROM books WHERE status = 'reading'", [], |r| r.get(0),
@@ -731,24 +724,22 @@ pub fn get_book_counts(db: State<'_, Db>) -> AppResult<BookCounts> {
     Ok(BookCounts { all, reading, finished })
 }
 
-#[tauri::command]
-pub fn get_book(id: String, db: State<'_, Db>) -> AppResult<Book> {
-    let mut book = query_book(&db, &id)?;
-    resolve_book_paths(&mut book, &db);
+pub fn get_book(core: &Core, id: String) -> AppResult<Book> {
+    let mut book = query_book(&core.db, &id)?;
+    resolve_book_paths(&mut book, &core.db);
     Ok(book)
 }
 
 /// Check if a book's file is locally available and trigger iCloud download if not.
-#[tauri::command]
-pub fn check_book_available(id: String, db: State<'_, Db>) -> AppResult<bool> {
-    let conn = db.reader();
+pub fn check_book_available(core: &Core, id: String) -> AppResult<bool> {
+    let conn = core.db.reader();
     let file_path: String = conn.query_row(
         "SELECT file_path FROM books WHERE id = ?1",
         params![id],
         |row| row.get(0),
     )?;
 
-    let abs_path = db.resolve_path(&file_path);
+    let abs_path = core.db.resolve_path(&file_path);
     let available = icloud::is_file_downloaded(&abs_path);
 
     if !available {
@@ -761,16 +752,15 @@ pub fn check_book_available(id: String, db: State<'_, Db>) -> AppResult<bool> {
 /// Probe whether a book's file contents can actually be read. Used by
 /// the reader after a load failure to distinguish a broken book from
 /// broken iCloud sync; nudges iCloud to re-download when unreadable.
-#[tauri::command]
-pub fn check_book_readable(id: String, db: State<'_, Db>) -> AppResult<bool> {
-    let conn = db.reader();
+pub fn check_book_readable(core: &Core, id: String) -> AppResult<bool> {
+    let conn = core.db.reader();
     let file_path: String = conn.query_row(
         "SELECT file_path FROM books WHERE id = ?1",
         params![id],
         |row| row.get(0),
     )?;
 
-    let abs_path = db.resolve_path(&file_path);
+    let abs_path = core.db.resolve_path(&file_path);
     let readable = icloud::is_file_readable(&abs_path);
 
     if !readable {
@@ -817,32 +807,25 @@ pub(crate) fn do_delete_book(id: &str, db: &Db, sync: &SyncWriter) -> AppResult<
     Ok(())
 }
 
-#[tauri::command]
-pub fn delete_book(
-    id: String,
-    db: State<'_, Db>,
-    sync: State<'_, SyncWriter>,
-) -> AppResult<()> {
-    do_delete_book(&id, &db, &sync)
+pub fn delete_book(core: &Core, id: String) -> AppResult<()> {
+    do_delete_book(&id, &core.db, &core.sync_writer)
 }
 
-#[tauri::command]
 pub fn update_reading_progress(
+    core: &Core,
     id: String,
     progress: i32,
     cfi: Option<String>,
-    db: State<'_, Db>,
-    sync: State<'_, SyncWriter>,
 ) -> AppResult<()> {
     let now = chrono::Utc::now().timestamp_millis();
-    let device = sync.self_device().to_string();
+    let device = core.sync_writer.self_device().to_string();
     // Page-turn rate is dominated by this command; gate the event push on
     // the per-book throttle so a reading session doesn't balloon the log.
     // The SQL write always lands so the local UI stays current — only the
     // event publication is coalesced. Semantic transitions like
     // `mark_finished` deliberately do NOT consult the throttle.
-    let emit = sync.should_emit_progress(&id);
-    sync.with_tx(&db, now, |tx, events| {
+    let emit = core.sync_writer.should_emit_progress(&id);
+    core.sync_writer.with_tx(&core.db, now, |tx, events| {
         tx.execute(
             "UPDATE books SET progress = ?1, current_cfi = ?2, updated_at = ?3, updated_by_device = ?4 WHERE id = ?5",
             params![progress, cfi, now, device, id],
@@ -858,11 +841,10 @@ pub fn update_reading_progress(
     })
 }
 
-#[tauri::command]
-pub fn update_book_pages(id: String, pages: i32, db: State<'_, Db>) -> AppResult<()> {
+pub fn update_book_pages(core: &Core, id: String, pages: i32) -> AppResult<()> {
     // Local-only — `pages` is derived from the book file on this device and
     // not part of the sync contract. Plain DB write, no SyncWriter.
-    let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
+    let conn = core.db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
     conn.execute(
         "UPDATE books SET pages = ?1 WHERE id = ?2",
         params![pages, id],
@@ -870,15 +852,10 @@ pub fn update_book_pages(id: String, pages: i32, db: State<'_, Db>) -> AppResult
     Ok(())
 }
 
-#[tauri::command]
-pub fn mark_finished(
-    id: String,
-    db: State<'_, Db>,
-    sync: State<'_, SyncWriter>,
-) -> AppResult<()> {
+pub fn mark_finished(core: &Core, id: String) -> AppResult<()> {
     let now = chrono::Utc::now().timestamp_millis();
-    let device = sync.self_device().to_string();
-    sync.with_tx(&db, now, |tx, events| {
+    let device = core.sync_writer.self_device().to_string();
+    core.sync_writer.with_tx(&core.db, now, |tx, events| {
         // Read the current cfi BEFORE the UPDATE so the synthesized
         // `book.progress.set` carries the resume position the local row
         // keeps. Local SQL doesn't touch `current_cfi` here, so emitting
@@ -974,26 +951,26 @@ pub(crate) fn do_update_book(
     query_book(db, id)
 }
 
-#[tauri::command]
-pub fn update_book_status(
-    id: String,
-    status: String,
-    db: State<'_, Db>,
-    sync: State<'_, SyncWriter>,
-) -> AppResult<()> {
-    do_update_book(&id, None, None, None, Some(&status), &db, &sync)?;
+pub fn update_book_status(core: &Core, id: String, status: String) -> AppResult<()> {
+    do_update_book(&id, None, None, None, Some(&status), &core.db, &core.sync_writer)?;
     Ok(())
 }
 
-#[tauri::command]
 pub fn update_book_metadata(
+    core: &Core,
     id: String,
     title: String,
     author: String,
-    db: State<'_, Db>,
-    sync: State<'_, SyncWriter>,
 ) -> AppResult<()> {
-    do_update_book(&id, Some(&title), Some(&author), None, None, &db, &sync)?;
+    do_update_book(
+        &id,
+        Some(&title),
+        Some(&author),
+        None,
+        None,
+        &core.db,
+        &core.sync_writer,
+    )?;
     Ok(())
 }
 

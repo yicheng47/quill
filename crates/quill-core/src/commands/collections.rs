@@ -1,9 +1,9 @@
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
-use tauri::State;
 
 use crate::db::Db;
 use crate::error::AppResult;
+use crate::host::Core;
 use crate::sync::events::EventBody;
 use crate::sync::writer::SyncWriter;
 
@@ -41,9 +41,8 @@ pub(crate) fn query_collections(db: &Db) -> AppResult<Vec<Collection>> {
     Ok(collections)
 }
 
-#[tauri::command]
-pub fn list_collections(db: State<'_, Db>) -> AppResult<Vec<Collection>> {
-    query_collections(&db)
+pub fn list_collections(core: &Core) -> AppResult<Vec<Collection>> {
+    query_collections(&core.db)
 }
 
 pub(crate) fn do_create_collection(
@@ -84,13 +83,8 @@ pub(crate) fn do_create_collection(
     })
 }
 
-#[tauri::command]
-pub fn create_collection(
-    name: String,
-    db: State<'_, Db>,
-    sync: State<'_, SyncWriter>,
-) -> AppResult<Collection> {
-    do_create_collection(&name, &db, &sync)
+pub fn create_collection(core: &Core, name: String) -> AppResult<Collection> {
+    do_create_collection(&name, &core.db, &core.sync_writer)
 }
 
 pub(crate) fn do_rename_collection(
@@ -114,14 +108,8 @@ pub(crate) fn do_rename_collection(
     })
 }
 
-#[tauri::command]
-pub fn rename_collection(
-    id: String,
-    name: String,
-    db: State<'_, Db>,
-    sync: State<'_, SyncWriter>,
-) -> AppResult<()> {
-    do_rename_collection(&id, &name, &db, &sync)
+pub fn rename_collection(core: &Core, id: String, name: String) -> AppResult<()> {
+    do_rename_collection(&id, &name, &core.db, &core.sync_writer)
 }
 
 pub(crate) fn do_delete_collection(id: &str, db: &Db, sync: &SyncWriter) -> AppResult<()> {
@@ -139,24 +127,14 @@ pub(crate) fn do_delete_collection(id: &str, db: &Db, sync: &SyncWriter) -> AppR
     })
 }
 
-#[tauri::command]
-pub fn delete_collection(
-    id: String,
-    db: State<'_, Db>,
-    sync: State<'_, SyncWriter>,
-) -> AppResult<()> {
-    do_delete_collection(&id, &db, &sync)
+pub fn delete_collection(core: &Core, id: String) -> AppResult<()> {
+    do_delete_collection(&id, &core.db, &core.sync_writer)
 }
 
-#[tauri::command]
-pub fn reorder_collections(
-    ids: Vec<String>,
-    db: State<'_, Db>,
-    sync: State<'_, SyncWriter>,
-) -> AppResult<()> {
+pub fn reorder_collections(core: &Core, ids: Vec<String>) -> AppResult<()> {
     let now = chrono::Utc::now().timestamp_millis();
-    let device = sync.self_device().to_string();
-    sync.with_tx(&db, now, |tx, events| {
+    let device = core.sync_writer.self_device().to_string();
+    core.sync_writer.with_tx(&core.db, now, |tx, events| {
         for (i, id) in ids.iter().enumerate() {
             let sort_order = i as i32;
             tx.execute(
@@ -193,14 +171,12 @@ pub(crate) fn do_add_book_to_collection(
     })
 }
 
-#[tauri::command]
 pub fn add_book_to_collection(
+    core: &Core,
     collection_id: String,
     book_id: String,
-    db: State<'_, Db>,
-    sync: State<'_, SyncWriter>,
 ) -> AppResult<()> {
-    do_add_book_to_collection(&collection_id, &book_id, &db, &sync)
+    do_add_book_to_collection(&collection_id, &book_id, &core.db, &core.sync_writer)
 }
 
 pub(crate) fn do_remove_book_from_collection(
@@ -223,22 +199,16 @@ pub(crate) fn do_remove_book_from_collection(
     })
 }
 
-#[tauri::command]
 pub fn remove_book_from_collection(
+    core: &Core,
     collection_id: String,
     book_id: String,
-    db: State<'_, Db>,
-    sync: State<'_, SyncWriter>,
 ) -> AppResult<()> {
-    do_remove_book_from_collection(&collection_id, &book_id, &db, &sync)
+    do_remove_book_from_collection(&collection_id, &book_id, &core.db, &core.sync_writer)
 }
 
-#[tauri::command]
-pub fn list_books_in_collection(
-    collection_id: String,
-    db: State<'_, Db>,
-) -> AppResult<Vec<String>> {
-    let conn = db.reader();
+pub fn list_books_in_collection(core: &Core, collection_id: String) -> AppResult<Vec<String>> {
+    let conn = core.db.reader();
     let mut stmt = conn.prepare(
         "SELECT book_id FROM collection_books WHERE collection_id = ?1",
     )?;

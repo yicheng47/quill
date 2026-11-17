@@ -33,7 +33,7 @@ pub struct OAuthStatus {
 }
 
 #[derive(Debug, Deserialize)]
-pub(crate) struct TokenResponse {
+pub struct TokenResponse {
     pub access_token: String,
     pub refresh_token: Option<String>,
     pub expires_in: Option<u64>,

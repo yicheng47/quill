@@ -1,11 +1,10 @@
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
-use tauri::State;
 
 use crate::db::Db;
 use crate::error::AppResult;
+use crate::host::Core;
 use crate::sync::events::{EventBody, VocabPayload};
-use crate::sync::writer::SyncWriter;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct VocabWord {
@@ -72,21 +71,18 @@ fn row_to_vocab_with_book(row: &rusqlite::Row) -> rusqlite::Result<VocabWord> {
 
 const SELECT_COLS: &str = "id, book_id, word, definition, context_sentence, cfi, mastery, review_count, next_review_at, created_at, updated_at, context_explanation";
 
-#[tauri::command]
-#[allow(clippy::too_many_arguments)]
 pub fn add_vocab_word(
+    core: &Core,
     book_id: String,
     word: String,
     definition: String,
     context_sentence: Option<String>,
     context_explanation: Option<String>,
     cfi: Option<String>,
-    db: State<'_, Db>,
-    sync: State<'_, SyncWriter>,
 ) -> AppResult<VocabWord> {
     let id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().timestamp_millis();
-    let device = sync.self_device().to_string();
+    let device = core.sync_writer.self_device().to_string();
 
     log::debug!("vocab: add_vocab_word book_id={book_id} word={word:?}");
 
@@ -95,7 +91,7 @@ pub fn add_vocab_word(
     // unique index on (book_id, word) — the conn mutex serializes the
     // whole tx, so the second writer's check sees the first writer's
     // committed row.
-    let vocab = sync.with_tx(&db, now, |tx, events| {
+    let vocab = core.sync_writer.with_tx(&core.db, now, |tx, events| {
         let existing: Option<VocabWord> = {
             let mut stmt = tx.prepare(&format!(
                 "SELECT {} FROM vocab_words WHERE book_id = ?1 AND word = ?2 COLLATE NOCASE LIMIT 1",
@@ -151,14 +147,9 @@ pub fn add_vocab_word(
     Ok(vocab)
 }
 
-#[tauri::command]
-pub fn remove_vocab_word(
-    id: String,
-    db: State<'_, Db>,
-    sync: State<'_, SyncWriter>,
-) -> AppResult<()> {
+pub fn remove_vocab_word(core: &Core, id: String) -> AppResult<()> {
     let now = chrono::Utc::now().timestamp_millis();
-    sync.with_tx(&db, now, |tx, events| {
+    core.sync_writer.with_tx(&core.db, now, |tx, events| {
         tx.execute("DELETE FROM vocab_words WHERE id = ?1", params![id])?;
         events.push(EventBody::VocabDelete { id: id.clone() });
         Ok(())
@@ -177,18 +168,12 @@ pub(crate) fn query_vocab_words(db: &Db, book_id: &str) -> AppResult<Vec<VocabWo
     Ok(words)
 }
 
-#[tauri::command]
-pub fn list_vocab_words(book_id: String, db: State<'_, Db>) -> AppResult<Vec<VocabWord>> {
-    query_vocab_words(&db, &book_id)
+pub fn list_vocab_words(core: &Core, book_id: String) -> AppResult<Vec<VocabWord>> {
+    query_vocab_words(&core.db, &book_id)
 }
 
-#[tauri::command]
-pub fn check_vocab_exists(
-    book_id: String,
-    word: String,
-    db: State<'_, Db>,
-) -> AppResult<Option<String>> {
-    let conn = db.reader();
+pub fn check_vocab_exists(core: &Core, book_id: String, word: String) -> AppResult<Option<String>> {
+    let conn = core.db.reader();
     let mut stmt = conn.prepare(
         "SELECT id FROM vocab_words WHERE book_id = ?1 AND word = ?2 COLLATE NOCASE LIMIT 1",
     )?;
@@ -199,9 +184,8 @@ pub fn check_vocab_exists(
     Ok(id)
 }
 
-#[tauri::command]
-pub fn list_all_vocab_words(db: State<'_, Db>) -> AppResult<Vec<VocabWord>> {
-    let conn = db.reader();
+pub fn list_all_vocab_words(core: &Core) -> AppResult<Vec<VocabWord>> {
+    let conn = core.db.reader();
     let mut stmt = conn.prepare(
         "SELECT v.id, v.book_id, v.word, v.definition, v.context_sentence, v.cfi, v.mastery, v.review_count, v.next_review_at, v.created_at, v.updated_at, v.context_explanation, b.title FROM vocab_words v LEFT JOIN books b ON v.book_id = b.id ORDER BY v.created_at DESC"
     )?;
@@ -211,17 +195,15 @@ pub fn list_all_vocab_words(db: State<'_, Db>) -> AppResult<Vec<VocabWord>> {
     Ok(words)
 }
 
-#[tauri::command]
 pub fn update_vocab_mastery(
+    core: &Core,
     id: String,
     mastery: String,
     next_review_at: Option<i64>,
-    db: State<'_, Db>,
-    sync: State<'_, SyncWriter>,
 ) -> AppResult<()> {
     let now = chrono::Utc::now().timestamp_millis();
-    let device = sync.self_device().to_string();
-    sync.with_tx(&db, now, |tx, events| {
+    let device = core.sync_writer.self_device().to_string();
+    core.sync_writer.with_tx(&core.db, now, |tx, events| {
         tx.execute(
             "UPDATE vocab_words SET mastery = ?1, next_review_at = ?2, review_count = review_count + 1, updated_at = ?3, updated_by_device = ?4 WHERE id = ?5",
             params![mastery, next_review_at, now, device, id],
@@ -259,9 +241,8 @@ pub(crate) fn query_vocab_due(db: &Db) -> AppResult<Vec<VocabWord>> {
     Ok(words)
 }
 
-#[tauri::command]
-pub fn list_vocab_due_for_review(db: State<'_, Db>) -> AppResult<Vec<VocabWord>> {
-    query_vocab_due(&db)
+pub fn list_vocab_due_for_review(core: &Core) -> AppResult<Vec<VocabWord>> {
+    query_vocab_due(&core.db)
 }
 
 pub(crate) fn query_vocab_stats(db: &Db) -> AppResult<VocabStats> {
@@ -297,7 +278,6 @@ pub(crate) fn query_vocab_stats(db: &Db) -> AppResult<VocabStats> {
     })
 }
 
-#[tauri::command]
-pub fn get_vocab_stats(db: State<'_, Db>) -> AppResult<VocabStats> {
-    query_vocab_stats(&db)
+pub fn get_vocab_stats(core: &Core) -> AppResult<VocabStats> {
+    query_vocab_stats(&core.db)
 }

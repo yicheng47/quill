@@ -4,8 +4,8 @@ use std::ptr::NonNull;
 use std::{cell::RefCell, collections::HashMap};
 
 #[cfg(target_os = "macos")]
-use crate::error::AppError;
-use crate::error::AppResult;
+use quill_core::error::AppError;
+use quill_core::error::AppResult;
 #[cfg(target_os = "macos")]
 use block2::RcBlock;
 #[cfg(target_os = "macos")]

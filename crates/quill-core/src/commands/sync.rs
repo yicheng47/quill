@@ -15,20 +15,18 @@ use std::time::{Duration, Instant};
 
 use rusqlite::params;
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, State};
 
 use crate::db::Db;
 use crate::error::{AppError, AppResult};
+use crate::host::{Core, ShellHost};
 use crate::icloud;
-use crate::sync::device::DeviceIdentity;
+use crate::sync;
 use crate::sync::log::EventLog;
 use crate::sync::peers;
 use crate::sync::replay::{self as replay, ReplayEngine, ReplayReport};
 use crate::sync::snapshot::{self, CompactReport, Snapshot};
 // `Snapshot` is referenced from the `publish_bootstrap_snapshot` helper.
 use crate::sync::watcher::{self, WatcherHandle};
-use crate::sync::writer::SyncWriter;
-use crate::{sync, LocalDir};
 
 #[cfg(not(test))]
 const DISABLE_COPY_PLACEHOLDER_TIMEOUT: Duration = Duration::from_secs(120);
@@ -160,17 +158,11 @@ impl From<CompactReport> for SyncCompactResult {
     }
 }
 
-#[tauri::command]
-pub async fn sync_status(
-    local: State<'_, LocalDir>,
-    db: State<'_, Db>,
-    device: State<'_, DeviceIdentity>,
-    sync_state: State<'_, SyncState>,
-) -> AppResult<SyncStatus> {
-    let local_dir = local.0.clone();
-    let db = db.inner().clone();
-    let device_uuid = device.device_uuid.clone();
-    let enabled = sync_state.engine_snapshot()?.is_some();
+pub async fn sync_status(core: &Core) -> AppResult<SyncStatus> {
+    let local_dir = core.local_dir.clone();
+    let db = core.db.clone();
+    let device_uuid = core.device.device_uuid.clone();
+    let enabled = core.sync_state.engine_snapshot()?.is_some();
 
     tokio::task::spawn_blocking(move || {
         let sync_enabled = sync::migration::is_sync_enabled(&local_dir);
@@ -224,17 +216,9 @@ pub async fn sync_status(
     .map_err(|e| AppError::Other(format!("sync_status worker failed: {e}")))?
 }
 
-#[tauri::command]
-pub fn sync_enable(
-    app: tauri::AppHandle,
-    local: State<'_, LocalDir>,
-    db: State<'_, Db>,
-    device: State<'_, DeviceIdentity>,
-    sync_writer: State<'_, SyncWriter>,
-    sync_state: State<'_, SyncState>,
-) -> AppResult<()> {
+pub fn sync_enable(core: &Core) -> AppResult<()> {
     // Idempotent — already on means already on.
-    if sync_state.engine_snapshot()?.is_some() {
+    if core.sync_state.engine_snapshot()?.is_some() {
         return Ok(());
     }
 
@@ -261,23 +245,23 @@ pub fn sync_enable(
     // from "sync was never enabled." Still rolled back on failure below.
     let log_path = icloud_dir
         .join("logs")
-        .join(format!("{}.jsonl", device.device_uuid));
-    let log = Arc::new(EventLog::open(&log_path, &device.device_uuid, true)?);
+        .join(format!("{}.jsonl", core.device.device_uuid));
+    let log = Arc::new(EventLog::open(&log_path, &core.device.device_uuid, true)?);
 
     let engine = Arc::new(
         ReplayEngine::new(
             icloud_dir.clone(),
-            device.device_uuid.clone(),
+            core.device.device_uuid.clone(),
             Arc::clone(&log),
         )
-        .with_app_handle(app.clone()),
+        .with_host(Arc::clone(&core.host)),
     );
 
     // Watcher spawn is the most likely failure point — do it before
     // any durable write. If it fails, we abort cleanly; the log file
     // creation above is orphaned but harmless.
     let watcher_handle =
-        watcher::spawn(icloud_dir.clone(), db.inner().clone(), Arc::clone(&engine))?;
+        watcher::spawn(icloud_dir.clone(), core.db.clone(), Arc::clone(&engine))?;
 
     // ---- Phase 2: durable-state commit ----
     // Order is load-bearing: small idempotent files first, then the
@@ -298,21 +282,26 @@ pub fn sync_enable(
     // every iCloud-side write between the move and the data_dir
     // update was a potential data-loss path.
 
-    publish_bootstrap_snapshot_unless_rebuild_pending(&db, &icloud_dir, &device.device_uuid)?;
+    publish_bootstrap_snapshot_unless_rebuild_pending(
+        &core.db,
+        &icloud_dir,
+        &core.device.device_uuid,
+    )?;
 
     peers::write_own_manifest(
         &icloud_dir,
-        &device.device_uuid,
+        &core.device.device_uuid,
         &peers::device_name(),
         peers::current_platform(),
         env!("CARGO_PKG_VERSION"),
         chrono::Utc::now().timestamp_millis(),
     )?;
 
-    sync::migration::write_sync_settings(&local.0, Some(&icloud_dir))?;
+    sync::migration::write_sync_settings(&core.local_dir, Some(&icloud_dir))?;
 
     {
-        let mut data_dir = db
+        let mut data_dir = core
+            .db
             .data_dir
             .lock()
             .map_err(|e| AppError::Other(format!("data_dir mutex: {e}")))?;
@@ -325,7 +314,7 @@ pub fn sync_enable(
     // completes — we don't want to publish to peers before our
     // binaries are visible to them. If the move fails, this leaves
     // the writer in queue-only mode (correct for the partial state).
-    sync_writer.set_should_queue(true);
+    core.sync_writer.set_should_queue(true);
 
     // First-time enable: move local binaries into the ubiquity container
     // so peers can read them. Re-enable after a disable just shuffles
@@ -341,25 +330,27 @@ pub fn sync_enable(
     // Launch-time `reconcile_local_blobs_to_ubiquity` still backstops
     // restart recovery; this fix gives the user a working in-session
     // retry too. PR #190's seventh review pass.
-    move_dir_contents(&local.0.join("books"), &icloud_dir.join("books"))?;
-    move_dir_contents(&local.0.join("covers"), &icloud_dir.join("covers"))?;
+    move_dir_contents(&core.local_dir.join("books"), &icloud_dir.join("books"))?;
+    move_dir_contents(&core.local_dir.join("covers"), &icloud_dir.join("covers"))?;
 
     // Move succeeded — wire the log so post-commit flushes drain to
     // peers, and store the engine + watcher in app state so the rest
     // of the app sees sync as on.
-    sync_writer.set_log(Some(Arc::clone(&log)));
-    sync_writer.spawn_cover_writer();
-    sync_writer.spawn_flush_worker(db.inner().clone(), Arc::clone(&log));
-    sync_writer.backfill_cover_files(&db);
+    core.sync_writer.set_log(Some(Arc::clone(&log)));
+    core.sync_writer.spawn_cover_writer();
+    core.sync_writer.spawn_flush_worker(core.db.clone(), Arc::clone(&log));
+    core.sync_writer.backfill_cover_files(&core.db);
     {
-        let mut g = sync_state
+        let mut g = core
+            .sync_state
             .engine
             .lock()
             .map_err(|e| AppError::Other(format!("engine mutex: {e}")))?;
         *g = Some(Arc::clone(&engine));
     }
     {
-        let mut g = sync_state
+        let mut g = core
+            .sync_state
             .watcher
             .lock()
             .map_err(|e| AppError::Other(format!("watcher mutex: {e}")))?;
@@ -369,8 +360,8 @@ pub fn sync_enable(
     // Fire the initial tick on a background thread so sync_enable
     // returns immediately — the UI stays responsive while the tick
     // applies peer snapshots and events. Same pattern as startup boot.
-    let bg_db = db.inner().clone();
-    let bg_handle = app.clone();
+    let bg_db = core.db.clone();
+    let bg_host = Arc::clone(&core.host);
     std::thread::Builder::new()
         .name("sync-enable-tick".into())
         .spawn(move || {
@@ -380,11 +371,11 @@ pub fn sync_enable(
             // library with a stranded marker.
             let result = if rebuild_marker_set(&bg_db) {
                 log::info!("sync_enable: rebuild marker set — resuming rebuild from iCloud");
-                run_rebuild_replay(&bg_db, &engine, Some(&bg_handle))
+                run_rebuild_replay(&bg_db, &engine, Some(bg_host.as_ref()))
             } else {
-                engine.tick_with_progress(&bg_db, Some(&bg_handle))
+                engine.tick_with_progress(&bg_db, Some(bg_host.as_ref()))
             };
-            let _ = tauri::Emitter::emit(&bg_handle, "sync-initial-tick-done", ());
+            bg_host.emit("sync-initial-tick-done", serde_json::Value::Null);
             if let Err(e) = result {
                 log::warn!("sync_enable: initial tick failed: {e}");
             }
@@ -394,23 +385,16 @@ pub fn sync_enable(
     Ok(())
 }
 
-#[tauri::command]
-pub async fn sync_disable(
-    app: AppHandle,
-    local: State<'_, LocalDir>,
-    db: State<'_, Db>,
-    device: State<'_, DeviceIdentity>,
-    sync_writer: State<'_, SyncWriter>,
-    sync_state: State<'_, SyncState>,
-) -> AppResult<()> {
-    let engine = sync_state.engine_snapshot()?;
-    let local_dir = local.0.clone();
+pub async fn sync_disable(core: &Core) -> AppResult<()> {
+    let engine = core.sync_state.engine_snapshot()?;
+    let local_dir = core.local_dir.clone();
     log::info!("sync_disable: requested");
 
     // Stop new watcher ticks first, then cancel any tick already in
     // flight before joining the watcher thread.
     let old_watcher = {
-        let mut g = sync_state
+        let mut g = core
+            .sync_state
             .watcher
             .lock()
             .map_err(|e| AppError::Other(format!("watcher mutex: {e}")))?;
@@ -444,12 +428,12 @@ pub async fn sync_disable(
         .or_else(icloud::icloud_data_dir);
     let copy_result = if let Some(ub) = ubiquity_dir.as_ref() {
         log::info!("sync_disable: copy-back starting");
-        let app = app.clone();
+        let host = Arc::clone(&core.host);
         let jobs = vec![
             (ub.join("books"), local_dir.join("books")),
             (ub.join("covers"), local_dir.join("covers")),
         ];
-        tokio::task::spawn_blocking(move || copy_disable_files_with_progress(&app, &jobs))
+        tokio::task::spawn_blocking(move || copy_disable_files_with_progress(host, &jobs))
             .await
             .map_err(|e| AppError::Other(format!("sync_disable copy worker failed: {e}")))?
     } else {
@@ -460,8 +444,8 @@ pub async fn sync_disable(
         log::warn!("sync_disable: copy-back failed; keeping sync enabled: {e}");
         if had_watcher {
             if let (Some(ub), Some(engine)) = (ubiquity_dir.as_ref(), engine.as_ref()) {
-                match watcher::spawn(ub.clone(), db.inner().clone(), Arc::clone(engine)) {
-                    Ok(watcher) => match sync_state.watcher.lock() {
+                match watcher::spawn(ub.clone(), core.db.clone(), Arc::clone(engine)) {
+                    Ok(watcher) => match core.sync_state.watcher.lock() {
                         Ok(mut g) => *g = Some(watcher),
                         Err(lock_err) => {
                             log::error!("sync_disable: failed to restore watcher: {lock_err}");
@@ -486,7 +470,8 @@ pub async fn sync_disable(
 
     // Watcher already dropped above. Drop the engine.
     {
-        let mut g = sync_state
+        let mut g = core
+            .sync_state
             .engine
             .lock()
             .map_err(|e| AppError::Other(format!("engine mutex: {e}")))?;
@@ -495,16 +480,17 @@ pub async fn sync_disable(
 
     // Stop publishing. Future `with_tx` calls neither queue into
     // `_pending_publish` nor try to drain it.
-    sync_writer.set_log(None);
-    sync_writer.set_should_queue(false);
-    sync_writer.set_cover_tx(None);
-    sync_writer.set_flush_tx(None);
+    core.sync_writer.set_log(None);
+    core.sync_writer.set_should_queue(false);
+    core.sync_writer.set_cover_tx(None);
+    core.sync_writer.set_flush_tx(None);
 
     // Repoint data_dir at local now that the binary copy-back has
     // finished. Mid-flight reads during phase 1 still resolved
     // against iCloud, which is correct (the files haven't moved yet).
     {
-        let mut data_dir = db
+        let mut data_dir = core
+            .db
             .data_dir
             .lock()
             .map_err(|e| AppError::Other(format!("data_dir mutex: {e}")))?;
@@ -515,7 +501,7 @@ pub async fn sync_disable(
     // seen" — they'll just see this device drop off the list. Best-
     // effort; failure is logged but doesn't block disable.
     if let Some(ub) = ubiquity_dir.as_ref() {
-        if let Err(e) = peers::delete_own_manifest(ub, &device.device_uuid) {
+        if let Err(e) = peers::delete_own_manifest(ub, &core.device.device_uuid) {
             log::warn!("sync_disable: failed to remove own peer manifest: {e}");
         }
     }
@@ -527,16 +513,22 @@ pub async fn sync_disable(
     // Without this, a boot that races with disable can leave a watcher
     // thread alive after sync is "off."
     {
-        let mut eg = sync_state.engine.lock()
+        let mut eg = core
+            .sync_state
+            .engine
+            .lock()
             .map_err(|e| AppError::Other(format!("engine mutex: {e}")))?;
-        let mut wg = sync_state.watcher.lock()
+        let mut wg = core
+            .sync_state
+            .watcher
+            .lock()
             .map_err(|e| AppError::Other(format!("watcher mutex: {e}")))?;
         if eg.is_some() || wg.is_some() {
             log::warn!("sync_disable: boot thread installed engine during disable — clearing");
             *eg = None;
             *wg = None;
-            sync_writer.set_log(None);
-            sync_writer.set_flush_tx(None);
+            core.sync_writer.set_log(None);
+            core.sync_writer.set_flush_tx(None);
         }
     }
 
@@ -544,12 +536,8 @@ pub async fn sync_disable(
     Ok(())
 }
 
-#[tauri::command]
-pub fn sync_cancel(
-    app: tauri::AppHandle,
-    sync_state: State<'_, SyncState>,
-) -> AppResult<()> {
-    if let Some(engine) = sync_state.engine_snapshot()? {
+pub fn sync_cancel(core: &Core) -> AppResult<()> {
+    if let Some(engine) = core.sync_state.engine_snapshot()? {
         engine.cancel();
         // Operation-scoped cancel signal: the monotonic generation
         // survives the tick-start flag reset, so a rebuild aborts (or
@@ -557,21 +545,19 @@ pub fn sync_cancel(
         // its ticks — e.g. during the bootstrap publish.
         engine.bump_cancel_generation();
     }
-    let _ = tauri::Emitter::emit(&app, "sync-initial-tick-done", ());
+    core.host
+        .emit("sync-initial-tick-done", serde_json::Value::Null);
     Ok(())
 }
 
-#[tauri::command]
-pub fn sync_now(
-    app: tauri::AppHandle,
-    db: State<'_, Db>,
-    sync_state: State<'_, SyncState>,
-) -> AppResult<SyncNowResult> {
-    let engine = sync_state
+pub fn sync_now(core: &Core) -> AppResult<SyncNowResult> {
+    let engine = core
+        .sync_state
         .engine_snapshot()?
         .ok_or_else(|| AppError::Other("sync is not enabled on this device".into()))?;
-    let result = engine.tick_with_progress(&db, Some(&app));
-    let _ = tauri::Emitter::emit(&app, "sync-initial-tick-done", ());
+    let result = engine.tick_with_progress(&core.db, Some(core.host.as_ref()));
+    core.host
+        .emit("sync-initial-tick-done", serde_json::Value::Null);
     Ok(result?.into())
 }
 
@@ -586,20 +572,17 @@ pub fn sync_now(
 /// Refuses when the engine is not running this session (queue-only
 /// mode included), matching `sync_now` / `sync_compact` — the wipe
 /// must never run without a live engine to replay the data back.
-#[tauri::command]
-pub async fn sync_rebuild(
-    app: tauri::AppHandle,
-    db: State<'_, Db>,
-    sync_state: State<'_, SyncState>,
-) -> AppResult<SyncNowResult> {
-    let engine = sync_state
+pub async fn sync_rebuild(core: &Core) -> AppResult<SyncNowResult> {
+    let engine = core
+        .sync_state
         .engine_snapshot()?
         .ok_or_else(|| AppError::Other("sync is not enabled on this device".into()))?;
-    let db = db.inner().clone();
+    let db = core.db.clone();
+    let host = Arc::clone(&core.host);
 
     tokio::task::spawn_blocking(move || {
-        let result = run_rebuild(&db, &engine, Some(&app));
-        let _ = tauri::Emitter::emit(&app, "sync-initial-tick-done", ());
+        let result = run_rebuild(&db, &engine, Some(host.as_ref()));
+        host.emit("sync-initial-tick-done", serde_json::Value::Null);
         Ok(result?.into())
     })
     .await
@@ -613,9 +596,9 @@ pub async fn sync_rebuild(
 ///
 /// Returns an error when sync isn't enabled in this process — the
 /// settings UI surfaces it as a toast.
-#[tauri::command]
-pub fn sync_compact(sync_state: State<'_, SyncState>) -> AppResult<SyncCompactResult> {
-    let engine = sync_state
+pub fn sync_compact(core: &Core) -> AppResult<SyncCompactResult> {
+    let engine = core
+        .sync_state
         .engine_snapshot()?
         .ok_or_else(|| AppError::Other("sync is not enabled on this device".into()))?;
     let report = snapshot::compact_own_log(&engine.shared_dir, &engine.own_log)?;
@@ -635,16 +618,11 @@ pub fn sync_compact(sync_state: State<'_, SyncState>) -> AppResult<SyncCompactRe
 /// command works whether or not the engine is currently booted in this
 /// process. Returns an error only when no shared dir can be resolved
 /// (iCloud unavailable AND no recorded marker).
-#[tauri::command]
-pub fn sync_remove_peer(
-    device_uuid: String,
-    local: State<'_, LocalDir>,
-    device: State<'_, DeviceIdentity>,
-) -> AppResult<()> {
-    let shared_dir = sync::migration::recorded_data_dir(&local.0)
+pub fn sync_remove_peer(core: &Core, device_uuid: String) -> AppResult<()> {
+    let shared_dir = sync::migration::recorded_data_dir(&core.local_dir)
         .or_else(icloud::icloud_data_dir)
         .ok_or_else(|| AppError::Other("iCloud shared folder is not available".into()))?;
-    peers::delete_peer(&shared_dir, &device_uuid, &device.device_uuid)
+    peers::delete_peer(&shared_dir, &device_uuid, &core.device.device_uuid)
 }
 
 // ---------------------------------------------------------------------------
@@ -758,13 +736,13 @@ pub(crate) fn wipe_synced_tables(db: &Db) -> AppResult<()> {
 pub(crate) fn run_rebuild_replay(
     db: &Db,
     engine: &ReplayEngine,
-    app_handle: Option<&AppHandle>,
+    host: Option<&dyn ShellHost>,
 ) -> AppResult<ReplayReport> {
     let _flight = REBUILD_MUTEX
         .lock()
         .map_err(|e| AppError::Other(format!("rebuild mutex: {e}")))?;
     let cancel_gen = engine.cancel_generation();
-    run_rebuild_replay_locked(db, engine, app_handle, cancel_gen)
+    run_rebuild_replay_locked(db, engine, host, cancel_gen)
 }
 
 /// `cancel_gen` is the generation captured when this operation entered
@@ -776,7 +754,7 @@ pub(crate) fn run_rebuild_replay(
 fn run_rebuild_replay_locked(
     db: &Db,
     engine: &ReplayEngine,
-    app_handle: Option<&AppHandle>,
+    host: Option<&dyn ShellHost>,
     cancel_gen: u64,
 ) -> AppResult<ReplayReport> {
     // Ask any in-flight watcher tick to wind down so the wipe isn't
@@ -785,7 +763,7 @@ fn run_rebuild_replay_locked(
     // cancel generation.
     engine.cancel();
     wipe_synced_tables(db)?;
-    let mut report = engine.tick_with_progress(db, app_handle)?;
+    let mut report = engine.tick_with_progress(db, host)?;
     if engine.cancel_generation() != cancel_gen {
         report.cancelled = true;
     }
@@ -839,14 +817,14 @@ fn settle_rebuild_marker(db: &Db, report: &ReplayReport) -> AppResult<()> {
 pub(crate) fn run_rebuild(
     db: &Db,
     engine: &ReplayEngine,
-    app_handle: Option<&AppHandle>,
+    host: Option<&dyn ShellHost>,
 ) -> AppResult<ReplayReport> {
     let _flight = REBUILD_MUTEX
         .lock()
         .map_err(|e| AppError::Other(format!("rebuild mutex: {e}")))?;
     let cancel_gen = engine.cancel_generation();
     if !rebuild_marker_set(db) {
-        let pre = engine.tick_with_progress(db, app_handle)?;
+        let pre = engine.tick_with_progress(db, host)?;
         if pre.cancelled || engine.cancel_generation() != cancel_gen {
             return Ok(ReplayReport { cancelled: true, ..pre });
         }
@@ -860,7 +838,7 @@ pub(crate) fn run_rebuild(
         }
         set_rebuild_marker(db)?;
     }
-    run_rebuild_replay_locked(db, engine, app_handle, cancel_gen)
+    run_rebuild_replay_locked(db, engine, host, cancel_gen)
 }
 
 /// `sync_enable`'s bootstrap publish, gated on the rebuild marker.
@@ -940,25 +918,25 @@ fn read_last_replay_at(db: &Db) -> AppResult<Option<i64>> {
 }
 
 struct DisableCopyProgressEmitter {
-    app: Option<AppHandle>,
+    host: Option<Arc<dyn ShellHost>>,
     copied: usize,
     total: usize,
 }
 
 impl DisableCopyProgressEmitter {
-    fn new(app: Option<AppHandle>, total: usize) -> Self {
+    fn new(host: Option<Arc<dyn ShellHost>>, total: usize) -> Self {
         Self {
-            app,
+            host,
             copied: 0,
             total,
         }
     }
 
     fn emit(&self, phase: &str, current: Option<String>) {
-        if let Some(app) = self.app.as_ref() {
-            let _ = app.emit(
+        if let Some(host) = self.host.as_ref() {
+            host.emit_json(
                 "sync-disable-progress",
-                SyncDisableProgress {
+                &SyncDisableProgress {
                     phase: phase.to_string(),
                     copied: self.copied,
                     total: self.total,
@@ -975,14 +953,14 @@ impl DisableCopyProgressEmitter {
 }
 
 fn copy_disable_files_with_progress(
-    app: &AppHandle,
+    host: Arc<dyn ShellHost>,
     jobs: &[(PathBuf, PathBuf)],
 ) -> AppResult<()> {
     let total = jobs
         .iter()
         .try_fold(0usize, |acc, (src, _)| count_copy_entries(src).map(|n| acc + n))?;
     log::info!("sync_disable: copy-back total_files={total}");
-    let mut progress = DisableCopyProgressEmitter::new(Some(app.clone()), total);
+    let mut progress = DisableCopyProgressEmitter::new(Some(host), total);
     progress.emit("preparing", None);
     for (src, dst) in jobs {
         copy_dir_contents_with_progress(src, dst, Some(&mut progress))?;

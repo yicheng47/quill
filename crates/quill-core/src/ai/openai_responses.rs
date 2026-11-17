@@ -1,8 +1,8 @@
 use futures::StreamExt;
-use tauri::{AppHandle, Emitter};
 
 use crate::commands::ai::{AiStreamChunk, ChatMessage};
 use crate::error::{AppError, AppResult};
+use crate::host::ShellHost;
 
 /// Stream chat using OpenAI's Responses API (`/responses`).
 /// When using OAuth tokens, requests go to `chatgpt.com/backend-api/codex`
@@ -13,7 +13,7 @@ use crate::error::{AppError, AppResult};
 ///   store, stream — no temperature, no max_output_tokens.
 #[allow(clippy::too_many_arguments)]
 pub async fn stream_chat(
-    app: &AppHandle,
+    host: &dyn ShellHost,
     base_url: &str,
     api_key: &str,
     model: &str,
@@ -60,9 +60,9 @@ pub async fn stream_chat(
                     match event_type {
                         "response.output_text.delta" => {
                             if let Some(delta) = parsed["delta"].as_str() {
-                                let _ = app.emit(
+                                host.emit_json(
                                     event_name,
-                                    AiStreamChunk {
+                                    &AiStreamChunk {
                                         delta: delta.to_string(),
                                         done: false,
                                     },
@@ -70,9 +70,9 @@ pub async fn stream_chat(
                             }
                         }
                         "response.completed" => {
-                            let _ = app.emit(
+                            host.emit_json(
                                 event_name,
-                                AiStreamChunk {
+                                &AiStreamChunk {
                                     delta: String::new(),
                                     done: true,
                                 },
@@ -86,9 +86,9 @@ pub async fn stream_chat(
         }
     }
 
-    let _ = app.emit(
+    host.emit_json(
         event_name,
-        AiStreamChunk {
+        &AiStreamChunk {
             delta: String::new(),
             done: true,
         },

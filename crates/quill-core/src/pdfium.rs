@@ -10,7 +10,12 @@ use std::sync::OnceLock;
 
 use pdfium_render::prelude::*;
 
+static CONFIGURED_PDFIUM_PATH: OnceLock<PathBuf> = OnceLock::new();
 static PDFIUM: OnceLock<Result<Pdfium, String>> = OnceLock::new();
+
+pub fn set_configured_path(path: PathBuf) {
+    let _ = CONFIGURED_PDFIUM_PATH.set(path);
+}
 
 /// Returns a process-wide `Pdfium` instance, or an error string suitable
 /// for logging. Callers use this for best-effort cover rendering — on
@@ -28,6 +33,12 @@ pub fn pdfium() -> Result<&'static Pdfium, &'static str> {
 }
 
 fn locate_pdfium_lib() -> Option<PathBuf> {
+    if let Some(configured) = CONFIGURED_PDFIUM_PATH.get() {
+        if configured.exists() {
+            return Some(configured.clone());
+        }
+    }
+
     let lib_name = Pdfium::pdfium_platform_library_name();
 
     if let Ok(exe) = std::env::current_exe() {
@@ -52,8 +63,8 @@ fn locate_pdfium_lib() -> Option<PathBuf> {
     }
 
     // 4. Dev fallback: build.rs emits PDFIUM_DEV_LIB_PATH pointing at the
-    //    binary it downloaded into src-tauri/binaries/<target>/. This is
-    //    what cargo test picks up.
+    //    binary it downloaded into crates/quill-core/binaries/<target>/. This is
+    //    what cargo test and development builds pick up.
     if let Some(dev_path) = option_env!("PDFIUM_DEV_LIB_PATH") {
         let p = PathBuf::from(dev_path);
         if p.exists() {

@@ -1,12 +1,12 @@
 use futures::StreamExt;
-use tauri::{AppHandle, Emitter};
 
 use crate::commands::ai::{AiStreamChunk, ChatMessage};
 use crate::error::{AppError, AppResult};
+use crate::host::ShellHost;
 
 #[allow(clippy::too_many_arguments)]
 pub async fn stream_chat(
-    app: &AppHandle,
+    host: &dyn ShellHost,
     base_url: &str,
     api_key: &str,
     model: &str,
@@ -86,14 +86,14 @@ pub async fn stream_chat(
                     match event_type {
                         "content_block_delta" => {
                             if let Some(text) = parsed["delta"]["text"].as_str() {
-                                let _ = app.emit(event_name, AiStreamChunk {
+                                host.emit_json(event_name, &AiStreamChunk {
                                     delta: text.to_string(),
                                     done: false,
                                 });
                             }
                         }
                         "message_stop" => {
-                            let _ = app.emit(event_name, AiStreamChunk {
+                            host.emit_json(event_name, &AiStreamChunk {
                                 delta: String::new(),
                                 done: true,
                             });
@@ -106,7 +106,7 @@ pub async fn stream_chat(
         }
     }
 
-    let _ = app.emit(event_name, AiStreamChunk {
+    host.emit_json(event_name, &AiStreamChunk {
         delta: String::new(),
         done: true,
     });

@@ -1,13 +1,10 @@
 use base64::Engine;
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
-use tauri::State;
-use uuid::Uuid;
-
 use crate::db::Db;
 use crate::error::AppResult;
+use crate::host::Core;
 use crate::sync::events::{ChatMessagePayload, EventBody};
-use crate::sync::writer::SyncWriter;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Chat {
@@ -132,18 +129,16 @@ fn row_to_msg(row: &rusqlite::Row) -> rusqlite::Result<ChatMsg> {
     })
 }
 
-#[tauri::command]
 pub fn create_chat(
+    core: &Core,
     book_id: String,
     title: Option<String>,
     model: Option<String>,
-    db: State<'_, Db>,
-    sync: State<'_, SyncWriter>,
 ) -> AppResult<Chat> {
-    let id = Uuid::new_v4().to_string();
+    let id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().timestamp_millis();
     let title = title.unwrap_or_else(|| "New chat".to_string());
-    let device = sync.self_device().to_string();
+    let device = core.sync_writer.self_device().to_string();
 
     let chat = Chat {
         id: id.clone(),
@@ -159,7 +154,7 @@ pub fn create_chat(
         last_message: None,
     };
 
-    sync.with_tx(&db, now, |tx, events| {
+    core.sync_writer.with_tx(&core.db, now, |tx, events| {
         tx.execute(
             "INSERT INTO chats (id, book_id, title, model, pinned, metadata, created_at, updated_at, updated_by_device)
              VALUES (?1, ?2, ?3, ?4, 0, NULL, ?5, ?5, ?6)",
@@ -190,21 +185,19 @@ pub(crate) fn query_chats(db: &Db, book_id: &str) -> AppResult<Vec<Chat>> {
     Ok(chats)
 }
 
-#[tauri::command]
-pub fn list_chats(book_id: String, db: State<'_, Db>) -> AppResult<Vec<Chat>> {
-    query_chats(&db, &book_id)
+pub fn list_chats(core: &Core, book_id: String) -> AppResult<Vec<Chat>> {
+    query_chats(&core.db, &book_id)
 }
 
-#[tauri::command]
 pub fn list_all_chats(
+    core: &Core,
     search: Option<String>,
     book_id: Option<String>,
     cursor: Option<String>,
     limit: Option<usize>,
-    db: State<'_, Db>,
 ) -> AppResult<ChatPage> {
     query_all_chats(
-        &db,
+        &core.db,
         search.as_deref(),
         book_id.as_deref(),
         cursor.as_deref(),
@@ -331,14 +324,12 @@ pub(crate) fn query_chat_counts(db: &Db) -> AppResult<ChatCounts> {
     Ok(ChatCounts { total, by_book })
 }
 
-#[tauri::command]
-pub fn get_chat_counts(db: State<'_, Db>) -> AppResult<ChatCounts> {
-    query_chat_counts(&db)
+pub fn get_chat_counts(core: &Core) -> AppResult<ChatCounts> {
+    query_chat_counts(&core.db)
 }
 
-#[tauri::command]
-pub fn get_chat(chat_id: String, db: State<'_, Db>) -> AppResult<Chat> {
-    let conn = db.reader();
+pub fn get_chat(core: &Core, chat_id: String) -> AppResult<Chat> {
+    let conn = core.db.reader();
     let chat = conn.query_row(
         "SELECT id, book_id, title, model, pinned, metadata, created_at, updated_at
          FROM chats WHERE id = ?1",
@@ -348,14 +339,9 @@ pub fn get_chat(chat_id: String, db: State<'_, Db>) -> AppResult<Chat> {
     Ok(chat)
 }
 
-#[tauri::command]
-pub fn delete_chat(
-    chat_id: String,
-    db: State<'_, Db>,
-    sync: State<'_, SyncWriter>,
-) -> AppResult<()> {
+pub fn delete_chat(core: &Core, chat_id: String) -> AppResult<()> {
     let now = chrono::Utc::now().timestamp_millis();
-    sync.with_tx(&db, now, |tx, events| {
+    core.sync_writer.with_tx(&core.db, now, |tx, events| {
         tx.execute(
             "DELETE FROM chat_messages WHERE chat_id = ?1",
             params![chat_id],
@@ -368,16 +354,10 @@ pub fn delete_chat(
     })
 }
 
-#[tauri::command]
-pub fn rename_chat(
-    chat_id: String,
-    title: String,
-    db: State<'_, Db>,
-    sync: State<'_, SyncWriter>,
-) -> AppResult<()> {
+pub fn rename_chat(core: &Core, chat_id: String, title: String) -> AppResult<()> {
     let now = chrono::Utc::now().timestamp_millis();
-    let device = sync.self_device().to_string();
-    sync.with_tx(&db, now, |tx, events| {
+    let device = core.sync_writer.self_device().to_string();
+    core.sync_writer.with_tx(&core.db, now, |tx, events| {
         tx.execute(
             "UPDATE chats SET title = ?1, updated_at = ?2, updated_by_device = ?3 WHERE id = ?4",
             params![title, now, device, chat_id],
@@ -403,24 +383,21 @@ pub(crate) fn query_chat_messages(db: &Db, chat_id: &str) -> AppResult<Vec<ChatM
     Ok(msgs)
 }
 
-#[tauri::command]
-pub fn list_chat_messages(chat_id: String, db: State<'_, Db>) -> AppResult<Vec<ChatMsg>> {
-    query_chat_messages(&db, &chat_id)
+pub fn list_chat_messages(core: &Core, chat_id: String) -> AppResult<Vec<ChatMsg>> {
+    query_chat_messages(&core.db, &chat_id)
 }
 
-#[tauri::command]
 pub fn save_chat_message(
+    core: &Core,
     chat_id: String,
     role: String,
     content: String,
     context: Option<String>,
     metadata: Option<String>,
-    db: State<'_, Db>,
-    sync: State<'_, SyncWriter>,
 ) -> AppResult<ChatMsg> {
-    let id = Uuid::new_v4().to_string();
+    let id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().timestamp_millis();
-    let device = sync.self_device().to_string();
+    let device = core.sync_writer.self_device().to_string();
 
     let msg = ChatMsg {
         id: id.clone(),
@@ -433,7 +410,7 @@ pub fn save_chat_message(
         updated_at: now,
     };
 
-    sync.with_tx(&db, now, |tx, events| {
+    core.sync_writer.with_tx(&core.db, now, |tx, events| {
         tx.execute(
             "INSERT INTO chat_messages (id, chat_id, role, content, context, metadata, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
@@ -467,6 +444,7 @@ mod tests {
     use super::*;
     use crate::db::Db;
     use tempfile::TempDir;
+    use uuid::Uuid;
 
     fn setup() -> (TempDir, Db) {
         let dir = TempDir::new().unwrap();

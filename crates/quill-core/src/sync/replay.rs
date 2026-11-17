@@ -33,10 +33,10 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use rusqlite::{params, Connection};
-use tauri::Emitter;
 
 use crate::db::Db;
 use crate::error::{AppError, AppResult};
+use crate::host::ShellHost;
 
 use super::events::{Event, EventBody};
 use super::log::{self, EventLog};
@@ -161,9 +161,9 @@ struct SyncProgress {
     total: usize,
 }
 
-fn emit_progress(app_handle: Option<&tauri::AppHandle>, update: Option<(usize, usize)>) {
-    if let (Some(handle), Some((applied, total))) = (app_handle, update) {
-        let _ = handle.emit("sync-progress", SyncProgress { applied, total });
+fn emit_progress(host: Option<&dyn ShellHost>, update: Option<(usize, usize)>) {
+    if let (Some(host), Some((applied, total))) = (host, update) {
+        host.emit_json("sync-progress", &SyncProgress { applied, total });
     }
 }
 
@@ -239,12 +239,12 @@ pub struct ReplayEngine {
     /// Own log handle, shared with `SyncWriter`. `tick()` writes here when
     /// flushing the outbox.
     pub own_log: Arc<EventLog>,
-    /// Handle for emitting non-modal frontend events (e.g.
+    /// Host for emitting non-modal frontend events (e.g.
     /// `sync-covers-ingested`) from any tick — including the silent
     /// watcher ticks where covers actually land. Deliberately separate
-    /// from `tick_with_progress`'s `app_handle` parameter, which drives
+    /// from `tick_with_progress`'s `host` parameter, which drives
     /// the `sync-progress` modal and is `None` for watcher ticks.
-    app_handle: Option<tauri::AppHandle>,
+    host: Option<Arc<dyn ShellHost>>,
     /// Set to `true` by `cancel()` to abort an in-flight tick early.
     /// Checked between events in Phase C so a `sync_disable` doesn't
     /// have to wait for a long replay to finish.
@@ -266,16 +266,16 @@ impl ReplayEngine {
             shared_dir,
             self_device,
             own_log,
-            app_handle: None,
+            host: None,
             cancelled: std::sync::atomic::AtomicBool::new(false),
             cancel_generation: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
-    /// Attach an `AppHandle` so ticks can emit non-modal frontend events.
+    /// Attach a `ShellHost` so ticks can emit non-modal frontend events.
     /// Set at both engine boot sites (`boot_sync_engine`, `sync_enable`).
-    pub fn with_app_handle(mut self, handle: tauri::AppHandle) -> Self {
-        self.app_handle = Some(handle);
+    pub fn with_host(mut self, host: Arc<dyn ShellHost>) -> Self {
+        self.host = Some(host);
         self
     }
 
@@ -310,12 +310,12 @@ impl ReplayEngine {
     }
 
     /// Like `tick` but emits `sync-progress` events via the provided
-    /// AppHandle so the frontend can show a progress indicator during
+    /// ShellHost so the frontend can show a progress indicator during
     /// the initial sync. Watcher ticks pass `None` (silent).
     pub fn tick_with_progress(
         &self,
         db: &Db,
-        app_handle: Option<&tauri::AppHandle>,
+        host: Option<&dyn ShellHost>,
     ) -> AppResult<ReplayReport> {
         let _guard = TICK_MUTEX
             .lock()
@@ -324,8 +324,8 @@ impl ReplayEngine {
         self.cancelled.store(false, std::sync::atomic::Ordering::SeqCst);
         let started = std::time::Instant::now();
 
-        if let Some(handle) = app_handle {
-            let _ = handle.emit("sync-progress", SyncProgress { applied: 0, total: 0 });
+        if let Some(host) = host {
+            host.emit_json("sync-progress", &SyncProgress { applied: 0, total: 0 });
         }
 
         // Phase 0 — drain the outbox into the device log. Manages its
@@ -350,7 +350,7 @@ impl ReplayEngine {
         // behind the watcher tick. The PRAGMA wrap also lives inside
         // `apply_in_tx` so any error path still restores FK = ON.
         let (snapshots_applied, events_applied) =
-            self.apply_in_tx(db, &peers, app_handle).inspect_err(|e| {
+            self.apply_in_tx(db, &peers, host).inspect_err(|e| {
                 ::log::error!("sync: batch apply failed: {e}");
             })?;
 
@@ -358,11 +358,11 @@ impl ReplayEngine {
         if covers_ingested > 0 {
             // Covers land on watcher ticks (the placeholder triggered for
             // download a tick or two earlier), which pass `None` for the
-            // modal `app_handle`. Use the engine-held handle so the grid
+            // modal `host`. Use the engine-held host so the grid
             // refreshes when covers fill in — otherwise blank cards persist
             // until the user navigates or relaunches.
-            if let Some(handle) = &self.app_handle {
-                let _ = handle.emit("sync-covers-ingested", covers_ingested);
+            if let Some(host) = &self.host {
+                host.emit_json("sync-covers-ingested", &covers_ingested);
             }
         }
 
@@ -456,7 +456,7 @@ impl ReplayEngine {
         &self,
         db: &Db,
         peers: &BTreeMap<String, PeerFiles>,
-        app_handle: Option<&tauri::AppHandle>,
+        host: Option<&dyn ShellHost>,
     ) -> AppResult<(usize, usize)> {
         // -- Phase A — read everything from disk. No SQL lock held. --
         // Paths that previously timed out are skipped for STALL_BACKOFF
@@ -528,7 +528,7 @@ impl ReplayEngine {
         let snapshot_units: usize = snapshots.iter().map(|(_, s)| s.work_units()).sum();
         let raw_events: usize = peer_logs.iter().map(|(_, events)| events.len()).sum();
         let mut ledger = SyncProgressLedger::new(snapshot_units, raw_events);
-        emit_progress(app_handle, ledger.begin());
+        emit_progress(host, ledger.begin());
         let mut snapshots_applied = 0usize;
         for (device, snap) in &snapshots {
             let mut conn = db
@@ -537,7 +537,7 @@ impl ReplayEngine {
                 .map_err(|e| AppError::Other(format!("db conn mutex: {e}")))?;
             let tx = conn.transaction()?;
             let outcome = snap.apply_peer_with_progress(&tx, device, &mut |n| {
-                emit_progress(app_handle, ledger.snapshot_rows(n));
+                emit_progress(host, ledger.snapshot_rows(n));
             });
             match outcome {
                 Ok(outcome) => {
@@ -558,7 +558,7 @@ impl ReplayEngine {
                 }
             }
             drop(conn);
-            emit_progress(app_handle, ledger.peer_done(snap.work_units()));
+            emit_progress(host, ledger.peer_done(snap.work_units()));
         }
 
         // Read watermarks through the reader — no write lock needed.
@@ -581,7 +581,7 @@ impl ReplayEngine {
         all_events.sort_by(|a, b| (a.ts, &a.device).cmp(&(b.ts, &b.device)));
 
         let total_events = all_events.len();
-        emit_progress(app_handle, ledger.events_known(total_events));
+        emit_progress(host, ledger.events_known(total_events));
         if total_events == 0 {
             return Ok((snapshots_applied, 0));
         }
@@ -609,7 +609,7 @@ impl ReplayEngine {
                     bump_event_watermark(&tx, &ev.device, &ev.id)?;
                     tx.commit()?;
                     events_applied += 1;
-                    emit_progress(app_handle, ledger.event_applied());
+                    emit_progress(host, ledger.event_applied());
                 }
                 Err(e) => {
                     ::log::warn!(

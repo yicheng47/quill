@@ -1,34 +1,31 @@
 use rusqlite::params;
 use std::collections::HashMap;
-use tauri::{AppHandle, Emitter, State};
 
-use crate::db::Db;
 use crate::error::{AppError, AppResult};
+use crate::host::Core;
 use crate::secrets::Secrets;
 
-#[tauri::command]
-pub fn get_all_settings(db: State<'_, Db>, secrets: State<'_, Secrets>) -> AppResult<HashMap<String, String>> {
-    let conn = db.reader();
+pub fn get_all_settings(core: &Core) -> AppResult<HashMap<String, String>> {
+    let conn = core.db.reader();
     let mut stmt = conn.prepare("SELECT key, value FROM settings")?;
     let mut settings = stmt
         .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?
         .collect::<Result<HashMap<_, _>, _>>()?;
 
     // Merge sensitive keys from secrets store
-    if let Some(value) = secrets.get("ai_api_key") {
+    if let Some(value) = core.secrets.get("ai_api_key") {
         settings.insert("ai_api_key".to_string(), value);
     }
 
     Ok(settings)
 }
 
-#[tauri::command]
-pub fn get_setting(key: String, db: State<'_, Db>, secrets: State<'_, Secrets>) -> AppResult<Option<String>> {
+pub fn get_setting(core: &Core, key: String) -> AppResult<Option<String>> {
     if Secrets::is_sensitive_key(&key) {
-        return Ok(secrets.get(&key));
+        return Ok(core.secrets.get(&key));
     }
 
-    let conn = db.reader();
+    let conn = core.db.reader();
     let result = conn.query_row(
         "SELECT value FROM settings WHERE key = ?1",
         params![key],
@@ -41,13 +38,12 @@ pub fn get_setting(key: String, db: State<'_, Db>, secrets: State<'_, Secrets>) 
     }
 }
 
-#[tauri::command]
-pub fn set_setting(key: String, value: String, db: State<'_, Db>, secrets: State<'_, Secrets>) -> AppResult<()> {
+pub fn set_setting(core: &Core, key: String, value: String) -> AppResult<()> {
     if Secrets::is_sensitive_key(&key) {
-        return secrets.set(&key, &value);
+        return core.secrets.set(&key, &value);
     }
 
-    let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
+    let conn = core.db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
     conn.execute(
         "INSERT INTO settings (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = ?2",
         params![key, value],
@@ -55,12 +51,11 @@ pub fn set_setting(key: String, value: String, db: State<'_, Db>, secrets: State
     Ok(())
 }
 
-#[tauri::command]
-pub fn set_settings_bulk(settings: HashMap<String, String>, db: State<'_, Db>, secrets: State<'_, Secrets>) -> AppResult<()> {
-    let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
+pub fn set_settings_bulk(core: &Core, settings: HashMap<String, String>) -> AppResult<()> {
+    let conn = core.db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
     for (key, value) in settings {
         if Secrets::is_sensitive_key(&key) {
-            secrets.set(&key, &value)?;
+            core.secrets.set(&key, &value)?;
         } else {
             conn.execute(
                 "INSERT INTO settings (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = ?2",
@@ -71,9 +66,8 @@ pub fn set_settings_bulk(settings: HashMap<String, String>, db: State<'_, Db>, s
     Ok(())
 }
 
-#[tauri::command]
-pub fn get_book_settings(book_id: String, db: State<'_, Db>) -> AppResult<HashMap<String, String>> {
-    let conn = db.reader();
+pub fn get_book_settings(core: &Core, book_id: String) -> AppResult<HashMap<String, String>> {
+    let conn = core.db.reader();
     let mut stmt = conn.prepare("SELECT key, value FROM book_settings WHERE book_id = ?1")?;
     let settings = stmt
         .query_map(params![book_id], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?
@@ -81,9 +75,12 @@ pub fn get_book_settings(book_id: String, db: State<'_, Db>) -> AppResult<HashMa
     Ok(settings)
 }
 
-#[tauri::command]
-pub fn set_book_settings_bulk(book_id: String, settings: HashMap<String, String>, db: State<'_, Db>) -> AppResult<()> {
-    let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
+pub fn set_book_settings_bulk(
+    core: &Core,
+    book_id: String,
+    settings: HashMap<String, String>,
+) -> AppResult<()> {
+    let conn = core.db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
     for (key, value) in settings {
         conn.execute(
             "INSERT INTO book_settings (book_id, key, value) VALUES (?1, ?2, ?3) ON CONFLICT(book_id, key) DO UPDATE SET value = ?3",
@@ -202,9 +199,7 @@ mod tests {
 }
 
 /// Emit an open-settings event to the main window from any window.
-#[tauri::command]
-pub fn open_settings_on_main(section: String, app: AppHandle) -> AppResult<()> {
-    app.emit_to("main", "open-settings", &section)
-        .map_err(|e| AppError::Other(e.to_string()))?;
+pub fn open_settings_on_main(core: &Core, section: String) -> AppResult<()> {
+    core.host.emit_to_json("main", "open-settings", &section);
     Ok(())
 }

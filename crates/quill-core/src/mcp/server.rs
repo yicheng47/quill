@@ -79,7 +79,7 @@ impl ServerHandler for QuillMcpHandler {
 ///
 /// Called from `mcp_stdio_main()` in `lib.rs`; not used by the Tauri
 /// app side.
-pub(crate) async fn serve_stdio(state: McpState) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn serve_stdio(state: McpState) -> Result<(), Box<dyn std::error::Error>> {
     let handler = QuillMcpHandler::new(state);
     let server = handler.serve(stdio()).await?;
     // `waiting` resolves when the peer disconnects or sends shutdown.

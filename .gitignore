@@ -29,3 +29,5 @@ dist-ssr
 .worktrees/
 .nvmrc
 src-tauri/embedded.provisionprofile
+/target/
+/crates/quill-core/binaries/

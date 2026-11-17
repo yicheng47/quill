@@ -10,6 +10,7 @@
 pub mod notify;
 pub mod server;
 pub mod state;
+pub mod stdio;
 pub mod tools;
 
 pub use state::McpState;
