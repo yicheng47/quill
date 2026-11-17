@@ -10,6 +10,8 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+out
+*.node
 *.local
 
 # Editor directories and files
@@ -31,3 +33,4 @@ dist-ssr
 src-tauri/embedded.provisionprofile
 /target/
 /crates/quill-core/binaries/
+crates/quill-node/index.d.ts

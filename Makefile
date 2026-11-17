@@ -1,8 +1,11 @@
 .PHONY: dev dev-web build package lint typecheck clean-rust-stale clean install
 
-# Start Tauri app (frontend + backend) with dev-mode config overlay
+# Start Electron app (native core + main/preload + Vite HMR) against dev data
 dev:
-	npm run tauri dev -- --config src-tauri/tauri.dev.conf.json
+	npx install-electron
+	npx napi build --manifest-path crates/quill-node/Cargo.toml -o crates/quill-node --dts index.d.ts
+	cargo build -p quill-mcp
+	npx electron-vite dev
 
 # Start frontend only (browser)
 dev-web:
@@ -19,13 +22,14 @@ package:
 	@ls -lh src-tauri/target/release/bundle/dmg/*.dmg 2>/dev/null || true
 	@ls -lh src-tauri/target/release/bundle/macos/*.app 2>/dev/null || true
 
-# Lint frontend
+# Lint frontend and Electron main/preload
 lint:
 	npm run lint
 
-# Type-check frontend
+# Type-check frontend and Electron main/preload
 typecheck:
 	npx tsc --noEmit
+	npx tsc -p tsconfig.electron.json --noEmit
 
 # Install dependencies
 install:
@@ -38,7 +42,7 @@ clean-rust-stale:
 
 # Clean build artifacts
 clean:
-	rm -rf dist node_modules/.vite src-tauri/target/debug
+	rm -rf dist out crates/quill-node/index.node crates/quill-node/index.d.ts node_modules/.vite src-tauri/target/debug target/debug
 
 # Clean everything including release builds
 clean-all: clean

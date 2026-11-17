@@ -1,3 +1,4 @@
+import { electronPlatform } from "./electron";
 import { tauriPlatform } from "./tauri";
 import type { Platform } from "./types";
 
@@ -14,7 +15,9 @@ export type {
   WindowSize,
 } from "./types";
 
-export const platform: Platform = tauriPlatform;
+const isElectron = typeof window !== "undefined" && Boolean(window.quillShell);
+
+export const platform: Platform = isElectron ? electronPlatform : tauriPlatform;
 
 export const invoke: Platform["invoke"] = (command, args) => platform.invoke(command, args);
 export const listen: Platform["listen"] = (event, handler) => platform.listen(event, handler);

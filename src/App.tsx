@@ -37,11 +37,15 @@ function applyTheme(theme: string) {
   }
 }
 
+const SETTINGS_REVEAL_TIMEOUT_MS = 250;
+
 export default function App() {
   useEffect(() => {
     const cachedZoom = readAppZoom();
     const cachedZoomReady = restoreAppZoom(cachedZoom);
-    void invoke<Record<string, string>>("get_all_settings")
+    applyTheme(localStorage.getItem("quill-theme") ?? "system");
+
+    const settingsReady = invoke<Record<string, string>>("get_all_settings")
       .then((settings) => {
         const theme = settings.theme ?? "system";
         applyTheme(theme);
@@ -58,9 +62,20 @@ export default function App() {
     // the persisted DB value (and persist to the DB on first launch).
     reconcileLanguage();
 
-    // macOS pauses requestAnimationFrame for hidden windows, so reveal only
-    // after the synchronously cached zoom restore finishes.
-    void cachedZoomReady.finally(() => {
+    // Bound first-launch settings wait so an unresponsive backend never keeps
+    // the window hidden indefinitely, while fast persisted dark applies pre-reveal
+    // and slower resolutions reconcile cleanly afterward.
+    let revealTimer: number | undefined;
+    const revealTimeout = new Promise<void>((resolve) => {
+      revealTimer = window.setTimeout(resolve, SETTINGS_REVEAL_TIMEOUT_MS);
+    });
+    void Promise.all([
+      cachedZoomReady,
+      Promise.race([settingsReady, revealTimeout]),
+    ]).finally(() => {
+      if (revealTimer !== undefined) {
+        window.clearTimeout(revealTimer);
+      }
       void appReady().catch(() => {});
     });
 
