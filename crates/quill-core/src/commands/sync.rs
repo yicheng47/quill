@@ -31,7 +31,7 @@ use crate::sync::watcher::{self, WatcherHandle};
 #[cfg(not(test))]
 const DISABLE_COPY_PLACEHOLDER_TIMEOUT: Duration = Duration::from_secs(120);
 #[cfg(test)]
-const DISABLE_COPY_PLACEHOLDER_TIMEOUT: Duration = Duration::from_millis(50);
+const DISABLE_COPY_PLACEHOLDER_TIMEOUT: Duration = Duration::from_millis(250);
 #[cfg(not(test))]
 const DISABLE_COPY_PLACEHOLDER_POLL: Duration = Duration::from_millis(500);
 #[cfg(test)]
@@ -1311,14 +1311,19 @@ mod tests {
         fs::create_dir_all(&src).unwrap();
         fs::write(src.join(".evicted.epub.icloud"), b"stub").unwrap();
 
+        let staged = tmp.path().join("evicted.epub.staged");
         let real = src.join("evicted.epub");
         let real_for_thread = real.clone();
-        std::thread::spawn(move || {
+        let handle = std::thread::spawn(move || {
             std::thread::sleep(DISABLE_COPY_PLACEHOLDER_POLL + DISABLE_COPY_PLACEHOLDER_POLL);
-            fs::write(real_for_thread, b"downloaded").unwrap();
+            // Stage outside `src` and rename atomically so `wait_for_icloud_file`'s
+            // `exists()` poll cannot observe an empty file between `open` and `write`.
+            fs::write(&staged, b"downloaded").unwrap();
+            fs::rename(&staged, &real_for_thread).unwrap();
         });
 
         copy_dir_contents(&src, &dst).unwrap();
+        handle.join().unwrap();
         assert_eq!(fs::read(dst.join("evicted.epub")).unwrap(), b"downloaded");
         assert!(real.exists(), "copy-back must keep the iCloud source file");
     }
