@@ -63,3 +63,27 @@ jobs:
       - run: npm run electron:build
       - run: cargo clippy --workspace -- -D warnings
       - run: cargo test --workspace
+      - name: Validate unpacked Electron bundle (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          QUILL_PACK_ALLOW_DEBUG: "1"
+        run: |
+          cargo build -p quill-mcp
+          arch=$(node -e 'process.stdout.write(process.arch === "arm64" ? "arm64" : "x64")')
+          mac_dir=$([[ "$arch" == "arm64" ]] && echo "mac-arm64" || echo "mac")
+          npx electron-builder --mac --dir --"$arch" --publish never
+          node scripts/validate-pack.mjs --platform darwin --arch "$arch"
+          test ! -e "dist-electron/$mac_dir/Quill.app/Contents/Resources/app.asar.unpacked"
+      - name: Validate unpacked Electron bundle (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          QUILL_PACK_ALLOW_DEBUG: "1"
+        run: |
+          cargo build -p quill-mcp
+          npx electron-builder --win --x64 --dir --publish never
+          node scripts/validate-pack.mjs --platform win32 --arch x64
+          test ! -e dist-electron/win-unpacked/resources/app.asar.unpacked

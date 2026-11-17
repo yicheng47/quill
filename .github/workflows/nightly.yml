@@ -1,0 +1,547 @@
+name: Nightly
+run-name: Nightly (${{ inputs.platform }})
+
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: Platforms to build from one stamp and commit
+        type: choice
+        default: all
+        options:
+          - all
+          - both
+          - macos
+          - windows
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  group: nightly
+  cancel-in-progress: true
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      stamp: ${{ steps.build.outputs.stamp }}
+      sha: ${{ steps.build.outputs.sha }}
+      short_sha: ${{ steps.build.outputs.short_sha }}
+      version: ${{ steps.build.outputs.version }}
+      release_title: ${{ steps.build.outputs.release_title }}
+    steps:
+      - name: Check out dispatch commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Compute nightly identity once
+        id: build
+        run: |
+          test "$GITHUB_REF" = refs/heads/main || { echo "error: nightly is cut from main, not $GITHUB_REF" >&2; exit 1; }
+          pkg_version=$(node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync("package.json", "utf8")).version)')
+          cargo_version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')
+          test "$pkg_version" = "$cargo_version" || { echo "error: package.json ($pkg_version) != Cargo.toml ($cargo_version)" >&2; exit 1; }
+          base_version=${pkg_version%%-*}
+          stamp=$(date -u +%Y%m%d%H%M)
+          sha=$(git rev-parse HEAD)
+          test "$sha" = "$GITHUB_SHA"
+          echo "stamp=$stamp" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "short_sha=${sha:0:7}" >> "$GITHUB_OUTPUT"
+          echo "version=${base_version}-nightly.${stamp}" >> "$GITHUB_OUTPUT"
+          echo "release_title=Quill Nightly" >> "$GITHUB_OUTPUT"
+
+  build-macos:
+    needs: prepare
+    if: inputs.platform == 'all' || inputs.platform == 'both' || inputs.platform == 'macos'
+    runs-on: macos-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            rust_target: aarch64-apple-darwin
+            mac_dir: mac-arm64
+          - arch: x64
+            rust_target: x86_64-apple-darwin
+            mac_dir: mac
+    steps:
+      - name: Check out dispatch commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          submodules: true
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: nightly-macos-${{ matrix.arch }}
+
+      - name: Verify Apple signing & notarization secrets
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          PROVISIONING_PROFILE: ${{ secrets.PROVISIONING_PROFILE }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          for var in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD PROVISIONING_PROFILE APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            test -n "${!var}" || { echo "error: missing required secret $var" >&2; exit 1; }
+          done
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Stamp nightly package version
+        run: |
+          node -e '
+            const fs = require("fs");
+            const v = process.argv[1];
+            for (const file of ["package.json", "package-lock.json"]) {
+              const data = JSON.parse(fs.readFileSync(file, "utf8"));
+              data.version = v;
+              if (data.packages && data.packages[""]) data.packages[""].version = v;
+              fs.writeFileSync(file, JSON.stringify(data, null, 2) + "\n");
+            }
+          ' "${{ needs.prepare.outputs.version }}"
+
+      - name: Build native Rust artifacts (${{ matrix.rust_target }})
+        run: |
+          npx napi build --manifest-path crates/quill-node/Cargo.toml -o "out/native/${{ matrix.rust_target }}" --target "${{ matrix.rust_target }}" --release
+          cargo build --release --target "${{ matrix.rust_target }}" -p quill-mcp
+
+      - name: Build Electron and renderer bundles
+        run: npm run build
+
+      - name: Prepare Apple certificate and provisioning profile
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          PROVISIONING_PROFILE: ${{ secrets.PROVISIONING_PROFILE }}
+        run: |
+          cert_path="$RUNNER_TEMP/apple-cert.p12"
+          printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$cert_path"
+          test -s "$cert_path"
+          mkdir -p build
+          printf '%s' "$PROVISIONING_PROFILE" | base64 --decode > build/embedded.provisionprofile
+          test -s build/embedded.provisionprofile
+          echo "CSC_CERT_PATH=$cert_path" >> "$GITHUB_ENV"
+
+      - name: Package, sign, and notarize macOS nightly (${{ matrix.arch }})
+        env:
+          QUILL_RUST_TARGET: ${{ matrix.rust_target }}
+          CSC_LINK: ${{ env.CSC_CERT_PATH }}
+          CSC_KEY_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: npx electron-builder --mac dmg zip --${{ matrix.arch }} --publish never
+
+      - name: Verify macOS nightly bundle, entitlements, signatures, and notarization
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          version="${{ needs.prepare.outputs.version }}"
+          arch="${{ matrix.arch }}"
+          app="dist-electron/${{ matrix.mac_dir }}/Quill.app"
+          node scripts/validate-pack.mjs --platform darwin --arch "$arch" --require-app-update true
+          test ! -e "$app/Contents/Resources/app.asar.unpacked"
+          test ! -e dist-electron/latest.json
+          test -s "dist-electron/Quill-${version}-${arch}.dmg"
+          test -s "dist-electron/Quill-${version}-${arch}-mac.zip"
+          test -s "dist-electron/Quill-${version}-${arch}-mac.zip.blockmap"
+          test -s dist-electron/latest-mac.yml
+
+          codesign --verify --deep --strict --verbose=2 "$app"
+          spctl -a -t exec -vv "$app"
+          xcrun stapler validate "$app"
+
+          for bin in \
+            "$app" \
+            "$app/Contents/Resources/quill-mcp" \
+            "$app/Contents/Resources/libpdfium.dylib" \
+            "$app/Contents/Resources/quill-node/index.node"; do
+            team=$(codesign -dvv "$bin" 2>&1 | sed -n 's/^TeamIdentifier=//p')
+            test "$team" = "$APPLE_TEAM_ID" || { echo "error: unexpected TeamIdentifier ($team) on $bin" >&2; exit 1; }
+          done
+
+          app_ent=$(codesign -d --entitlements :- "$app")
+          printf '%s\n' "$app_ent" | grep -Fq 'com.apple.developer.icloud-container-identifiers'
+          printf '%s\n' "$app_ent" | grep -Fq 'com.apple.application-identifier'
+
+          for helper in "$app"/Contents/Frameworks/Quill\ Helper*.app; do
+            test -d "$helper" || continue
+            helper_ent=$(codesign -d --entitlements :- "$helper")
+            if printf '%s\n' "$helper_ent" | grep -Eq 'com\.apple\.developer\.icloud-container-identifiers|com\.apple\.application-identifier'; then
+              echo "error: helper $helper must not carry iCloud or application-identifier entitlements" >&2
+              exit 1
+            fi
+          done
+
+          mkdir -p dist-electron/stage
+          cp "dist-electron/Quill-${version}-${arch}.dmg" dist-electron/stage/
+          cp "dist-electron/Quill-${version}-${arch}-mac.zip" dist-electron/stage/
+          cp "dist-electron/Quill-${version}-${arch}-mac.zip.blockmap" dist-electron/stage/
+          if [[ -f "dist-electron/Quill-${version}-${arch}.dmg.blockmap" ]]; then
+            cp "dist-electron/Quill-${version}-${arch}.dmg.blockmap" dist-electron/stage/
+          fi
+          cp dist-electron/latest-mac.yml "dist-electron/stage/latest-mac-${arch}.yml"
+
+      - name: Clean up signing secrets from runner workspace
+        if: always()
+        run: rm -f "$RUNNER_TEMP/apple-cert.p12" build/embedded.provisionprofile
+
+      - name: Upload macOS nightly artifacts (${{ matrix.arch }})
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-macos-${{ matrix.arch }}
+          path: dist-electron/stage/*
+          if-no-files-found: error
+
+  build-windows:
+    needs: prepare
+    if: inputs.platform == 'all' || inputs.platform == 'both' || inputs.platform == 'windows'
+    runs-on: windows-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out dispatch commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          submodules: true
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: nightly-windows-x64
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Stamp nightly package version
+        run: |
+          node -e '
+            const fs = require("fs");
+            const v = process.argv[1];
+            for (const file of ["package.json", "package-lock.json"]) {
+              const data = JSON.parse(fs.readFileSync(file, "utf8"));
+              data.version = v;
+              if (data.packages && data.packages[""]) data.packages[""].version = v;
+              fs.writeFileSync(file, JSON.stringify(data, null, 2) + "\n");
+            }
+          ' "${{ needs.prepare.outputs.version }}"
+
+      - name: Build native Rust artifacts (x86_64-pc-windows-msvc)
+        run: |
+          npx napi build --manifest-path crates/quill-node/Cargo.toml -o out/native/x86_64-pc-windows-msvc --target x86_64-pc-windows-msvc --release
+          cargo build --release --target x86_64-pc-windows-msvc -p quill-mcp
+
+      - name: Build Electron and renderer bundles
+        run: npm run build
+
+      - name: Package unsigned Windows nightly NSIS installer
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          QUILL_RUST_TARGET: x86_64-pc-windows-msvc
+        run: npx electron-builder --win nsis --x64 --publish never
+
+      - name: Validate Windows nightly bundle and installer outputs
+        run: |
+          version="${{ needs.prepare.outputs.version }}"
+          node scripts/validate-pack.mjs --platform win32 --arch x64 --require-app-update true
+          test ! -e dist-electron/win-unpacked/resources/app.asar.unpacked
+          test ! -e dist-electron/latest.json
+          test -s "dist-electron/Quill-Setup-${version}-x64.exe"
+          test -s "dist-electron/Quill-Setup-${version}-x64.exe.blockmap"
+          test -s dist-electron/latest.yml
+
+          mkdir -p dist-electron/stage
+          cp "dist-electron/Quill-Setup-${version}-x64.exe" dist-electron/stage/
+          cp "dist-electron/Quill-Setup-${version}-x64.exe.blockmap" dist-electron/stage/
+          cp dist-electron/latest.yml dist-electron/stage/latest.yml
+
+      - name: Upload Windows nightly artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-windows
+          path: dist-electron/stage/*
+          if-no-files-found: error
+
+  publish:
+    needs: [prepare, build-macos, build-windows]
+    if: >-
+      ${{ !cancelled() && needs.prepare.result == 'success' &&
+      ((inputs.platform == 'all' && needs.build-macos.result == 'success' && needs.build-windows.result == 'success') ||
+      (inputs.platform == 'both' && needs.build-macos.result == 'success' && needs.build-windows.result == 'success') ||
+      (inputs.platform == 'macos' && needs.build-macos.result == 'success' && needs.build-windows.result == 'skipped') ||
+      (inputs.platform == 'windows' && needs.build-macos.result == 'skipped' && needs.build-windows.result == 'success')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      PLATFORM: ${{ inputs.platform }}
+      RELEASE_TITLE: ${{ needs.prepare.outputs.release_title }}
+      SOURCE_SHA: ${{ needs.prepare.outputs.sha }}
+      BUILD_STAMP: ${{ needs.prepare.outputs.stamp }}
+      NIGHTLY_VERSION: ${{ needs.prepare.outputs.version }}
+      DMG_ARM64: Quill-${{ needs.prepare.outputs.version }}-arm64.dmg
+      ZIP_ARM64: Quill-${{ needs.prepare.outputs.version }}-arm64-mac.zip
+      DMG_X64: Quill-${{ needs.prepare.outputs.version }}-x64.dmg
+      ZIP_X64: Quill-${{ needs.prepare.outputs.version }}-x64-mac.zip
+      SETUP_WIN: Quill-Setup-${{ needs.prepare.outputs.version }}-x64.exe
+    steps:
+      - name: Check out dispatch commit with history
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install JS helpers without downloading Electron
+        run: npm ci --ignore-scripts
+
+      - name: Download macOS nightly artifacts
+        if: inputs.platform == 'all' || inputs.platform == 'both' || inputs.platform == 'macos'
+        uses: actions/download-artifact@v4
+        with:
+          pattern: nightly-macos-*
+          path: nightly-artifacts/macos
+          merge-multiple: true
+
+      - name: Download Windows nightly artifacts
+        if: inputs.platform == 'all' || inputs.platform == 'both' || inputs.platform == 'windows'
+        uses: actions/download-artifact@v4
+        with:
+          name: nightly-windows
+          path: nightly-artifacts/windows
+
+      - name: Prepare and validate nightly artifacts before publishing
+        run: |
+          if find nightly-artifacts -name 'latest.json' | grep -q .; then
+            echo "error: unexpected Tauri latest.json found in nightly artifacts" >&2
+            exit 1
+          fi
+          mkdir -p nightly-payloads nightly-feeds
+          if [[ "$PLATFORM" == "all" || "$PLATFORM" == "both" || "$PLATFORM" == "macos" ]]; then
+            node scripts/merge-mac-update-yml.mjs \
+              nightly-artifacts/macos/latest-mac-arm64.yml \
+              nightly-artifacts/macos/latest-mac-x64.yml \
+              nightly-feeds/latest-mac.yml \
+              "$NIGHTLY_VERSION"
+            for file in \
+              "$DMG_ARM64" \
+              "$ZIP_ARM64" \
+              "$ZIP_ARM64.blockmap" \
+              "$DMG_X64" \
+              "$ZIP_X64" \
+              "$ZIP_X64.blockmap"; do
+              test -s "nightly-artifacts/macos/$file" || { echo "error: missing $file" >&2; exit 1; }
+              cp "nightly-artifacts/macos/$file" nightly-payloads/
+            done
+            for opt in "$DMG_ARM64.blockmap" "$DMG_X64.blockmap"; do
+              if [[ -f "nightly-artifacts/macos/$opt" ]]; then
+                cp "nightly-artifacts/macos/$opt" nightly-payloads/
+              fi
+            done
+          fi
+          if [[ "$PLATFORM" == "all" || "$PLATFORM" == "both" || "$PLATFORM" == "windows" ]]; then
+            test -s "nightly-artifacts/windows/$SETUP_WIN"
+            test -s "nightly-artifacts/windows/$SETUP_WIN.blockmap"
+            test -s nightly-artifacts/windows/latest.yml
+            grep -Fxq "version: ${NIGHTLY_VERSION}" nightly-artifacts/windows/latest.yml || {
+              echo "error: Windows latest.yml version does not match $NIGHTLY_VERSION" >&2
+              exit 1
+            }
+            cp "nightly-artifacts/windows/$SETUP_WIN" nightly-payloads/
+            cp "nightly-artifacts/windows/$SETUP_WIN.blockmap" nightly-payloads/
+            cp nightly-artifacts/windows/latest.yml nightly-feeds/
+          fi
+
+      - name: Move nightly tag and compose release notes
+        run: |
+          notes="$RUNNER_TEMP/nightly-notes.md"
+          release=$(git describe --tags --match 'v*' --abbrev=0 "$SOURCE_SHA" 2>/dev/null || true)
+          {
+            if [[ -z "$release" ]]; then
+              echo "## Changes in this nightly"
+              echo
+              echo "This nightly is ${SOURCE_SHA:0:7} (\`${NIGHTLY_VERSION}\`)."
+            else
+              echo "## Changes since $release"
+              echo
+              echo "This nightly is ${SOURCE_SHA:0:7} (\`${NIGHTLY_VERSION}\`)."
+              echo
+              git log --no-merges --format='- %s (%h)' "$release..$SOURCE_SHA" > "$RUNNER_TEMP/nightly-changes.txt"
+              total=$(wc -l < "$RUNNER_TEMP/nightly-changes.txt")
+              if (( total == 0 )); then
+                echo "No commits since $release."
+              fi
+              head -n 100 "$RUNNER_TEMP/nightly-changes.txt"
+              if (( total > 100 )); then
+                echo "- and $((total - 100)) more commits"
+              fi
+            fi
+            cat <<'EOF'
+
+          Rolling nightly builds of Quill (`com.wycstudios.quill`) from `main`. All platforms share this rolling prerelease; single-platform dispatches keep the other platform's files in place. Nightly installs check this `nightly` feed automatically; install a stable release by hand to switch back to production.
+
+          ### macOS
+          Download **Quill-…-arm64.dmg** (Apple Silicon) or **Quill-…-x64.dmg** (Intel), then drag **Quill.app** into Applications. The app is Developer ID signed, hardened, and notarized, with iCloud library sync enabled.
+
+          ### Windows
+          Download **Quill-Setup-…-x64.exe** (unsigned NSIS installer for x64; SmartScreen may warn on first launch).
+          EOF
+          } > "$notes"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag --force --annotate nightly --message "$RELEASE_TITLE $NIGHTLY_VERSION" "$SOURCE_SHA"
+          git push --force origin refs/tags/nightly
+
+      - name: Prepare rolling nightly prerelease and upload versioned payloads
+        run: |
+          notes="$RUNNER_TEMP/nightly-notes.md"
+          if gh release view nightly >/dev/null 2>&1; then
+            gh release edit nightly --target "$SOURCE_SHA" --title "$RELEASE_TITLE" --notes-file "$notes" --prerelease --draft=false --latest=false
+          else
+            gh release create nightly --target "$SOURCE_SHA" --title "$RELEASE_TITLE" --notes-file "$notes" --prerelease --latest=false
+          fi
+          gh release upload nightly nightly-payloads/* --clobber
+
+      - name: Verify public versioned payload URLs before updating live feeds
+        run: |
+          public_curl() {
+            curl --silent --show-error --fail --location --retry 5 --retry-delay 10 "$@"
+          }
+          if [[ "$PLATFORM" == "all" || "$PLATFORM" == "both" || "$PLATFORM" == "macos" ]]; then
+            for file in "$DMG_ARM64" "$ZIP_ARM64" "$ZIP_ARM64.blockmap" "$DMG_X64" "$ZIP_X64" "$ZIP_X64.blockmap"; do
+              public_curl --head "https://github.com/$GITHUB_REPOSITORY/releases/download/nightly/$file" >/dev/null
+            done
+          fi
+          if [[ "$PLATFORM" == "all" || "$PLATFORM" == "both" || "$PLATFORM" == "windows" ]]; then
+            for file in "$SETUP_WIN" "$SETUP_WIN.blockmap"; do
+              public_curl --head "https://github.com/$GITHUB_REPOSITORY/releases/download/nightly/$file" >/dev/null
+            done
+          fi
+
+      - name: Publish active nightly update feeds
+        run: gh release upload nightly nightly-feeds/* --clobber
+
+      - name: Verify public nightly release and YAML feeds before pruning
+        run: |
+          public_curl() {
+            curl --silent --show-error --fail --location --retry 5 --retry-delay 10 "$@"
+          }
+          gh release view nightly --json isPrerelease,isDraft,assets | jq -e \
+            --arg platform "$PLATFORM" \
+            --arg dmg_arm64 "$DMG_ARM64" \
+            --arg zip_arm64 "$ZIP_ARM64" \
+            --arg dmg_x64 "$DMG_X64" \
+            --arg zip_x64 "$ZIP_X64" \
+            --arg setup_win "$SETUP_WIN" '
+            .isPrerelease and (.isDraft | not) and
+            ([.assets[].name] |
+              (($platform != "all" and $platform != "both" and $platform != "macos") or
+                (index($dmg_arm64) != null and index($zip_arm64) != null and index($zip_arm64 + ".blockmap") != null and
+                 index($dmg_x64) != null and index($zip_x64) != null and index($zip_x64 + ".blockmap") != null and
+                 index("latest-mac.yml") != null)) and
+              (($platform != "all" and $platform != "both" and $platform != "windows") or
+                (index($setup_win) != null and index($setup_win + ".blockmap") != null and index("latest.yml") != null)))'
+
+          if [[ "$PLATFORM" == "all" || "$PLATFORM" == "both" || "$PLATFORM" == "macos" ]]; then
+            public_curl "https://github.com/$GITHUB_REPOSITORY/releases/download/nightly/latest-mac.yml" --output "$RUNNER_TEMP/public-latest-mac.yml"
+            cmp nightly-feeds/latest-mac.yml "$RUNNER_TEMP/public-latest-mac.yml"
+          fi
+
+          if [[ "$PLATFORM" == "all" || "$PLATFORM" == "both" || "$PLATFORM" == "windows" ]]; then
+            public_curl "https://github.com/$GITHUB_REPOSITORY/releases/download/nightly/latest.yml" --output "$RUNNER_TEMP/public-latest.yml"
+            cmp nightly-feeds/latest.yml "$RUNNER_TEMP/public-latest.yml"
+          fi
+
+      - name: Prune macOS nightlies to latest two stamps per arch
+        if: inputs.platform == 'all' || inputs.platform == 'both' || inputs.platform == 'macos'
+        run: |
+          assets=$(gh release view nightly --json assets --jq '.assets[].name')
+          for arch in arm64 x64; do
+            pattern="^Quill-.*-nightly\.([0-9]{12})-${arch}(-mac\.zip(\.blockmap)?|\.dmg(\.blockmap)?)$"
+            stale_stamps=$(printf '%s\n' "$assets" | while IFS= read -r name; do
+              if [[ "$name" =~ $pattern ]]; then
+                printf '%s\n' "${BASH_REMATCH[1]}"
+              fi
+            done | sort -ru | sed -n '3,$p')
+            if printf '%s\n' "$stale_stamps" | grep -Fxq "$BUILD_STAMP"; then
+              echo "error: refusing to prune current macOS $arch nightly stamp $BUILD_STAMP" >&2
+              exit 1
+            fi
+            while IFS= read -r name; do
+              if [[ "$name" =~ $pattern ]]; then
+                stamp="${BASH_REMATCH[1]}"
+                if printf '%s\n' "$stale_stamps" | grep -Fxq "$stamp"; then
+                  gh release delete-asset nightly "$name" --yes
+                fi
+              fi
+            done <<< "$assets"
+          done
+
+      - name: Prune Windows nightlies to latest two stamps
+        if: inputs.platform == 'all' || inputs.platform == 'both' || inputs.platform == 'windows'
+        run: |
+          assets=$(gh release view nightly --json assets --jq '.assets[].name')
+          pattern="^Quill-Setup-.*-nightly\.([0-9]{12})-x64\.exe(\.blockmap)?$"
+          stale_stamps=$(printf '%s\n' "$assets" | while IFS= read -r name; do
+            if [[ "$name" =~ $pattern ]]; then
+              printf '%s\n' "${BASH_REMATCH[1]}"
+            fi
+          done | sort -ru | sed -n '3,$p')
+          if printf '%s\n' "$stale_stamps" | grep -Fxq "$BUILD_STAMP"; then
+            echo "error: refusing to prune current Windows nightly stamp $BUILD_STAMP" >&2
+            exit 1
+          fi
+          while IFS= read -r name; do
+            if [[ "$name" =~ $pattern ]]; then
+              stamp="${BASH_REMATCH[1]}"
+              if printf '%s\n' "$stale_stamps" | grep -Fxq "$stamp"; then
+                gh release delete-asset nightly "$name" --yes
+              fi
+            fi
+          done <<< "$assets"
+
+      - name: Report completed nightly publication
+        run: echo "Published $PLATFORM nightly $NIGHTLY_VERSION from $SOURCE_SHA to release nightly." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Report incomplete nightly publication
+        if: failure() || cancelled()
+        run: echo "Incomplete $PLATFORM nightly $NIGHTLY_VERSION from $SOURCE_SHA. Some files may already be uploaded; inspect release nightly before another cut." >> "$GITHUB_STEP_SUMMARY"

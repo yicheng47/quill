@@ -5,7 +5,7 @@ description: Cut a Quill production release — bump the version, tag vX.Y.Z, le
 
 # Release
 
-A production release is a `vX.Y.Z` tag on a `main` commit whose app version is exactly `X.Y.Z`. `release.yml` builds the signed, notarized macOS DMGs for Apple Silicon and Intel, the Windows x64 installer, and the updater bundles with their signatures and `latest.json`, then attaches everything to a **draft** release. Publishing the draft is the user's switch: it moves `releases/latest`, which the in-app updater reads.
+A production or release-candidate release is a `vX.Y.Z` or `vX.Y.Z-rc.N` tag on a `main` commit whose `package.json` and `Cargo.toml` workspace version match the tag without the `v` prefix. `release.yml` builds the signed, notarized macOS DMGs and updater zips for Apple Silicon and Intel, merges `latest-mac.yml`, builds the Windows x64 NSIS installer and `latest.yml`, and attaches everything to a **draft** release (`prerelease: true` when the tag contains `-`). Publishing a stable draft is the user's switch: it moves `releases/latest`, which `electron-updater` reads for stable installs (while `-rc.` installs also accept prereleases).
 
 An explicit request to `run` authorizes the bump commit, the push, the tag, and editing the draft's notes; after the user publishes, it also authorizes the sweep's docs commit and push. An explicit `sweep` request authorizes that commit and push on its own. Nothing in this skill publishes the draft, deletes a release or moves an existing tag. Record only observed results.
 
@@ -16,23 +16,23 @@ An explicit request to `run` authorizes the bump commit, the push, the tag, and 
 ## `run <version>`
 
 1. **Preflight — stop on any failure and report it.**
-   - `<version>` must match `^[0-9]+\.[0-9]+\.[0-9]+$` and be greater than the current tag from `gh release list`.
+   - `<version>` must match `^[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$` and be greater than the current tag from `gh release list`.
    - `git fetch origin`; require branch `main`, a clean tree, and `git rev-parse main origin/main` equal. Everything meant for the release is already merged.
    - CI on `origin/main` is green: `gh run list --branch main --workflow ci.yaml --limit 1 --json conclusion`.
    - The smoke tier of the [regression suite](../../../docs/tests/regression/README.md) has passed on macOS for the `main` commit being released, in a run recorded in `docs/tests/runs/`, unless Jason waives it for this release. If no such run exists, stop and propose the qa mission that runs it.
    - No release run is in flight: `gh run list --workflow release.yml --limit 3 --json status`.
-2. **Bump.** Do not use `sed` for the version. Read each file first to confirm the current version, then edit it in `package.json`, `src-tauri/tauri.conf.json` and `src-tauri/Cargo.toml`, and check all three show the new version. Run `cargo check` in `src-tauri/` to refresh `Cargo.lock`, and `npm install --package-lock-only --ignore-scripts` to refresh the root `version` in `package-lock.json`. If the `public/foliate-js` submodule moved, push the submodule commit first and stage the updated pointer. Commit as `chore: bump version to v<version>` and push `main`.
+2. **Bump.** Do not use `sed` for the version. Read each file first to confirm the current version, then edit it in `package.json` and workspace `Cargo.toml` (`[workspace.package]`), and check both show `<version>`. Run `cargo check --workspace` to refresh `Cargo.lock`, and `npm install --package-lock-only --ignore-scripts` to refresh `package-lock.json`. If the `public/foliate-js` submodule moved, push the submodule commit first and stage the updated pointer. Commit as `chore: bump version to v<version>` and push `main`.
 3. **Tag.** `git tag -a v<version> -m "v<version>" && git push origin v<version>`. The push starts `release.yml`.
-4. **Watch.** Find the run with `gh run list --workflow release.yml --limit 1 --json databaseId,status,headSha` and `gh run watch <id> --exit-status`. Every build job must succeed. On failure, `gh run view <id> --log-failed`, report the failing step, and stop; the tag stays, the draft may be partial.
+4. **Watch.** Find the run with `gh run list --workflow release.yml --limit 1 --json databaseId,status,headSha` and `gh run watch <id> --exit-status`. Every build job and `publish` must succeed. On failure, `gh run view <id> --log-failed`, report the failing step, and stop; the tag stays, the draft may be partial.
 5. **Notes.** Follow `notes <version>` below and set them on the draft: `gh release edit v<version> --notes-file <file>`. Do not pass `--draft=false`.
-6. **Report.** The draft URL, every asset name, and the reminder that publishing is the user's action. A draft's `untagged-…` URL changes each time it is edited, so link the latest one. After the user publishes, confirm `gh release view v<version> --json isDraft` is `false` and `gh api repos/yicheng47/quill/releases/latest --jq .tag_name` is `v<version>` before anything that assumes the release is live.
-7. **Sweep.** Once the release is live, follow `sweep <version>` below.
+6. **Report.** The draft URL, every asset name, and the reminder that publishing is the user's action. A draft's `untagged-…` URL changes each time it is edited, so link the latest one. After the user publishes a stable release, confirm `gh release view v<version> --json isDraft` is `false` and `gh api repos/yicheng47/quill/releases/latest --jq .tag_name` is `v<version>` before anything that assumes the release is live.
+7. **Sweep.** Once a stable release is live, follow `sweep <version>` below.
 
 ## `notes <version>`
 
 Source the content from `git log v<previous>..v<version> --no-merges --format='- %s (%h)'` and the closed issues those commits reference. Write for users, not for the repo: what changed for them, in their words, one bullet per change with the issue number at the end. Skip internal work (tests, CI, docs, refactors) unless it changes what users see. A draft with only the workflow's one-line stub is not ready to publish.
 
-Sections, omitting empty ones: **What's New**, **Improvements**, **Bug Fixes**, then **Download**, naming each installer from the draft's assets (`gh release view v<version> --json assets --jq '.assets[].name'`) rather than guessing: the Apple Silicon and Intel DMGs, and the Windows x64 installer.
+Sections, omitting empty ones: **What's New**, **Improvements**, **Bug Fixes**, then **Download**, naming each installer from the draft's assets (`gh release view v<version> --json assets --jq '.assets[].name'`) rather than guessing: `Quill-<version>-arm64.dmg`, `Quill-<version>-x64.dmg`, and `Quill-Setup-<version>-x64.exe` (and note one-time manual upgrade if jumping from Tauri `1.x` to Electron `2.0.0`).
 
 ## `sweep <version>`
 
@@ -46,7 +46,7 @@ Reviews and cleans up the docs of everything shipped since the previous sweep in
 
 ## `check <version>`
 
-Read-only. `gh release view v<version> --json isDraft,isPrerelease,assets,body`: report draft state, that both DMGs, the Windows installer, the updater bundles with their `.sig` files and `latest.json` are present, and whether the body has more than the workflow's stub. After publishing, also verify `releases/latest` resolves to the tag.
+Read-only. `gh release view v<version> --json isDraft,isPrerelease,assets,body`: report draft and prerelease state, confirm `Quill-<version>-arm64.dmg`, `Quill-<version>-x64.dmg`, `Quill-<version>-arm64-mac.zip`, `Quill-<version>-x64-mac.zip`, `latest-mac.yml`, `Quill-Setup-<version>-x64.exe`, `latest.yml`, `.blockmap` files, and zero `latest.json` files are present, and check whether the body has more than the workflow's stub. After publishing a stable release, also verify `releases/latest` resolves to the tag.
 
 ## Notarization commands
 

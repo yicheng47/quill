@@ -17,15 +17,15 @@ Core vocabulary:
 ## Stack
 
 - Frontend: React 19, TypeScript, Tailwind CSS 4, Vite, React Router; icons from `lucide-react`; i18n through i18next and react-i18next.
-- Desktop/backend: Tauri 2, Rust, SQLite via `rusqlite` in WAL mode.
+- Desktop/backend: Electron 45 (`electron-vite`, `electron-builder`, `electron-updater`), Rust workspace (`crates/quill-core`, `crates/quill-node` N-API addon, `crates/quill-mcp` stdio MCP server), SQLite via `rusqlite` in WAL mode.
 - Reader engine: `foliate-js`, a git submodule at `public/foliate-js`.
 - Sync: iCloud container files, append-only event logs, snapshots, and watcher-driven replay.
-- AI: OpenAI, Anthropic and Ollama over HTTP, plus ChatGPT-login OAuth for OpenAI. Each request streams over its own Tauri event channel.
-- CI: `.github/workflows/ci.yaml` checks pull requests; `release.yml` builds a tagged release into a draft.
+- AI: OpenAI, Anthropic and Ollama over HTTP, plus ChatGPT-login OAuth for OpenAI. Each request streams over a per-request Electron IPC channel.
+- CI: `.github/workflows/ci.yaml` checks pull requests; `release.yml` builds tagged releases (`v*`) into drafts; `nightly-on-merge.yml` and `nightly.yml` publish rolling `nightly` builds from `main`.
 
 ## Project Map
 
-- `src/`: React frontend.
+- `src/`: React frontend and `src/platform/` desktop/web runtime adapter.
 - `src/components/`: shared UI, reader controls, settings, and library components.
 - `src/components/settings/`: settings modal sections, one per tab.
 - `src/components/ui/`: common UI primitives.
@@ -33,11 +33,13 @@ Core vocabulary:
 - `src/hooks/`: frontend data hooks and command wrappers.
 - `src/contexts/`: React context providers.
 - `src/i18n/`: translation JSON files.
-- `src-tauri/src/commands/`: Tauri command handlers exposed to the frontend.
-- `src-tauri/src/sync/`: iCloud sync engine, event log, peer manifests, replay, snapshots, and writer.
-- `src-tauri/src/mcp/`: MCP server and tools.
-- `src-tauri/src/ai/`: AI provider integrations.
-- `src-tauri/migrations/`: versioned SQL schema.
+- `electron/main/`: Electron main process, `QuillCore` host bridge, IPC handlers, custom protocols, windows, menus, and `electron-updater` service.
+- `electron/preload/`: `contextBridge` API exposed to the renderer.
+- `electron/packaging/`: Native artifact staging and macOS/Windows packaging helpers (`electron-builder.ts`, `scripts/`).
+- `crates/quill-core/`: Rust engine — commands (`src/commands/`), sync engine (`src/sync/`), MCP server (`src/mcp/`), AI providers (`src/ai/`), PDFium integration, and versioned SQLite schema (`migrations/`).
+- `crates/quill-node/`: N-API native addon bridging `quill-core` into Electron main (`index.node`).
+- `crates/quill-mcp/`: Standalone stdio MCP binary (`quill-mcp`).
+- `build/`: App icons and macOS entitlements (`entitlements.mac.plist`, `entitlements.mac.inherit.plist`).
 - `public/foliate-js/`: vendored reader engine submodule.
 - `design/`: Pencil source files, mainly `design/quill-desktop.pen`.
 - `docs/README.md`: the docs layout and the [archive policy](docs/README.md#archive-policy).
@@ -50,11 +52,11 @@ Core vocabulary:
 ## Development Commands
 
 - Install dependencies: `npm install`. A fresh checkout or worktree also needs `git submodule update --init` for `public/foliate-js`.
-- Start the desktop app against development data: `make dev`. A debug build keeps its database, secrets and logs under `com.wycstudios.quill-dev`, apart from the installed Quill; it still shares the iCloud container (see [Test Scope](#test-scope)). Vite's port is fixed at 1430, so only one development app runs at a time on a machine.
+- Start the desktop app against development data: `make dev` (builds debug `quill-node` and `quill-mcp`, then runs `electron-vite dev`). A dev run (`!app.isPackaged`) keeps its database, secrets and logs under `com.wycstudios.quill-dev`, apart from the installed Quill; it still shares the iCloud container (see [Test Scope](#test-scope)). Dev Vite listens on port 1430 (`ELECTRON_RENDERER_URL=http://localhost:1430`), so only one development app runs at a time on a machine.
 - Frontend only, in a browser: `make dev-web`.
-- Frontend typecheck: `make typecheck`. Lint: `make lint`. Tests: `npm test`. Build: `npm run build`.
-- Rust, from `src-tauri/`: `cargo check`, `cargo test`, `cargo clippy -- -D warnings`.
-- Package the macOS app: `make package`.
+- Typecheck: `make typecheck` (`tsc --noEmit` and `tsc -p tsconfig.electron.json --noEmit`). Lint: `make lint`. Tests: `npm test`. Build: `make build` (release native builds + `npm run build`), or `npm run electron:build` for Electron/renderer JS bundles only.
+- Rust, from the repository root: `cargo check --workspace`, `cargo test --workspace`, `cargo clippy --workspace -- -D warnings`.
+- Unpacked packaging check (secret-free): `CSC_IDENTITY_AUTO_DISCOVERY=false QUILL_PACK_ALLOW_DEBUG=1 npx electron-builder --mac --dir --publish never` followed by `node scripts/validate-pack.mjs`. Packaged builds run with `isDev = false` and must never be launched against a real `$HOME`; use an isolated `HOME=$(mktemp -d ...)` when smoke-testing packaged artifacts.
 
 Prefer the smallest check that covers the change. For frontend changes, run typecheck, lint and the affected tests. For Rust behavior, run the relevant `cargo test` target; for sync changes, run sync-focused tests before broadening. New backend commands get unit tests before the frontend is built on them.
 
@@ -88,9 +90,9 @@ For larger work, write a short problem brief with the evidence, proposed scope a
 
 The checkout at the repository root stays on `main`. Every branch of work gets its own linked worktree under `.worktrees/`, named after the branch with its slashes flattened: `fix/323-focus-open-reader` lives in `.worktrees/fix-323-focus-open-reader`. Create it with `git worktree add .worktrees/<flattened-branch> -b <branch> origin/main`, then run `git submodule update --init` and `npm install` inside it, and remove it with `git worktree remove` once the branch has merged. Because the directory name is the branch name, an editor window's title says which work it holds, and either name can be derived from the other.
 
-`.worktrees/` is ignored, and the root checkout's tooling stays out of it: `git clean -xfd` skips a nested worktree and reports it as a skipped repository, so removing one takes a deliberate `-ff`; Cargo builds only `src-tauri/`; `tsc` and ESLint read only `src/`; Vitest collects only `src/` and Vite does not watch `.worktrees/` (`vite.config.ts`); and ripgrep honours the ignore, so a search from the root checkout does not cross into another branch's copy.
+`.worktrees/` is ignored, and the root checkout's tooling stays out of it: `git clean -xfd` skips a nested worktree and reports it as a skipped repository, so removing one takes a deliberate `-ff`; Cargo builds the Rust workspace (`crates/`); `tsc` covers `src/` and `tsconfig.electron.json` covers `electron/` and `electron-builder.ts`; ESLint checks `src/`, `electron/`, and `scripts/`; Vitest collects tests in `src/` and `electron/`, and Vite ignores `.worktrees/` (`vite.config.ts`); and ripgrep honours the ignore, so a search from the root checkout does not cross into another branch's copy.
 
-Each worktree carries its own `node_modules/` and `src-tauri/target/` and pays for its own build. Do not point them at a shared `CARGO_TARGET_DIR`: Cargo takes an exclusive lock on the target directory, so concurrent worktrees would queue behind each other instead of building in parallel. Every worktree's development app uses the same development data and port, so only one runs at a time.
+Each worktree carries its own `node_modules/` and `target/` and pays for its own build. Do not point them at a shared `CARGO_TARGET_DIR`: Cargo takes an exclusive lock on the target directory, so concurrent worktrees would queue behind each other instead of building in parallel. Every worktree's development app uses the same development data and port, so only one runs at a time.
 
 Work stays inside its own worktree. When several are live at once, treat the others as another machine's checkout.
 
@@ -103,9 +105,9 @@ Work stays inside its own worktree. When several are live at once, treat the oth
 - Keep comments rare and useful. Explain non-obvious intent, not mechanics.
 - Design UI in Pencil before implementing it, and keep UI aligned with the file and node referenced by the user or feature spec; the product canvas is `design/quill-desktop.pen`. Pen does not autosave and a `.pen` file does not merge, so a design is settled and committed on `main` before the branch that builds it.
 - All user-facing strings use i18n keys; never hardcode English in components. Keep `src/i18n/en.json` and `src/i18n/zh.json` in sync.
-- Settings are key-value rows in the SQLite `settings` table: `useSettings` on the frontend, `src-tauri/src/commands/settings.rs` on the backend. Settings modal sections follow the row pattern in `GeneralSettings.tsx`: 73px rows, `flex justify-between`, 1px `black/10` dividers.
+- Settings are key-value rows in the SQLite `settings` table: `useSettings` on the frontend, `crates/quill-core/src/commands/settings.rs` on the backend. Settings modal sections follow the row pattern in `GeneralSettings.tsx`: 73px rows, `flex justify-between`, 1px `black/10` dividers.
 - Sensitive data such as API keys and OAuth tokens goes in `secrets.db`, which stays local and never syncs, not in `quill.db`.
-- AI streaming uses a per-request event channel through the Tauri event emitter.
+- AI streaming uses a per-request Electron IPC event channel forwarded from `quill-core`'s host event emitter.
 - Treat sync and file-copy changes as data-safety sensitive. Preserve the invariant that the app must not repoint storage or disable sync until required local files are actually reachable.
 - Do not add repo conventions only to an agent-specific file. Update this file and leave tool-specific files as pointers if needed.
 
@@ -113,9 +115,9 @@ Work stays inside its own worktree. When several are live at once, treat the oth
 
 - Use focused commits with an imperative subject; [Crew Missions](#crew-missions) covers how a mission's pull request is shaped.
 - Common scopes: `sync`, `commands`, `reader`, `library`, `settings`, `ai`, `mcp`, `ui`, `docs`, `release`.
-- Example: `fix(sync): keep status reads off the webview thread`.
+- Example: `fix(sync): keep status reads off the renderer thread`.
 - A doc-only change (`docs/`, `design/`, the README, this file) is committed straight to `main` from the root checkout, with no branch, worktree or pull request; a feature's spec, impl plan and mission brief go on its branch and land with its code. Open a PR for docs only when the edit is large and spans several files, such as a restructure or a rename across the docs tree.
-- A PR that changes Quill's data-safety core gets the `core-review` label, and Jason reviews it closely before it merges. The core is the sync engine (`src-tauri/src/sync/`), the SQLite schema and migrations (`src-tauri/migrations/`), secrets storage, and the code that resolves, relocates or copies the data directory. Whoever opens the PR adds the label; test-only changes do not need it. Never remove the label, and a crew asked to merge waits for Jason's review of a `core-review` PR.
+- A PR that changes Quill's data-safety core gets the `core-review` label, and Jason reviews it closely before it merges. The core is the sync engine (`crates/quill-core/src/sync/`), the SQLite schema and migrations (`crates/quill-core/migrations/`), secrets storage, and the code that resolves, relocates or copies the data directory. Whoever opens the PR adds the label; test-only changes do not need it. Never remove the label, and a crew asked to merge waits for Jason's review of a `core-review` PR.
 - Every PR gets exactly one risk label, which tells Jason how closely to read it: `risk-low` for a small or mechanical change a skim covers, such as removing unreachable code, a rename, or a behaviour-preserving refactor whose tests are unchanged; `risk-medium` for a real behaviour change in a contained area, whose changed code paths need reading; `risk-high` for a broad or cross-cutting behaviour change, a migration, or anything hard to undo, which needs a careful review and live testing. Whoever opens the PR picks the label from what the diff does, not from which paths it touches: a `core-review` PR can still be `risk-low`. When unsure, pick the higher one, and update the label when the PR's scope changes.
 - A PR whose required live checks have not passed yet carries `needs-live-test`. Whoever opens it adds the label when the brief or the clean review names required live checks (see [Test Scope](#test-scope)); whoever runs them removes it once every selected check has passed and records in the PR description which checks ran. A failed check keeps the label. A crew asked to merge waits while the label is on.
 - A PR carries `reviewed` once an independent reviewer has passed its current head with no remaining must-fix findings: the crew's reviewer for a mission's PR, or the codex `reviewer` on `gpt-6-astra` for an inline fix (see [Issue Investigation And Fixes](#issue-investigation-and-fixes)). The reviewer adds the label with its clean review and names the reviewed commit in a PR comment. Whoever later pushes a code change removes the label until the new head passes review again.

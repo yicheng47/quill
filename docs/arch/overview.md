@@ -4,59 +4,65 @@
 
 ## 1. Overview
 
-Quill is a local-first AI-powered ebook reader. It reads EPUBs and PDFs, provides AI-assisted lookup/chat/translation, and syncs across devices via iCloud. The app is a Tauri 2 binary: Rust backend, React 19 + TypeScript webview, SQLite (WAL mode) for all persistent state, and a per-device JSONL event log for sync.
+Quill is a local-first AI-powered ebook reader. It reads EPUBs and PDFs, provides AI-assisted lookup/chat/translation, and syncs across devices via iCloud. The desktop app pairs an Electron 45 shell (main/preload/renderer) with a shared Rust core loaded through the `quill-node` N-API addon (`crates/quill-core` + `crates/quill-node`), React 19 + TypeScript UI, SQLite (WAL mode) for persistent state, and a per-device JSONL event log for sync.
 
 ### 1.1 Runtime picture
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│ Tauri process (Quill desktop app)                                            │
+│ Electron main process + React renderer (Quill desktop app)                   │
 │                                                                              │
 │  ┌───────────────────────────────────────────────────────────────────────┐   │
-│  │ React webview                                                         │   │
+│  │ React renderer (src/ + src/platform/electron.ts)                      │   │
 │  │                                                                       │   │
 │  │  Home ── BookGrid / BookList (cursor-paginated)                       │   │
 │  │  Reader ── Foliate.js (EPUB) / PDF.js (PDF)                           │   │
 │  │  Settings Modal (8 tabs)                                              │   │
-│  │  Popovers: LookupPopover, TranslationPopover, HighlightToolbar       │   │
-│  │  Side panels: AI chat, bookmarks, highlights, vocab                  │   │
+│  │  Popovers: LookupPopover, TranslationPopover, HighlightToolbar        │   │
+│  │  Side panels: AI chat, bookmarks, highlights, vocab                   │   │
 │  └────────────────────────────────┬──────────────────────────────────────┘   │
-│                                   │ Tauri IPC (invoke + event emitter)       │
+│                                   │ preload contextBridge + Electron IPC     │
 │                                   ▼                                          │
-│  ┌────────────────────┐  ┌─────────────────┐  ┌──────────────────────────┐  │
-│  │ commands/           │  │ ai/              │  │ sync/                    │  │
-│  │  books, bookmarks,  │  │  anthropic       │  │  writer   (chokepoint)  │  │
-│  │  collections, chats,│  │  openai_compat   │  │  log      (JSONL)       │  │
-│  │  vocab, translation,│  │  oauth           │  │  replay   (LWW merge)   │  │
-│  │  settings, ai,      │  │                  │  │  watcher  (notify)      │  │
-│  │  sync, oauth, app   │  │                  │  │  snapshot               │  │
-│  └────────┬───────────┘  └────────┬─────────┘  │  merge, peers, device   │  │
-│           │                       │             └────────────┬─────────────┘  │
-│           │                       │                          │                │
-│           ▼                       ▼                          ▼                │
-│  ┌─────────────────┐  ┌─────────────────────┐  ┌──────────────────────────┐  │
-│  │ quill.db         │  │ AI provider API     │  │ iCloud ubiquity          │  │
-│  │ (SQLite WAL,     │  │ (OpenAI, Anthropic, │  │ container                │  │
-│  │  dual-conn)      │  │  Ollama, custom)    │  │                          │  │
-│  ├─────────────────┤  └─────────────────────┘  │  books/   (EPUB/PDF)     │  │
-│  │ secrets.db       │                           │  covers/  (.img blobs)   │  │
-│  │ (credentials,    │                           │  logs/    (per-device    │  │
-│  │  never synced)   │                           │           JSONL)         │  │
-│  └─────────────────┘                            │  snapshots/              │  │
-│                                                  └──────────────────────────┘  │
+│  ┌───────────────────────────────────────────────────────────────────────┐   │
+│  │ Electron main (electron/main/) + quill-node (N-API) → quill-core      │   │
+│  │                                                                       │   │
+│  │  QuillUpdaterService (electron-updater)  |  protocols (quill-app/file)│   │
+│  │                                                                       │   │
+│  │  ┌──────────────────┐  ┌───────────────┐  ┌────────────────────────┐  │   │
+│  │  │ commands/        │  │ ai/           │  │ sync/                  │  │   │
+│  │  │  books,bookmarks,│  │  anthropic    │  │  writer   (chokepoint) │  │   │
+│  │  │  collections,    │  │  openai_compat│  │  log      (JSONL)      │  │   │
+│  │  │  chats,vocab,    │  │  oauth        │  │  replay   (LWW merge)  │  │   │
+│  │  │  translation,    │  └───────┬───────┘  │  watcher  (notify)     │  │   │
+│  │  │  settings,ai,    │          │          │  snapshot, merge,      │  │   │
+│  │  │  sync,oauth,mcp  │          │          │  peers, device         │  │   │
+│  │  └────────┬─────────┘          │          └───────────┬────────────┘  │   │
+│  └───────────┼────────────────────┼──────────────────────┼───────────────┘   │
+│              │                    │                      │                   │
+│              ▼                    ▼                      ▼                   │
+│     ┌─────────────────┐  ┌──────────────────┐  ┌────────────────────────┐    │
+│     │ quill.db        │  │ AI provider API  │  │ iCloud ubiquity        │    │
+│     │ (SQLite WAL,    │  │ (OpenAI,         │  │ container              │    │
+│     │  dual-conn)     │  │  Anthropic,      │  │                        │    │
+│     ├─────────────────┤  │  Ollama, custom) │  │ books/   (EPUB/PDF)    │    │
+│     │ secrets.db      │  └──────────────────┘  │ covers/  (.img blobs)  │    │
+│     │ (credentials,   │                        │ logs/    (per-device   │    │
+│     │  never synced)  │                        │           JSONL)       │    │
+│     └─────────────────┘                        │ snapshots/             │    │
+│                                                └────────────────────────┘    │
 └──────────────────────────────────────────────────────────────────────────────┘
 
-Separate process (no Tauri runtime):
+Separate process (standalone binary in Contents/Resources/quill-mcp):
 ┌──────────────────────────┐
-│ quill mcp                │  stdio binary, shares WAL SQLite
-│  (MCP server for Claude  │  with the desktop app.
-│   Code, Codex, etc.)     │  .mcp-notify sentinel for
-└──────────────────────────┘  write-back coordination.
+│ quill-mcp mcp            │  stdio binary built on quill-core,
+│  (MCP server for Claude  │  sharing WAL SQLite with the desktop app.
+│   Code, Codex, etc.)     │  .mcp-notify sentinel for write-back.
+└──────────────────────────┘
 ```
 
-**Three distinct subsystems.** The commands layer is a thin Tauri IPC surface — each command reads/writes SQLite and returns. The AI layer streams LLM responses over per-request event channels. The sync layer is the interesting one: it sits alongside the commands as a mutation observer, capturing every write as an event and replaying peer events on the other end.
+**Three distinct subsystems.** The commands layer (`quill-core::dispatch`) handles typed command dispatch from Electron main — each command reads/writes SQLite and returns. The AI layer streams LLM responses over per-request IPC event channels forwarded through `ShellHost` callbacks. The sync layer is the interesting one: it sits alongside the commands as a mutation observer, capturing every write as an event and replaying peer events on the other end.
 
-**What's not in the picture.** The webview knows nothing about sync. It calls `invoke("import_book")` or `invoke("save_bookmark")` like any local app. The SyncWriter intercepts those mutations at the Rust layer, transparently enqueuing events. The frontend never constructs, reads, or acknowledges sync events directly.
+**What's not in the picture.** The renderer knows nothing about sync. Through `src/platform/`, it calls commands such as `"import_book"` or `"save_bookmark"` like any local app. The SyncWriter intercepts those mutations at the Rust layer, transparently enqueuing events. The frontend never constructs, reads, or acknowledges sync events directly.
 
 **The invariant this picture encodes.** `quill.db` is the single source of truth for the running app. The JSONL event logs are a replication transport, not a primary store. If you deleted every `.jsonl` file and every peer snapshot, the app would still work — it just wouldn't sync. This is the opposite of Runner's architecture (where the NDJSON *is* the primary store). The difference is intentional: a reading app needs fast indexed queries over 300+ books; an event log is the wrong shape for that.
 
@@ -64,22 +70,23 @@ Separate process (no Tauri runtime):
 
 | Layer | Choice | Why |
 |---|---|---|
-| Desktop shell | **Tauri 2** | Rust-native, small binary, WebKit2 webview. Ships `.dmg` + `.nsis`. |
-| Backend | **Rust** | Owns SQLite, sync engine, AI streaming, EPUB/PDF parsing. One language for all backend concerns. |
-| Frontend | **React 19 + TypeScript** | Familiar, fast, no SSR concerns inside Tauri. |
+| Desktop shell | **Electron 45** (`electron-vite`, `electron-builder`) | Cross-platform desktop shell; ships signed/notarized macOS `.dmg` + `.zip` (`arm64`/`x64`) and Windows `x64` NSIS installer. |
+| Native bridge | **`quill-node`** (`napi` 3) | In-process N-API `.node` addon exposing async command dispatch, media root authorization, and event streaming from Rust into Electron main. |
+| Backend | **Rust** (`quill-core`, `quill-mcp`) | Owns SQLite, sync engine, AI streaming, MCP server, EPUB/PDF metadata extraction, and PDFium cover rendering. |
+| Frontend | **React 19 + TypeScript** | Fast SPA bundled cleanly inside Electron's renderer (`quill-app://`). |
 | Styling | **Tailwind CSS 4** | Utility-first; theme tokens via CSS variables. |
 | EPUB rendering | **Foliate.js** (git submodule) | Best open-source EPUB renderer. Handles CFI positions, pagination, search, annotations. |
-| PDF rendering | **PDF.js** | Standard. Loaded from CDN in the webview. |
+| PDF rendering | **PDF.js** + **`pdfium-render`** | PDF.js renders reader pages in the iframe; PDFium renders cover thumbnails in `quill-core`. |
 | Persistence | **SQLite via `rusqlite`** (WAL mode, dual connections) | All app state — library, highlights, chats, settings, sync metadata. WAL gives concurrent readers + one writer without blocking. |
 | Secrets | **Separate SQLite** (`secrets.db`) | API keys, OAuth tokens. Never synced, never exposed through bulk settings queries. |
 | Sync transport | **Append-only JSONL per device** | Peer-to-peer via iCloud file sync. Each device writes its own log; peers replay each other's. |
 | File watching | **`notify` crate** | Watches iCloud directory for peer log changes + `.mcp-notify` sentinel. |
 | AI providers | **reqwest + streaming** | Direct HTTP to OpenAI, Anthropic, Ollama, or any OpenAI-compatible endpoint. Provider-agnostic. |
-| MCP | **`rmcp` crate** | Model Context Protocol server for AI coding assistants. Stdio transport. |
+| MCP | **`rmcp` crate** | Model Context Protocol server for AI coding assistants (`quill-mcp` stdio binary). |
 | i18n | **i18next + react-i18next** | English + 简体中文. All UI strings externalized. |
 | Icons | **lucide-react** | Consistent icon set across all UI surfaces. |
-| Logging | **`tauri-plugin-log`** + panic hook | Rotated file logs (10MB × 3). Panic hook captures backtraces before the logger initializes. |
-| Auto-update | **`tauri-plugin-updater`** | Signed updates from GitHub Releases with minisign verification. |
+| Logging | **`fern` + `log`** (`quill-core`) + panic hook | Rotated file logs (`quill.log`, 10 MB × 3). Panic hook captures backtraces before logger teardown. |
+| Auto-update | **`electron-updater`** | GitHub Releases (`latest-mac.yml` / `latest.yml`) with channel routing (`releases/latest`, prerelease `-rc.`, and `nightly`). |
 
 **Platform targets.** macOS (Apple Silicon + x64) primary. Windows (x64, NSIS installer) secondary. iCloud sync is macOS-only; on other platforms the app works fully but without cross-device sync.
 
@@ -305,45 +312,44 @@ The watcher also handles:
 ## 6. Boot sequence
 
 ```
-main.rs
-  ├─ argv contains "mcp" → mcp_stdio_main()  (§7, separate process)
-  └─ else → run()
-
-run()
-  1. Install panic hook (before logger, so early panics still get captured)
-  2. Init tauri-plugin-log (file + stdout in debug)
-  3. Build Tauri app with plugins: opener, dialog, fs, updater, process
-  4. setup() callback:
-     a. Resolve local_dir (~/.app-data/com.wycstudios.quill[-dev]/)
-     b. Self-heal: if quill.db missing but .icloud_setting exists, clear stale marker
-     c. Resolve ubiquity_dir (iCloud container) if sync enabled
-     d. Load or create DeviceIdentity
-     e. Resolve data_dir (iCloud if sync, else local)
-     f. Db::init_split(local_dir, data_dir) → runs 13 migrations, returns needs_cover_backfill
-     g. Create SyncWriter (queue-only if sync enabled)
-     h. Init Secrets store, migrate legacy secrets
-     i. Manage Tauri state: Db, Secrets, DeviceIdentity, SyncWriter, SyncState, LocalDir
-     j. If sync enabled + iCloud reachable:
-          spawn background thread → boot_sync_engine()
+electron/main/index.ts
+  1. Set Chromium `userData` to `appData/com.wycstudios.quill-chromium[-dev]`
+     so Chromium state stays outside Quill's core data directory
+  2. Register custom protocols (`quill-app://`, `quill-file://`) as privileged
+  3. Acquire single-instance lock (forwarding `open-file` / second-instance args)
+  4. app.whenReady() → bootQuillCore() loads `quill-node/index.node` and calls quill_core::host::boot():
+     a. Install panic hook + init `fern` rotating logger (`<log_dir>/quill.log`)
+     b. Configure PDFium path (`pdfium::set_configured_path`) if resolved
+     c. Resolve local_dir (`<app_data_base_dir>/com.wycstudios.quill[-dev]/`)
+     d. Self-heal: if `quill.db` missing but `.icloud_setting` exists, clear stale marker
+     e. Resolve ubiquity_dir (iCloud container) if sync enabled
+     f. Load or create DeviceIdentity
+     g. Resolve data_dir (iCloud if sync, else local)
+     h. `Db::init_split(local_dir, data_dir)` → runs migrations, returns `needs_cover_backfill`
+     i. Init `Secrets` store, migrate legacy secrets
+     j. Create `SyncWriter`, spawn `.mcp-notify` watcher
+     k. If `!is_dev` (packaged boot): repair legacy packaged MCP entries in `~/.claude.json` and `~/.codex/config.toml`
+     l. If sync enabled + iCloud reachable:
+          spawn `sync-boot` background thread → `boot_sync_engine()`
             → open EventLog, create ReplayEngine, spawn watcher
-            → initial tick (replay peer events)
-            → chained backfill: cover files → BLOBs, then BLOBs → .img files
-     k. If non-sync + needs_cover_backfill:
-          spawn background thread → db.backfill_cover_data()
-  5. Frontend mounts → invoke("app_ready") → window.show()
+            → initial tick + chained backfill (cover files → BLOBs → .img files)
+        else if non-sync + `needs_cover_backfill`:
+          spawn `cover-backfill` thread → `db.backfill_cover_data()`
+  5. Wire `QuillUpdaterService`, register protocols + IPC handlers, install menu, create main window
+  6. Frontend mounts → calls `app_ready` → replays queued `file-open` paths and shows window
 ```
 
-**Why async boot.** The sync engine touches iCloud — network I/O that can take seconds. If this ran on the setup thread, the user would see a white screen. Instead, setup installs state and returns immediately; the sync engine boots in the background. The frontend shows the library from local SQLite while sync catches up.
+**Why async boot.** The sync engine touches iCloud — network I/O that can take seconds. If this ran on the main thread during startup, the user would see a blank window. Instead, `host::boot()` initializes SQLite and spawns `sync-boot` in the background so the main window renders immediately from local SQLite while sync catches up.
 
-**Self-healing.** The stale-marker check (step 4b) handles the edge case where a user deletes `quill.db` via Finder but leaves `.icloud_setting` intact. Without this, the app would try to boot sync without a database.
+**Self-healing.** The stale-marker check (step 4d) handles the edge case where a user deletes `quill.db` via Finder but leaves `.icloud_setting` intact. Without this, the app would try to boot sync without a database.
 
 ## 7. MCP server — *AI coding assistant integration*
 
-`quill mcp` is a separate process that serves the Model Context Protocol over stdin/stdout. It gives AI coding assistants (Claude Code, Codex) read (and optionally write) access to the user's library.
+`quill-mcp mcp` (invoked from the standalone `quill-mcp` binary bundled alongside app resources, or `target/debug/quill-mcp` in dev) serves the Model Context Protocol over stdin/stdout. It gives AI coding assistants (Claude Code, Codex) read (and optionally write) access to the user's library.
 
-**Why a separate process.** MCP clients expect a stdio binary they can spawn. Running inside the Tauri process would require exposing a socket, complicating the security model. A separate process shares the WAL-mode SQLite safely — concurrent readers are free, and the single-writer constraint is already handled by SQLite's locking.
+**Why a separate binary.** MCP clients expect a stdio binary they can spawn directly without launching Electron. `crates/quill-mcp` builds cleanly against `quill-core` and shares WAL-mode SQLite safely — concurrent readers are free, and the single-writer constraint is handled by SQLite locking. On packaged app boot (`!is_dev`), Quill inspects `~/.claude.json` (`mcpServers.quill`) and `~/.codex/config.toml` (`[mcp_servers.quill]`) and upgrades only existing legacy packaged Quill paths (e.g., `Quill.app/...`) to the new `quill-mcp` binary path while leaving absent, up-to-date, and third-party entries untouched.
 
-**Write-back coordination.** When MCP write access is enabled, the subprocess mutates the database and touches `.mcp-notify` (a sentinel JSON file). The main app's filesystem watcher detects this and refreshes the UI. This avoids polling and keeps the two processes decoupled.
+**Write-back coordination.** When MCP write access is enabled, `quill-mcp` mutates the database and touches `.mcp-notify` (a sentinel JSON file). The main app's filesystem watcher detects this and notifies the renderer to refresh. This avoids polling and keeps the two processes decoupled.
 
 **Tools exposed:** library (list/search/import books), chats (list/create), vocab (add/remove/list), highlights (list), and collections (list/add/remove books).
 
@@ -364,18 +370,18 @@ The `openai_compat` module handles any endpoint that speaks the OpenAI chat comp
 
 ### 8.2 Streaming via event channels
 
-AI responses stream via Tauri event emitter, not command return values. Each request gets a unique channel ID:
+AI responses stream via per-request IPC event channels forwarded through `ShellHost`, not command return values. Each request gets a unique channel ID:
 
 ```
-Frontend: invoke("ai_lookup", { word, sentence, ... })
+Frontend: invoke("ai_lookup", { word, sentence, ... }) → preload → Electron IPC → quill-node
 Backend:  → compose prompt with book context
           → POST to provider API with streaming
-          → for each chunk: app.emit("ai-lookup-response", { id, chunk })
-          → final: app.emit("ai-lookup-response", { id, done: true })
+          → for each chunk: host.emit("ai-lookup-response", { id, chunk })
+          → final: host.emit("ai-lookup-response", { id, done: true })
 Frontend: listen("ai-lookup-response") → append chunks to UI
 ```
 
-This pattern avoids holding the Tauri command channel open for the full response duration (which can be 10+ seconds). The frontend can render incrementally.
+This pattern avoids holding the request/response IPC promise open for long LLM streams (which can run 10+ seconds) and lets the renderer update incrementally.
 
 ### 8.3 AI features
 
@@ -393,11 +399,11 @@ All AI features respect the user's configured language. The system prompt adapts
 
 Two routes, both top-level:
 - **`/`** — Home (library). BookGrid or BookList view, sidebar with collections, chats, and saved items such as Vocab, plus search + filter and drag-drop import.
-- **`/reader/:bookId`** — Reader. Rendered in a separate Tauri window. Foliate.js for EPUB, PDF.js for PDF.
+- **`/reader/:bookId`** — Reader. Rendered in a separate Electron `BrowserWindow`. Foliate.js for EPUB, PDF.js for PDF.
 
 ### 9.2 State management
 
-No global state library. Each domain has a custom hook that wraps Tauri `invoke` calls:
+No global state library. Each domain has a custom hook backed by `src/platform/` command and event adapters:
 
 | Hook | Domain |
 |---|---|
@@ -408,7 +414,7 @@ No global state library. Each domain has a custom hook that wraps Tauri `invoke`
 | `useAiChat` | AI streaming: compose requests, handle event chunks |
 | `useDictionary` | Vocab: add/remove, mastery tracking, review |
 | `useSettings` | App + per-book settings: get/set, theme, language |
-| `useUpdateChecker` | Auto-update: check GitHub releases, prompt install |
+| `useUpdateChecker` | Auto-update: check GitHub releases via `electron-updater`, stream progress, prompt install |
 
 ### 9.3 Reader integration
 
@@ -417,7 +423,7 @@ The Reader page embeds Foliate.js (EPUB) or PDF.js (PDF) in an iframe. Communica
 - **React → renderer:** navigate to CFI, apply theme, set font/size/margins.
 - **Renderer → React:** text selection (triggers lookup/translation popovers), page turn (triggers progress save), chapter change (updates TOC highlight).
 
-Reader windows are independent Tauri windows. Closing the main window hides it on macOS (standard Mac convention); reader windows close normally. The main window reappears on dock icon click.
+Reader windows are independent Electron windows. Closing the main window hides it on macOS (standard Mac convention); reader windows close normally. The main window reappears on dock icon click (recreating it if previously closed).
 
 ## 10. Build and release
 
@@ -425,58 +431,63 @@ Reader windows are independent Tauri windows. Closing the main window hides it o
 
 | Workflow | Trigger | Steps |
 |---|---|---|
-| `ci.yaml` | Pull request | TypeScript check, ESLint, `cargo clippy`, `cargo test --lib` |
-| `release.yml` | `v*` tag push | Build macOS (aarch64 + x86_64) + Windows, code sign, notarize (macOS), create draft GitHub release |
+| `ci.yaml` | Pull request | Build `quill-node` + smoke test, typecheck (`src/` + `electron/`), ESLint, Vitest, `electron-vite build`, `cargo clippy`, `cargo test --workspace`, unpacked `electron-builder --dir` layout/arch checks |
+| `release.yml` | `v*` tag push | Build macOS (`arm64` + `x64`, signed + notarized) and Windows (`x64` unsigned NSIS), merge `latest-mac.yml`, create draft release (`prerelease: true` when tag contains `-`) |
+| `nightly-on-merge.yml` | Merge commits to `main` (non-doc changes) | Dispatch `nightly.yml` with `platform: all` |
+| `nightly.yml` | Merge dispatch or manual dispatch (`all` / `both` / `macos` / `windows`) | Stamp `X.Y.Z-nightly.<YYYYMMDDHHMM>`, build/sign/notarize macOS + Windows, update rolling `nightly` tag/prerelease, verify public feeds before pruning to latest 2 stamps per platform/arch |
 
 ### 10.2 Release process
 
-1. Bump version in `package.json`, `tauri.conf.json`, `Cargo.toml`.
-2. `cargo check` to sync `Cargo.lock`.
+1. Bump version in `package.json` and `Cargo.toml` (`[workspace.package]`).
+2. `cargo check --workspace` to sync `Cargo.lock`, and `npm install --package-lock-only --ignore-scripts` to sync `package-lock.json`.
 3. Commit, tag `v{version}`, push.
-4. CI builds artifacts, signs, notarizes, uploads to draft release.
-5. Edit release notes, publish.
+4. `release.yml` builds signed/notarized macOS DMGs + updater zips (`arm64` and `x64`), merges `latest-mac.yml`, builds Windows NSIS + `latest.yml`, and uploads them to a draft release.
+5. Edit release notes and publish the draft.
 
-The auto-updater polls `https://github.com/yicheng47/quill/releases/latest/download/latest.json` on each launch. Updates are minisign-verified before install.
+`QuillUpdaterService` configures `electron-updater` based on the running `app.getVersion()`: nightly builds (`-nightly.`) check the rolling `https://github.com/yicheng47/quill/releases/download/nightly` feed; prerelease builds (`-rc.`) read GitHub Releases with `allowPrerelease = true`; stable builds read `releases/latest` (`allowPrerelease = false`). Both stable and nightly builds share `com.wycstudios.quill`.
 
 ### 10.3 Dev/prod isolation
 
-Debug builds use `com.wycstudios.quill-dev` as the bundle identifier. This gives dev builds their own app-data directory, log directory, and iCloud container — a `pnpm tauri dev` session never touches production data.
+When `!app.isPackaged` (`make dev`), `bootQuillCore` passes `isDev = true` to `quill-core`, pointing local data, logs, and Chromium `userData` at `com.wycstudios.quill-dev` / `com.wycstudios.quill-chromium-dev`, refusing release `quill-mcp` fallbacks, skipping MCP config auto-repair, and returning `null` from update checks. Packaged builds run with `isDev = false` against `com.wycstudios.quill`; any local packaged smoke test must isolate `HOME`.
 
 ## 11. Key dependencies
 
-### Backend (`Cargo.toml`)
+### Backend (`Cargo.toml` workspace)
 
 | Crate | Purpose |
 |---|---|
-| `tauri` 2 + plugins | Desktop shell, dialog, fs, updater, process, opener, log |
+| `napi` 3 / `napi-derive` 3 | N-API bindings in `crates/quill-node` bridging async Rust work to Electron main |
 | `rusqlite` 0.31 (bundled) | SQLite with WAL mode |
-| `tokio` | Async runtime (sync channels, timers, networking) |
+| `tokio` | Async runtime (sync channels, timers, networking, N-API async tasks) |
 | `reqwest` 0.12 | HTTP client for AI provider APIs (streaming) |
-| `rmcp` 1.7 | MCP protocol server |
+| `rmcp` 1.7 | MCP protocol server (`crates/quill-mcp` stdio binary) |
 | `epub` 2 | EPUB metadata and content extraction |
-| `lopdf` 0.40 | PDF metadata extraction (title, author, page count) |
-| `notify` 6 | Filesystem watcher (iCloud logs + MCP sentinel) |
+| `pdfium-render` 0.9 | PDF cover thumbnail rendering (dynamic `libpdfium` bundled into app resources) |
+| `lopdf` 0.40 | PDF test fixtures (`dev-dependencies`) |
+| `fern` 0.7 / `log` 0.4 | Rotating file logs (10 MB × 3) |
+| `notify` 6 | Filesystem watcher (iCloud logs + `.mcp-notify` sentinel) |
 | `serde` / `serde_json` | Serialization for events, IPC, settings |
 | `chrono` | Timestamps (with serde support) |
 | `uuid` / `ulid` | Book IDs (UUID v4), event IDs (ULID for time-ordering) |
 | `sha2` / `base64` | Content hashing, cover encoding |
-| `objc2` / `objc2-foundation` | macOS-only: NSFileCoordinator for iCloud APIs |
+| `objc2` / `objc2-foundation` | macOS-only: `NSFileCoordinator` / `NSFileManager` for iCloud APIs |
 | `gethostname` | Device name for sync peer metadata |
 | `toml_edit` | Round-trip TOML editing (MCP config in `~/.codex/config.toml`) |
 
-### Frontend (`package.json`)
+### Desktop & Frontend (`package.json`)
 
 | Package | Purpose |
 |---|---|
-| `react` 19 / `react-dom` | UI framework |
+| `electron` 45 / `electron-vite` 6 / `electron-builder` 26 | Desktop shell, Vite-based main/preload/renderer bundling, macOS/Windows packaging |
+| `electron-updater` 6 | GitHub Releases auto-updater (`latest-mac.yml`, `latest.yml`) |
+| `react` 19 / `react-dom` 19 | UI framework |
 | `react-router-dom` 7 | Client-side routing (Home ↔ Reader) |
 | `tailwindcss` 4 | Utility CSS |
-| `@tauri-apps/api` 2 + plugins | Tauri IPC, dialog, fs, updater, process, opener |
 | `i18next` + `react-i18next` | Internationalization (en, zh) |
 | `lucide-react` | Icon library |
-| `react-markdown` | Markdown rendering in AI chat responses |
-| `vite` 7 | Build tool + dev server |
-| `typescript` 5.8 | Type safety |
+| `react-markdown` / `remark-gfm` | Markdown rendering in AI chat responses |
+| `vite` 7 / `vitest` 4 | Build tool, dev server, unit tests |
+| `typescript` 5.8 | Type safety (`src/` + `electron/`) |
 
 ### Submodules
 

@@ -6,20 +6,53 @@ on:
       - "v*"
 
 permissions:
+  actions: read
   contents: write
 
 jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      release_tag: ${{ steps.meta.outputs.release_tag }}
+      release_title: ${{ steps.meta.outputs.release_title }}
+      is_prerelease: ${{ steps.meta.outputs.is_prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify release tag and compute metadata
+        id: meta
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          version="${tag#v}"
+          test "$tag" != "$version" || { echo "error: release tag must start with v: $tag" >&2; exit 1; }
+          pkg_version=$(node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync("package.json", "utf8")).version)')
+          cargo_version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')
+          test "$pkg_version" = "$version" || { echo "error: package.json version ($pkg_version) != tag version ($version)" >&2; exit 1; }
+          test "$cargo_version" = "$version" || { echo "error: Cargo.toml workspace version ($cargo_version) != tag version ($version)" >&2; exit 1; }
+          is_prerelease=false
+          if [[ "$version" == *-* ]]; then
+            is_prerelease=true
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "release_tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "release_title=Quill $tag" >> "$GITHUB_OUTPUT"
+          echo "is_prerelease=$is_prerelease" >> "$GITHUB_OUTPUT"
+
   build-macos:
+    needs: prepare
+    runs-on: macos-latest
+    timeout-minutes: 90
     strategy:
+      fail-fast: false
       matrix:
         include:
-          - target: aarch64-apple-darwin
-            arch: aarch64
-          - target: x86_64-apple-darwin
-            arch: x64
-
-    runs-on: macos-latest
-
+          - arch: arm64
+            rust_target: aarch64-apple-darwin
+            mac_dir: mac-arm64
+          - arch: x64
+            rust_target: x86_64-apple-darwin
+            mac_dir: mac
     steps:
       - uses: actions/checkout@v4
         with:
@@ -34,66 +67,128 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
+          targets: ${{ matrix.rust_target }}
 
       - name: Rust cache
-        uses: swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@v2
         with:
-          workspaces: src-tauri -> target
+          key: release-macos-${{ matrix.arch }}
 
-      - name: Install frontend dependencies
-        run: npm ci
-
-      - name: Import Apple Developer Certificate
+      - name: Verify Apple signing & notarization secrets
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-        run: |
-          KEYCHAIN_PASSWORD=$(openssl rand -base64 32)
-          echo $APPLE_CERTIFICATE | base64 --decode > certificate.p12
-          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
-          security default-keychain -s build.keychain
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
-          security set-keychain-settings -t 3600 -u build.keychain
-          security import certificate.p12 -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
-
-      - name: Install Provisioning Profile
-        env:
           PROVISIONING_PROFILE: ${{ secrets.PROVISIONING_PROFILE }}
-        run: |
-          echo "$PROVISIONING_PROFILE" | base64 --decode > src-tauri/embedded.provisionprofile
-
-      - name: Verify Certificate
-        run: |
-          CERT_INFO=$(security find-identity -v -p codesigning build.keychain | grep "Developer ID Application")
-          CERT_ID=$(echo "$CERT_INFO" | awk -F'"' '{print $2}')
-          echo "APPLE_SIGNING_IDENTITY=$CERT_ID" >> $GITHUB_ENV
-          echo "Certificate: $CERT_ID"
-
-      - name: Build Tauri app
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ env.APPLE_SIGNING_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          for var in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD PROVISIONING_PROFILE APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            test -n "${!var}" || { echo "error: missing required secret $var" >&2; exit 1; }
+          done
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build native Rust artifacts (${{ matrix.rust_target }})
+        run: |
+          npx napi build --manifest-path crates/quill-node/Cargo.toml -o "out/native/${{ matrix.rust_target }}" --target "${{ matrix.rust_target }}" --release
+          cargo build --release --target "${{ matrix.rust_target }}" -p quill-mcp
+
+      - name: Build Electron and renderer bundles
+        run: npm run build
+
+      - name: Prepare Apple certificate and provisioning profile
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          PROVISIONING_PROFILE: ${{ secrets.PROVISIONING_PROFILE }}
+        run: |
+          cert_path="$RUNNER_TEMP/apple-cert.p12"
+          printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$cert_path"
+          test -s "$cert_path"
+          mkdir -p build
+          printf '%s' "$PROVISIONING_PROFILE" | base64 --decode > build/embedded.provisionprofile
+          test -s build/embedded.provisionprofile
+          echo "CSC_CERT_PATH=$cert_path" >> "$GITHUB_ENV"
+
+      - name: Package, sign, and notarize macOS app (${{ matrix.arch }})
+        env:
+          QUILL_RUST_TARGET: ${{ matrix.rust_target }}
+          CSC_LINK: ${{ env.CSC_CERT_PATH }}
+          CSC_KEY_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: npx electron-builder --mac dmg zip --${{ matrix.arch }} --publish never
+
+      - name: Verify macOS bundle, entitlements, signatures, and notarization
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          version="${{ needs.prepare.outputs.version }}"
+          arch="${{ matrix.arch }}"
+          app="dist-electron/${{ matrix.mac_dir }}/Quill.app"
+          node scripts/validate-pack.mjs --platform darwin --arch "$arch" --require-app-update true
+          test ! -e "$app/Contents/Resources/app.asar.unpacked"
+          test ! -e dist-electron/latest.json
+          test -s "dist-electron/Quill-${version}-${arch}.dmg"
+          test -s "dist-electron/Quill-${version}-${arch}-mac.zip"
+          test -s "dist-electron/Quill-${version}-${arch}-mac.zip.blockmap"
+          test -s dist-electron/latest-mac.yml
+
+          codesign --verify --deep --strict --verbose=2 "$app"
+          spctl -a -t exec -vv "$app"
+          xcrun stapler validate "$app"
+
+          for bin in \
+            "$app" \
+            "$app/Contents/Resources/quill-mcp" \
+            "$app/Contents/Resources/libpdfium.dylib" \
+            "$app/Contents/Resources/quill-node/index.node"; do
+            team=$(codesign -dvv "$bin" 2>&1 | sed -n 's/^TeamIdentifier=//p')
+            test "$team" = "$APPLE_TEAM_ID" || { echo "error: unexpected TeamIdentifier ($team) on $bin" >&2; exit 1; }
+          done
+
+          app_ent=$(codesign -d --entitlements :- "$app")
+          printf '%s\n' "$app_ent" | grep -Fq 'com.apple.developer.icloud-container-identifiers'
+          printf '%s\n' "$app_ent" | grep -Fq 'com.apple.application-identifier'
+
+          for helper in "$app"/Contents/Frameworks/Quill\ Helper*.app; do
+            test -d "$helper" || continue
+            helper_ent=$(codesign -d --entitlements :- "$helper")
+            if printf '%s\n' "$helper_ent" | grep -Eq 'com\.apple\.developer\.icloud-container-identifiers|com\.apple\.application-identifier'; then
+              echo "error: helper $helper must not carry iCloud or application-identifier entitlements" >&2
+              exit 1
+            fi
+          done
+
+          mkdir -p dist-electron/stage
+          cp "dist-electron/Quill-${version}-${arch}.dmg" dist-electron/stage/
+          cp "dist-electron/Quill-${version}-${arch}-mac.zip" dist-electron/stage/
+          cp "dist-electron/Quill-${version}-${arch}-mac.zip.blockmap" dist-electron/stage/
+          if [[ -f "dist-electron/Quill-${version}-${arch}.dmg.blockmap" ]]; then
+            cp "dist-electron/Quill-${version}-${arch}.dmg.blockmap" dist-electron/stage/
+          fi
+          cp dist-electron/latest-mac.yml "dist-electron/stage/latest-mac-${arch}.yml"
+
+      - name: Clean up signing secrets from runner workspace
+        if: always()
+        run: rm -f "$RUNNER_TEMP/apple-cert.p12" build/embedded.provisionprofile
+
+      - name: Upload macOS artifacts (${{ matrix.arch }})
+        uses: actions/upload-artifact@v4
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "Quill ${{ github.ref_name }}"
-          releaseBody: "See the [commits](https://github.com/${{ github.repository }}/commits/${{ github.ref_name }}) for details."
-          releaseDraft: true
-          prerelease: false
-          args: --target ${{ matrix.target }}
+          name: release-macos-${{ matrix.arch }}
+          path: dist-electron/stage/*
+          if-no-files-found: error
 
   build-windows:
+    needs: prepare
     runs-on: windows-latest
-
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
         with:
@@ -107,24 +202,124 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
 
       - name: Rust cache
-        uses: swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@v2
         with:
-          workspaces: src-tauri -> target
+          key: release-windows-x64
 
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Build Tauri app
-        uses: tauri-apps/tauri-action@v0
+      - name: Build native Rust artifacts (x86_64-pc-windows-msvc)
+        run: |
+          npx napi build --manifest-path crates/quill-node/Cargo.toml -o out/native/x86_64-pc-windows-msvc --target x86_64-pc-windows-msvc --release
+          cargo build --release --target x86_64-pc-windows-msvc -p quill-mcp
+
+      - name: Build Electron and renderer bundles
+        run: npm run build
+
+      - name: Package unsigned Windows NSIS installer
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          QUILL_RUST_TARGET: x86_64-pc-windows-msvc
+        run: npx electron-builder --win nsis --x64 --publish never
+
+      - name: Validate Windows bundle and installer outputs
+        run: |
+          version="${{ needs.prepare.outputs.version }}"
+          node scripts/validate-pack.mjs --platform win32 --arch x64 --require-app-update true
+          test ! -e dist-electron/win-unpacked/resources/app.asar.unpacked
+          test ! -e dist-electron/latest.json
+          test -s "dist-electron/Quill-Setup-${version}-x64.exe"
+          test -s "dist-electron/Quill-Setup-${version}-x64.exe.blockmap"
+          test -s dist-electron/latest.yml
+
+          mkdir -p dist-electron/stage
+          cp "dist-electron/Quill-Setup-${version}-x64.exe" dist-electron/stage/
+          cp "dist-electron/Quill-Setup-${version}-x64.exe.blockmap" dist-electron/stage/
+          cp dist-electron/latest.yml dist-electron/stage/latest.yml
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "Quill ${{ github.ref_name }}"
-          releaseBody: "See the [commits](https://github.com/${{ github.repository }}/commits/${{ github.ref_name }}) for details."
-          releaseDraft: true
-          prerelease: false
+          name: release-windows
+          path: dist-electron/stage/*
+          if-no-files-found: error
+
+  publish:
+    needs: [prepare, build-macos, build-windows]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install JS helpers without downloading Electron
+        run: npm ci --ignore-scripts
+
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: release-artifacts
+          merge-multiple: true
+
+      - name: Merge multi-arch macOS update feed and verify release payload
+        run: |
+          version="${{ needs.prepare.outputs.version }}"
+          if find release-artifacts -name 'latest.json' | grep -q .; then
+            echo "error: unexpected Tauri latest.json found in release artifacts" >&2
+            exit 1
+          fi
+          mkdir -p release-upload
+          node scripts/merge-mac-update-yml.mjs \
+            release-artifacts/latest-mac-arm64.yml \
+            release-artifacts/latest-mac-x64.yml \
+            release-upload/latest-mac.yml \
+            "$version"
+          test -s release-artifacts/latest.yml
+          grep -Fxq "version: ${version}" release-artifacts/latest.yml || {
+            echo "error: Windows latest.yml version does not match $version" >&2
+            exit 1
+          }
+          for file in \
+            "Quill-${version}-arm64.dmg" \
+            "Quill-${version}-arm64-mac.zip" \
+            "Quill-${version}-arm64-mac.zip.blockmap" \
+            "Quill-${version}-x64.dmg" \
+            "Quill-${version}-x64-mac.zip" \
+            "Quill-${version}-x64-mac.zip.blockmap" \
+            "Quill-Setup-${version}-x64.exe" \
+            "Quill-Setup-${version}-x64.exe.blockmap" \
+            "latest.yml"; do
+            test -s "release-artifacts/$file" || { echo "error: missing release artifact $file" >&2; exit 1; }
+            cp "release-artifacts/$file" release-upload/
+          done
+          for opt in \
+            "Quill-${version}-arm64.dmg.blockmap" \
+            "Quill-${version}-x64.dmg.blockmap"; do
+            if [[ -f "release-artifacts/$opt" ]]; then
+              cp "release-artifacts/$opt" release-upload/
+            fi
+          done
+
+      - name: Create draft release and upload assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          release_tag="${{ needs.prepare.outputs.release_tag }}"
+          release_title="${{ needs.prepare.outputs.release_title }}"
+          flags=(--draft --verify-tag --title "$release_title" --notes "See the [commits](https://github.com/${{ github.repository }}/commits/${release_tag}) for details.")
+          if [[ "${{ needs.prepare.outputs.is_prerelease }}" == "true" ]]; then
+            flags+=(--prerelease)
+          fi
+          gh release create "$release_tag" "${flags[@]}"
+          gh release upload "$release_tag" release-upload/* --clobber
