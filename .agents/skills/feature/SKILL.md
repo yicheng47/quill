@@ -41,6 +41,7 @@ Write the spec when development of a feature starts.
 
 1. Work in the feature's branch worktree (`AGENTS.md`, Worktrees), never in the root checkout on `main`. If the branch does not exist yet, create it as `AGENTS.md` describes once the user has asked to start the work.
 2. Create `docs/features/{issue}-{slug}.md`, pre-populated from the issue body and its discussion: a header linking the tracking issue, then Motivation, Scope, Implementation Phases, Verification. Leave priority and milestone out; they live on the issue.
+   - For UI changes, name the signed-off design path and nodes under `quill/desktop/specs/` in the private `YeelinksCo/yeelinks_design` repo. Select the required live checks under `AGENTS.md`, Test Scope, with a reason for each.
 3. Add the spec's line under Active in `docs/features/README.md`.
 4. The spec is committed on the branch and lands with the code. A crew mission folds it into its commits like the brief.
 
@@ -48,7 +49,7 @@ Write the spec when development of a feature starts.
 Close a feature that shipped or was dropped.
 
 1. Close the GitHub issue: `gh issue close <number>`, adding `--reason "not planned"` when it was dropped.
-2. Leave its spec where it is. The release's docs sweep archives specs (`release` skill, `sweep`).
+2. Leave its spec where it is. The release's docs sweep prunes completed small specs and retains only consequential records under the archive policy (`release` skill, `sweep`).
 
 #### `prioritize <issue-number> <P0|P1|P2|P3>`
 Set or change the priority of an existing feature.
@@ -107,7 +108,7 @@ When in doubt between two levels, pick the lower-urgency one and say why; over-l
 ## Conventions
 
 - A spec is named after its tracking issue, `{issue}-{slug}.md`, with a lowercase kebab-case slug.
-- Specs, impl plans (`docs/impls/`) and mission briefs (`docs/impls/briefs/`) are written on the feature's branch and land with its code. Design files are the exception: `.pen` files are settled on `main` first (`AGENTS.md`, Engineering Conventions).
+- Specs, impl plans (`docs/impls/`) and mission briefs (`docs/impls/briefs/`) are written on the feature's branch and land with its code. Design files are settled first in the separate `YeelinksCo/yeelinks_design` repo under `quill/desktop/` (`AGENTS.md`, Engineering Conventions).
 - At the release's docs sweep, retain specs in `docs/features/archive/` only when their decisions, compatibility constraints or implementation context still help. Obsolete or duplicate proposals can be pruned after preserving useful unique content and fixing references; issues and git history are enough for many dropped ideas. The implementation is the source of truth.
 
 ## Notes

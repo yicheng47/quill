@@ -105,13 +105,14 @@ Configure in Settings:
 
 Feature specs, implementation plans, and the roadmap live in [`docs/`](./docs/):
 
-- [`docs/features/`](./docs/features/) — product-level feature specs (19+ and counting)
+- [`docs/features/`](./docs/features/) — specs of features in development
 - [`docs/impls/`](./docs/impls/) — implementation plans paired with each feature
 - [`docs/roadmap/`](./docs/roadmap/) — milestones (MVP, depth, companion)
 - [`docs/guide/`](./docs/guide/) — engineering guides
+- [`docs/tests/`](./docs/tests/README.md) — validation scope, live regression cases and run records
 - [`docs/privacy.md`](./docs/privacy.md) — privacy policy
 
-For dev setup, tech stack, and conventions see [CLAUDE.md](./CLAUDE.md).
+For dev setup, tech stack, and conventions see the shared [agent guide](./AGENTS.md). Design sources live under `quill/desktop/` in the private `YeelinksCo/yeelinks_design` repo.
 
 ## License
 

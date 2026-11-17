@@ -10,7 +10,7 @@ Quill's maintained list of live regression cases: actions in the running app and
 
 ## Environments
 
-- **dev** — the development app, `make dev`, with development data under `com.wycstudios.quill-dev`. Live testing here is standing-authorized under Test Scope. **iCloud sync stays off.** Only one development app runs at a time. After #327's first mission, `make dev` runs the Electron app on the same data.
+- **dev** — the Electron development app, `make dev`, with development data under `com.wycstudios.quill-dev`. Live testing here is standing-authorized under Test Scope. **iCloud sync stays off.** Only one development app runs at a time.
 - **signed** — an installed, signed build. It uses the production identity and data directory, so it runs only in a separate macOS user account or VM that Jason prepares, never in his own account.
 - **jason** — needs Jason's setup or hands, such as iCloud sync between two devices or accounts.
 
@@ -140,11 +140,11 @@ Recorded, not pass/fail; a large regression is raised with Jason before release.
 
 ## Automation
 
-Nothing can drive the Tauri app on macOS, because WKWebView has no WebDriver, so every case runs by hand or through computer use. Under Electron (#327), Playwright can drive the app; adding it, with an Auto column naming the test that covers each case, is a follow-up. Rendering quality, PDF selection feel, native window chrome, signed builds, upgrades and sync stay with computer use.
+Live cases run by hand or through computer use. Adding Electron automation with an Auto column naming the test that covers each case remains a follow-up; automated coverage must not be inferred from the shell migration. Rendering quality, PDF selection feel, native window chrome, signed builds, upgrades and sync stay with computer use.
 
 ## Recording a run
 
-Each run is one file, `docs/tests/runs/YYYY-MM-DD-<platform>.md`, where platform is `mac`, `win` or `both`. A second run on the same day adds its own block to that file. A run records:
+Feature and bug-fix QA runs use `docs/tests/runs/<issue>-<slug>-<platform>.md`, matching the spec/brief slug. Append retries on the same issue to that file so parallel missions do not share a dated log. Full regression and release runs use `docs/tests/runs/YYYY-MM-DD-<platform>.md`; a second such run on the same day adds its own block. Platform is `mac`, `win` or `both`. Existing records keep their names. A run records:
 
 - the candidate: commit, build, shell, environment, and what the run is for, such as a release or a #327 mission
 - one row per selected case and platform: the ID, the result and its reason. A result is Passed, Failed, Blocked (a prerequisite was missing) or Skipped (outside the run's scope).

@@ -4,8 +4,8 @@ A brief gives a mission its working directory, problem, deliverables, validation
 
 ## Writing a brief
 
-1. **Starting point.** Name the issue or existing PR, branch, exact worktree and base revision. The root checkout stays on `main`; every worktree has its own `node_modules/` and `src-tauri/target/`.
-2. **Problem and outcome.** Describe the trigger, current behavior and intended result. Name the spec and the Pencil frame in `design/` when applicable, and say which source wins on detail.
+1. **Starting point.** Name the issue or existing PR, branch, exact worktree and base revision. The root checkout stays on `main`; every worktree has its own `node_modules/` and `target/`.
+2. **Problem and outcome.** Describe the trigger, current behavior and intended result. Name the spec and the design's path and Pencil nodes under `quill/desktop/` in the private `YeelinksCo/yeelinks_design` repo when applicable, and say which source wins on detail.
 3. **Read first.** Point to the few source files and docs needed to begin. Prefer symbols over line numbers that will drift.
 4. **Deliverables and boundaries.** State observable acceptance criteria, non-goals and any approved probes or fixtures. Avoid repeating the repo's rulebook.
 5. **Validation and handoffs.** Tie each selected check to changed behavior under [Test Scope](../../../AGENTS.md#test-scope). State who implements, reviews and runs live checks, and what evidence the final handoff carries.

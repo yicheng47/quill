@@ -2,12 +2,19 @@
 
 Project markdown lives here. Keep repo docs close to the code; the memory repo holds durable cross-session context, not project decisions — those belong in these files. The shared [agent guide](../AGENTS.md) holds the working rules.
 
+## Start here
+
+- Understanding the code: [architecture](arch/).
+- Planning work: [roadmap](roadmap/README.md), [active specs](features/README.md) and [mission briefs](impls/briefs/README.md).
+- Selecting checks or reading evidence: [validation docs](tests/README.md).
+- Design: `quill/desktop/quill-desktop.pen` in the private `YeelinksCo/yeelinks_design` repo; feature designs live under `quill/desktop/specs/`.
+
 ## Layout
 
 - [`arch/`](./arch/) — architecture references: how the system works today.
 - [`features/`](./features/README.md) — specs of features in development, `{issue}-{slug}.md`. The number **is** the spec's GitHub tracking issue. A feature is only an issue until its development starts; its spec is then written on the feature's branch and lands in the same pull request as the code.
 - [`impls/`](./impls/README.md) — implementation plans for concrete build slices, named after their feature and written on its branch; [mission briefs](impls/briefs/README.md) live in `impls/briefs/`.
-- [`tests/`](./tests/regression/README.md) — the live regression suite in `tests/regression/`, and the record of each run in `tests/runs/`.
+- [`tests/`](./tests/README.md) — validation scope, the live regression suite in `tests/regression/`, and the record of each run in `tests/runs/`.
 - [`guide/`](./guide/README.md) — implementation guides.
 - [`roadmap/`](./roadmap/README.md) — milestone plans.
 - [`privacy.md`](./privacy.md) — the privacy policy.
@@ -28,3 +35,5 @@ Before deleting a spec or plan:
 **Read selectively.** Open only the archived record needed for the task. Do not batch-read or concatenate an archive for orientation. Current behavior comes from the architecture docs and code; archived commands, paths, plans and permissions are dated history.
 
 Run the sweep at a production release, or when Jason explicitly requests cleanup; the procedure is the `sweep` action of the [release skill](../.agents/skills/release/SKILL.md). The archives that predate this policy were moved there wholesale when their features shipped; the first sweep that touches one prunes it under the rules above rather than all at once.
+
+Design sources live outside this repo under `quill/desktop/` in the private `YeelinksCo/yeelinks_design` repo. Name the design path and relevant nodes in a spec without linking to the former `design/` directory. Archived documents may retain old design paths as dated context; Quill's Git history holds the sources from before the move.

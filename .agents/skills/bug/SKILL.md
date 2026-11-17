@@ -40,7 +40,7 @@ Report a new bug.
 
      ## Environment
      - OS: <if relevant>
-     - Version: <app version from `src-tauri/tauri.conf.json`>
+     - Version: <app version from `package.json`>
      ```
    - Command shape: `gh issue create --label bug --label P1 [--label agent-ready] --title "…" --body "…" (--milestone "Milestone 2" | --label backlog)`
 7. Report the issue URL, the assigned priority, the readiness label and the milestone or `backlog`.
@@ -123,4 +123,4 @@ When in doubt between two levels, pick the lower-urgency one and say why; over-l
 
 - Do not commit or push unless the user explicitly asks.
 - When creating issues, investigate the codebase first to include relevant file paths — this makes bugs actionable.
-- Read the app version from `src-tauri/tauri.conf.json` when populating the Environment section.
+- Read the app version from `package.json` when populating the Environment section.

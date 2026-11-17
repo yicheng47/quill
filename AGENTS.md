@@ -1,6 +1,6 @@
 # Quill Agent Guide
 
-This file is the repo-wide guide for any coding assistant working on Quill. Keep shared conventions here instead of putting them only in a tool-specific file: `CLAUDE.md` is a symlink to this file. The working rules from Test Scope onward follow the Runner repo's guide and were adopted here on 2026-11-10 (Jason).
+This file is the repo-wide guide for any coding assistant working on Quill. Keep shared conventions here instead of putting them only in a tool-specific file: `CLAUDE.md` is a symlink to this file. The workflow follows Runner's repo harness, adapted to Quill's Electron/Rust stack and data-safety boundaries.
 
 ## Product Context
 
@@ -41,12 +41,12 @@ Core vocabulary:
 - `crates/quill-mcp/`: Standalone stdio MCP binary (`quill-mcp`).
 - `build/`: App icons and macOS entitlements (`entitlements.mac.plist`, `entitlements.mac.inherit.plist`).
 - `public/foliate-js/`: vendored reader engine submodule.
-- `design/`: Pencil source files, mainly `design/quill-desktop.pen`.
+- Design sources live in `quill/desktop/` of the private `YeelinksCo/yeelinks_design` repo, outside this code repo (see Engineering Conventions).
 - `docs/README.md`: the docs layout and the [archive policy](docs/README.md#archive-policy).
 - `docs/arch/`: architecture references.
 - `docs/features/`: specs of features in development, named `{tracking-issue}-{slug}.md`. A feature is only an issue until its development starts; its spec is then written on the feature's branch and lands with the code. Retained shipped records live in `docs/features/archive/`.
 - `docs/impls/`: implementation plans, written on the feature's branch; mission briefs in `docs/impls/briefs/`; retained shipped plans in `docs/impls/archive/`.
-- `docs/tests/`: the live [regression suite](docs/tests/regression/README.md) in `regression/`, and dated run records in `runs/`.
+- `docs/tests/`: [validation docs](docs/tests/README.md), with the live regression suite in `regression/` and candidate-specific run records in `runs/`.
 - `docs/guide/`: implementation guides. `docs/roadmap/`: milestone plans.
 
 ## Development Commands
@@ -64,7 +64,7 @@ Prefer the smallest check that covers the change. For frontend changes, run type
 
 Feature validation covers the behavior changed by the diff and regressions directly affected by it. Before testing, list the changed behaviors and the selected checks, with a concrete reason connecting each check to the change. Unchanged sync, AI providers, the reader engine, import and other shared behavior are not automatic feature checks merely because the tested screen contains them. Take the checks from the [regression suite](docs/tests/regression/README.md) where one of its cases covers the behavior, by ID, and write feature-specific checks for the rest.
 
-Broaden coverage for major changes, such as a sync or storage rewrite, a schema migration or a refactor affecting behavior across the app, or when Jason explicitly requests broader testing. State why the change needs that coverage. CI and the automated checks still apply. An unavailable prerequisite blocks an in-scope check; an unrelated check is outside scope, not a feature blocker. A feature pass means every selected required check passed, and must not be described as a full regression pass. Preserve failures and record any later scope change explicitly.
+Broaden coverage for major changes, such as a sync or storage rewrite, a schema migration or a refactor affecting behavior across the app, or when Jason explicitly requests broader testing. State why the change needs that coverage. CI and the automated checks still apply. An unavailable prerequisite blocks an in-scope check; an unrelated check is outside scope, not a feature blocker. A feature pass means every selected required check passed, and must not be described as a full regression pass. Preserve failures and record any later scope change explicitly. Record feature and bug-fix QA runs per issue in `docs/tests/runs/<issue>-<slug>-<platform>.md` (matching the spec/brief slug and using `mac`, `win` or `both`), appending retries to that issue's file. Full regression and release runs use dated files; existing records keep their names.
 
 The development app is a separate test environment: a debug build from `make dev` keeps its library, settings, secrets and logs under `com.wycstudios.quill-dev`, apart from the installed Quill, so live testing in it is authorized standing and needs no per-mission ask. Whoever runs the selected live checks, usually the `qa` slot of a trio or the `qa` role added to a mission after its code review, may launch the development app, import small test books, and make bounded AI calls on an inexpensive model with tiny prompts. **iCloud sync is the exception.** The development app uses the same iCloud container as the installed Quill (`iCloud~com~wycstudios~quill`), so turning sync on in it would write into the real library on every device. Live tests keep sync off; a check that needs sync waits for Jason to approve and set up the environment. Never touch the installed Quill or its data.
 
@@ -78,7 +78,7 @@ A live test of a pull request runs in the `qa` role through Runner, not in the c
 
 An issue's route follows its readiness. The route is the default recommendation; Jason's explicit choice of crew or of inline work wins, and starting a crew still needs his approval, with the crew confirmed for each mission (see [Crew Missions](#crew-missions)).
 
-1. **Needs design** (`needs-design`): the chat that took the issue finishes the design and the spec. It draws the UI in Pencil under `design/`, settles the open questions with Jason, and writes `docs/features/<issue>-<slug>.md` on the feature's branch, naming the live checks the change needs as [Test Scope](#test-scope) describes. The issue drops `needs-design` once Jason signs the design off.
+1. **Needs design** (`needs-design`): the chat that took the issue finishes the design and the spec. It draws the UI in Pencil at `quill/desktop/specs/<issue>-<slug>.pen` in `YeelinksCo/yeelinks_design`, settles the open questions with Jason, and writes `docs/features/<issue>-<slug>.md` on the feature's branch, naming the live checks the change needs as [Test Scope](#test-scope) describes. The issue drops `needs-design` once Jason signs the design off.
 2. **Designed**: a signed-off design and spec go to a claude crew, the claude trio when the spec names live checks and the claude duo otherwise. A codex crew runs only when Jason asks for one.
 3. **Very small**: a change whose brief would be longer than its diff is fixed inline, as below. A trivial change that needs no review, such as copy, a typo or an obvious one-line fix, skips the reviewer.
 
@@ -103,7 +103,7 @@ Work stays inside its own worktree. When several are live at once, treat the oth
 - Do not revert user changes. If the working tree is dirty, inspect first and preserve unrelated edits.
 - Use structured APIs and parsers when available instead of ad hoc string manipulation.
 - Keep comments rare and useful. Explain non-obvious intent, not mechanics.
-- Design UI in Pencil before implementing it, and keep UI aligned with the file and node referenced by the user or feature spec; the product canvas is `design/quill-desktop.pen`. Pen does not autosave and a `.pen` file does not merge, so a design is settled and committed on `main` before the branch that builds it.
+- Design UI in Pencil before implementing it. Designs live in the private `YeelinksCo/yeelinks_design` repo under `quill/desktop/` (checked out at `~/repos/yeelinks/yeelinks_design`); its README owns the design conventions. The product canvas is `quill/desktop/quill-desktop.pen`; feature designs go in `quill/desktop/specs/<issue>-<slug>.pen`, one file per spec, containing only the frames and components it needs. Keep UI aligned with the file and nodes named by the user or feature spec. Pull the design repo before opening a file, and commit and push the settled design there when authorized, before implementation starts: Pen does not autosave and `.pen` files do not merge in practice. When a feature ships, apply its chosen design to the product canvas before pruning redundant spec snapshots. Docs here name private design paths and nodes without relative links into this repo.
 - All user-facing strings use i18n keys; never hardcode English in components. Keep `src/i18n/en.json` and `src/i18n/zh.json` in sync.
 - Settings are key-value rows in the SQLite `settings` table: `useSettings` on the frontend, `crates/quill-core/src/commands/settings.rs` on the backend. Settings modal sections follow the row pattern in `GeneralSettings.tsx`: 73px rows, `flex justify-between`, 1px `black/10` dividers.
 - Sensitive data such as API keys and OAuth tokens goes in `secrets.db`, which stays local and never syncs, not in `quill.db`.
@@ -116,7 +116,7 @@ Work stays inside its own worktree. When several are live at once, treat the oth
 - Use focused commits with an imperative subject; [Crew Missions](#crew-missions) covers how a mission's pull request is shaped.
 - Common scopes: `sync`, `commands`, `reader`, `library`, `settings`, `ai`, `mcp`, `ui`, `docs`, `release`.
 - Example: `fix(sync): keep status reads off the renderer thread`.
-- A doc-only change (`docs/`, `design/`, the README, this file) is committed straight to `main` from the root checkout, with no branch, worktree or pull request; a feature's spec, impl plan and mission brief go on its branch and land with its code. Open a PR for docs only when the edit is large and spans several files, such as a restructure or a rename across the docs tree.
+- A doc-only change (`docs/`, the README, this file) is committed straight to `main` from the root checkout, with no branch, worktree or pull request; a feature's spec, impl plan and mission brief go on its branch and land with its code. Open a PR for docs only when the edit is large and spans several files, such as a restructure or a rename across the docs tree.
 - A PR that changes Quill's data-safety core gets the `core-review` label, and Jason reviews it closely before it merges. The core is the sync engine (`crates/quill-core/src/sync/`), the SQLite schema and migrations (`crates/quill-core/migrations/`), secrets storage, and the code that resolves, relocates or copies the data directory. Whoever opens the PR adds the label; test-only changes do not need it. Never remove the label, and a crew asked to merge waits for Jason's review of a `core-review` PR.
 - Every PR gets exactly one risk label, which tells Jason how closely to read it: `risk-low` for a small or mechanical change a skim covers, such as removing unreachable code, a rename, or a behaviour-preserving refactor whose tests are unchanged; `risk-medium` for a real behaviour change in a contained area, whose changed code paths need reading; `risk-high` for a broad or cross-cutting behaviour change, a migration, or anything hard to undo, which needs a careful review and live testing. Whoever opens the PR picks the label from what the diff does, not from which paths it touches: a `core-review` PR can still be `risk-low`. When unsure, pick the higher one, and update the label when the PR's scope changes.
 - A PR whose required live checks have not passed yet carries `needs-live-test`. Whoever opens it adds the label when the brief or the clean review names required live checks (see [Test Scope](#test-scope)); whoever runs them removes it once every selected check has passed and records in the PR description which checks ran. A failed check keeps the label. A crew asked to merge waits while the label is on.
@@ -144,13 +144,13 @@ An agent that merges a pull request runs the post-mission cleanup as part of the
 1. **Archive the missions.** For every mission that worked on the branch, including a qa-only or reviewer-only one, stop it if a session is still live (`runner mission stop <id>`), then `runner mission archive <id>`.
 2. **Remove the worktree and branches.** `git worktree remove .worktrees/<flattened-branch>`, then delete the local branch. GitHub deletes the remote branch on merge; delete it by hand only if it is still there.
 
-The mission's brief and spec stay where they are until the next release's docs sweep.
+The mission's brief, test record and spec stay where they are until the next release's docs sweep.
 
 ## Docs Sweep At Release
 
 Shipped work's docs are reviewed once per production release, not after each merge; Jason may also request a cleanup. Follow the [archive policy](docs/README.md#archive-policy): delete completed small-feature and bug-fix specs and plans; retain only important features, architectural changes and consequential migration or compatibility records, with a reason in the relevant archive README. Preserve unique current decisions and repair references before pruning. Read archive indexes first and load only the records needed for the task, never the whole archive for orientation.
 
-Once a release is published, one doc-only commit on `main` sweeps everything shipped since the previous sweep: merged missions' briefs are pruned, specs and plans follow the retention policy, and their indexes drop the shipped entries. Distant features remain issues until development starts. The procedure is the `sweep` action of the [release skill](.agents/skills/release/SKILL.md).
+Once a release is published, one doc-only commit on `main` sweeps everything shipped since the previous sweep: merged missions' briefs are pruned, specs and plans follow the retention policy, and their indexes drop the shipped entries. Promote lasting live checks into `docs/tests/regression/`; retain run results and task/review history separately from discarded planning text. Distant features remain issues until development starts. The procedure is the `sweep` action of the [release skill](.agents/skills/release/SKILL.md).
 
 ## Notes For Agent Runtimes
 
