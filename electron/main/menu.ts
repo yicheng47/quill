@@ -1,6 +1,6 @@
 import { app, Menu, type MenuItemConstructorOptions } from "electron";
 import type { QuillCoreInstance } from "./core";
-import { broadcastEvent, createMainWindow, focusManagedWindow } from "./windows";
+import { broadcastEvent, createMainWindow, focusManagedWindow, whenWindowReady } from "./windows";
 
 export function installAppMenu(
   core: QuillCoreInstance,
@@ -24,7 +24,9 @@ export function installAppMenu(
       if (!focusManagedWindow("main")) {
         createMainWindow(await isInitialDark());
       }
-      broadcastEvent("menu:check-for-updates", null);
+      whenWindowReady("main", () => {
+        broadcastEvent("menu:check-for-updates", null);
+      });
     },
   };
 

@@ -79,6 +79,7 @@ vi.mock("electron", () => {
 });
 
 import {
+  appReadyForWindow,
   createMainWindow,
   createReaderWindow,
   getTitlebarZoomForWindow,
@@ -87,6 +88,7 @@ import {
   scaledTitlebarHeight,
   setTitlebarZoomForWindow,
   trafficLightPositionFor,
+  whenWindowReady,
 } from "./windows";
 
 function closeIfOpen(label: string, rec: MockWindowRecord | undefined) {
@@ -185,5 +187,34 @@ describe("electron windows titlebar & lifecycle", () => {
     expect(() => setTitlebarZoomForWindow("reader-book1", 1.2, "darwin")).not.toThrow();
 
     closeIfOpen("main", mainRec);
+  });
+
+  it("defers whenWindowReady callbacks until appReadyForWindow and discards them if closed", () => {
+    createMainWindow(false);
+    const mainRec = mockState.instances[0];
+    const deferredCb = vi.fn();
+    const immediateCb = vi.fn();
+
+    whenWindowReady("main", deferredCb);
+    expect(deferredCb).not.toHaveBeenCalled();
+
+    appReadyForWindow("main");
+    expect(deferredCb).toHaveBeenCalledTimes(1);
+
+    whenWindowReady("main", immediateCb);
+    expect(immediateCb).toHaveBeenCalledTimes(1);
+
+    closeIfOpen("main", mainRec);
+
+    // Reopening a fresh main window resets readiness and drops any pre-close queue.
+    createMainWindow(false);
+    const secondRec = mockState.instances[1];
+    const cancelledCb = vi.fn();
+    whenWindowReady("main", cancelledCb);
+    expect(cancelledCb).not.toHaveBeenCalled();
+
+    closeIfOpen("main", secondRec);
+    appReadyForWindow("main");
+    expect(cancelledCb).not.toHaveBeenCalled();
   });
 });

@@ -18,6 +18,8 @@ const DARK_BG = "#151518";
 const windowsByLabel = new Map<string, BrowserWindow>();
 const labelByWebContentsId = new Map<number, string>();
 const titlebarZoomByLabel = new Map<string, number>();
+const readyLabels = new Set<string>();
+const pendingReadyCallbacks = new Map<string, Array<() => void>>();
 let quitting = false;
 
 export function markQuitting(): void {
@@ -119,6 +121,25 @@ export function appReadyForWindow(label: string): void {
   if (label === "main") {
     win.focus();
   }
+  readyLabels.add(label);
+  const pending = pendingReadyCallbacks.get(label);
+  if (pending) {
+    pendingReadyCallbacks.delete(label);
+    for (const cb of pending) {
+      cb();
+    }
+  }
+}
+
+export function whenWindowReady(label: string, callback: () => void): void {
+  if (!getWindow(label)) return;
+  if (readyLabels.has(label)) {
+    callback();
+    return;
+  }
+  const queue = pendingReadyCallbacks.get(label) ?? [];
+  queue.push(callback);
+  pendingReadyCallbacks.set(label, queue);
 }
 
 function createWindow(options: {
@@ -211,6 +232,8 @@ function createWindow(options: {
     windowsByLabel.delete(options.label);
     labelByWebContentsId.delete(wcId);
     titlebarZoomByLabel.delete(options.label);
+    readyLabels.delete(options.label);
+    pendingReadyCallbacks.delete(options.label);
     if (!isMac && isMain) {
       for (const other of getAllManagedWindows()) {
         other.close();
