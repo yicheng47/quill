@@ -152,12 +152,13 @@ export function useAiChat(bookId?: string, bookContext?: BookContext) {
     }
   }, [bookId]);
 
+  // Keep messagesRef current synchronously rather than inside setMessages'
+  // updater: React 19 defers updaters until render, so async callers like
+  // send() read a stale ref when IPC/listeners resolve before the next paint.
   const updateMessages = (updater: ChatMessage[] | ((prev: ChatMessage[]) => ChatMessage[])) => {
-    setMessages((prev) => {
-      const next = typeof updater === "function" ? updater(prev) : updater;
-      messagesRef.current = next;
-      return next;
-    });
+    const next = typeof updater === "function" ? updater(messagesRef.current) : updater;
+    messagesRef.current = next;
+    setMessages(next);
   };
 
   const refreshChats = useCallback(async (bid: string) => {
@@ -248,7 +249,6 @@ export function useAiChat(bookId?: string, bookContext?: BookContext) {
     }
   }, [bookId, refreshChats, loadChat]);
 
-  /* eslint-disable react-hooks/preserve-manual-memoization */
   const send = useCallback(
     async (content: string, context?: string, contextCfi?: string) => {
       // Refuse while the session chat is still loading — otherwise the lazy
@@ -326,10 +326,12 @@ export function useAiChat(bookId?: string, bookContext?: BookContext) {
         console.error("Failed to save user message:", err);
       }
 
+      if (chatIdRef.current !== currentChatId) return;
+
       // Accumulate full assistant content for persistence
       let fullContent = "";
 
-      unlistenRef.current = await listen<{ delta: string; done: boolean }>(
+      const unlisten = await listen<{ delta: string; done: boolean }>(
         "ai-stream-chunk",
         async (event) => {
           if (event.payload.done) {
@@ -366,6 +368,12 @@ export function useAiChat(bookId?: string, bookContext?: BookContext) {
           );
         }
       );
+
+      if (chatIdRef.current !== currentChatId) {
+        unlisten();
+        return;
+      }
+      unlistenRef.current = unlisten;
 
       // Build API messages from current ref (avoids stale closure)
       // Include each message's context inline so the AI sees all quoted passages
@@ -404,7 +412,6 @@ export function useAiChat(bookId?: string, bookContext?: BookContext) {
     },
     [bookId, bookContext?.title, bookContext?.author, bookContext?.chapter, createChat, refreshChats]
   );
-  /* eslint-enable react-hooks/preserve-manual-memoization */
 
   const deleteChat = useCallback(async (id: string) => {
     const currentBookId = bookId;
