@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   setZoom: vi.fn<(zoom: number) => Promise<void>>(),
+  setTitlebarZoom: vi.fn<(zoom: number) => Promise<void>>(),
   invoke: vi.fn<(command: string, args?: object) => Promise<void>>(),
 }));
 const storedValues = new Map<string, string>();
@@ -13,14 +14,10 @@ const localStorageMock = {
   setItem: (key: string, value: string) => storedValues.set(key, value),
 };
 
-vi.mock("@tauri-apps/api/core", () => ({
+vi.mock("../platform", () => ({
   invoke: mocks.invoke,
-}));
-
-vi.mock("@tauri-apps/api/webview", () => ({
-  getCurrentWebview: () => ({
-    setZoom: mocks.setZoom,
-  }),
+  setZoom: mocks.setZoom,
+  setTitlebarZoom: mocks.setTitlebarZoom,
 }));
 
 import {
@@ -46,6 +43,8 @@ describe("app zoom", () => {
     mocks.invoke.mockResolvedValue();
     mocks.setZoom.mockReset();
     mocks.setZoom.mockResolvedValue();
+    mocks.setTitlebarZoom.mockReset();
+    mocks.setTitlebarZoom.mockResolvedValue();
   });
 
   it("persists and applies zoom to the invoking window", () => {
@@ -56,18 +55,14 @@ describe("app zoom", () => {
       key: "app_zoom",
       value: "1.2",
     });
-    expect(mocks.invoke).toHaveBeenCalledWith("window_set_titlebar_zoom", {
-      zoom: 1.2,
-    });
+    expect(mocks.setTitlebarZoom).toHaveBeenCalledWith(1.2);
     expect(mocks.setZoom).toHaveBeenCalledWith(1.2);
   });
 
   it("syncs the native titlebar for the invoking window", async () => {
     await syncTitlebarZoom(0.8);
 
-    expect(mocks.invoke).toHaveBeenCalledWith("window_set_titlebar_zoom", {
-      zoom: 0.8,
-    });
+    expect(mocks.setTitlebarZoom).toHaveBeenCalledWith(0.8);
   });
 
   it("pulses native zoom to refresh newly loaded frames", async () => {

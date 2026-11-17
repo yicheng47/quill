@@ -1,6 +1,5 @@
 import { useState, useCallback, useRef } from "react";
-import { check, type Update } from "@tauri-apps/plugin-updater";
-import { relaunch } from "@tauri-apps/plugin-process";
+import { checkForUpdate as platformCheckForUpdate, relaunch, type UpdateHandle } from "../platform";
 
 export type UpdateStatus =
   | "idle"
@@ -12,7 +11,7 @@ export type UpdateStatus =
 
 export interface UpdateState {
   status: UpdateStatus;
-  update: Update | null;
+  update: UpdateHandle | null;
   progress: number;
   error: string | null;
   /** True when the in-flight/last check was user-initiated (menu). The
@@ -27,7 +26,7 @@ export interface UpdateState {
 
 export function useUpdateChecker(): UpdateState {
   const [status, setStatus] = useState<UpdateStatus>("idle");
-  const [update, setUpdate] = useState<Update | null>(null);
+  const [update, setUpdate] = useState<UpdateHandle | null>(null);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [manualCheck, setManualCheck] = useState(false);
@@ -47,7 +46,7 @@ export function useUpdateChecker(): UpdateState {
     setStatus("checking");
     setError(null);
     try {
-      const result = await check();
+      const result = await platformCheckForUpdate();
       if (result) {
         setUpdate(result);
         setStatus("available");

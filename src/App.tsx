@@ -1,7 +1,11 @@
 import { useEffect } from "react";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
-import { invoke } from "@tauri-apps/api/core";
-import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import {
+  appReady,
+  getCurrentWindowLabel,
+  invoke,
+  onWindowResized,
+} from "./platform";
 import Home from "./pages/Home";
 import Reader from "./pages/Reader";
 import { UpdateProvider } from "./contexts/UpdateContext";
@@ -19,8 +23,7 @@ import {
   writeAppZoom,
 } from "./lib/settings";
 
-const appWindow = getCurrentWebviewWindow();
-const isMainWindow = appWindow.label === "main";
+const isMainWindow = getCurrentWindowLabel() === "main";
 
 function applyTheme(theme: string) {
   const root = document.documentElement;
@@ -58,7 +61,7 @@ export default function App() {
     // macOS pauses requestAnimationFrame for hidden windows, so reveal only
     // after the synchronously cached zoom restore finishes.
     void cachedZoomReady.finally(() => {
-      void invoke("app_ready").catch(() => {});
+      void appReady().catch(() => {});
     });
 
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
@@ -90,7 +93,7 @@ export default function App() {
 
   useEffect(() => {
     let timer: number | null = null;
-    const unlisten = appWindow.onResized(() => {
+    const unlisten = onWindowResized(() => {
       if (timer !== null) window.clearTimeout(timer);
       timer = window.setTimeout(() => {
         void syncTitlebarZoom(readAppZoom());

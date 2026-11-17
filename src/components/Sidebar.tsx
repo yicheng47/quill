@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useTranslation } from "react-i18next";
-import { listen } from "@tauri-apps/api/event";
+import { listen } from "../platform";
 import { Library, BookOpen, CheckCircle2, FolderClosed, BookA, Plus, MessageSquare, Pencil, Trash2, GripVertical, RefreshCw } from "lucide-react";
 import Button from "./ui/Button";
 import TitlebarDragRegion from "./ui/TitlebarDragRegion";

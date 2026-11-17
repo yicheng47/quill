@@ -1,9 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { Search, LayoutGrid, List, Plus, Upload, BookOpen, Loader, AlertCircle, X } from "lucide-react";
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
-import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { invoke, listen, listenCurrentWindow, onDragDrop } from "../platform";
 import Sidebar from "../components/Sidebar";
 import BookGrid from "../components/BookGrid";
 import BookList from "../components/BookList";
@@ -74,7 +72,7 @@ export default function Home() {
     window.addEventListener("open-settings", handler);
 
     // Cross-window: reader uses emitTo("main", ...) — must use webview-specific listener
-    const unlisten = getCurrentWebview().listen<string>("open-settings", (event) => {
+    const unlisten = listenCurrentWindow<string>("open-settings", (event) => {
       setSettingsSection(normalizeSettingsSection(event.payload));
       setSettingsOpen(true);
     });
@@ -111,7 +109,7 @@ export default function Home() {
   const { books, loading, hasMore, loadMore, loadingMore, refreshSilently, patchBook } = useBooks(statusFilter, searchParam, collectionId);
 
   useEffect(() => {
-    const unlisten = getCurrentWebview().listen<string>("book-availability-changed", (event) => {
+    const unlisten = listenCurrentWindow<string>("book-availability-changed", (event) => {
       patchBook(event.payload, { available: true });
     });
     return () => {
@@ -212,16 +210,16 @@ export default function Home() {
     };
   }, []);
 
-  // Listen for Tauri file drag-and-drop events
+  // Listen for native file drag-and-drop events
   useEffect(() => {
     let cancelled = false;
-    const unlisten = getCurrentWebview().onDragDropEvent(async (event) => {
+    const unlisten = onDragDrop(async (event) => {
       if (cancelled) return;
-      if (event.payload.type === "over" || event.payload.type === "enter") {
+      if (event.type === "over" || event.type === "enter") {
         setIsDragging(true);
-      } else if (event.payload.type === "drop") {
+      } else if (event.type === "drop") {
         setIsDragging(false);
-        const books = event.payload.paths.filter((p) =>
+        const books = event.paths.filter((p) =>
           p.toLowerCase().endsWith(".epub") || p.toLowerCase().endsWith(".pdf")
         );
         if (books.length > 0) {

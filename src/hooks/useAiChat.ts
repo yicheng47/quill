@@ -1,6 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { invoke, listen, type UnlistenFn } from "../platform";
 
 export interface ChatMessage {
   id: string;

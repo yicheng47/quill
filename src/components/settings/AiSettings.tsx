@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../../platform";
 import { KeyRound, Shield } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import Button from "../ui/Button";

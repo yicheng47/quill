@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { invoke, listen } from "../../platform";
 import { Loader2, Monitor, Smartphone, Laptop, Trash2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import Button from "../ui/Button";

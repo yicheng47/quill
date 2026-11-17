@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../platform";
 import { ArrowLeft, Bot, BookOpen, SlidersHorizontal, Palette, KeyRound, Shield, Cloud, Loader2, Globe, Sparkles, X, Check } from "lucide-react";
 import i18n from "../i18n";
 import Button from "../components/ui/Button";

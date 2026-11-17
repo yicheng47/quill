@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../../platform";
 import { useTranslation } from "react-i18next";
 import { Check, Copy, ShieldAlert, PenLine } from "lucide-react";
 import Toggle from "../ui/Toggle";

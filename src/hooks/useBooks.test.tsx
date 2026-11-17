@@ -8,12 +8,9 @@ const mocks = vi.hoisted(() => ({
   invoke: vi.fn<(command: string, args?: object) => Promise<unknown>>(),
 }));
 
-vi.mock("@tauri-apps/api/core", () => ({
+vi.mock("../platform", () => ({
   invoke: mocks.invoke,
-}));
-
-vi.mock("@tauri-apps/plugin-dialog", () => ({
-  open: vi.fn(),
+  openFileDialog: vi.fn(),
 }));
 
 import { type Book, useBooks } from "./useBooks";
