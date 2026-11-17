@@ -1,7 +1,6 @@
 import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
-import { getVersion } from "@tauri-apps/api/app";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { getAppVersion, openUrl } from "../../platform";
 import { Github, BookText, Scale, ExternalLink } from "lucide-react";
 import QuillLogo from "../QuillLogo";
 
@@ -34,7 +33,7 @@ export default function AboutSettings() {
   const platform = platformLabel();
 
   useEffect(() => {
-    getVersion().then(setVersion).catch(() => setVersion("unknown"));
+    getAppVersion().then(setVersion).catch(() => setVersion("unknown"));
   }, []);
 
   const open = (url: string) => {

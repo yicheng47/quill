@@ -1,7 +1,6 @@
 import { useTranslation } from "react-i18next";
 import { Loader2, Settings } from "lucide-react";
-import { invoke } from "@tauri-apps/api/core";
-import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { focusWindow, invoke } from "../platform";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { ChatMessage } from "../hooks/useAiChat";
@@ -25,8 +24,7 @@ export default function MessageBubble({ msg, messages, streaming, onNavigateToCf
           <button
             onClick={async () => {
               await invoke("open_settings_on_main", { section: "ai" });
-              const main = await WebviewWindow.getByLabel("main");
-              await main?.setFocus();
+              await focusWindow("main");
             }}
             className="flex items-center gap-1.5 text-[13px] font-medium text-accent-text hover:opacity-70 cursor-pointer"
           >

@@ -1,0 +1,17 @@
+[package]
+name = "quill-mcp"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "quill-mcp"
+path = "src/main.rs"
+
+[dependencies]
+quill-core = { path = "../quill-core" }
+
+[dev-dependencies]
+rusqlite = "0.31"
+serde_json = "1"
+tempfile = "3"

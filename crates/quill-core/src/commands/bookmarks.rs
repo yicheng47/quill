@@ -1,0 +1,215 @@
+use rusqlite::params;
+use serde::{Deserialize, Serialize};
+
+use crate::db::Db;
+use crate::error::AppResult;
+use crate::host::Core;
+use crate::sync::events::{BookmarkPayload, EventBody, HighlightPayload};
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Bookmark {
+    pub id: String,
+    pub book_id: String,
+    pub cfi: String,
+    pub label: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Highlight {
+    pub id: String,
+    pub book_id: String,
+    pub cfi_range: String,
+    pub color: String,
+    pub note: Option<String>,
+    pub text_content: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+pub fn add_bookmark(
+    core: &Core,
+    book_id: String,
+    cfi: String,
+    label: Option<String>,
+) -> AppResult<Bookmark> {
+    let id = uuid::Uuid::new_v4().to_string();
+    let now = chrono::Utc::now().timestamp_millis();
+
+    let bookmark = Bookmark {
+        id: id.clone(),
+        book_id: book_id.clone(),
+        cfi: cfi.clone(),
+        label: label.clone(),
+        created_at: now,
+        updated_at: now,
+    };
+
+    core.sync_writer.with_tx(&core.db, now, |tx, events| {
+        tx.execute(
+            "INSERT INTO bookmarks (id, book_id, cfi, label, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
+            params![id, book_id, cfi, label, now],
+        )?;
+        events.push(EventBody::BookmarkAdd(BookmarkPayload {
+            id: id.clone(),
+            book_id: book_id.clone(),
+            cfi: cfi.clone(),
+            label: label.clone(),
+        }));
+        Ok(())
+    })?;
+
+    Ok(bookmark)
+}
+
+pub fn remove_bookmark(core: &Core, id: String) -> AppResult<()> {
+    let now = chrono::Utc::now().timestamp_millis();
+    core.sync_writer.with_tx(&core.db, now, |tx, events| {
+        tx.execute("DELETE FROM bookmarks WHERE id = ?1", params![id])?;
+        events.push(EventBody::BookmarkDelete { id: id.clone() });
+        Ok(())
+    })
+}
+
+/// Shared query helper. Same shape as `list_bookmarks` — both the app
+/// command and the MCP `get_bookmarks` tool call this so the column
+/// list lives in exactly one place.
+pub(crate) fn query_bookmarks(db: &Db, book_id: &str) -> AppResult<Vec<Bookmark>> {
+    let conn = db.reader();
+    let mut stmt = conn.prepare(
+        "SELECT id, book_id, cfi, label, created_at, updated_at FROM bookmarks WHERE book_id = ?1 ORDER BY created_at DESC",
+    )?;
+    let bookmarks = stmt
+        .query_map(params![book_id], |row| {
+            Ok(Bookmark {
+                id: row.get(0)?,
+                book_id: row.get(1)?,
+                cfi: row.get(2)?,
+                label: row.get(3)?,
+                created_at: row.get(4)?,
+                updated_at: row.get(5)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(bookmarks)
+}
+
+pub fn list_bookmarks(core: &Core, book_id: String) -> AppResult<Vec<Bookmark>> {
+    query_bookmarks(&core.db, &book_id)
+}
+
+pub fn add_highlight(
+    core: &Core,
+    book_id: String,
+    cfi_range: String,
+    color: Option<String>,
+    note: Option<String>,
+    text_content: Option<String>,
+) -> AppResult<Highlight> {
+    let id = uuid::Uuid::new_v4().to_string();
+    let now = chrono::Utc::now().timestamp_millis();
+    let color = color.unwrap_or_else(|| "yellow".to_string());
+
+    log::debug!("highlights: add_highlight book_id={book_id} color={color}");
+
+    let highlight = Highlight {
+        id: id.clone(),
+        book_id: book_id.clone(),
+        cfi_range: cfi_range.clone(),
+        color: color.clone(),
+        note: note.clone(),
+        text_content: text_content.clone(),
+        created_at: now,
+        updated_at: now,
+    };
+
+    let device = core.sync_writer.self_device().to_string();
+    core.sync_writer.with_tx(&core.db, now, |tx, events| {
+        tx.execute(
+            "INSERT INTO highlights (id, book_id, cfi_range, color, note, text_content, created_at, updated_at, updated_by_device)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7, ?8)",
+            params![id, book_id, cfi_range, color, note, text_content, now, device],
+        )?;
+        events.push(EventBody::HighlightAdd(HighlightPayload {
+            id: id.clone(),
+            book_id: book_id.clone(),
+            cfi_range: cfi_range.clone(),
+            color: color.clone(),
+            note: note.clone(),
+            text_content: text_content.clone(),
+        }));
+        Ok(())
+    })?;
+
+    Ok(highlight)
+}
+
+pub fn remove_highlight(core: &Core, id: String) -> AppResult<()> {
+    let now = chrono::Utc::now().timestamp_millis();
+    core.sync_writer.with_tx(&core.db, now, |tx, events| {
+        tx.execute("DELETE FROM highlights WHERE id = ?1", params![id])?;
+        events.push(EventBody::HighlightDelete { id: id.clone() });
+        Ok(())
+    })
+}
+
+/// Shared query helper. Mirror of `list_highlights` for the MCP
+/// `get_highlights` tool — keeps the column list canonical.
+pub(crate) fn query_highlights(db: &Db, book_id: &str) -> AppResult<Vec<Highlight>> {
+    let conn = db.reader();
+    let mut stmt = conn.prepare(
+        "SELECT id, book_id, cfi_range, color, note, text_content, created_at, updated_at FROM highlights WHERE book_id = ?1 ORDER BY created_at DESC",
+    )?;
+    let highlights = stmt
+        .query_map(params![book_id], |row| {
+            Ok(Highlight {
+                id: row.get(0)?,
+                book_id: row.get(1)?,
+                cfi_range: row.get(2)?,
+                color: row.get(3)?,
+                note: row.get(4)?,
+                text_content: row.get(5)?,
+                created_at: row.get(6)?,
+                updated_at: row.get(7)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(highlights)
+}
+
+pub fn list_highlights(core: &Core, book_id: String) -> AppResult<Vec<Highlight>> {
+    query_highlights(&core.db, &book_id)
+}
+
+pub fn update_highlight_note(core: &Core, id: String, note: String) -> AppResult<()> {
+    let now = chrono::Utc::now().timestamp_millis();
+    let device = core.sync_writer.self_device().to_string();
+    core.sync_writer.with_tx(&core.db, now, |tx, events| {
+        tx.execute(
+            "UPDATE highlights SET note = ?1, updated_at = ?2, updated_by_device = ?3 WHERE id = ?4",
+            params![note, now, device, id],
+        )?;
+        events.push(EventBody::HighlightNoteSet {
+            id: id.clone(),
+            note: Some(note.clone()),
+        });
+        Ok(())
+    })
+}
+
+pub fn update_highlight_color(core: &Core, id: String, color: String) -> AppResult<()> {
+    let now = chrono::Utc::now().timestamp_millis();
+    let device = core.sync_writer.self_device().to_string();
+    core.sync_writer.with_tx(&core.db, now, |tx, events| {
+        tx.execute(
+            "UPDATE highlights SET color = ?1, updated_at = ?2, updated_by_device = ?3 WHERE id = ?4",
+            params![color, now, device, id],
+        )?;
+        events.push(EventBody::HighlightColorSet {
+            id: id.clone(),
+            color: color.clone(),
+        });
+        Ok(())
+    })
+}

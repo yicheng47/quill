@@ -1,6 +1,5 @@
 import { createContext, useContext, useEffect, type ReactNode } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { invoke, listen } from "../platform";
 import { useUpdateChecker, type UpdateState } from "../hooks/useUpdateChecker";
 
 const UpdateContext = createContext<UpdateState | null>(null);

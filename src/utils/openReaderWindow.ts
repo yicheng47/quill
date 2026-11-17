@@ -1,4 +1,4 @@
-import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { focusWindow, openReaderWindow as openPlatformReaderWindow } from "../platform";
 
 interface ReaderWindowOptions {
   openVocab?: boolean;
@@ -35,12 +35,7 @@ export async function openReaderWindow(
   const label = `reader-${bookId}`;
 
   try {
-    // Focus existing window if already open
-    const existing = await WebviewWindow.getByLabel(label);
-    if (existing) {
-      await existing.show();
-      await existing.unminimize();
-      await existing.setFocus();
+    if (await focusWindow(label)) {
       return;
     }
   } catch (err) {
@@ -62,15 +57,13 @@ export async function openReaderWindow(
 
   const { width, height } = loadSavedSize(bookId);
 
-  new WebviewWindow(label, {
+  await openPlatformReaderWindow({
+    label,
     url,
     title: "Quill",
     width,
     height,
     minWidth: MIN_WIDTH,
     minHeight: MIN_HEIGHT,
-    titleBarStyle: "overlay",
-    hiddenTitle: true,
-    visible: false,
   });
 }

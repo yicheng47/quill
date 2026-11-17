@@ -1,5 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
-import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { invoke, setTitlebarZoom, setZoom } from "../platform";
 import {
   notifySameWindowStorage,
   readAppZoom,
@@ -10,7 +9,7 @@ import {
 
 export function syncTitlebarZoom(zoom: number): Promise<void> {
   try {
-    return invoke<void>("window_set_titlebar_zoom", { zoom }).catch(() => {});
+    return setTitlebarZoom(zoom).catch(() => {});
   } catch {
     return Promise.resolve();
   }
@@ -20,9 +19,9 @@ export function restoreAppZoom(zoom: number): Promise<void> {
   const titlebarZoom = syncTitlebarZoom(zoom);
   let webviewZoom = Promise.resolve();
   try {
-    webviewZoom = getCurrentWebview().setZoom(zoom).catch(() => {});
+    webviewZoom = setZoom(zoom).catch(() => {});
   } catch {
-    // Browser preview has no Tauri webview.
+    // Browser preview has no native webview.
   }
   return Promise.all([titlebarZoom, webviewZoom]).then(() => {});
 }
@@ -31,12 +30,11 @@ export function refreshAppZoom(): Promise<void> {
   const zoom = readAppZoom();
   if (zoom === 1) return Promise.resolve();
   try {
-    const webview = getCurrentWebview();
     const refreshZoom = zoom === ZOOM_STEPS[ZOOM_STEPS.length - 1]
       ? zoom - 0.001
       : zoom + 0.001;
-    return webview.setZoom(refreshZoom)
-      .then(() => webview.setZoom(zoom))
+    return setZoom(refreshZoom)
+      .then(() => setZoom(zoom))
       .catch(() => {});
   } catch {
     return Promise.resolve();

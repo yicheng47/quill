@@ -1,0 +1,148 @@
+import path from "node:path";
+import fs from "node:fs";
+import { app, protocol } from "electron";
+import { bootQuillCore, getLogDir, type QuillCoreInstance } from "./core";
+import { registerIpcHandlers, readInitialDark } from "./ipc";
+import { installAppMenu } from "./menu";
+import { registerProtocols } from "./protocols";
+import { createElectronUpdaterService } from "./updater";
+import {
+  broadcastEvent,
+  createMainWindow,
+  focusManagedWindow,
+  markQuitting,
+  sendEventToWindow,
+} from "./windows";
+
+const isDev = !app.isPackaged;
+
+// Keep Chromium's cache/localStorage outside `com.wycstudios.quill(-dev)` so
+// the core data directory remains exclusively Quill's DB, secrets, and blobs.
+app.setPath(
+  "userData",
+  path.join(
+    app.getPath("appData"),
+    isDev ? "com.wycstudios.quill-chromium-dev" : "com.wycstudios.quill-chromium",
+  ),
+);
+
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: "quill-app",
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      corsEnabled: true,
+      stream: true,
+    },
+  },
+  {
+    scheme: "quill-file",
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      corsEnabled: true,
+      stream: true,
+    },
+  },
+]);
+
+function extractBookPaths(argv: string[]): string[] {
+  return argv.filter((arg) => {
+    if (arg.startsWith("-")) return false;
+    const lower = arg.toLowerCase();
+    return (
+      (lower.endsWith(".epub") || lower.endsWith(".pdf")) && fs.existsSync(arg)
+    );
+  });
+}
+
+const pendingOpenFiles: string[] = extractBookPaths(process.argv.slice(1));
+let mainWindowReady = false;
+let core: QuillCoreInstance | null = null;
+
+function dispatchFileOpen(paths: string[]): void {
+  if (paths.length === 0) return;
+  if (mainWindowReady) {
+    focusManagedWindow("main");
+    broadcastEvent("file-open", paths);
+  } else {
+    pendingOpenFiles.push(...paths);
+  }
+}
+
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on("open-file", (event, filePath) => {
+    event.preventDefault();
+    const paths = extractBookPaths([filePath]);
+    dispatchFileOpen(paths);
+  });
+
+  app.on("second-instance", async (_event, argv) => {
+    if (core && !focusManagedWindow("main")) {
+      createMainWindow(await readInitialDark(core));
+    }
+    dispatchFileOpen(extractBookPaths(argv.slice(1)));
+  });
+
+  app.on("before-quit", () => {
+    markQuitting();
+  });
+
+  app.on("activate", async () => {
+    if (!core) return;
+    if (!focusManagedWindow("main")) {
+      createMainWindow(await readInitialDark(core));
+    }
+  });
+
+  app.on("window-all-closed", () => {
+    if (process.platform !== "darwin") {
+      app.quit();
+    }
+  });
+
+  void app
+    .whenReady()
+    .then(async () => {
+      app.setAppLogsPath(getLogDir(isDev));
+
+      core = await bootQuillCore({
+        emitAll: (event, payload) => broadcastEvent(event, payload),
+        emitTo: (windowLabel, event, payload) =>
+          sendEventToWindow(windowLabel, event, payload),
+      });
+
+      const updater = createElectronUpdaterService({
+        isPackaged: () => app.isPackaged,
+        getVersion: () => app.getVersion(),
+        markQuitting,
+      });
+
+      registerProtocols(core, path.join(__dirname, "../renderer"));
+      registerIpcHandlers(
+        core,
+        () => {
+          mainWindowReady = true;
+          if (pendingOpenFiles.length > 0) {
+            const batch = pendingOpenFiles.splice(0, pendingOpenFiles.length);
+            broadcastEvent("file-open", batch);
+          }
+        },
+        updater,
+      );
+      installAppMenu(core, () => readInitialDark(core!));
+
+      const initialDark = await readInitialDark(core);
+      createMainWindow(initialDark);
+    })
+    .catch((err) => {
+      console.error("Failed to boot Quill:", err);
+      app.exit(1);
+    });
+}

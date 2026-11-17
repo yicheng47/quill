@@ -9,8 +9,13 @@ lerna-debug.log*
 
 node_modules
 dist
+dist-electron
 dist-ssr
+out
+*.node
 *.local
+build/embedded.provisionprofile
+*.provisionprofile
 
 # Editor directories and files
 .vscode/*
@@ -28,4 +33,6 @@ dist-ssr
 .claude/worktrees/
 .worktrees/
 .nvmrc
-src-tauri/embedded.provisionprofile
+/target/
+/crates/quill-core/binaries/
+crates/quill-node/index.d.ts

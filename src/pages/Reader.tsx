@@ -1,9 +1,14 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { convertFileSrc, invoke } from "@tauri-apps/api/core";
-import { emitTo } from "@tauri-apps/api/event";
-import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import {
+  convertFileSrc,
+  emitTo,
+  getCurrentWindowLabel,
+  invoke,
+  onWindowResized,
+  setWindowTitle,
+} from "../platform";
 import {
   AlertCircle,
   ArrowLeft,
@@ -208,9 +213,9 @@ const highlightColorMap: Record<string, string> = {
   purple: "#A78BFA",
 };
 
-const appWindow = getCurrentWebviewWindow();
-const isMainWindow = appWindow.label === "main";
-const isStandaloneWindow = appWindow.label.startsWith("reader-");
+const windowLabel = getCurrentWindowLabel();
+const isMainWindow = windowLabel === "main";
+const isStandaloneWindow = windowLabel.startsWith("reader-");
 
 // One-time migration of `reader-zoom-${bookId}` keys written by PR #199.
 // That PR saved "100" on every default open, so every pre-upgrade book has
@@ -343,7 +348,7 @@ export default function Reader() {
       .then((b) => {
         setBook(b);
         if (isStandaloneWindow && b) {
-          appWindow.setTitle(b.title);
+          void setWindowTitle(b.title);
         }
       })
       .catch(() => setBook(null))
@@ -408,12 +413,10 @@ export default function Reader() {
   useEffect(() => {
     if (!isStandaloneWindow || !bookId) return;
     let timer: number | null = null;
-    const unlistenPromise = appWindow.onResized(({ payload }) => {
+    const unlistenPromise = onWindowResized((logical) => {
       if (timer !== null) window.clearTimeout(timer);
-      timer = window.setTimeout(async () => {
+      timer = window.setTimeout(() => {
         try {
-          const scale = await appWindow.scaleFactor();
-          const logical = payload.toLogical(scale);
           localStorage.setItem(
             `reader-window-${bookId}`,
             JSON.stringify({ width: Math.round(logical.width), height: Math.round(logical.height) }),

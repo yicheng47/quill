@@ -10,31 +10,60 @@ import { useUpdate } from "../contexts/UpdateContext";
 // stays silent unless an update is found.
 export default function UpdateToast() {
   const { t } = useTranslation();
-  const { status, update, progress, manualCheck, error, downloadAndInstall, checkForUpdate } =
-    useUpdate();
+  const {
+    status,
+    update,
+    progress,
+    manualCheck,
+    manualCheckSeq,
+    upToDateSeq,
+    error,
+    downloadAndInstall,
+    checkForUpdate,
+  } = useUpdate();
   const [dismissed, setDismissed] = useState(false);
   const [visible, setVisible] = useState(false);
   const [confirmUpToDate, setConfirmUpToDate] = useState(false);
-  const prevStatus = useRef(status);
+  const prevManualCheckSeq = useRef(manualCheckSeq);
+  const prevUpToDateSeq = useRef(upToDateSeq);
+  const dismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const cancelPendingDismiss = useCallback(() => {
+    if (dismissTimerRef.current !== null) {
+      clearTimeout(dismissTimerRef.current);
+      dismissTimerRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => () => cancelPendingDismiss(), [cancelPendingDismiss]);
 
   // A manual check ending with no update → brief "up to date" confirmation.
   // Any new check / found update clears it and un-dismisses the toast.
   useEffect(() => {
-    const prev = prevStatus.current;
-    prevStatus.current = status;
+    const hasNewManualCheck = manualCheckSeq !== prevManualCheckSeq.current;
+    const hasNewUpToDate = upToDateSeq !== prevUpToDateSeq.current;
+    prevManualCheckSeq.current = manualCheckSeq;
+    prevUpToDateSeq.current = upToDateSeq;
+
     if (
       status === "checking" ||
       status === "available" ||
       status === "downloading" ||
       status === "ready"
     ) {
+      cancelPendingDismiss();
       setConfirmUpToDate(false);
       setDismissed(false);
-    } else if (manualCheck && prev === "checking" && status === "idle") {
+    } else if (hasNewUpToDate) {
+      cancelPendingDismiss();
       setConfirmUpToDate(true);
       setDismissed(false);
+    } else if (status === "error" && hasNewManualCheck) {
+      cancelPendingDismiss();
+      setConfirmUpToDate(false);
+      setDismissed(false);
     }
-  }, [status, manualCheck]);
+  }, [status, manualCheckSeq, upToDateSeq, cancelPendingDismiss]);
 
   const view: "available" | "downloading" | "checking" | "uptodate" | "error" | null =
     status === "available"
@@ -52,12 +81,14 @@ export default function UpdateToast() {
   const shouldShow = view !== null && !dismissed;
 
   const dismiss = useCallback(() => {
+    cancelPendingDismiss();
     setVisible(false);
-    setTimeout(() => {
+    dismissTimerRef.current = setTimeout(() => {
+      dismissTimerRef.current = null;
       setDismissed(true);
       setConfirmUpToDate(false);
     }, 200);
-  }, []);
+  }, [cancelPendingDismiss]);
 
   useEffect(() => {
     if (!shouldShow) {
@@ -74,7 +105,7 @@ export default function UpdateToast() {
       cancelAnimationFrame(raf);
       if (timer) clearTimeout(timer);
     };
-  }, [shouldShow, view, dismiss]);
+  }, [shouldShow, view, dismiss, manualCheckSeq, upToDateSeq]);
 
   if (!shouldShow) return null;
 

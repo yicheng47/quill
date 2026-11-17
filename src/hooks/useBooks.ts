@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { open } from "@tauri-apps/plugin-dialog";
+import { invoke, openFileDialog } from "../platform";
 
 export interface Book {
   id: string;
@@ -98,7 +97,7 @@ export function useBooks(filter?: string, search?: string, collectionId?: string
 }
 
 async function pickFile(): Promise<string | null> {
-  return open({
+  return openFileDialog({
     multiple: false,
     filters: [{ name: "Books", extensions: ["epub", "pdf"] }],
   });

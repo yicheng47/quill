@@ -1,0 +1,29 @@
+name: Nightly on merge
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch an all-platform nightly for a merged pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Pull requests land as merge commits; direct pushes (docs, quick fixes) have one parent.
+          parents=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA" --jq '.parents | length')
+          if [[ "$parents" -lt 2 ]]; then
+            echo "Direct push to main; no nightly."
+            exit 0
+          fi
+          gh workflow run nightly.yml --repo "$GITHUB_REPOSITORY" --ref main -f platform=all

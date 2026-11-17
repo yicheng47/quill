@@ -1,0 +1,39 @@
+[package]
+name = "quill-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[dependencies]
+log = "0.4"
+fern = "0.7"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rusqlite = { version = "0.31", features = ["bundled"] }
+epub = "2"
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+thiserror = "1"
+reqwest = { version = "0.12", features = ["json", "stream"] }
+tokio = { version = "1", features = ["sync", "macros", "rt-multi-thread", "net", "io-util", "time"] }
+futures = "0.3"
+rmcp = { version = "1.7", features = ["server", "transport-io"] }
+schemars = "1"
+toml_edit = "0.22"
+sha2 = "0.10"
+base64 = "0.22"
+rand = "0.8"
+ulid = { version = "1", features = ["serde"] }
+notify = "6"
+gethostname = "0.5"
+pdfium-render = "0.9"
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSFileManager", "NSFileCoordinator", "NSString", "NSURL", "NSError", "block2"] }
+block2 = "0.6"
+
+[dev-dependencies]
+tempfile = "3"
+lopdf = "0.40.0"

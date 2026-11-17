@@ -1,7 +1,11 @@
 import { useEffect } from "react";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
-import { invoke } from "@tauri-apps/api/core";
-import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import {
+  appReady,
+  getCurrentWindowLabel,
+  invoke,
+  onWindowResized,
+} from "./platform";
 import Home from "./pages/Home";
 import Reader from "./pages/Reader";
 import { UpdateProvider } from "./contexts/UpdateContext";
@@ -19,8 +23,7 @@ import {
   writeAppZoom,
 } from "./lib/settings";
 
-const appWindow = getCurrentWebviewWindow();
-const isMainWindow = appWindow.label === "main";
+const isMainWindow = getCurrentWindowLabel() === "main";
 
 function applyTheme(theme: string) {
   const root = document.documentElement;
@@ -34,11 +37,15 @@ function applyTheme(theme: string) {
   }
 }
 
+const SETTINGS_REVEAL_TIMEOUT_MS = 250;
+
 export default function App() {
   useEffect(() => {
     const cachedZoom = readAppZoom();
     const cachedZoomReady = restoreAppZoom(cachedZoom);
-    void invoke<Record<string, string>>("get_all_settings")
+    applyTheme(localStorage.getItem("quill-theme") ?? "system");
+
+    const settingsReady = invoke<Record<string, string>>("get_all_settings")
       .then((settings) => {
         const theme = settings.theme ?? "system";
         applyTheme(theme);
@@ -55,10 +62,21 @@ export default function App() {
     // the persisted DB value (and persist to the DB on first launch).
     reconcileLanguage();
 
-    // macOS pauses requestAnimationFrame for hidden windows, so reveal only
-    // after the synchronously cached zoom restore finishes.
-    void cachedZoomReady.finally(() => {
-      void invoke("app_ready").catch(() => {});
+    // Bound first-launch settings wait so an unresponsive backend never keeps
+    // the window hidden indefinitely, while fast persisted dark applies pre-reveal
+    // and slower resolutions reconcile cleanly afterward.
+    let revealTimer: number | undefined;
+    const revealTimeout = new Promise<void>((resolve) => {
+      revealTimer = window.setTimeout(resolve, SETTINGS_REVEAL_TIMEOUT_MS);
+    });
+    void Promise.all([
+      cachedZoomReady,
+      Promise.race([settingsReady, revealTimeout]),
+    ]).finally(() => {
+      if (revealTimer !== undefined) {
+        window.clearTimeout(revealTimer);
+      }
+      void appReady().catch(() => {});
     });
 
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
@@ -90,7 +108,7 @@ export default function App() {
 
   useEffect(() => {
     let timer: number | null = null;
-    const unlisten = appWindow.onResized(() => {
+    const unlisten = onWindowResized(() => {
       if (timer !== null) window.clearTimeout(timer);
       timer = window.setTimeout(() => {
         void syncTitlebarZoom(readAppZoom());

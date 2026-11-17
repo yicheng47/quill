@@ -1,7 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { focusWindow, invoke, listen, type UnlistenFn } from "../platform";
 import { X, Loader2, Sparkles, BookmarkPlus, Check, Copy, Settings } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import Markdown from "react-markdown";
@@ -284,8 +282,7 @@ export default function LookupPopover({
               onClick={async () => {
                 onClose();
                 await invoke("open_settings_on_main", { section: translationLanguageNotConfigured ? "tools" : "ai" });
-                const main = await WebviewWindow.getByLabel("main");
-                await main?.setFocus();
+                await focusWindow("main");
               }}
               className="flex items-center gap-1.5 text-[13px] font-medium text-accent-text hover:opacity-70 cursor-pointer"
             >

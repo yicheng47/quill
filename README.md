@@ -27,7 +27,7 @@
 
 ---
 
-> Status: shipping on Mac (v1.0.5) and iOS; library, progress, highlights, and settings sync between devices via iCloud.
+> Status: shipping on Mac, Windows, and iOS; library, progress, highlights, and settings sync across Mac, iPhone, and iPad via iCloud.
 
 ---
 
@@ -37,20 +37,28 @@ Quill is what happens when you stop alt-tabbing between a reader and ChatGPT and
 
 You open a book — EPUB or PDF, paginated or scrolled, the typography knobs you'd expect. You highlight a passage that confuses you and ask the assistant what's going on; your selection is the context, no copy-pasting. You tap a word and get a contextual definition you can save to a vocabulary deck with spaced repetition. You pick the model: OpenAI via OAuth (your existing ChatGPT subscription, no extra payment), Anthropic, any OpenAI-compatible endpoint, or Ollama running on your own machine.
 
-Your library lives in iCloud, so the book you started on the Mac picks up on the iPhone or iPad — same progress, same highlights, same notes. The Mac app is built on Tauri 2 (Rust + React + foliate-js); the iOS app is native SwiftUI on top of the same renderer.
+Your library lives in iCloud, so the book you started on the Mac picks up on the iPhone or iPad — same progress, same highlights, same notes. The desktop app is built on Electron, React, foliate-js, and a Rust core (`quill-core`); the iOS app is native SwiftUI on top of the same renderer.
 
 ## Download
 
-### macOS
+Latest installers on the [releases page](https://github.com/yicheng47/quill/releases/latest) (or preview builds from the rolling [`nightly` prerelease](https://github.com/yicheng47/quill/releases/tag/nightly)):
 
-Latest `.dmg` on the [releases page](https://github.com/yicheng47/quill/releases/latest):
+### macOS
 
 | File | Platform |
 | --- | --- |
-| `Quill_x.x.x_aarch64.dmg` | Apple Silicon (M1/M2/M3/M4) |
-| `Quill_x.x.x_x64.dmg` | Intel Mac |
+| `Quill-x.x.x-arm64.dmg` | Apple Silicon (M1/M2/M3/M4) |
+| `Quill-x.x.x-x64.dmg` | Intel Mac |
 
-Open the `.dmg` and drag **Quill.app** to your Applications folder. Requires macOS 14.4 (Sonoma) or later for PDF support; EPUB works on earlier versions.
+Open the `.dmg` and drag **Quill.app** to your Applications folder. Upgrading from `1.x` to `2.0.0` is a one-time manual download because the desktop shell moved from Tauri to Electron; existing library data, settings, iCloud sync state, and MCP configurations are preserved automatically.
+
+### Windows
+
+| File | Platform |
+| --- | --- |
+| `Quill-Setup-x.x.x-x64.exe` | Windows 10/11 (x64, unsigned NSIS installer) |
+
+Upgrading from `1.x` to `2.0.0` is a one-time manual installer download.
 
 ### iOS
 

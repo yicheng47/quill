@@ -1,6 +1,6 @@
 import i18n from "i18next";
 import { initReactI18next } from "react-i18next";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../platform";
 import en from "./en.json";
 import zh from "./zh.json";
 

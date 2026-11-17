@@ -1,6 +1,5 @@
 import { useState, useCallback, useRef } from "react";
-import { check, type Update } from "@tauri-apps/plugin-updater";
-import { relaunch } from "@tauri-apps/plugin-process";
+import { checkForUpdate as platformCheckForUpdate, relaunch, type UpdateHandle } from "../platform";
 
 export type UpdateStatus =
   | "idle"
@@ -12,7 +11,7 @@ export type UpdateStatus =
 
 export interface UpdateState {
   status: UpdateStatus;
-  update: Update | null;
+  update: UpdateHandle | null;
   progress: number;
   error: string | null;
   /** True when the in-flight/last check was user-initiated (menu). The
@@ -20,6 +19,10 @@ export interface UpdateState {
    *  for manual checks — the launch auto-check stays silent unless an
    *  update is actually found. */
   manualCheck: boolean;
+  /** Monotonic counters so synchronous/batched `Promise.resolve(null)` checks
+   *  and repeated manual checks still drive toast transitions. */
+  manualCheckSeq: number;
+  upToDateSeq: number;
   checkForUpdate: (opts?: { manual?: boolean }) => Promise<void>;
   downloadAndInstall: () => Promise<void>;
   restart: () => Promise<void>;
@@ -27,11 +30,14 @@ export interface UpdateState {
 
 export function useUpdateChecker(): UpdateState {
   const [status, setStatus] = useState<UpdateStatus>("idle");
-  const [update, setUpdate] = useState<Update | null>(null);
+  const [update, setUpdate] = useState<UpdateHandle | null>(null);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [manualCheck, setManualCheck] = useState(false);
+  const [manualCheckSeq, setManualCheckSeq] = useState(0);
+  const [upToDateSeq, setUpToDateSeq] = useState(0);
   const checking = useRef(false);
+  const manualCheckRef = useRef(false);
 
   const checkForUpdate = useCallback(async (opts?: { manual?: boolean }) => {
     if (checking.current) {
@@ -39,19 +45,31 @@ export function useUpdateChecker(): UpdateState {
       // this one is manual (menu), promote it so the in-flight result
       // still surfaces checking/up-to-date feedback instead of being a
       // visible no-op.
-      if (opts?.manual) setManualCheck(true);
+      if (opts?.manual) {
+        manualCheckRef.current = true;
+        setManualCheck(true);
+        setManualCheckSeq((n) => n + 1);
+      }
       return;
     }
     checking.current = true;
-    setManualCheck(opts?.manual ?? false);
+    const isManual = opts?.manual ?? false;
+    manualCheckRef.current = isManual;
+    setManualCheck(isManual);
+    if (isManual) {
+      setManualCheckSeq((n) => n + 1);
+    }
     setStatus("checking");
     setError(null);
     try {
-      const result = await check();
+      const result = await platformCheckForUpdate();
       if (result) {
         setUpdate(result);
         setStatus("available");
       } else {
+        if (manualCheckRef.current) {
+          setUpToDateSeq((n) => n + 1);
+        }
         setStatus("idle");
       }
     } catch (e) {
@@ -68,6 +86,7 @@ export function useUpdateChecker(): UpdateState {
     // manual so a download/install/relaunch failure surfaces in the
     // toast (error + Retry) even when the update was found by the
     // silent launch check.
+    manualCheckRef.current = true;
     setManualCheck(true);
     setStatus("downloading");
     setProgress(0);
@@ -106,6 +125,8 @@ export function useUpdateChecker(): UpdateState {
     progress,
     error,
     manualCheck,
+    manualCheckSeq,
+    upToDateSeq,
     checkForUpdate,
     downloadAndInstall,
     restart,

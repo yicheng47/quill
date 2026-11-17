@@ -148,8 +148,21 @@ body {
   display: none;
 }
 
-[data-tauri-drag-region] {
+[data-drag-region] {
   cursor: default;
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+
+[data-drag-region] button,
+[data-drag-region] a,
+[data-drag-region] input,
+[data-drag-region] select,
+[data-drag-region] textarea,
+[data-drag-region] [role="button"],
+.no-drag {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
 }
 
 /* Styling for react-markdown output (AI responses) */
