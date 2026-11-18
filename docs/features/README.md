@@ -17,3 +17,4 @@ Specs of features in development. A feature is filed as a GitHub issue only; its
 - [325 — OpenAI OAuth Session Expiry → Re-login Prompt](325-oauth-session-expiry.md)
 - [326 — Agent Connections (Codex App Server + Claude Code)](326-agent-connections.md)
 - [327 — Electron Shell](327-electron-shell.md)
+- [331 — Desktop Rebrand (Dawn Design System & Shell)](331-rebrand.md)
