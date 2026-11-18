@@ -24,8 +24,12 @@ export const emitTo: Platform["emitTo"] = (windowLabel, event, payload) =>
   platform.emitTo(windowLabel, event, payload);
 export const getCurrentWindowLabel: Platform["getCurrentWindowLabel"] = () =>
   platform.getCurrentWindowLabel();
+export const getInitialReaderTheme: Platform["getInitialReaderTheme"] = () =>
+  platform.getInitialReaderTheme();
 export const setWindowTitle: Platform["setWindowTitle"] = (title) =>
   platform.setWindowTitle(title);
+export const setWindowBackgroundColor: Platform["setWindowBackgroundColor"] = (color) =>
+  platform.setWindowBackgroundColor(color);
 export const appReady: Platform["appReady"] = () => platform.appReady();
 export const focusWindow: Platform["focusWindow"] = (label) => platform.focusWindow(label);
 export const openReaderWindow: Platform["openReaderWindow"] = (params) =>

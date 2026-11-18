@@ -1,22 +1,61 @@
 import { useState, useRef, useEffect } from "react";
 import { useTranslation } from "react-i18next";
-import { Sun, Check, ScrollText, BookOpen, File, Files } from "lucide-react";
+import { Sun, ScrollText, BookOpen, File, Files, Type } from "lucide-react";
 import Select from "./ui/Select";
-
-const sliderClass =
-  "w-full h-1 cursor-pointer appearance-none rounded-full bg-border [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3.5 [&::-webkit-slider-thumb]:h-3.5 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-bg-surface [&::-webkit-slider-thumb]:border [&::-webkit-slider-thumb]:border-border [&::-webkit-slider-thumb]:shadow-sm";
+import Stepper from "./ui/Stepper";
 
 const themes = [
-  { id: "original", label: "Original", color: "bg-reader-original-bg border border-reader-original-border", pdf: true },
-  { id: "paper", label: "Sepia", color: "bg-reader-paper-bg", pdf: true },
-  { id: "quiet", label: "Gray", color: "bg-reader-quiet-bg", pdf: true },
-  { id: "dark", label: "Dark", color: "bg-reader-dark-bg border border-reader-dark-border", pdf: true },
+  {
+    id: "original",
+    bg: "#FDFCFA",
+    aaColor: "#15151A",
+  },
+  {
+    id: "paper",
+    bg: "#F4ECD8",
+    aaColor: "#2B2116",
+  },
+  {
+    id: "quiet",
+    bg: "#E4E4E8",
+    aaColor: "#15151A",
+  },
+  {
+    id: "dark",
+    bg: "#1E1D24",
+    aaColor: "#E8E6F0",
+  },
 ] as const;
 
 export const FONT_SIZE_MIN = 12;
 export const FONT_SIZE_MAX = 48;
 
+export const LINE_SPACING_MIN = 1;
+export const LINE_SPACING_MAX = 3;
+export const LINE_SPACING_STEP = 0.05;
+
+export const CHAR_SPACING_MIN = -5;
+export const CHAR_SPACING_MAX = 20;
+
+export const WORD_SPACING_MIN = -10;
+export const WORD_SPACING_MAX = 50;
+
+export const MARGIN_PRESETS = [
+  { id: "narrow", value: 0 },
+  { id: "normal", value: 60 },
+  { id: "wide", value: 120 },
+] as const;
+
+export type MarginPresetId = (typeof MARGIN_PRESETS)[number]["id"];
+
+export function nearestMarginPreset(margins: number): MarginPresetId {
+  if (margins <= 30) return "narrow";
+  if (margins <= 90) return "normal";
+  return "wide";
+}
+
 export const fonts = [
+  { id: "literata", label: "Literata", family: "'Literata Variable', 'Literata', Georgia, serif" },
   { id: "system", label: "System", family: "Inter, system-ui, sans-serif" },
   { id: "georgia", label: "Georgia", family: "Georgia, serif" },
   { id: "palatino", label: "Palatino", family: "Palatino, serif" },
@@ -37,7 +76,7 @@ export interface ReaderSettingsState {
   brightness: number; // 0-100
   readingMode: ReadingMode;
   pageColumns: PageColumns; // 1 = single page, 2 = two pages side by side
-  lineSpacing: number; // multiplier, e.g. 1.5
+  lineSpacing: number; // multiplier, e.g. 1.75
   charSpacing: number; // percentage, 0 = normal
   wordSpacing: number; // percentage, 0 = normal
   margins: number; // pixels, 0 = none
@@ -45,6 +84,15 @@ export interface ReaderSettingsState {
 
 export function nudgeFontSize(fontSize: number, direction: 1 | -1): number {
   return Math.min(FONT_SIZE_MAX, Math.max(FONT_SIZE_MIN, fontSize + direction * 2));
+}
+
+export function nudgeLineSpacing(lineSpacing: number, direction: 1 | -1): number {
+  const next = Math.round((lineSpacing + direction * LINE_SPACING_STEP) * 20) / 20;
+  return Math.min(LINE_SPACING_MAX, Math.max(LINE_SPACING_MIN, next));
+}
+
+export function nudgeIntRange(value: number, delta: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, Math.round(value + delta)));
 }
 
 export function getStoredReaderSettings(
@@ -66,19 +114,19 @@ interface ReaderSettingsProps {
 }
 
 export function getFontFamily(fontId: ReaderFont): string {
-  return fonts.find((f) => f.id === fontId)?.family ?? "Inter, system-ui, sans-serif";
+  return fonts.find((f) => f.id === fontId)?.family ?? "'Literata Variable', 'Literata', Georgia, serif";
 }
 
 export function getThemeStyles(themeId: ReaderTheme) {
   switch (themeId) {
     case "paper":
-      return { body: "#F2E2C9", text: "#34271B" };
+      return { body: "#F4ECD8", text: "#2B2116", border: "#E4D8BE", overline: "#7A6A55" };
     case "quiet":
-      return { body: "#71717b", text: "#fafafa" };
+      return { body: "#E4E4E8", text: "#15151A", border: "#D4D4DA", overline: "#6E6E7A" };
     case "dark":
-      return { body: "#1b1b1f", text: "#d8d8de" };
+      return { body: "#1E1D24", text: "#ECEAF4", border: "rgba(255, 255, 255, 0.12)", overline: "#8E8C9E" };
     default:
-      return { body: "#ffffff", text: "#0a0a0a" };
+      return { body: "#FDFCFA", text: "#15151A", border: "rgba(255, 255, 255, 0.9)", overline: "#6E6E7A" };
   }
 }
 
@@ -86,17 +134,25 @@ export function getDefaultReaderTheme(): ReaderTheme {
   return document.documentElement.classList.contains("dark") ? "dark" : "original";
 }
 
-export default function ReaderSettings({ open, onClose, anchorRef, settings, onSettingsChange, bookFormat }: ReaderSettingsProps) {
+export default function ReaderSettings({
+  open,
+  onClose,
+  anchorRef,
+  settings,
+  onSettingsChange,
+  bookFormat,
+}: ReaderSettingsProps) {
   const { t } = useTranslation();
   const popoverRef = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState({ top: 0, right: 0 });
+  const isPdf = bookFormat === "pdf";
 
   useEffect(() => {
     if (open && anchorRef.current) {
       const rect = anchorRef.current.getBoundingClientRect();
       setPosition({
-        top: rect.bottom + 4,
-        right: window.innerWidth - rect.right,
+        top: rect.bottom + 8,
+        right: Math.max(12, window.innerWidth - rect.right),
       });
     }
   }, [open, anchorRef]);
@@ -113,231 +169,316 @@ export default function ReaderSettings({ open, onClose, anchorRef, settings, onS
         onClose();
       }
     };
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
     document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("mousedown", handleClick);
+      document.removeEventListener("keydown", handleEscape);
+    };
   }, [open, onClose, anchorRef]);
 
   const update = (partial: Partial<ReaderSettingsState>) => {
     onSettingsChange({ ...settings, ...partial });
   };
 
-  const themeLabels: Record<string, string> = {
+  const themeLabels: Record<ReaderTheme, string> = {
     original: t("readerSettings.themeOriginal"),
     paper: t("readerSettings.themeSepia"),
     quiet: t("readerSettings.themeGray"),
     dark: t("readerSettings.themeDark"),
   };
 
+  const marginLabels: Record<MarginPresetId, string> = {
+    narrow: t("readerSettings.marginNarrow"),
+    normal: t("readerSettings.marginNormal"),
+    wide: t("readerSettings.marginWide"),
+  };
+
   if (!open) return null;
+
+  const activeMarginPreset = nearestMarginPreset(settings.margins);
 
   return (
     <div
       ref={popoverRef}
-      className="fixed z-50 w-[280px] bg-bg-surface border border-border rounded-xl shadow-popover flex flex-col"
+      role="dialog"
+      aria-label={t("readerSettings.typography")}
+      className={`fixed z-50 ${
+        isPdf ? "w-[296px] p-4" : "w-[316px] p-[18px]"
+      } max-h-[calc(100vh-88px)] overflow-y-auto bg-surface-solid border border-border-subtle rounded-[24px] shadow-menu flex flex-col gap-3.5`}
       style={{ top: position.top, right: position.right }}
     >
-      {/* Font size toggle */}
-      {bookFormat !== "pdf" && (<div className="flex items-center h-[60px] px-4 border-b border-border-light">
-        <button
-          onClick={() => update({ fontSize: nudgeFontSize(settings.fontSize, -1) })}
-          className="flex-1 flex items-center justify-center h-7 border-r border-border cursor-pointer text-text-primary hover:bg-bg-input"
-        >
-          <span className="text-[14px] font-medium">A-</span>
-        </button>
-        <span className="flex-1 flex items-center justify-center text-[14px] font-medium text-text-primary">
-          {settings.fontSize}px
-        </span>
-        <button
-          onClick={() => update({ fontSize: nudgeFontSize(settings.fontSize, 1) })}
-          className="flex-1 flex items-center justify-center h-9 border-l border-border cursor-pointer text-text-primary hover:bg-bg-input"
-        >
-          <span className="text-[20px] font-medium tracking-[-0.45px]">A+</span>
-        </button>
-      </div>)}
+      {/* Font size bar — EPUB only */}
+      {!isPdf && (
+        <div className="grid grid-cols-[1fr_92px_1fr] h-10 rounded-[10px] bg-surface-inset border border-border-subtle overflow-hidden shrink-0">
+          <button
+            type="button"
+            onClick={() => update({ fontSize: nudgeFontSize(settings.fontSize, -1) })}
+            aria-label={t("readerSettings.decreaseFontSize")}
+            disabled={settings.fontSize <= FONT_SIZE_MIN}
+            className="flex items-center justify-center border-r border-border-subtle cursor-pointer text-[13.5px] font-semibold text-text-primary hover:bg-border-subtle transition-colors disabled:opacity-40 disabled:pointer-events-none"
+          >
+            A−
+          </button>
+          <span className="flex items-center justify-center font-mono text-[12.5px] font-medium text-text-secondary select-none">
+            {settings.fontSize} px
+          </span>
+          <button
+            type="button"
+            onClick={() => update({ fontSize: nudgeFontSize(settings.fontSize, 1) })}
+            aria-label={t("readerSettings.increaseFontSize")}
+            disabled={settings.fontSize >= FONT_SIZE_MAX}
+            className="flex items-center justify-center border-l border-border-subtle cursor-pointer text-[17px] font-semibold text-text-primary hover:bg-border-subtle transition-colors disabled:opacity-40 disabled:pointer-events-none"
+          >
+            A+
+          </button>
+        </div>
+      )}
 
-      {/* Brightness slider */}
-      <div className="flex items-center gap-3 h-[42px] px-4 border-b border-border-light">
-        <Sun size={14} className="text-text-muted shrink-0" />
+      {/* Brightness slider — EPUB and PDF */}
+      <div className="flex items-center gap-2.5 h-4 shrink-0">
+        <Sun size={13} className="text-text-tertiary shrink-0" />
         <input
           type="range"
           min={0}
           max={100}
           value={settings.brightness}
+          aria-label={t("readerSettings.brightness")}
           onChange={(e) => update({ brightness: Number(e.target.value) })}
-          className={`flex-1 ${sliderClass}`}
+          className="flex-1 h-1 cursor-pointer appearance-none rounded-full [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:size-3.5 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-surface-solid [&::-webkit-slider-thumb]:border [&::-webkit-slider-thumb]:border-border-default [&::-webkit-slider-thumb]:shadow-xs"
+          style={{
+            background: `linear-gradient(to right, var(--color-accent) ${settings.brightness}%, var(--color-track) ${settings.brightness}%)`,
+          }}
         />
-        <Sun size={18} className="text-text-muted shrink-0" />
+        <Sun size={16} className="text-text-secondary shrink-0" />
       </div>
 
-      {/* Theme selector */}
-      <div className={`flex items-center justify-center gap-5 h-[78px] ${bookFormat !== "pdf" ? "border-b border-border-light" : ""}`}>
-        {themes.filter((t) => bookFormat !== "pdf" || t.pdf).map((theme) => (
-          <button
-            key={theme.id}
-            onClick={() => update({ theme: theme.id })}
-            className="flex flex-col items-center gap-1.5 cursor-pointer"
-          >
-            <div
-              className={`size-8 rounded-full ${theme.color} flex items-center justify-center ${
-                settings.theme === theme.id ? "ring-2 ring-accent ring-offset-2 ring-offset-bg-surface" : ""
-              }`}
+      {/* Theme swatches — EPUB and PDF */}
+      <div className={`grid grid-cols-4 gap-1 shrink-0 ${isPdf ? "" : "px-1 py-0.5"}`}>
+        {themes.map((theme) => {
+          const selected = settings.theme === theme.id;
+          return (
+            <button
+              key={theme.id}
+              type="button"
+              onClick={() => update({ theme: theme.id })}
+              aria-pressed={selected}
+              className="flex flex-col items-center gap-1 cursor-pointer group"
             >
-              {settings.theme === theme.id && (
-                <Check
-                  size={14}
-                  className={theme.id === "dark" || theme.id === "quiet" ? "text-white" : "text-accent"}
-                />
-              )}
-            </div>
-            <span className="text-[10px] font-medium text-text-muted tracking-[0.12px]">
-              {themeLabels[theme.id]}
-            </span>
-          </button>
-        ))}
+              <span
+                className={`${
+                  isPdf ? "size-[30px]" : "size-[34px]"
+                } rounded-full flex items-center justify-center transition-all ${
+                  selected
+                    ? "border-2 border-accent"
+                    : "border border-border-default group-hover:border-border-strong"
+                }`}
+                style={{ backgroundColor: theme.bg }}
+              >
+                <span
+                  className={`font-reading leading-none ${isPdf ? "text-[11px]" : "text-[12px]"}`}
+                  style={{ color: theme.aaColor }}
+                >
+                  Aa
+                </span>
+              </span>
+              <span
+                className={`${isPdf ? "text-[10.5px]" : "text-[11px]"} leading-[14px] ${
+                  selected
+                    ? "font-semibold text-accent-on-tint"
+                    : "font-normal text-text-tertiary"
+                }`}
+              >
+                {themeLabels[theme.id]}
+              </span>
+            </button>
+          );
+        })}
       </div>
 
-      {/* Font family — hidden for PDFs */}
-      {bookFormat !== "pdf" && (
-      <div className="px-4 py-3 border-b border-border-light">
-        <p className="text-[11px] font-medium text-text-muted tracking-[0.5px] uppercase mb-2">{t("readerSettings.font")}</p>
-        <Select
-          value={settings.font}
-          onChange={(v) => update({ font: v as ReaderFont })}
-          options={fonts.map((f) => ({ value: f.id, label: f.label }))}
-        />
-      </div>
+      <div className="h-px bg-border-subtle shrink-0" />
+
+      {/* Font family — EPUB only */}
+      {!isPdf && (
+        <div className="flex items-center justify-between gap-3 shrink-0">
+          <span className="text-[13px] font-medium text-text-primary">
+            {t("readerSettings.font")}
+          </span>
+          <Select
+            appearance="dawn"
+            className="w-[152px]"
+            icon={<Type size={14} />}
+            value={settings.font}
+            onChange={(v) => update({ font: v as ReaderFont })}
+            options={fonts.map((f) => ({ value: f.id, label: f.label }))}
+          />
+        </div>
       )}
 
-      {/* Reading Mode — supported for both EPUB and PDF */}
-      <div className="px-4 py-3 border-b border-border-light">
-        <p className="text-[11px] font-medium text-text-muted tracking-[0.5px] uppercase mb-2">{t("readerSettings.readingMode")}</p>
-        <div className="flex gap-2">
+      {/* Reading mode — EPUB and PDF */}
+      <div className="flex flex-col gap-2 shrink-0">
+        <p className="text-[10.5px] font-semibold text-text-tertiary tracking-[0.8px] uppercase">
+          {t("readerSettings.readingMode")}
+        </p>
+        <div className="grid grid-cols-2 gap-2">
           <button
+            type="button"
             onClick={() => update({ readingMode: "scrolling" })}
-            className={`flex-1 flex flex-col items-center gap-1.5 py-2.5 rounded-lg border cursor-pointer transition-colors ${
+            aria-pressed={settings.readingMode === "scrolling"}
+            className={`flex items-center justify-center gap-[7px] h-[34px] px-2.5 rounded-[10px] border cursor-pointer transition-colors ${
               settings.readingMode === "scrolling"
-                ? "border-accent bg-accent-bg text-accent"
-                : "border-border bg-bg-surface text-text-primary hover:bg-bg-input"
+                ? "bg-accent-tint border-accent/35 text-accent-on-tint font-semibold"
+                : "bg-surface-inset border-border-subtle text-text-secondary font-medium hover:bg-surface-solid"
             }`}
           >
-            <ScrollText size={20} />
-            <span className="text-[12px] font-medium">{t("readerSettings.scrolling")}</span>
+            <ScrollText size={14} />
+            <span className="text-[12.5px]">{t("readerSettings.scrolling")}</span>
           </button>
           <button
+            type="button"
             onClick={() => update({ readingMode: "paginated" })}
-            className={`flex-1 flex flex-col items-center gap-1.5 py-2.5 rounded-lg border cursor-pointer transition-colors ${
+            aria-pressed={settings.readingMode === "paginated"}
+            className={`flex items-center justify-center gap-[7px] h-[34px] px-2.5 rounded-[10px] border cursor-pointer transition-colors ${
               settings.readingMode === "paginated"
-                ? "border-accent bg-accent-bg text-accent"
-                : "border-border bg-bg-surface text-text-primary hover:bg-bg-input"
+                ? "bg-accent-tint border-accent/35 text-accent-on-tint font-semibold"
+                : "bg-surface-inset border-border-subtle text-text-secondary font-medium hover:bg-surface-solid"
             }`}
           >
-            <BookOpen size={20} />
-            <span className="text-[12px] font-medium">{t("readerSettings.pageTurning")}</span>
+            <BookOpen size={14} />
+            <span className="text-[12.5px]">{t("readerSettings.pageTurning")}</span>
           </button>
         </div>
       </div>
 
-      {/* Page columns — single or two pages — PDF only */}
-      {bookFormat === "pdf" && (<div className="px-4 py-3 border-b border-border-light">
-        <p className="text-[11px] font-medium text-text-muted tracking-[0.5px] uppercase mb-2">{t("readerSettings.pageLayout")}</p>
-        <div className="flex gap-2">
-          <button
-            onClick={() => update({ pageColumns: 1 })}
-            className={`flex-1 flex flex-col items-center gap-1.5 py-2.5 rounded-lg border cursor-pointer transition-colors ${
-              settings.pageColumns === 1
-                ? "border-accent bg-accent-bg text-accent"
-                : "border-border bg-bg-surface text-text-primary hover:bg-bg-input"
-            }`}
-          >
-            <File size={20} />
-            <span className="text-[12px] font-medium">{t("readerSettings.singlePage")}</span>
-          </button>
-          <button
-            onClick={() => update({ pageColumns: 2 })}
-            className={`flex-1 flex flex-col items-center gap-1.5 py-2.5 rounded-lg border cursor-pointer transition-colors ${
-              settings.pageColumns === 2
-                ? "border-accent bg-accent-bg text-accent"
-                : "border-border bg-bg-surface text-text-primary hover:bg-bg-input"
-            }`}
-          >
-            <Files size={20} />
-            <span className="text-[12px] font-medium">{t("readerSettings.twoPages")}</span>
-          </button>
-        </div>
-      </div>)}
-
-      {/* Layout section — hidden for PDFs */}
-      {bookFormat !== "pdf" && (<div className="px-4 py-3 flex flex-col gap-4">
-        <p className="text-[11px] font-medium text-text-muted tracking-[0.5px] uppercase">{t("readerSettings.layout")}</p>
-
-        {/* Line Spacing */}
-        <div className="flex flex-col gap-1.5">
-          <div className="flex items-center justify-between">
-            <span className="text-[13px] font-medium text-text-primary">{t("readerSettings.lineSpacing")}</span>
-            <span className="text-[13px] text-text-muted">{settings.lineSpacing}</span>
+      {/* Page Layout — PDF only */}
+      {isPdf && (
+        <div className="flex flex-col gap-2 shrink-0">
+          <p className="text-[10.5px] font-semibold text-text-tertiary tracking-[0.8px] uppercase">
+            {t("readerSettings.pageLayout")}
+          </p>
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={() => update({ pageColumns: 1 })}
+              aria-pressed={settings.pageColumns === 1}
+              className={`flex items-center justify-center gap-1.5 h-8 px-2.5 rounded-[10px] border cursor-pointer transition-colors ${
+                settings.pageColumns === 1
+                  ? "bg-accent-tint border-accent/35 text-accent-on-tint font-semibold"
+                  : "bg-surface-inset border-border-subtle text-text-secondary font-medium hover:bg-surface-solid"
+              }`}
+            >
+              <File size={14} />
+              <span className="text-[12px]">{t("readerSettings.singlePage")}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => update({ pageColumns: 2 })}
+              aria-pressed={settings.pageColumns === 2}
+              className={`flex items-center justify-center gap-1.5 h-8 px-2.5 rounded-[10px] border cursor-pointer transition-colors ${
+                settings.pageColumns === 2
+                  ? "bg-accent-tint border-accent/35 text-accent-on-tint font-semibold"
+                  : "bg-surface-inset border-border-subtle text-text-secondary font-medium hover:bg-surface-solid"
+              }`}
+            >
+              <Files size={14} />
+              <span className="text-[12px]">{t("readerSettings.twoPages")}</span>
+            </button>
           </div>
-          <input
-            type="range"
-            min={1}
-            max={3}
-            step={0.1}
-            value={settings.lineSpacing}
-            onChange={(e) => update({ lineSpacing: Number(e.target.value) })}
-            className={sliderClass}
-          />
         </div>
+      )}
 
-        {/* Character Spacing */}
-        <div className="flex flex-col gap-1.5">
-          <div className="flex items-center justify-between">
-            <span className="text-[13px] font-medium text-text-primary">{t("readerSettings.charSpacing")}</span>
-            <span className="text-[13px] text-text-muted">{settings.charSpacing}%</span>
-          </div>
-          <input
-            type="range"
-            min={-5}
-            max={20}
-            step={1}
-            value={settings.charSpacing}
-            onChange={(e) => update({ charSpacing: Number(e.target.value) })}
-            className={sliderClass}
-          />
-        </div>
+      {/* Spacing & Margins — EPUB only */}
+      {!isPdf && (
+        <>
+          <div className="h-px bg-border-subtle shrink-0" />
+          <div className="flex flex-col gap-2.5 shrink-0">
+            <p className="text-[10.5px] font-semibold text-text-tertiary tracking-[0.8px] uppercase">
+              {t("readerSettings.spacingAndMargins")}
+            </p>
 
-        {/* Word Spacing */}
-        <div className="flex flex-col gap-1.5">
-          <div className="flex items-center justify-between">
-            <span className="text-[13px] font-medium text-text-primary">{t("readerSettings.wordSpacing")}</span>
-            <span className="text-[13px] text-text-muted">{settings.wordSpacing}%</span>
-          </div>
-          <input
-            type="range"
-            min={-10}
-            max={50}
-            step={1}
-            value={settings.wordSpacing}
-            onChange={(e) => update({ wordSpacing: Number(e.target.value) })}
-            className={sliderClass}
-          />
-        </div>
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[12.5px] text-text-secondary">
+                {t("readerSettings.lineSpacing")}
+              </span>
+              <Stepper
+                valueLabel={String(settings.lineSpacing)}
+                onDecrement={() => update({ lineSpacing: nudgeLineSpacing(settings.lineSpacing, -1) })}
+                onIncrement={() => update({ lineSpacing: nudgeLineSpacing(settings.lineSpacing, 1) })}
+                disableDecrement={settings.lineSpacing <= LINE_SPACING_MIN}
+                disableIncrement={settings.lineSpacing >= LINE_SPACING_MAX}
+                decrementLabel={`${t("common.decrease")} ${t("readerSettings.lineSpacing")}`}
+                incrementLabel={`${t("common.increase")} ${t("readerSettings.lineSpacing")}`}
+              />
+            </div>
 
-        {/* Margins */}
-        <div className="flex flex-col gap-1.5">
-          <div className="flex items-center justify-between">
-            <span className="text-[13px] font-medium text-text-primary">{t("readerSettings.margins")}</span>
-            <span className="text-[13px] text-text-muted">{settings.margins}px</span>
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[12.5px] text-text-secondary">
+                {t("readerSettings.charSpacing")}
+              </span>
+              <Stepper
+                valueLabel={`${settings.charSpacing}%`}
+                onDecrement={() =>
+                  update({ charSpacing: nudgeIntRange(settings.charSpacing, -1, CHAR_SPACING_MIN, CHAR_SPACING_MAX) })
+                }
+                onIncrement={() =>
+                  update({ charSpacing: nudgeIntRange(settings.charSpacing, 1, CHAR_SPACING_MIN, CHAR_SPACING_MAX) })
+                }
+                disableDecrement={settings.charSpacing <= CHAR_SPACING_MIN}
+                disableIncrement={settings.charSpacing >= CHAR_SPACING_MAX}
+                decrementLabel={`${t("common.decrease")} ${t("readerSettings.charSpacing")}`}
+                incrementLabel={`${t("common.increase")} ${t("readerSettings.charSpacing")}`}
+              />
+            </div>
+
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[12.5px] text-text-secondary">
+                {t("readerSettings.wordSpacing")}
+              </span>
+              <Stepper
+                valueLabel={`${settings.wordSpacing}%`}
+                onDecrement={() =>
+                  update({ wordSpacing: nudgeIntRange(settings.wordSpacing, -1, WORD_SPACING_MIN, WORD_SPACING_MAX) })
+                }
+                onIncrement={() =>
+                  update({ wordSpacing: nudgeIntRange(settings.wordSpacing, 1, WORD_SPACING_MIN, WORD_SPACING_MAX) })
+                }
+                disableDecrement={settings.wordSpacing <= WORD_SPACING_MIN}
+                disableIncrement={settings.wordSpacing >= WORD_SPACING_MAX}
+                decrementLabel={`${t("common.decrease")} ${t("readerSettings.wordSpacing")}`}
+                incrementLabel={`${t("common.increase")} ${t("readerSettings.wordSpacing")}`}
+              />
+            </div>
+
+            <div
+              role="group"
+              aria-label={t("readerSettings.margins")}
+              className="grid grid-cols-3 p-[3px] gap-0.5 rounded-full bg-border-subtle"
+            >
+              {MARGIN_PRESETS.map((preset) => {
+                const selected = activeMarginPreset === preset.id;
+                return (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    onClick={() => update({ margins: preset.value })}
+                    aria-pressed={selected}
+                    className={`py-[5px] rounded-full text-[12px] cursor-pointer transition-colors ${
+                      selected
+                        ? "bg-surface-solid text-text-primary font-semibold shadow-xs"
+                        : "text-text-secondary font-medium hover:text-text-primary"
+                    }`}
+                  >
+                    {marginLabels[preset.id]}
+                  </button>
+                );
+              })}
+            </div>
           </div>
-          <input
-            type="range"
-            min={0}
-            max={120}
-            step={1}
-            value={settings.margins}
-            onChange={(e) => update({ margins: Number(e.target.value) })}
-            className={sliderClass}
-          />
-        </div>
-      </div>)}
+        </>
+      )}
     </div>
   );
 }

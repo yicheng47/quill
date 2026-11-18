@@ -135,7 +135,7 @@ export default function Select({
           dawn
             ? `w-full h-[38px] rounded-full px-3.5 text-[13px] font-medium flex items-center justify-between gap-[7px] cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-focus-ring ${
                 highlighted
-                  ? "bg-accent-tint border border-violet-200 text-accent-on-tint font-semibold"
+                  ? "bg-accent-tint border border-accent/30 text-accent-on-tint font-semibold"
                   : "dawn-glass text-text-primary hover:bg-surface-solid"
               }`
             : "w-full h-9 bg-bg-input rounded-lg px-3 text-[13px] font-medium text-text-primary flex items-center justify-between cursor-pointer border border-transparent hover:border-border transition-colors"
@@ -156,7 +156,7 @@ export default function Select({
             <span
               className={`text-[12px] shrink-0 ${
                 dawn
-                  ? `font-mono ${highlighted ? "text-violet-600" : "text-text-tertiary"}`
+                  ? `font-mono ${highlighted ? "text-accent-on-tint" : "text-text-tertiary"}`
                   : "text-text-muted"
               }`}
             >
@@ -210,8 +210,8 @@ export default function Select({
                           option.description != null ? "h-[52px] py-1.5" : "h-[36px]"
                         } ${
                           isActive
-                            ? "bg-violet-50 text-accent-on-tint"
-                            : "text-text-primary hover:bg-black/[0.04]"
+                            ? "bg-accent-tint text-accent-on-tint"
+                            : "text-text-primary hover:bg-border-subtle"
                         }`
                       : `w-full flex items-center justify-between gap-3 px-4 text-[14px] cursor-pointer transition-colors ${
                           option.description != null ? "h-13 py-1.5" : "h-10"

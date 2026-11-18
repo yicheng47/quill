@@ -9,7 +9,7 @@ const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(
   ({ active = false, size = "md", className = "", children, ...props }, ref) => {
     const sizeClass = size === "sm" ? "size-8" : "size-9";
     const stateClass = active
-      ? "bg-accent-tint border border-violet-200 text-accent-on-tint"
+      ? "bg-accent-tint border border-accent/30 text-accent-on-tint"
       : "dawn-glass text-text-secondary hover:bg-surface-solid";
 
     return (

@@ -58,12 +58,12 @@ The case descriptions name these files by what they cover: "the 1000-page PDF" i
 | ID | Tier | Platforms | Env | Check |
 |---|---|---|---|---|
 | RDR-01 | smoke | mac, win | dev | Open an EPUB in its reader window, turn pages, close, reopen: it resumes at the same position. |
-| RDR-02 | full | mac | dev | Reader settings apply live and persist: font, line, character and word spacing, margins, the four themes, scrolling vs page turning, one vs two pages. |
-| RDR-03 | full | mac | dev | The table of contents panel opens, expands sections and jumps to a chapter. |
+| RDR-02 | full | mac | dev | Typography (`Aa`) settings apply live and persist: font, brightness, line, character and word spacing, Narrow/Normal/Wide margins, the four themes (`Original`, `Sepia`, `Gray`, `Dark`), Scrolling vs Paginated, Single Page vs Two Pages. |
+| RDR-03 | full | mac | dev | The Contents island opens, expands sections and jumps to a chapter. |
 | RDR-04 | smoke | mac, win | dev | Open the 1000-page PDF: pages render, fit and zoom work, scroll mode works, and position resumes after reopening. |
 | RDR-05 | full | mac | dev | PDF text selection follows the pointer precisely, after zoom and resize too (#52, #153). Record any difference from the baseline. |
-| RDR-06 | smoke | mac, win | dev | Highlight text in an EPUB and in a PDF: each appears in the highlights panel and re-renders in place after reopening. |
-| RDR-07 | full | mac | dev | Add bookmarks, list them, and jump to one. |
+| RDR-06 | smoke | mac, win | dev | Highlight text in an EPUB and in a PDF: each appears in the Highlights tab of the Highlights/Bookmarks island, updates via the inline highlight toolbar, and re-renders in place after reopening. |
+| RDR-07 | full | mac | dev | Add bookmarks from the Bookmarks tab or header action, list them, and jump to one. |
 | RDR-08 | full | mac, win | dev | Open two books in two reader windows. Clicking an already open book in the library focuses its window, and restores it when minimized (#323). Closing a reader window leaves the others. |
 | RDR-09 | full | mac, win | dev | ⌘/Ctrl +, − and 0 zoom the content of the focused reader only. App zoom in Appearance scales the whole UI of every window (#318, #319, #295). |
 | RDR-10 | full | mac | dev | Time to first page for the 1000-page PDF and the 5 MB EPUB, recorded against the baseline. |

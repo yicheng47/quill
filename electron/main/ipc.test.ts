@@ -17,7 +17,7 @@ vi.mock("electron", () => ({
   },
 }));
 
-import { readInitialDark } from "./ipc";
+import { readInitialDark, readStoredReaderTheme } from "./ipc";
 
 afterEach(() => {
   state.systemDark = false;
@@ -46,5 +46,32 @@ describe("readInitialDark", () => {
     const promise = readInitialDark(core, 100);
     await vi.advanceTimersByTimeAsync(100);
     await expect(promise).resolves.toBe(true);
+  });
+});
+
+describe("readStoredReaderTheme", () => {
+  it("prefers valid per-book override without querying global reader_theme", async () => {
+    const core = { dispatch: vi.fn() };
+    await expect(readStoredReaderTheme(core, "paper", 50)).resolves.toBe("paper");
+    expect(core.dispatch).not.toHaveBeenCalled();
+  });
+
+  it("reads global reader_theme when book override is absent and falls back to original on timeout", async () => {
+    const core = {
+      dispatch: vi.fn().mockResolvedValue(JSON.stringify("dark")),
+    };
+    await expect(readStoredReaderTheme(core, undefined, 50)).resolves.toBe("dark");
+    expect(core.dispatch).toHaveBeenCalledWith(
+      "get_setting",
+      JSON.stringify({ key: "reader_theme" }),
+    );
+
+    vi.useFakeTimers();
+    const hangingCore = {
+      dispatch: vi.fn(() => new Promise<string>(() => {})),
+    };
+    const promise = readStoredReaderTheme(hangingCore, undefined, 50);
+    await vi.advanceTimersByTimeAsync(50);
+    await expect(promise).resolves.toBe("original");
   });
 });

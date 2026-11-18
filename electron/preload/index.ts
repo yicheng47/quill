@@ -8,11 +8,21 @@ function resolveInitialWindowLabel(): string {
   return ipcRenderer.sendSync("quill:get-window-label") as string;
 }
 
+function resolveInitialReaderTheme(): string {
+  const arg = process.argv.find((a) => a.startsWith("--quill-reader-theme="));
+  return arg ? arg.slice("--quill-reader-theme=".length) : "original";
+}
+
 const initialWindowLabel = resolveInitialWindowLabel();
+const initialReaderTheme = resolveInitialReaderTheme();
 
 const bridge = {
   getWindowLabel(): string {
     return initialWindowLabel;
+  },
+
+  getInitialReaderTheme(): string {
+    return initialReaderTheme;
   },
 
   async invoke<T = unknown>(command: string, args?: Record<string, unknown>): Promise<T> {
@@ -66,6 +76,10 @@ const bridge = {
     return ipcRenderer.invoke("quill:set-window-title", title);
   },
 
+  setWindowBackgroundColor(color: string): Promise<void> {
+    return ipcRenderer.invoke("quill:set-window-background", color);
+  },
+
   focusWindow(label: string): Promise<boolean> {
     return ipcRenderer.invoke("quill:focus-window", label);
   },
@@ -78,6 +92,7 @@ const bridge = {
     height: number;
     minWidth: number;
     minHeight: number;
+    pageTheme?: string;
   }): Promise<void> {
     return ipcRenderer.invoke("quill:open-reader-window", params);
   },

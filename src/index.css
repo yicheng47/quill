@@ -81,6 +81,12 @@
   --color-bg-end: #f7f5f3;
   --color-bg-glow-violet: rgba(212, 204, 255, 0.45);
 
+  --color-reader-shell-sepia-start: #f0e7d4;
+  --color-reader-shell-sepia-end: #f6f0e5;
+  --color-reader-shell-sepia-glow: rgba(232, 207, 166, 0.35);
+  --color-reader-shell-gray-start: #d2d2d8;
+  --color-reader-shell-gray-end: #d8d8de;
+
   --color-surface-glass: rgba(255, 255, 255, 0.72);
   --color-surface-glass-border: rgba(255, 255, 255, 0.9);
   --color-surface-inset: rgba(255, 255, 255, 0.6);
@@ -134,7 +140,7 @@
   --shadow-cover-hover: 0 18px 34px rgba(91, 75, 232, 0.3);
 }
 
-/* Scoped to Main Window (html.dawn) so Reader windows stay on legacy palette/typography until Mission 2 */
+/* Scoped to Dawn windows (Main and Reader; html.dawn) */
 .dawn {
   --font-sans: var(--font-ui);
   --color-text-primary: #15151a;
@@ -142,6 +148,55 @@
   --color-accent: #6f63d2;
   --color-success: #2f9e6b;
   --color-danger: #d93f4c;
+}
+
+.dawn.dark {
+  --color-bg-start: #12111a;
+  --color-bg-end: #17151f;
+  --color-bg-glow-violet: rgba(66, 53, 138, 0.3);
+  --color-bg-glow-peach: rgba(89, 53, 46, 0.2);
+  --color-bg-glow-mint: rgba(29, 71, 66, 0.2);
+
+  --color-surface-glass: rgba(30, 29, 41, 0.8);
+  --color-surface-glass-border: rgba(255, 255, 255, 0.09);
+  --color-surface-inset: rgba(21, 20, 29, 0.7);
+  --color-surface-chip: rgba(40, 38, 54, 0.9);
+  --color-surface-solid: #232130;
+  --color-paper: #1b1a23;
+  --color-paper-edge: rgba(255, 255, 255, 0.07);
+
+  --color-text-primary: #f3f1f8;
+  --color-text-secondary: #b5b2c4;
+  --color-text-tertiary: #7e7b8f;
+  --color-text-disabled: #524f61;
+  --color-text-on-accent: #ffffff;
+
+  --color-border-subtle: rgba(255, 255, 255, 0.07);
+  --color-border-default: rgba(255, 255, 255, 0.12);
+  --color-border-strong: rgba(255, 255, 255, 0.2);
+
+  --color-accent: #8477ee;
+  --color-accent-hover: #9387f5;
+  --color-accent-pressed: #7366df;
+  --color-accent-tint: rgba(132, 119, 238, 0.17);
+  --color-accent-tint-hover: rgba(132, 119, 238, 0.24);
+  --color-accent-on-tint: #c8c0ff;
+  --color-progress: #8e82f5;
+  --color-track: rgba(255, 255, 255, 0.09);
+  --color-focus-ring: rgba(132, 119, 238, 0.5);
+
+  --color-success: #45c088;
+  --color-success-tint: rgba(47, 158, 107, 0.16);
+  --color-warning: #f0ac3c;
+  --color-warning-tint: rgba(183, 116, 10, 0.18);
+  --color-danger: #f26470;
+  --color-danger-tint: rgba(217, 63, 76, 0.17);
+
+  --color-hl-yellow: rgba(229, 184, 59, 0.4);
+  --color-hl-green: rgba(59, 184, 110, 0.35);
+  --color-hl-blue: rgba(74, 143, 231, 0.35);
+  --color-hl-pink: rgba(224, 90, 148, 0.35);
+  --color-hl-violet: rgba(132, 119, 238, 0.35);
 }
 
 .dark {
@@ -210,6 +265,50 @@ body {
       linear-gradient(135deg, var(--color-bg-start) 0%, var(--color-bg-end) 100%);
   }
 
+  .dawn.dark .dawn-atmosphere {
+    background-image:
+      radial-gradient(
+        55% 55% at 10% 5%,
+        var(--color-bg-glow-violet) 0%,
+        transparent 100%
+      ),
+      radial-gradient(
+        45% 45% at 95% 15%,
+        var(--color-bg-glow-peach) 0%,
+        transparent 100%
+      ),
+      radial-gradient(
+        60% 40% at 55% 105%,
+        var(--color-bg-glow-mint) 0%,
+        transparent 100%
+      ),
+      linear-gradient(135deg, var(--color-bg-start) 0%, var(--color-bg-end) 100%);
+  }
+
+  .reader-shell-sepia {
+    background-color: var(--color-reader-shell-sepia-start);
+    background-image:
+      radial-gradient(
+        65% 50% at 12% 0%,
+        var(--color-reader-shell-sepia-glow) 0%,
+        transparent 100%
+      ),
+      linear-gradient(
+        135deg,
+        var(--color-reader-shell-sepia-start) 0%,
+        var(--color-reader-shell-sepia-end) 100%
+      );
+  }
+
+  .reader-shell-quiet {
+    background-color: var(--color-reader-shell-gray-start);
+    background-image: linear-gradient(
+      135deg,
+      var(--color-reader-shell-gray-start) 0%,
+      var(--color-reader-shell-gray-end) 100%
+    );
+  }
+
   .dawn-glass {
     background: var(--color-surface-glass);
     border: 1px solid var(--color-surface-glass-border);
@@ -275,6 +374,12 @@ body {
 }
 .dawn ::-webkit-scrollbar-thumb:hover {
   background: rgba(21, 21, 26, 0.26);
+}
+.dawn.dark ::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.16);
+}
+.dawn.dark ::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.28);
 }
 ::-webkit-scrollbar-corner {
   background: transparent;
@@ -406,4 +511,10 @@ body {
 .dawn .markdown-body th,
 .dawn .markdown-body td {
   border-color: var(--color-border-subtle);
+}
+.dawn.dark .markdown-body code {
+  background: rgba(255, 255, 255, 0.08);
+}
+.dawn.dark .markdown-body pre {
+  background: rgba(255, 255, 255, 0.05);
 }

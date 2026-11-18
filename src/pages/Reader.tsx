@@ -1,38 +1,30 @@
-import { useState, useRef, useCallback, useEffect, useMemo } from "react";
+import { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import {
-  convertFileSrc,
-  emitTo,
-  getCurrentWindowLabel,
-  invoke,
-  onWindowResized,
-  setWindowTitle,
-} from "../platform";
-import {
   AlertCircle,
   ArrowLeft,
-  BookOpen,
-  CloudOff,
-  List,
   Bookmark,
-  Bot,
+  ChevronLeft,
   Languages,
+  List,
   Loader2,
-  Minus,
-  Plus,
+  Sparkles,
+  Type,
 } from "lucide-react";
 import Button from "../components/ui/Button";
-import TitlebarDragRegion from "../components/ui/TitlebarDragRegion";
+import IconButton from "../components/ui/IconButton";
 import AiPanel from "../components/AiPanel";
 import BookmarksPanel from "../components/BookmarksPanel";
+import ReaderBottomPills from "../components/ReaderBottomPills";
+import ReaderCloudState from "../components/ReaderCloudState";
 import ReaderSettings, {
-  getDefaultReaderTheme,
   getFontFamily,
   getStoredReaderSettings,
   getThemeStyles,
   nudgeFontSize,
   type ReaderSettingsState,
+  type ReaderTheme,
 } from "../components/ReaderSettings";
 import ReaderContextMenu from "../components/ReaderContextMenu";
 import HighlightToolbar from "../components/HighlightToolbar";
@@ -45,10 +37,28 @@ import { getBook, updateReadingProgress, checkBookAvailable, checkBookReadable, 
 import { getAllSettings } from "../hooks/useSettings";
 import type { Highlight } from "../hooks/useBookmarks";
 import {
+  convertFileSrc,
+  emitTo,
+  focusWindow,
+  getCurrentWindowLabel,
+  getInitialReaderTheme,
+  invoke,
+  onWindowResized,
+  setWindowBackgroundColor,
+  setWindowTitle,
+} from "../platform";
+import {
   handleAppZoomShortcut,
   refreshAppZoom,
   zoomShortcutActionForEvent,
 } from "../lib/appZoom";
+import { createAnnotationDrawCallback } from "../lib/highlightPalette";
+import {
+  canShowDualIslands,
+  READER_SHELL_BG_BY_THEME,
+  readerShellClassForTheme,
+  WORKSPACE_PADDING_X,
+} from "../lib/readerLayout";
 
 // foliate-js <foliate-view> web component interface
 /* eslint-disable @typescript-eslint/no-explicit-any -- foliate-js has no TS definitions */
@@ -78,10 +88,10 @@ function getPdfOverlays(theme: string): PdfOverlay {
       backgroundColor: getThemeStyles("paper").body,
       mixBlendMode: "multiply",
     }] };
-    case "quiet": return { layers: [
-      { backgroundColor: "#ffffff", mixBlendMode: "difference" },
-      { backgroundColor: getThemeStyles("quiet").body, mixBlendMode: "screen" },
-    ] };
+    case "quiet": return { layers: [{
+      backgroundColor: getThemeStyles("quiet").body,
+      mixBlendMode: "multiply",
+    }] };
     case "dark": return { layers: [
       { backgroundColor: "#ffffff", mixBlendMode: "difference" },
       { backgroundColor: getThemeStyles("dark").body, mixBlendMode: "screen" },
@@ -90,77 +100,54 @@ function getPdfOverlays(theme: string): PdfOverlay {
   }
 }
 
-function getReaderThemeVars(theme: string): Record<string, string> | undefined {
-  switch (theme) {
-    case "original": return {
-      // Mirrors the :root light palette in src/index.css so the reader view
-      // stays cohesive when the reader theme is Original but the system /
-      // app theme is dark.
-      "--color-bg-page": "#f4f4f5",
-      "--color-bg-surface": "#ffffff",
-      "--color-bg-muted": "#fafafa",
-      "--color-bg-input": "#f3f3f5",
-      "--color-text-primary": "#18181b",
-      "--color-text-body": "#0a0a0a",
-      "--color-text-secondary": "#52525c",
-      "--color-text-muted": "#71717b",
-      "--color-text-placeholder": "#a1a1aa",
-      "--color-border": "#e4e4e7",
-      "--color-border-light": "#f4f4f5",
-      "--color-accent-bg": "#f3e8ff",
-    };
-    case "paper": return {
-      "--color-bg-page": "#E8D5B8",
-      "--color-bg-surface": "#F2E2C9",
-      "--color-bg-muted": "#ECD9BC",
-      "--color-bg-input": "#E2CEAF",
-      "--color-text-primary": "#34271B",
-      "--color-text-body": "#34271B",
-      "--color-text-secondary": "#5C4A38",
-      "--color-text-muted": "#8B7355",
-      "--color-text-placeholder": "#8B7355",
-      "--color-border": "#D4BA97",
-      "--color-border-light": "#E2CEAF",
-      "--color-accent-bg": "#E8D0B0",
-    };
-    case "quiet": return {
-      "--color-bg-page": "#5A5A63",
-      "--color-bg-surface": "#71717b",
-      "--color-bg-muted": "#68686F",
-      "--color-bg-input": "#5A5A63",
-      "--color-text-primary": "#fafafa",
-      "--color-text-body": "#fafafa",
-      "--color-text-secondary": "#d4d4d8",
-      "--color-text-muted": "#d4d4d8",
-      "--color-text-placeholder": "#a1a1aa",
-      "--color-border": "#9999a1",
-      "--color-border-light": "#5A5A63",
-      "--color-accent-bg": "#5A4D6E",
-    };
-    case "dark": return {
-      "--color-bg-page": "#151518",
-      "--color-bg-surface": "#18191d",
-      "--color-bg-muted": "#1f2023",
-      "--color-bg-input": "#25262c",
-      "--color-text-primary": "#f4f4f5",
-      "--color-text-body": "#e7e7ea",
-      "--color-text-secondary": "#c9c9d1",
-      "--color-text-muted": "#9a9aa4",
-      "--color-text-placeholder": "#85858f",
-      "--color-border": "#34343d",
-      "--color-border-light": "#2a2b31",
-      "--color-accent-bg": "#302647",
-    };
-    default: return undefined;
+let cachedLiterataFontCss: string | null = null;
+
+function getLiterataFontFaceCSS(): string {
+  if (cachedLiterataFontCss !== null) return cachedLiterataFontCss;
+  const rules: string[] = [];
+  try {
+    for (const sheet of Array.from(document.styleSheets)) {
+      let cssRules: CSSRuleList;
+      try {
+        cssRules = sheet.cssRules;
+      } catch {
+        continue;
+      }
+      const baseHref = sheet.href || document.baseURI;
+      for (const rule of Array.from(cssRules)) {
+        if (typeof CSSFontFaceRule !== "undefined" && rule instanceof CSSFontFaceRule) {
+          const family = rule.style.getPropertyValue("font-family");
+          if (family.includes("Literata")) {
+            const rewritten = rule.cssText.replace(
+              /url\((['"]?)([^'")]+)\1\)/g,
+              (_match, _quote, url: string) => {
+                try {
+                  return `url("${new URL(url, baseHref).href}")`;
+                } catch {
+                  return `url("${url}")`;
+                }
+              },
+            );
+            rules.push(rewritten);
+          }
+        }
+      }
+    }
+  } catch {
+    // Fallback to Georgia if stylesheet inspection is unavailable
   }
+  cachedLiterataFontCss = rules.join("\n");
+  return cachedLiterataFontCss;
 }
 
 const getReaderCSS = (settings: ReaderSettingsState) => {
   const themeColors = getThemeStyles(settings.theme);
   const fontFamily = getFontFamily(settings.font);
+  const fontFaceCSS = settings.font === "literata" ? getLiterataFontFaceCSS() : "";
   const letterSpacing = settings.charSpacing === 0 ? "normal" : `${settings.charSpacing * 0.01}em`;
   const wordSpacing = settings.wordSpacing === 0 ? "normal" : `${settings.wordSpacing * 0.01}em`;
   return `
+    ${fontFaceCSS}
     body {
       background-color: ${themeColors.body} !important;
       color: ${themeColors.text} !important;
@@ -194,28 +181,51 @@ const getReaderCSS = (settings: ReaderSettingsState) => {
 
 const PANEL_MIN_WIDTH = 320;
 const PANEL_MAX_WIDTH = 700;
-const PANEL_DEFAULT_WIDTH = 525;
+const PANEL_DEFAULT_WIDTH = 420;
 
 type SidePanel = "ai" | "bookmarks" | "vocab" | null;
 
 interface TocChapter {
   title: string;
+  breadcrumb?: string;
   href?: string;
   targetHref?: string;
   depth: number;
 }
 
-const highlightColorMap: Record<string, string> = {
-  yellow: "#FBBF24",
-  green: "#34D399",
-  blue: "#60A5FA",
-  pink: "#F472B6",
-  purple: "#A78BFA",
-};
+const isMac = typeof navigator !== "undefined" && navigator.userAgent.includes("Macintosh");
 
 const windowLabel = getCurrentWindowLabel();
 const isMainWindow = windowLabel === "main";
 const isStandaloneWindow = windowLabel.startsWith("reader-");
+
+function normalizeReaderTheme(theme: unknown): ReaderTheme | null {
+  if (
+    theme === "original" ||
+    theme === "paper" ||
+    theme === "quiet" ||
+    theme === "dark"
+  ) {
+    return theme;
+  }
+  return null;
+}
+
+function readInitialBookTheme(bookId: string | undefined): ReaderTheme {
+  if (bookId) {
+    try {
+      const raw = localStorage.getItem(`reader-settings-${bookId}`);
+      if (raw) {
+        const parsed = JSON.parse(raw) as { theme?: unknown };
+        const override = normalizeReaderTheme(parsed.theme);
+        if (override) return override;
+      }
+    } catch {
+      // Ignore malformed localStorage state
+    }
+  }
+  return normalizeReaderTheme(getInitialReaderTheme()) ?? "original";
+}
 
 // One-time migration of `reader-zoom-${bookId}` keys written by PR #199.
 // That PR saved "100" on every default open, so every pre-upgrade book has
@@ -263,13 +273,25 @@ export default function Reader() {
   const [currentChapterIndex, setCurrentChapterIndex] = useState(-1);
   const [progress, setProgress] = useState(0);
   const [pageInfo, setPageInfo] = useState<{ current: number; total: number } | null>(null);
+  const [pdfSpreadRange, setPdfSpreadRange] = useState<{ start: number; end: number } | null>(null);
+  const [timeLeftMinutes, setTimeLeftMinutes] = useState<number | null>(null);
   const currentCfiRef = useRef<string | null>(null);
+  const [currentCfi, setCurrentCfi] = useState<string | null>(null);
   const [bookReady, setBookReady] = useState(false);
   const [canGoBack, setCanGoBack] = useState(false);
+  const [jumpBackPage, setJumpBackPage] = useState<number | null>(null);
   const backButtonTimerRef = useRef<number | null>(null);
+  const currentPageNumRef = useRef<number | null>(null);
+  const backPageStackRef = useRef<number[]>([]);
+  const forwardPageStackRef = useRef<number[]>([]);
+  const pendingHistoryActionRef = useRef<"back" | "forward" | null>(null);
+  const pendingJumpFromPageRef = useRef<number | null>(null);
   const [icloudDownloading, setIcloudDownloading] = useState(false);
   const [icloudTimeout, setIcloudTimeout] = useState(false);
+  const [icloudRetryTick, setIcloudRetryTick] = useState(0);
+  const [foliateRetryTick, setFoliateRetryTick] = useState(0);
   const [initError, setInitError] = useState<"icloud" | "generic" | null>(null);
+  const [highlightVersion, setHighlightVersion] = useState(0);
   const [contextMenu, setContextMenu] = useState<{
     x: number;
     y: number;
@@ -310,10 +332,11 @@ export default function Reader() {
     highlightId: string;
     cfiRange: string;
     color: string;
+    text: string | null;
   } | null>(null);
   const [readerSettings, setReaderSettings] = useState<ReaderSettingsState>(() => ({
-    theme: getDefaultReaderTheme(),
-    font: "georgia",
+    theme: readInitialBookTheme(bookId),
+    font: "literata",
     fontSize: 26,
     brightness: 100,
     readingMode: "scrolling",
@@ -326,6 +349,7 @@ export default function Reader() {
   const [hasFontSizeOverride, setHasFontSizeOverride] = useState(false);
 
   const settingsAnchorRef = useRef<HTMLButtonElement>(null);
+  const workspaceRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<FoliateView | null>(null);
   const isDragging = useRef(false);
@@ -334,12 +358,57 @@ export default function Reader() {
   const globalFontSizeRef = useRef(readerSettings.fontSize);
   const chaptersRef = useRef<TocChapter[]>([]);
   const selectedTextRef = useRef<{ text: string; cfi: string } | null>(null);
+  const [workspaceInnerWidth, setWorkspaceInnerWidth] = useState(() =>
+    typeof window !== "undefined" ? Math.max(0, window.innerWidth - WORKSPACE_PADDING_X) : 1400,
+  );
   const tocChapters = useMemo(() => chapters.map((chapter, i) => ({
     title: chapter.title,
     page: i + 1,
     depth: chapter.depth,
     disabled: !chapter.targetHref,
   })), [chapters]);
+
+  // Reader shell follows the page theme, not the app theme:
+  // Original/Sepia/Gray use Dawn light tokens; Dark activates Nocturne (.dawn.dark).
+  useLayoutEffect(() => {
+    const root = document.documentElement;
+    root.classList.add("dawn");
+    root.dataset.readerTheme = readerSettings.theme;
+    root.classList.toggle("dark", readerSettings.theme === "dark");
+    if (isStandaloneWindow) {
+      void setWindowBackgroundColor(READER_SHELL_BG_BY_THEME[readerSettings.theme]).catch(() => {});
+    }
+  }, [readerSettings.theme]);
+
+  useEffect(() => {
+    return () => {
+      const root = document.documentElement;
+      delete root.dataset.readerTheme;
+      if (!isMainWindow) {
+        root.classList.remove("dark");
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    const measure = () => {
+      const el = workspaceRef.current;
+      const inner = el
+        ? el.clientWidth - WORKSPACE_PADDING_X
+        : window.innerWidth - WORKSPACE_PADDING_X;
+      setWorkspaceInnerWidth(Math.max(0, inner));
+    };
+    measure();
+    const ro = workspaceRef.current ? new ResizeObserver(measure) : null;
+    if (workspaceRef.current && ro) {
+      ro.observe(workspaceRef.current);
+    }
+    window.addEventListener("resize", measure);
+    return () => {
+      ro?.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, [loading, book?.id]);
 
   // Load book metadata and default settings from DB
   useEffect(() => {
@@ -460,7 +529,57 @@ export default function Reader() {
 
     poll();
     return () => { cancelled = true; };
-  }, [book?.id, book?.available]);
+  }, [book?.id, book?.available, icloudRetryTick]);
+
+  const goBackInHistory = useCallback(() => {
+    if (!viewRef.current?.history.canGoBack) return;
+    pendingHistoryActionRef.current = "back";
+    viewRef.current.history.back();
+  }, []);
+
+  const goForwardInHistory = useCallback(() => {
+    if (!viewRef.current?.history.canGoForward) return;
+    pendingHistoryActionRef.current = "forward";
+    viewRef.current.history.forward();
+  }, []);
+
+  const handleCloudDownloadRetry = useCallback(async () => {
+    if (!book) return;
+    if (initError === "icloud") {
+      const available = await checkBookAvailable(book.id).catch(() => false);
+      const updated = await getBook(book.id).catch(() => null);
+      if (updated) {
+        setBook(updated);
+      }
+      setInitError(null);
+      if (!available) {
+        setIcloudDownloading(true);
+        setIcloudTimeout(false);
+        setIcloudRetryTick((n) => n + 1);
+      } else {
+        setFoliateRetryTick((n) => n + 1);
+      }
+      return;
+    }
+    setIcloudTimeout(false);
+    setIcloudRetryTick((n) => n + 1);
+  }, [book, initError]);
+
+  const handleToolbarLibraryClick = useCallback(() => {
+    if (isStandaloneWindow) {
+      void focusWindow("main");
+    } else {
+      navigate("/");
+    }
+  }, [navigate]);
+
+  const handleCloudBackToLibrary = useCallback(() => {
+    if (isStandaloneWindow) {
+      void focusWindow("main").finally(() => window.close());
+    } else {
+      navigate("/");
+    }
+  }, [navigate]);
 
   // Initialize foliate-js when book data is loaded
   useEffect(() => {
@@ -553,12 +672,16 @@ export default function Reader() {
           return item.subitems?.map((child: any) => firstHref(child)).find(Boolean);
         };
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const flattenToc = (items: any[], depth = 0): TocChapter[] =>
+        const flattenToc = (items: any[], depth = 0, parentTitle?: string): TocChapter[] =>
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          items.flatMap((item: any) => [
-            { title: item.label?.trim() || "", href: tocHref(item), targetHref: firstHref(item), depth },
-            ...(item.subitems ? flattenToc(item.subitems, depth + 1) : []),
-          ]);
+          items.flatMap((item: any) => {
+            const title = item.label?.trim() || "";
+            const breadcrumb = parentTitle && title ? `${parentTitle} · ${title}` : title || parentTitle;
+            return [
+              { title, breadcrumb, href: tocHref(item), targetHref: firstHref(item), depth },
+              ...(item.subitems ? flattenToc(item.subitems, depth + 1, breadcrumb) : []),
+            ];
+          });
         const chs = flattenToc(toc);
         chaptersRef.current = chs;
         setChapters(chs);
@@ -566,14 +689,55 @@ export default function Reader() {
 
       // Listen for location changes
       view.addEventListener("relocate", ((e: CustomEvent) => {
-        const { fraction, location, tocItem, cfi } = e.detail;
+        const { fraction, location, tocItem, cfi, time } = e.detail;
 
         const pct = Math.round((fraction ?? 0) * 100);
         setProgress(pct);
         currentCfiRef.current = cfi;
+        setCurrentCfi(cfi ?? null);
+
+        const remaining =
+          typeof time?.total === "number" && Number.isFinite(time.total) && time.total > 0
+            ? time.total
+            : null;
+        setTimeLeftMinutes(remaining);
 
         if (location) {
-          setPageInfo({ current: location.current + 1, total: location.total });
+          const current = location.current + 1;
+          const total = location.total;
+          currentPageNumRef.current = current;
+          setPageInfo({ current, total });
+          if (book.format === "pdf") {
+            const { pageColumns, readingMode } = readerSettingsRef.current;
+            if (pageColumns === 2) {
+              if (readingMode === "paginated" && view.renderer?.getContents) {
+                const indices = (view.renderer.getContents() as Array<{ index?: number }>)
+                  .map((c) => c.index)
+                  .filter((idx): idx is number => typeof idx === "number" && Number.isFinite(idx))
+                  .sort((a, b) => a - b);
+                const unique = Array.from(new Set(indices));
+                if (unique.length === 2) {
+                  setPdfSpreadRange({ start: unique[0] + 1, end: unique[1] + 1 });
+                } else if (unique.length === 1) {
+                  setPdfSpreadRange({ start: unique[0] + 1, end: unique[0] + 1 });
+                } else {
+                  setPdfSpreadRange({ start: current, end: current });
+                }
+              } else if (readingMode === "scrolling") {
+                if (current % 2 === 1 && current < total) {
+                  setPdfSpreadRange({ start: current, end: current + 1 });
+                } else if (current % 2 === 0 && current > 1) {
+                  setPdfSpreadRange({ start: current - 1, end: current });
+                } else {
+                  setPdfSpreadRange({ start: current, end: current });
+                }
+              } else {
+                setPdfSpreadRange({ start: current, end: current });
+              }
+            } else {
+              setPdfSpreadRange({ start: current, end: current });
+            }
+          }
         }
 
         if (tocItem) {
@@ -589,11 +753,36 @@ export default function Reader() {
         }
       }) as EventListener);
 
+      view.addEventListener("link", () => {
+        pendingJumpFromPageRef.current = currentPageNumRef.current;
+      });
+
       // Track navigation history for back button. Auto-hide 10s after the
       // last jump so it doesn't linger once the reader has settled.
       view.history.addEventListener("index-change", () => {
         const canBack = view.history.canGoBack;
+        const action = pendingHistoryActionRef.current;
+        pendingHistoryActionRef.current = null;
+        if (action === "back") {
+          backPageStackRef.current.pop();
+          if (currentPageNumRef.current !== null) {
+            forwardPageStackRef.current.push(currentPageNumRef.current);
+          }
+        } else if (action === "forward") {
+          forwardPageStackRef.current.pop();
+          if (currentPageNumRef.current !== null) {
+            backPageStackRef.current.push(currentPageNumRef.current);
+          }
+        } else if (canBack && pendingJumpFromPageRef.current !== null) {
+          backPageStackRef.current.push(pendingJumpFromPageRef.current);
+          forwardPageStackRef.current = [];
+        }
+        pendingJumpFromPageRef.current = null;
+        if (!canBack) {
+          backPageStackRef.current = [];
+        }
         setCanGoBack(canBack);
+        setJumpBackPage(backPageStackRef.current[backPageStackRef.current.length - 1] ?? null);
         if (backButtonTimerRef.current !== null) {
           window.clearTimeout(backButtonTimerRef.current);
           backButtonTimerRef.current = null;
@@ -669,10 +858,10 @@ export default function Reader() {
         doc.addEventListener("keydown", (ev: KeyboardEvent) => {
           if ((ev.metaKey || ev.ctrlKey) && ev.key === "[") {
             ev.preventDefault();
-            view.history.back();
+            goBackInHistory();
           } else if ((ev.metaKey || ev.ctrlKey) && ev.key === "]") {
             ev.preventDefault();
-            view.history.forward();
+            goForwardInHistory();
           } else if (
             isMainWindow
               ? handleAppZoomShortcut(ev)
@@ -726,26 +915,14 @@ export default function Reader() {
 
       view.addEventListener("draw-annotation", ((e: CustomEvent) => {
         const { draw, annotation } = e.detail;
-        const color = highlightColorMap[annotation.color] || highlightColorMap.yellow;
         const isPdf = book?.format === "pdf";
-        draw((rects: DOMRectList) => {
-          const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
-          g.setAttribute("fill", color);
-          g.setAttribute("opacity", "0.35");
-          g.style.mixBlendMode = "multiply";
-          for (const { left, top, height, width } of rects) {
-            const el = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-            // PDF text layer spans have sub-pixel gaps; pad rects to close them
-            const pad = isPdf ? 1 : 0;
-            el.setAttribute("x", String(Math.floor(left)));
-            el.setAttribute("y", String(top - pad));
-            el.setAttribute("height", String(height + pad * 2));
-            el.setAttribute("width", String(Math.ceil(width)));
-            el.setAttribute("rx", isPdf ? "1" : "0");
-            g.append(el);
-          }
-          return g;
-        });
+        draw(
+          createAnnotationDrawCallback(
+            annotation.color,
+            () => readerSettingsRef.current.theme,
+            isPdf,
+          ),
+        );
       }) as EventListener);
 
       view.addEventListener("show-annotation", ((e: CustomEvent) => {
@@ -770,6 +947,7 @@ export default function Reader() {
                 highlightId: hl.id,
                 cfiRange: hl.cfi_range,
                 color: hl.color,
+                text: hl.text_content ?? null,
               });
             }
           }).catch(() => {});
@@ -790,11 +968,6 @@ export default function Reader() {
 
       if (cancelled) return;
 
-      // Apply brightness
-      if (viewerRef.current) {
-        viewerRef.current.style.filter = `brightness(${readerSettings.brightness / 100})`;
-      }
-
       setBookReady(true);
     };
 
@@ -814,7 +987,12 @@ export default function Reader() {
         window.clearTimeout(backButtonTimerRef.current);
         backButtonTimerRef.current = null;
       }
+      backPageStackRef.current = [];
+      forwardPageStackRef.current = [];
+      pendingHistoryActionRef.current = null;
+      pendingJumpFromPageRef.current = null;
       setCanGoBack(false);
+      setJumpBackPage(null);
       if (viewRef.current) {
         viewRef.current.close();
         viewRef.current.remove();
@@ -827,7 +1005,7 @@ export default function Reader() {
     // below, so the derived dep stays `null` for them and the effect won't
     // re-run.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [book, book?.format === "pdf" ? readerSettings.readingMode : null]);
+  }, [book, foliateRetryTick, book?.format === "pdf" ? readerSettings.readingMode : null]);
 
   // Apply reader settings reactively
   useEffect(() => {
@@ -836,6 +1014,10 @@ export default function Reader() {
 
     // Update styles (theme, font, spacing)
     view.renderer.setStyles?.(getReaderCSS(readerSettings));
+
+    // Re-draw highlight overlays so light/dark highlight palettes match paper theme
+    const contents = view.renderer.getContents?.() as Array<{ overlayer?: { redraw?: () => void } }> | undefined;
+    contents?.forEach((c) => c.overlayer?.redraw?.());
 
     // Update reading mode — foliate-js supports instant switching
     view.renderer.setAttribute("flow",
@@ -854,11 +1036,7 @@ export default function Reader() {
     const marginOffset = readerSettings.margins * 2;
     view.renderer.setAttribute("max-inline-size", `${Math.max(400, baseWidth - marginOffset)}px`);
 
-    // Update brightness
-    if (viewerRef.current) {
-      viewerRef.current.style.filter = `brightness(${readerSettings.brightness / 100})`;
-    }
-    // PDF theming is handled by the overlay div in the JSX
+    // Brightness and PDF theming are applied on the Paper viewport and overlay in JSX;
     // bookReady is in deps so this re-runs once foliate finishes init —
     // fixes a race where DB-loaded settings arrive before view.renderer exists.
   }, [readerSettings, book?.format, bookReady]);
@@ -870,6 +1048,7 @@ export default function Reader() {
   // seed the numeric zoom when the user clicks +/- from fit mode so the
   // transition is smooth (e.g. fit≈1.47 → tap + → 150%, not 110%).
   const fitPctRef = useRef(100);
+  const [fitPercent, setFitPercent] = useState(100);
 
   const applyZoom = useCallback((value: number | "fit") => {
     const renderer = viewRef.current?.renderer;
@@ -949,7 +1128,9 @@ export default function Reader() {
         if (cancelled || !first?.width) return;
         const rowWidth = first.width + (second?.width ?? 0);
         const containerW = Math.max(renderer.clientWidth - 24, 1);
-        fitPctRef.current = Math.round((containerW / rowWidth) * 100);
+        const computed = Math.round((containerW / rowWidth) * 100);
+        fitPctRef.current = computed;
+        setFitPercent(computed);
       } catch { /* book may have closed */ }
     };
     update();
@@ -983,9 +1164,28 @@ export default function Reader() {
     };
   }, [bookReady, book?.format]);
 
-  const togglePanel = (panel: "ai" | "bookmarks" | "vocab") => {
-    setSidePanel((prev) => (prev === panel ? null : panel));
+  const dualIslandsAllowed = canShowDualIslands(workspaceInnerWidth, panelWidth);
+  const dualIslandsAllowedRef = useRef(dualIslandsAllowed);
+  dualIslandsAllowedRef.current = dualIslandsAllowed;
+
+  const openSidePanel = useCallback((panel: Exclude<SidePanel, null>) => {
+    if (!dualIslandsAllowedRef.current) setTocOpen(false);
+    setSidePanel(panel);
+  }, []);
+
+  const togglePanel = (panel: Exclude<SidePanel, null>) => {
+    setSidePanel((prev) => {
+      if (prev === panel) return null;
+      if (!dualIslandsAllowed) setTocOpen(false);
+      return panel;
+    });
   };
+
+  useEffect(() => {
+    if (!dualIslandsAllowed && tocOpen && sidePanel) {
+      setTocOpen(false);
+    }
+  }, [dualIslandsAllowed, tocOpen, sidePanel]);
 
   // Keyboard navigation — parent document listener
   useEffect(() => {
@@ -1136,12 +1336,17 @@ export default function Reader() {
   }, []);
 
   const navigateToChapter = useCallback((href: string) => {
+    pendingJumpFromPageRef.current = currentPageNumRef.current;
     viewRef.current?.goTo(href);
   }, []);
 
   const navigateToCfi = useCallback((cfi: string) => {
+    pendingJumpFromPageRef.current = currentPageNumRef.current;
     viewRef.current?.goTo(cfi);
   }, []);
+
+  const consumedChatStartupRef = useRef<string | null>(null);
+  const consumedVocabStartupRef = useRef<string | null>(null);
 
   // Handle navigation state from ChatsPage ("Open in Reader")
   // Supports both location.state (main window) and URL search params (standalone window)
@@ -1151,10 +1356,13 @@ export default function Reader() {
     const openChat = state?.openChat || searchParams.get("openChat") === "true";
     const chatId = state?.chatId || searchParams.get("chatId") || undefined;
     if (!openChat || !bookReady) return;
-    setSidePanel("ai");
+    const requestKey = `${state?.openChat ? "state" : "query"}:${bookId ?? ""}:${chatId ?? ""}`;
+    if (consumedChatStartupRef.current === requestKey) return;
+    consumedChatStartupRef.current = requestKey;
+    openSidePanel("ai");
     if (chatId) setInitialChatId(chatId);
     if (!isStandaloneWindow) navigate(location.pathname, { replace: true });
-  }, [bookReady, location.state, location.pathname, navigate]);
+  }, [bookId, bookReady, location.state, location.pathname, navigate, openSidePanel]);
 
   // Handle navigation state from DictionaryPage ("Open in Reader")
   // Supports both location.state (main window) and URL search params (standalone window)
@@ -1164,8 +1372,12 @@ export default function Reader() {
     const openVocab = state?.openVocab || searchParams.get("openVocab") === "true";
     const cfi = state?.cfi || searchParams.get("cfi") || undefined;
     if (!openVocab || !bookReady) return;
-    setSidePanel("vocab");
+    const requestKey = `${state?.openVocab ? "state" : "query"}:${bookId ?? ""}:${cfi ?? ""}`;
+    if (consumedVocabStartupRef.current === requestKey) return;
+    consumedVocabStartupRef.current = requestKey;
+    openSidePanel("vocab");
     if (cfi) {
+      pendingJumpFromPageRef.current = currentPageNumRef.current;
       viewRef.current?.goTo(cfi).then(() => {
         viewRef.current?.addAnnotation({ value: cfi, color: "#c27aff" });
         setTimeout(() => {
@@ -1175,43 +1387,14 @@ export default function Reader() {
     }
     // Clear the state so it doesn't re-trigger
     if (!isStandaloneWindow) navigate(location.pathname, { replace: true });
-  }, [bookReady, location.state, location.pathname, navigate]);
-
-  if (loading) {
-    return (
-      <div className="flex flex-col items-center justify-center h-screen gap-3">
-        <Loader2 size={24} className="animate-spin text-text-muted" />
-        <p className="text-text-muted text-[14px]">{t("reader.loading")}</p>
-      </div>
-    );
-  }
-
-  if (!book) {
-    return (
-      <div className="flex items-center justify-center h-screen">
-        <p>{t("reader.bookNotFound")}</p>
-      </div>
-    );
-  }
-
-  if (icloudDownloading) {
-    return (
-      <div className="flex flex-col items-center justify-center h-screen gap-3">
-        {icloudTimeout ? (
-          <p className="text-text-muted text-[14px]">{t("reader.downloadTimeout")}</p>
-        ) : (
-          <>
-            <Loader2 size={24} className="animate-spin text-text-muted" />
-            <p className="text-text-muted text-[14px]">{t("reader.downloadingFromICloud")}</p>
-          </>
-        )}
-      </div>
-    );
-  }
-
+  }, [bookId, bookReady, location.state, location.pathname, navigate, openSidePanel]);
 
   const toggleTocPanel = () => {
-    setTocOpen((open) => !open);
+    setTocOpen((open) => {
+      const next = !open;
+      if (next && !dualIslandsAllowed) setSidePanel(null);
+      return next;
+    });
     setSettingsOpen(false);
   };
 
@@ -1220,8 +1403,93 @@ export default function Reader() {
     if (chapter?.targetHref) navigateToChapter(chapter.targetHref);
   };
 
+  const paperStyles = getThemeStyles(readerSettings.theme);
+  const isDarkPaper = readerSettings.theme === "dark";
+  const currentChapter =
+    currentChapterIndex >= 0 && currentChapterIndex < chapters.length
+      ? chapters[currentChapterIndex]
+      : undefined;
+
+  const pdfPageRangeLabel = useMemo(() => {
+    if (!pageInfo) return null;
+    if (readerSettings.pageColumns === 2) {
+      if (pdfSpreadRange && pdfSpreadRange.end > pdfSpreadRange.start) {
+        return t("reader.pageRangeOf", {
+          start: pdfSpreadRange.start,
+          end: pdfSpreadRange.end,
+          total: pageInfo.total,
+        });
+      }
+      if (readerSettings.readingMode === "scrolling") {
+        const start = pageInfo.current % 2 === 1 ? pageInfo.current : Math.max(1, pageInfo.current - 1);
+        const end = Math.min(pageInfo.total, start + 1);
+        if (end > start) {
+          return t("reader.pageRangeOf", { start, end, total: pageInfo.total });
+        }
+      }
+    }
+    return t("reader.pageOf", { current: pageInfo.current, total: pageInfo.total });
+  }, [pageInfo, pdfSpreadRange, readerSettings.pageColumns, readerSettings.readingMode, t]);
+
+  const timeLeftLabel = useMemo(() => {
+    if (timeLeftMinutes === null || timeLeftMinutes <= 0) return null;
+    if (timeLeftMinutes < 60) {
+      return t("reader.timeLeftMinutes", { count: Math.max(1, Math.round(timeLeftMinutes)) });
+    }
+    return t("reader.timeLeftHours", { count: Math.max(1, Math.round(timeLeftMinutes / 60)) });
+  }, [timeLeftMinutes, t]);
+
+  const shellClass = readerShellClassForTheme(readerSettings.theme);
+
+  if (loading) {
+    return (
+      <div className={`flex flex-col items-center justify-center h-screen gap-3 ${shellClass}`}>
+        <Loader2 size={24} className="animate-spin text-text-tertiary" />
+        <p className="text-text-secondary text-[14px]">{t("reader.loading")}</p>
+      </div>
+    );
+  }
+
+  if (!book) {
+    return (
+      <div className={`flex flex-col items-center justify-center h-screen gap-4 ${shellClass}`}>
+        <p className="text-[15px] font-medium text-text-primary">{t("reader.bookNotFound")}</p>
+        <Button appearance="dawn" variant="secondary" size="md" onClick={handleCloudBackToLibrary}>
+          <ArrowLeft size={16} />
+          <span>{t("reader.backToLibrary")}</span>
+        </Button>
+      </div>
+    );
+  }
+
+  const isCloudScreen = icloudDownloading || initError === "icloud";
+
+  const toolbarSubtitle = isCloudScreen
+    ? t("reader.notOnThisMac")
+    : book.format === "pdf"
+      ? ["PDF", currentChapter?.title, pdfPageRangeLabel].filter(Boolean).join(" · ")
+      : currentChapter?.breadcrumb || book.author;
+
+  const progressPillLabel =
+    book.format === "pdf"
+      ? (pdfPageRangeLabel ?? `${progress}%`)
+      : chapters.length > 0 && currentChapterIndex >= 0
+        ? t("reader.chapterOf", { current: currentChapterIndex + 1, total: chapters.length })
+        : pageInfo
+          ? t("reader.pageOf", { current: pageInfo.current, total: pageInfo.total })
+          : `${progress}%`;
+
+  const paperSurfaceStyle: React.CSSProperties = {
+    backgroundColor:
+      book.format === "pdf" && readerSettings.theme === "original"
+        ? "#EFEBF7"
+        : paperStyles.body,
+    borderColor: paperStyles.border,
+    color: paperStyles.text,
+  };
+
   return (
-    <div className="flex flex-col h-screen bg-bg-page" style={getReaderThemeVars(readerSettings.theme) as React.CSSProperties}>
+    <div className={`flex flex-col h-screen ${shellClass} overflow-hidden`}>
       {/* Invisible overlay to close popovers when clicking anywhere */}
       {settingsOpen && (
         <div
@@ -1229,116 +1497,62 @@ export default function Reader() {
           onMouseDown={(e) => { e.preventDefault(); setSettingsOpen(false); }}
         />
       )}
-      {/* Header */}
+
+      {/* 64px Dawn Reader Toolbar */}
       <header
-        className={`flex items-center justify-between px-section pt-8 pb-2 shrink-0 relative select-none ${isStandaloneWindow ? "" : "bg-bg-surface border-b border-border"}`}
-        style={isStandaloneWindow ? {
-          backgroundColor: getThemeStyles(readerSettings.theme).body,
-          color: getThemeStyles(readerSettings.theme).text,
-          borderBottom: `1px solid ${getThemeStyles(readerSettings.theme).text}1a`,
-        } : undefined}
+        data-drag-region={isMac ? "" : undefined}
+        className="h-16 px-6 py-3.5 shrink-0 flex items-center justify-between gap-4 relative select-none"
       >
-        <TitlebarDragRegion height={32} />
+        {/* Left cluster */}
+        <div className="flex items-center gap-4 min-w-0">
+          {isMac && <div className="w-[56px] h-3 shrink-0" aria-hidden="true" />}
 
-        {/* Left section */}
-        <div className="flex items-center gap-3">
-          {isStandaloneWindow ? (
-            <div className="size-10 rounded-lg bg-accent flex items-center justify-center">
-              <BookOpen size={18} className="text-white" />
-            </div>
-          ) : (
-            <>
-              <Button variant="icon" size="md" onClick={() => navigate("/")}>
-                <ArrowLeft size={16} />
-              </Button>
-              <div className="w-px h-6 bg-border" />
-            </>
-          )}
+          <IconButton
+            onClick={handleToolbarLibraryClick}
+            aria-label={t("reader.backToLibrary")}
+            title={t("reader.backToLibrary")}
+          >
+            <ChevronLeft size={16} />
+          </IconButton>
 
-          {isStandaloneWindow ? (
-            <>
-              {/* TOC on left in standalone window */}
-              <div className="w-px h-6 bg-current opacity-15" />
-              <Button
-                variant="icon"
-                size="md"
-                active={tocOpen}
-                className={tocOpen ? "bg-accent-bg" : ""}
-                aria-label={t(tocOpen ? "reader.tocClose" : "reader.tocOpen")}
-                aria-expanded={tocOpen}
-                title={t(tocOpen ? "reader.tocClose" : "reader.tocOpen")}
-                onClick={toggleTocPanel}
-              >
-                <List size={16} />
-              </Button>
-            </>
-          ) : (
-            <>
-              {/* Book icon + title on left in main window */}
-              <div className="size-10 rounded-lg bg-accent flex items-center justify-center">
-                <BookOpen size={18} className="text-white" />
-              </div>
-              <div className="flex flex-col">
-                <h1 className="text-[16px] font-semibold text-text-primary leading-5">
-                  {book.title}
-                </h1>
-                <span className="text-[13px] text-text-muted leading-4">
-                  {book.format === "pdf"
-                    ? pageInfo ? t("reader.pageOf", { current: pageInfo.current, total: pageInfo.total }) : ""
-                    : chapters.length > 0 ? t("reader.chapterOf", { current: currentChapterIndex + 1, total: chapters.length }) : ""}
-                </span>
-              </div>
-            </>
-          )}
-        </div>
+          <IconButton
+            active={tocOpen}
+            disabled={isCloudScreen}
+            aria-label={t(tocOpen ? "reader.tocClose" : "reader.tocOpen")}
+            aria-expanded={tocOpen}
+            title={t(tocOpen ? "reader.tocClose" : "reader.tocOpen")}
+            onClick={toggleTocPanel}
+          >
+            <List size={16} />
+          </IconButton>
 
-        {/* Center — book title in standalone window */}
-        {isStandaloneWindow && (
-          <div className="absolute left-1/2 -translate-x-1/2 flex flex-col items-center pointer-events-none">
-            <h1 className="text-[14px] font-semibold leading-5" style={{ color: "inherit" }}>
+          <div className="flex flex-col gap-px min-w-0">
+            <h1 className="text-[14px] font-semibold text-text-primary leading-[18px] truncate">
               {book.title}
             </h1>
-            <span className="text-[12px] leading-4 opacity-60">
-              {book.format === "pdf"
-                ? pageInfo ? t("reader.pageOf", { current: pageInfo.current, total: pageInfo.total }) : ""
-                : chapters.length > 0 ? t("reader.chapterOf", { current: currentChapterIndex + 1, total: chapters.length }) : ""}
-            </span>
+            {toolbarSubtitle && (
+              <span className="text-[12px] text-text-tertiary leading-4 truncate">
+                {toolbarSubtitle}
+              </span>
+            )}
           </div>
-        )}
+        </div>
 
-        {/* Right section */}
-        <div className="flex items-center">
-          {/* TOC button in main window */}
-          {!isStandaloneWindow && (
-            <>
-              <Button
-                variant="icon"
-                size="md"
-                active={tocOpen}
-                className={tocOpen ? "bg-accent-bg" : ""}
-                aria-label={t(tocOpen ? "reader.tocClose" : "reader.tocOpen")}
-                aria-expanded={tocOpen}
-                title={t(tocOpen ? "reader.tocClose" : "reader.tocOpen")}
-                onClick={toggleTocPanel}
-              >
-                <List size={16} />
-              </Button>
-            </>
-          )}
-
-          <button
+        {/* Right cluster */}
+        <div className="flex items-center gap-2 shrink-0">
+          <IconButton
             ref={settingsAnchorRef}
+            active={settingsOpen}
+            disabled={isCloudScreen}
+            aria-label={t("readerSettings.typography")}
+            title={t("readerSettings.typography")}
             onClick={() => {
               setSettingsOpen((open) => !open);
               setTocOpen(false);
             }}
-            className={`flex items-center justify-center gap-1 size-9 rounded-lg cursor-pointer transition-colors ${
-              settingsOpen ? "text-accent-text" : isStandaloneWindow ? "opacity-60 hover:opacity-100" : "text-text-muted hover:bg-bg-input"
-            }`}
           >
-            <span className="text-[16px] font-semibold leading-6">A</span>
-            <span className="text-[12px] font-semibold leading-4">A</span>
-          </button>
+            <Type size={16} />
+          </IconButton>
           <ReaderSettings
             open={settingsOpen}
             onClose={() => setSettingsOpen(false)}
@@ -1348,226 +1562,243 @@ export default function Reader() {
             bookFormat={book.format}
           />
 
-          <Button
-            variant="icon"
-            size="md"
+          <IconButton
             active={sidePanel === "bookmarks"}
+            disabled={isCloudScreen}
+            aria-label={t("reader.bookmarksAndHighlights")}
+            title={t("reader.bookmarksAndHighlights")}
             onClick={() => togglePanel("bookmarks")}
           >
             <Bookmark size={16} />
-          </Button>
+          </IconButton>
 
-          <Button
-            variant="icon"
-            size="md"
+          <IconButton
             active={sidePanel === "vocab"}
+            disabled={isCloudScreen}
+            aria-label={t("vocab.title")}
+            title={t("vocab.title")}
             onClick={() => togglePanel("vocab")}
           >
             <Languages size={16} />
-          </Button>
+          </IconButton>
 
-          <div className="w-px h-6 bg-border mx-1" />
-
-          <button
+          <IconButton
+            active={sidePanel === "ai"}
+            disabled={isCloudScreen}
+            aria-label={t("reader.aiAssistant")}
+            title={t("reader.aiAssistant")}
             onClick={() => togglePanel("ai")}
-            className={`flex items-center gap-2 h-8 px-2.5 rounded-lg cursor-pointer transition-colors ${
-              sidePanel === "ai"
-                ? "text-accent-text"
-                : isStandaloneWindow ? "opacity-60 hover:opacity-100" : "hover:bg-bg-input text-text-muted"
-            }`}
           >
-            <Bot size={16} />
-            <span className="text-[14px] font-medium tracking-[-0.15px]">
-              {t("reader.aiAssistant")}
-            </span>
-          </button>
+            <Sparkles size={16} />
+          </IconButton>
         </div>
       </header>
 
-      {/* Body */}
-      <div
-        className="flex flex-1 overflow-hidden"
-        style={{ backgroundColor: getThemeStyles(readerSettings.theme).body }}
-      >
-        <TableOfContents
-          open={tocOpen}
-          chapters={tocChapters}
-          currentPage={currentChapterIndex + 1}
-          onNavigate={handleTocNavigate}
-        />
-        <div className="flex-1 flex flex-col min-w-0" style={{ backgroundColor: getThemeStyles(readerSettings.theme).body }}>
-          <main
-            className="flex-1 relative overflow-hidden"
-            style={{ backgroundColor: getThemeStyles(readerSettings.theme).body }}
-            onContextMenu={handleContextMenu}
-            onClick={() => {
-              setSettingsOpen(false);
-              // Clicks inside the iframe (text content) don't bubble out
-              // through the sandbox boundary, so this fires only for clicks
-              // on the margins/white space around the page — i.e. "anywhere
-              // else" from the reader's perspective. Drop the in-iframe text
-              // selection so the highlight doesn't linger.
-              viewRef.current?.deselect?.();
-              setHighlightToolbar(null);
-            }}
-          >
-            <div
-              ref={viewerRef}
-              className="w-full h-full"
-              style={book.format === "pdf" ? { backgroundColor: "#ffffff" } : undefined}
+      {/* Body workspace */}
+      <div ref={workspaceRef} className="flex-1 min-h-0 flex gap-4 px-5 pb-5 pt-0">
+        {isCloudScreen ? (
+          <ReaderCloudState
+            book={book}
+            state={initError === "icloud" ? "failed" : icloudTimeout ? "timedOut" : "downloading"}
+            onDownloadRetry={handleCloudDownloadRetry}
+            onBackToLibrary={handleCloudBackToLibrary}
+          />
+        ) : (
+          <>
+            <TableOfContents
+              open={tocOpen}
+              chapters={tocChapters}
+              currentPage={currentChapterIndex + 1}
+              onNavigate={handleTocNavigate}
+              onClose={() => setTocOpen(false)}
             />
-            {book.format === "pdf" && (() => {
-              const overlay = getPdfOverlays(readerSettings.theme);
-              if (!overlay) return null;
-              return overlay.layers.map((style, i) => (
-                <div
-                  key={i}
-                  className="z-10 pointer-events-none absolute inset-0"
-                  style={style}
-                />
-              ));
-            })()}
-            {initError && (
-              <div className="absolute inset-0 z-20 bg-bg-surface flex items-center justify-center">
-                <div className="flex flex-col items-center gap-3 max-w-[420px] px-8 text-center">
-                  {initError === "icloud" ? (
-                    <CloudOff size={24} className="text-text-muted" />
-                  ) : (
-                    <AlertCircle size={24} className="text-text-muted" />
-                  )}
-                  <span className="text-[14px] text-text-primary">{t("reader.openFailed")}</span>
-                  {initError === "icloud" && (
-                    <span className="text-[13px] text-text-muted">{t("reader.openFailedICloud")}</span>
-                  )}
-                </div>
-              </div>
-            )}
-            {!bookReady && !initError && (
-              <div className="absolute inset-0 z-20 bg-bg-surface flex items-center justify-center">
-                <div className="flex flex-col items-center gap-3">
-                  <Loader2 size={24} className="animate-spin text-text-muted" />
-                  <span className="text-[14px] text-text-muted">{t("reader.preparingBook")}</span>
-                </div>
-              </div>
-            )}
-            {canGoBack && (
-              <button
-                onClick={() => viewRef.current?.history.back()}
-                className="absolute bottom-4 left-6 z-20 flex items-center gap-1.5 px-3.5 py-2 rounded-full bg-accent-bg text-accent-text shadow-sm cursor-pointer transition-opacity hover:opacity-80"
-              >
-                <ArrowLeft size={14} />
-                <span className="text-[13px] font-medium">{t("reader.back")}</span>
-              </button>
-            )}
-          </main>
 
-          {/* Bottom progress bar */}
-          <footer
-            className={`px-page pb-2 pt-0 shrink-0 ${isStandaloneWindow ? "" : "bg-bg-surface"}`}
-            style={isStandaloneWindow ? {
-              backgroundColor: getThemeStyles(readerSettings.theme).body,
-              color: getThemeStyles(readerSettings.theme).text,
-            } : undefined}
-          >
-            <div className="flex flex-col gap-2">
-              <div className={`h-px w-full ${isStandaloneWindow ? "opacity-10" : "bg-border"}`} style={isStandaloneWindow ? { backgroundColor: "currentColor" } : undefined}>
+            {/* Floating Paper Island */}
+            <main
+              className="flex-1 min-w-0 h-full relative rounded-[24px] border shadow-glass overflow-hidden @container/paper"
+              style={paperSurfaceStyle}
+              onContextMenu={handleContextMenu}
+              onClick={() => {
+                setSettingsOpen(false);
+                // Clicks inside the iframe (text content) don't bubble out
+                // through the sandbox boundary, so this fires only for clicks
+                // on the margins/white space around the page — i.e. "anywhere
+                // else" from the reader's perspective. Drop the in-iframe text
+                // selection so the highlight doesn't linger.
+                viewRef.current?.deselect?.();
+                setHighlightToolbar(null);
+              }}
+            >
+              {/* Reserve 72px (or 108px below 700px Paper width where jump-back stacks
+                  above the pill) so content never sits behind floating controls and
+                  viewport height stays constant when jump-back appears or disappears. */}
+              <div
+                className="w-full h-full flex flex-col pb-[108px] @[700px]/paper:pb-[72px]"
+                style={{
+                  backgroundColor:
+                    book.format === "pdf"
+                      ? readerSettings.theme === "original"
+                        ? "#EFEBF7"
+                        : "#ffffff"
+                      : paperStyles.body,
+                  filter: `brightness(${readerSettings.brightness / 100})`,
+                }}
+              >
                 <div
-                  className="h-full transition-all"
-                  style={{ width: `${progress}%`, backgroundColor: isStandaloneWindow ? "currentColor" : "#9f9fa9", opacity: isStandaloneWindow ? 0.4 : undefined }}
+                  ref={viewerRef}
+                  className="w-full flex-1 min-h-0"
+                  style={
+                    book.format === "pdf"
+                      ? { backgroundColor: readerSettings.theme === "original" ? "#EFEBF7" : "#ffffff" }
+                      : undefined
+                  }
                 />
               </div>
-              <div className="flex items-center justify-between h-8">
-                <span className={`text-[12px] ${isStandaloneWindow ? "opacity-60" : "text-text-muted"}`}>
-                  {pageInfo ? t("reader.pageOf", { current: pageInfo.current, total: pageInfo.total }) : `${progress}%`}
-                </span>
-                {book.format === "pdf" && (
-                  <div className="flex items-center gap-1">
-                    <Button variant="icon" size="sm" onClick={() => handleZoom(-10)}>
-                      <Minus size={12} />
-                    </Button>
-                    <button
-                      type="button"
-                      onClick={resetPdfZoom}
-                      title={t("reader.zoom.fitTooltip")}
-                      className={`text-[12px] font-medium min-w-[36px] px-1 text-center tabular-nums hover:opacity-100 ${isStandaloneWindow ? "opacity-60" : "text-text-muted"} ${zoom === "fit" ? "" : "cursor-pointer"}`}
-                    >
-                      {zoom === "fit" ? t("reader.zoom.fit") : `${zoom}%`}
-                    </button>
-                    <Button variant="icon" size="sm" onClick={() => handleZoom(10)}>
-                      <Plus size={12} />
+              {book.format === "pdf" && (() => {
+                const overlay = getPdfOverlays(readerSettings.theme);
+                if (!overlay) return null;
+                return overlay.layers.map((style, i) => (
+                  <div
+                    key={i}
+                    className="z-10 pointer-events-none absolute inset-0"
+                    style={style}
+                  />
+                ));
+              })()}
+
+              {initError && (
+                <div className="absolute inset-0 z-20 flex items-center justify-center bg-paper/95">
+                  <div className="flex flex-col items-center gap-3 max-w-[420px] px-8 text-center">
+                    <AlertCircle size={24} className="text-danger" />
+                    <span className="text-[15px] font-medium text-text-primary">
+                      {t("reader.openFailed")}
+                    </span>
+                    <Button appearance="dawn" variant="secondary" size="sm" onClick={handleCloudBackToLibrary}>
+                      <ArrowLeft size={14} />
+                      <span>{t("reader.backToLibrary")}</span>
                     </Button>
                   </div>
-                )}
-                <span className={`text-[12px] ${isStandaloneWindow ? "opacity-50" : "text-text-muted"}`}>
-                  {pageInfo && pageInfo.total > pageInfo.current
-                    ? t("reader.pagesLeft", { count: pageInfo.total - pageInfo.current })
-                    : ""}
-                </span>
-              </div>
-            </div>
-          </footer>
-        </div>
+                </div>
+              )}
 
-        {sidePanel && (
-          <div
-            onPointerDown={handlePanelResizePointerDown}
-            className="w-1 h-full shrink-0 cursor-col-resize touch-none hover:bg-accent/30 transition-colors z-10"
-          />
+              {!bookReady && !initError && (
+                <div
+                  className="absolute inset-0 z-20 flex items-center justify-center"
+                  style={{ backgroundColor: paperSurfaceStyle.backgroundColor }}
+                >
+                  <div className="flex flex-col items-center gap-3">
+                    <Loader2 size={24} className="animate-spin text-text-tertiary" />
+                    <span className="text-[14px] text-text-secondary">
+                      {t("reader.preparingBook")}
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {/* Bottom floating pills */}
+              {bookReady && !initError && (
+                <ReaderBottomPills
+                  bookFormat={book.format}
+                  isDarkPaper={isDarkPaper}
+                  canGoBack={canGoBack}
+                  jumpBackPage={jumpBackPage}
+                  onGoBack={goBackInHistory}
+                  progress={progress}
+                  progressPillLabel={progressPillLabel}
+                  timeLeftLabel={timeLeftLabel}
+                  zoom={zoom}
+                  fitPercent={fitPercent}
+                  onZoom={handleZoom}
+                  onResetPdfZoom={resetPdfZoom}
+                  onPrev={() => viewRef.current?.prev()}
+                  onNext={() => viewRef.current?.next()}
+                />
+              )}
+            </main>
+
+            {sidePanel && (
+              <div
+                onPointerDown={handlePanelResizePointerDown}
+                className="w-4 -mx-4 h-full shrink-0 cursor-col-resize touch-none flex items-center justify-center group z-10"
+              >
+                <div className="w-1 h-12 rounded-full bg-transparent group-hover:bg-accent/40 transition-colors" />
+              </div>
+            )}
+
+            <div
+              ref={panelRef}
+              className={sidePanel ? "shrink-0 min-w-0 h-full" : "hidden"}
+              style={{
+                width: panelWidth,
+                maxWidth: tocOpen && dualIslandsAllowed ? "calc(100% - 572px)" : "calc(100% - 256px)",
+              }}
+            >
+              <div
+                className={
+                  sidePanel === "ai"
+                    ? "h-full rounded-[24px] overflow-hidden border border-surface-glass-border shadow-glass bg-bg-muted"
+                    : "hidden"
+                }
+              >
+                <AiPanel
+                  bookId={bookId}
+                  bookTitle={book.title}
+                  bookAuthor={book.author}
+                  currentChapter={currentChapter?.title}
+                  context={aiContext}
+                  initialChatId={initialChatId}
+                  onContextConsumed={() => setAiContext(undefined)}
+                  onNavigateToCfi={(cfi) => {
+                    pendingJumpFromPageRef.current = currentPageNumRef.current;
+                    viewRef.current?.goTo(cfi).then(() => {
+                      viewRef.current?.addAnnotation({ value: cfi, color: "#c27aff" });
+                      setTimeout(() => {
+                        viewRef.current?.deleteAnnotation({ value: cfi });
+                      }, 3000);
+                    });
+                  }}
+                />
+              </div>
+              {sidePanel === "bookmarks" && bookId && (
+                <BookmarksPanel
+                  bookId={bookId}
+                  bookTitle={book.title}
+                  currentCfi={currentCfi}
+                  highlightVersion={highlightVersion}
+                  onNavigate={navigateToCfi}
+                  onAsk={(text, cfi) => {
+                    setAiContext({ text, cfi });
+                    openSidePanel("ai");
+                  }}
+                  onRemoveHighlight={(cfiRange) => {
+                    viewRef.current?.deleteAnnotation({ value: cfiRange });
+                  }}
+                  getCurrentCfi={() => currentCfiRef.current}
+                  getCurrentLabel={() => currentChapter?.title || t("common.bookmark")}
+                  getPageFromCfi={() => pageInfo?.current ?? null}
+                />
+              )}
+              {sidePanel === "vocab" && bookId && (
+                <div className="h-full rounded-[24px] overflow-hidden border border-surface-glass-border shadow-glass bg-bg-muted">
+                  <DictionaryPanel
+                    bookId={bookId}
+                    bookTitle={book.title}
+                    onNavigate={(cfi) => {
+                      pendingJumpFromPageRef.current = currentPageNumRef.current;
+                      viewRef.current?.goTo(cfi).then(() => {
+                        viewRef.current?.addAnnotation({ value: cfi, color: "#c27aff" });
+                        setTimeout(() => {
+                          viewRef.current?.deleteAnnotation({ value: cfi });
+                        }, 3000);
+                      });
+                    }}
+                    getPageFromCfi={() => pageInfo?.current ?? null}
+                  />
+                </div>
+              )}
+            </div>
+          </>
         )}
-        <div ref={panelRef} className={sidePanel ? "shrink-0 h-full" : "hidden"} style={{ width: panelWidth }}>
-          <div className={sidePanel === "ai" ? "h-full" : "hidden"}>
-            <AiPanel
-              bookId={bookId}
-              bookTitle={book.title}
-              bookAuthor={book.author}
-              currentChapter={currentChapterIndex >= 0 && currentChapterIndex < chapters.length ? chapters[currentChapterIndex].title : undefined}
-              context={aiContext}
-              initialChatId={initialChatId}
-              onContextConsumed={() => setAiContext(undefined)}
-              onNavigateToCfi={(cfi) => {
-                viewRef.current?.goTo(cfi).then(() => {
-                  viewRef.current?.addAnnotation({ value: cfi, color: "#c27aff" });
-                  setTimeout(() => {
-                    viewRef.current?.deleteAnnotation({ value: cfi });
-                  }, 3000);
-                });
-              }}
-            />
-          </div>
-          {sidePanel === "bookmarks" && bookId && (
-            <BookmarksPanel
-              bookId={bookId}
-              onNavigate={navigateToCfi}
-              getCurrentCfi={() => currentCfiRef.current}
-              getCurrentLabel={() => {
-                const idx = currentChapterIndex;
-                return idx >= 0 && idx < chapters.length
-                  ? chapters[idx].title
-                  : t("common.bookmark");
-              }}
-              getPageFromCfi={() => {
-                // foliate-js uses fraction-based progress, not location indices
-                // Return page info from current state if available
-                return pageInfo?.current ?? null;
-              }}
-            />
-          )}
-          {sidePanel === "vocab" && bookId && (
-            <DictionaryPanel
-              bookId={bookId}
-              bookTitle={book.title}
-              onNavigate={(cfi) => {
-                viewRef.current?.goTo(cfi).then(() => {
-                  viewRef.current?.addAnnotation({ value: cfi, color: "#c27aff" });
-                  setTimeout(() => {
-                    viewRef.current?.deleteAnnotation({ value: cfi });
-                  }, 3000);
-                });
-              }}
-              getPageFromCfi={() => pageInfo?.current ?? null}
-            />
-          )}
-        </div>
       </div>
 
       {/* Context Menu */}
@@ -1601,7 +1832,7 @@ export default function Reader() {
               text: contextMenu.text,
               cfi: contextMenu.cfiRange,
             });
-            setSidePanel("ai");
+            openSidePanel("ai");
             setContextMenu(null);
           }}
           onLookup={() => {
@@ -1639,6 +1870,7 @@ export default function Reader() {
                 textContent: contextMenu.text,
               }).then((hl) => {
                 viewRef.current?.addAnnotation({ value: hl.cfi_range, color: hl.color });
+                setHighlightVersion((v) => v + 1);
               }).catch((err) => console.error("Failed to add highlight:", err));
             }
             setContextMenu(null);
@@ -1698,14 +1930,28 @@ export default function Reader() {
                 viewRef.current?.deleteAnnotation({ value: highlightToolbar.cfiRange });
                 viewRef.current?.addAnnotation({ value: highlightToolbar.cfiRange, color });
                 setHighlightToolbar((prev) => prev ? { ...prev, color } : null);
+                setHighlightVersion((v) => v + 1);
               })
               .catch((err) => console.error("Failed to update highlight color:", err));
           }}
+          onAsk={
+            highlightToolbar.text
+              ? () => {
+                  setAiContext({
+                    text: highlightToolbar.text!,
+                    cfi: highlightToolbar.cfiRange,
+                  });
+                  openSidePanel("ai");
+                  setHighlightToolbar(null);
+                }
+              : undefined
+          }
           onDelete={() => {
             invoke("remove_highlight", { id: highlightToolbar.highlightId })
               .then(() => {
                 viewRef.current?.deleteAnnotation({ value: highlightToolbar.cfiRange });
                 setHighlightToolbar(null);
+                setHighlightVersion((v) => v + 1);
               })
               .catch((err) => console.error("Failed to remove highlight:", err));
           }}
