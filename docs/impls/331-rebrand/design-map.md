@@ -103,6 +103,8 @@ Design source: `quill/desktop/specs/331-rebrand.pen` at revision `323c398` in `Y
 | `paper` / `paper-edge` | `#FDFCFA` / `#15151A0F` | `#1B1A23` / `#FFFFFF12` | Reader page & `In context` quote cards |
 | `reader-shell-sepia-start` / `end` / `glow` | `#F0E7D4` / `#F6F0E5` / `#E8CFA659` | — | Reader shell around the `Sepia` page (`135deg` base, glow at `12% 0%`) |
 | `reader-shell-gray-start` / `end` | `#D2D2D8` / `#D8D8DE` | — | Reader shell around the `Gray` page (`135deg`, no glow) |
+| `reader-island-sepia` / `-border` | `#F7F0E1` / `#E4D8BE` | — | Side panels, pills and popovers on the `Sepia` page |
+| `reader-island-gray` / `-border` | `#EDEDF0` / `#D4D4DA` | — | Side panels, pills and popovers on the `Gray` page |
 | `text-primary` | `#15151A` | `#F3F1F8` | Headings, body copy |
 | `text-secondary` | `#3B3B45` | `#B5B2C4` | Supporting labels, definitions |
 | `text-tertiary` | `#6E6E7A` | `#7E7B8F` | Metadata, hints, section eyebrows |
