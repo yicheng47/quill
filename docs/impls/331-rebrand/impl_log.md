@@ -16,3 +16,6 @@ Dated entries for the [331 Desktop Rebrand program](README.md), newest last. Mis
   1. **Nocturne Dark Mode** joins `#331` as **Mission 8 (`331-m8-nocturne-dark-mode`)** after Dawn Light surfaces ship in M1–M7.
   2. **`#276` Reset All Data** stays out of M4 so M4 avoids `core-review` storage-wipe scope; `#276` lands separately as its own `core-review` PR when needed.
   3. Expanded `docs/impls/331-rebrand/` into a full program subdirectory (`README.md`, `plan.md`, `design-map.md`, `impl_log.md`).
+- **M1 merged** ([#332](https://github.com/yicheng47/quill/pull/332)) after review and macOS live QA ([`331-m1-foundations-mac.md`](../../tests/runs/331-m1-foundations-mac.md)). **M2** and **M6** are unblocked.
+- The `/Users/jason/QuillQA/331/design-refs/` exports are no longer present. The `.pen` file is the only design reference; crews read frames through the Pencil MCP by node ID ([`design-map.md`](design-map.md)).
+- Jason deferred the Windows title bar: Windows keeps its native frame through the rebrand, and the `TopBar` and reader toolbar omit the traffic-light spacer there.

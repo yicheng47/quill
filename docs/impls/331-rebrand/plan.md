@@ -14,7 +14,7 @@ Program record: [`README.md`](README.md). Spec: [`docs/features/331-rebrand.md`]
   - **M6** activates `.dawn` on `Reader` windows (`64px` titlebar), shipping Paper/Sepia/Gray/Dark/PDF-spread surfaces, `Progress pill` + jump-back pill, `Typography` (`Aa`) popover, `Contents` island, `Highlights / Bookmarks` island + inline highlight toolbar, and `Book in iCloud` while keeping existing AI popovers and `AiPanel` functional until M7.
   - **M7** completes the Reader rebrand with `Selection Menu`, `Look Up` / `Explain` / `Translate` popovers, `Words in Book` island, and `Ask Quill` island + thread switcher.
   - **M8** ships **Nocturne Dark Mode** (`.dawn.dark` token variables, `Appearance` `System` / `Light` / `Dark` activation, `BrowserWindow` dark background sync, and cross-surface dark verification).
-- **Crews & design refs.** Confirm the crew with Jason before each mission start (`claude trio` default for live-checked UI missions unless Jason specifies `codex` or `hydrogen`). Reference 2x PNGs and SVGs for all 58 frames live at `/Users/jason/QuillQA/331/design-refs/`.
+- **Crews & design refs.** Confirm the crew with Jason before each mission start (`claude trio` default for live-checked UI missions unless Jason specifies `codex` or `hydrogen`). The design source is `quill/desktop/specs/331-rebrand.pen`; crews read its frames through the Pencil MCP by the node IDs in [`design-map.md`](design-map.md), exporting to their own scratch directory when a reference image helps.
 
 ```mermaid
 flowchart LR
@@ -36,7 +36,7 @@ flowchart LR
 
 ### Mission 1 — Dawn Foundations, Brand Icons, `cmp/*` Primitives & Highlight Queries (`331-m1-foundations`)
 
-- **Branch / PR:** `feat/331-rebrand` in `.worktrees/feat-331-rebrand` → PR [#332](https://github.com/yicheng47/quill/pull/332) (`risk-medium`).
+- **Branch / PR:** `feat/331-rebrand` in `.worktrees/feat-331-rebrand` → PR [#332](https://github.com/yicheng47/quill/pull/332) (`risk-medium`), merged 2026-11-18.
 - **Pencil nodes:** `t405CC`, `Owck6` (`YJzBT`, `Qn3yN`, and core `cmp/*` controls; `cmp/SettingsNav` `eY7n3` lands in M4).
 - **Deliverables:**
   1. Replace `build/icons/*` (`.icns`, `.ico`, PNGs), `assets/icon.png`, and `src/components/QuillLogo.tsx` with the Lens Q mark (`YJzBT.svg` / `Qn3yN.svg`), plus window icon wiring in `electron/main/`.

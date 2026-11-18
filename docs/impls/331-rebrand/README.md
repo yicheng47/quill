@@ -12,11 +12,11 @@ The spec says *what*; this directory says *how, in what order, and what has land
 
 ## Status (2026-11-18)
 
-Design is signed off and pushed to `YeelinksCo/yeelinks_design` `main` at `f7cb448` (`quill/desktop/specs/331-rebrand.pen`, 58 frames/boards + 29 reusable components), with 2x PNG and SVG reference exports materialized at `/Users/jason/QuillQA/331/design-refs/`. **M1** is in flight in `.worktrees/feat-331-rebrand` ([#332](https://github.com/yicheng47/quill/pull/332)).
+Design is signed off and pushed to `YeelinksCo/yeelinks_design` `main` at `f7cb448` (`quill/desktop/specs/331-rebrand.pen`, 58 frames/boards + 29 reusable components). **M1** merged on 2026-11-18 ([#332](https://github.com/yicheng47/quill/pull/332)); **M2** and **M6** are unblocked.
 
 | Mission | Phase | Branch | Waits on | Pull request | State |
 |---|---|---|---|---|---|
-| **M1** — Foundations, Icons, `cmp/*` & Queries | 1 | `feat/331-rebrand` | — | [#332](https://github.com/yicheng47/quill/pull/332) | In progress |
+| **M1** — Foundations, Icons, `cmp/*` & Queries | 1 | `feat/331-rebrand` | — | [#332](https://github.com/yicheng47/quill/pull/332) | Merged |
 | **M2** — `TopBar`, Quiet Updates, `⌘K` (Books), `Library` & Collections | 1 | `feat/331-m2-topbar-and-library` | M1 | — | Planned |
 | **M3** — `Home` Bento, Full `⌘K`, `Highlights`, `Words` (#322) & `Chats` | 2 | `feat/331-m3-main-views` | M2 | — | Planned |
 | **M4** — 9-Tab In-Window `Settings`, `iCloud Sync` States, `Updates` & `About` | 2 | `feat/331-m4-settings-and-updates` | M2 (M3 preferred) | — | Planned |
@@ -35,4 +35,5 @@ Design is signed off and pushed to `YeelinksCo/yeelinks_design` `main` at `f7cb4
 - **Home import states are separate single-state overlays, never side-by-side** (Jason, 2026-11-18): `isDragging` (`BC0DA`) and `importing` (`BUxUo`) each center a single modal card over the blurred scrim, while `importError` (`J6aW1P`) renders as a top-center dismissible toast over an un-dimmed interactive window.
 - **Library includes end-to-end collection creation and population** (Jason, 2026-11-18): users can create, drag-reorder, inline-rename, and non-destructively delete collections inside the `Collections` popover (`Zzvta`), toggle multi-collection checkmarks or quick-create-and-add from `BookContextMenu` (`F7B1gQ`, backed by `list_book_collections`), and populate an empty collection via `Add Books from Library…` (`r532a5`).
 - **iCloud Sync preserves all existing data-safety invariants (`LibrarySyncSettings.tsx`):** `sync_enabled` (durable intent, driving the toggle and cached `DEVICES` visibility) stays separate from `enabled` (session engine, showing `Paused` offline while disabling `Sync now`, `Compact log`, and `Rebuild`), and turning sync off runs the blocking `Copying library to this Mac…` verification modal before repointing storage. Live QA keeps iCloud sync strictly **off**.
+- **Windows keeps its native title bar for now** (Jason, 2026-11-18): the `TopBar` and reader toolbar are designed around macOS traffic lights only. On Windows they render below the native frame without the traffic-light spacer; a custom Windows title bar waits for its own design.
 - **Crew confirmation before every mission start (`AGENTS.md`):** confirm the crew with Jason before launching each Runner mission (claude trio by default for live-checked UI missions unless Jason specifies codex/hydrogen).

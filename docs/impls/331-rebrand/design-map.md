@@ -1,6 +1,6 @@
 # 331 — Design Map & Token Reference (`331-rebrand.pen`)
 
-Design source: `quill/desktop/specs/331-rebrand.pen` at revision `f7cb448` in `YeelinksCo/yeelinks_design`. Local 2x PNG and SVG reference exports live at `/Users/jason/QuillQA/331/design-refs/<nodeId>.png` (plus `YJzBT.svg` and `Qn3yN.svg`).
+Design source: `quill/desktop/specs/331-rebrand.pen` at revision `f7cb448` in `YeelinksCo/yeelinks_design`. Read frames through the Pencil MCP by the node IDs below, after pulling the design repo; when a reference image helps, export or screenshot the node into your own scratch directory. No local exports are kept.
 
 ## 1. Complete Frame & Board Inventory (58 Nodes)
 
