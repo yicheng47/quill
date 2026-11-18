@@ -1,6 +1,6 @@
 # 331 — Design Map & Token Reference (`331-rebrand.pen`)
 
-Design source: `quill/desktop/specs/331-rebrand.pen` at revision `323c398` in `YeelinksCo/yeelinks_design`. Read frames through the Pencil MCP by the node IDs below, after pulling the design repo; when a reference image helps, export or screenshot the node into your own scratch directory. No local exports are kept.
+Design source: `quill/desktop/specs/331-rebrand.pen` at revision `fd7c334` in `YeelinksCo/yeelinks_design`. Read frames through the Pencil MCP by the node IDs below, after pulling the design repo; when a reference image helps, export or screenshot the node into your own scratch directory. No local exports are kept.
 
 ## 1. Complete Frame & Board Inventory (60 Nodes)
 
@@ -118,5 +118,5 @@ Design source: `quill/desktop/specs/331-rebrand.pen` at revision `323c398` in `Y
 | `danger` / `danger-tint` | `#D93F4C` / `#FBE3E5` | `#F26470` / `#D93F4C2B` | Destructive actions, failed sync/auth banners |
 | `hl-yellow` / `green` / `blue` / `pink` / `violet` | `#FBE7A1` / `#CDEFD5` / `#CFE3FF` / `#FAD3E3` / `#E4DEFF` | `#E5B83B66` / `#3BB86E59` / `#4A8FE759` / `#E05A9459` / `#8477EE59` | Reader & Highlights passage colors |
 
-- **Typography:** `--font-ui: "Geist"`, `--font-mono: "Geist Mono"`, `--font-reading: "Literata"`. Headed views use `4px` top body padding above `Header`, `28px` (`font-weight: 600`, `letter-spacing: -0.75px`) page titles with `14px` inline subtitles, and `22px` (`-0.4px`) Settings right-pane section titles.
+- **Typography:** `--font-ui: "Geist"`, `--font-mono: "Geist Mono"`, `--font-reading: "Literata"`. Headed views use `4px` top body padding above `Header`, `28px` (`font-weight: 600`, `letter-spacing: -0.75px`) page titles with `14px` inline subtitles, and `22px` (`-0.4px`) Settings right-pane section titles. Chat messages (user bubbles and Quill replies) are `16px` in `Chats` and `Ask Quill`, line height `1.5` for bubbles and `1.6` for replies; the `Chats` passage quote is `16px` Literata, the `Ask Quill` quote `15px`, and chat composers `15px`.
 - **Radii:** `xs` `4px`, `sm` `6px` (covers), `md` `10px`, `control` `12px` (buttons and icon buttons), `lg` `14px`, `xl` `24px` (glass panes/tiles), `pill` `999px` (tabs, segments, chips, badges).

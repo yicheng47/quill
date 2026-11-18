@@ -2,7 +2,7 @@
 
 GitHub issue: https://github.com/yicheng47/quill/issues/331
 
-Program record: [`docs/impls/331-rebrand/README.md`](../impls/331-rebrand/README.md). Plan: [`docs/impls/331-rebrand/plan.md`](../impls/331-rebrand/plan.md). Design map: [`docs/impls/331-rebrand/design-map.md`](../impls/331-rebrand/design-map.md). Design source: `quill/desktop/specs/331-rebrand.pen` (`323c398` in `YeelinksCo/yeelinks_design`). Regression suite: [`docs/tests/regression/`](../tests/regression/README.md).
+Program record: [`docs/impls/331-rebrand/README.md`](../impls/331-rebrand/README.md). Plan: [`docs/impls/331-rebrand/plan.md`](../impls/331-rebrand/plan.md). Design map: [`docs/impls/331-rebrand/design-map.md`](../impls/331-rebrand/design-map.md). Design source: `quill/desktop/specs/331-rebrand.pen` (`fd7c334` in `YeelinksCo/yeelinks_design`). Regression suite: [`docs/tests/regression/`](../tests/regression/README.md).
 
 ## Motivation
 

@@ -135,7 +135,8 @@ flowchart LR
   2. **Reading Popovers (`xqqVr`, `ZpzpR`, `GWA41`):** `LookupPopover` (`tS7gX`: POS badge, IPA, gloss, definition, `IN THIS PASSAGE`, `Save to Words` + `Copy`), `ExplainPopover` (`Z9ULVg`: passage quote, streaming markdown, `Quote in Chat` + `Copy`), and `TranslationPopover` (`t0TRJ`: target-language chip, source quote, streaming translation, `Show surrounding context` toggle + `Copy`).
   3. **`Words in Book` Island (`xqqVr` right half):** Right glass island (`N0gxbh`) with count badge, search, word cards, and `Open in Words →` deep link.
   4. **`Ask Quill` Island (`ECLAp`, `ZpzpR`, `N4bEY`):** Thread header + `Thread Switcher Dropdown` (`pp2Tt`), starter-prompts empty state (`ZpzpR`), dismissible `Pending Quote Chip` (`hPfVt`), streaming thread + follow-up chips, composer + model/effort footer, and `#325` re-auth / unconfigured cards (`o04NH`).
-  5. Sync `en.json` and `zh.json`.
+  5. **Chat text size:** chat messages are 16px in `Ask Quill` and in the merged `Chats` view (`ChatsView.tsx`, `MessageBubble.tsx`), with the quote and composer sizes in [`design-map.md`](design-map.md) (Typography).
+  6. Sync `en.json` and `zh.json`.
 - **Gate:** `AI-01`..`AI-04`, `AI-07`, `VOC-01`.
 
 ---
