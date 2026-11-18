@@ -127,7 +127,7 @@ export default function TableOfContents({
             type="button"
             onClick={onClose}
             aria-label={t("reader.tocClose")}
-            className="size-7 rounded-full flex items-center justify-center text-text-secondary hover:bg-border-subtle cursor-pointer transition-colors shrink-0"
+            className="size-7 rounded-control flex items-center justify-center text-text-secondary hover:bg-border-subtle cursor-pointer transition-colors shrink-0"
           >
             <X size={14} />
           </button>

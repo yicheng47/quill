@@ -11,6 +11,7 @@ import {
   Settings,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import AiAuthPromptCard from "./AiAuthPromptCard";
 
 interface TranslationPopoverProps {
   x: number;
@@ -46,6 +47,7 @@ function useStreamingTranslation(
   const [content, setContent] = useState("");
   const [streaming, setStreaming] = useState(true);
   const [notConfigured, setNotConfigured] = useState(false);
+  const [reauthRequired, setReauthRequired] = useState(false);
   const [languageNotConfigured, setLanguageNotConfigured] = useState(false);
   const [targetLang, setTargetLang] = useState("");
   const unlistenRef = useRef<UnlistenFn | null>(null);
@@ -56,6 +58,7 @@ function useStreamingTranslation(
     setContent("");
     setStreaming(true);
     setNotConfigured(false);
+    setReauthRequired(false);
     setLanguageNotConfigured(false);
     setTargetLang("");
 
@@ -74,13 +77,28 @@ function useStreamingTranslation(
         (event) => {
           if (cancelled) return;
           if (event.payload.done) {
+            const finalContent = contentRef.current.trim();
+            if (finalContent === "AI_REAUTH_REQUIRED") {
+              setReauthRequired(true);
+              contentRef.current = "";
+              setContent("");
+            } else if (finalContent === "AI_NOT_CONFIGURED") {
+              setNotConfigured(true);
+              contentRef.current = "";
+              setContent("");
+            }
             setStreaming(false);
             unlistenRef.current?.();
             unlistenRef.current = null;
             return;
           }
           contentRef.current += event.payload.delta;
-          setContent(contentRef.current);
+          if (
+            contentRef.current !== "AI_REAUTH_REQUIRED" &&
+            contentRef.current !== "AI_NOT_CONFIGURED"
+          ) {
+            setContent(contentRef.current);
+          }
         }
       );
 
@@ -97,6 +115,8 @@ function useStreamingTranslation(
           const msg = String(err);
           if (msg.includes("AI_NOT_CONFIGURED")) {
             setNotConfigured(true);
+          } else if (msg.includes("AI_REAUTH_REQUIRED")) {
+            setReauthRequired(true);
           } else if (msg.includes("TRANSLATION_LANGUAGE_NOT_CONFIGURED")) {
             setLanguageNotConfigured(true);
           } else {
@@ -116,7 +136,7 @@ function useStreamingTranslation(
     };
   }, [text, context, bookId, cfi]);
 
-  return { content, contentRef, streaming, notConfigured, languageNotConfigured, targetLang };
+  return { content, contentRef, streaming, notConfigured, reauthRequired, languageNotConfigured, targetLang };
 }
 
 export default function TranslationPopover({
@@ -133,12 +153,19 @@ export default function TranslationPopover({
   const [expanded, setExpanded] = useState(false);
   const popoverRef = useRef<HTMLDivElement>(null);
 
-  const { content, contentRef, streaming, notConfigured, languageNotConfigured, targetLang } =
-    useStreamingTranslation(text, context, bookId, cfi);
+  const {
+    content,
+    contentRef,
+    streaming,
+    notConfigured,
+    reauthRequired,
+    languageNotConfigured,
+    targetLang,
+  } = useStreamingTranslation(text, context, bookId, cfi);
 
   const allDone = !streaming;
   const hasContent = !!content;
-  const hasConfigurationError = notConfigured || languageNotConfigured;
+  const hasConfigurationError = reauthRequired || notConfigured || languageNotConfigured;
 
   // Position clamping
   const [pos, setPos] = useState({ left: x, top: y });
@@ -253,22 +280,32 @@ export default function TranslationPopover({
 
         <div className="h-px bg-border/60 mb-3" />
 
-        {/* Not configured state */}
-        {hasConfigurationError ? (
+        {/* Not configured / session expired state */}
+        {reauthRequired || notConfigured ? (
+          <AiAuthPromptCard
+            variant={reauthRequired ? "reauth" : "notConfigured"}
+            embedded
+            onOpenSettings={async () => {
+              onClose();
+              await invoke("open_settings_on_main", { section: "ai" });
+              await focusWindow("main");
+            }}
+          />
+        ) : languageNotConfigured ? (
           <div className="flex flex-col items-center gap-2 py-4 text-center">
             <p className="text-[13px] text-text-muted">
-              {languageNotConfigured ? t("translation.languageNotConfigured") : t("ai.notConfigured")}
+              {t("translation.languageNotConfigured")}
             </p>
             <button
               onClick={async () => {
                 onClose();
-                await invoke("open_settings_on_main", { section: languageNotConfigured ? "tools" : "ai" });
+                await invoke("open_settings_on_main", { section: "tools" });
                 await focusWindow("main");
               }}
               className="flex items-center gap-1.5 text-[13px] font-medium text-accent-text hover:opacity-70 cursor-pointer"
             >
               <Settings size={14} />
-              {languageNotConfigured ? t("translation.openSettings") : t("ai.openSettings")}
+              {t("translation.openSettings")}
             </button>
           </div>
         ) : null}

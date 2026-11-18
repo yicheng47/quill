@@ -448,14 +448,14 @@ export default function CollectionsPopover({
                 setIsCreating(false);
                 setNewName("");
               }}
-              className="px-3 py-1.5 rounded-full bg-surface-chip border border-border-default hover:bg-surface-solid text-[12px] font-medium text-text-primary cursor-pointer transition-colors"
+              className="px-3 py-1.5 rounded-control bg-surface-chip border border-border-default hover:bg-surface-solid text-[12px] font-medium text-text-primary cursor-pointer transition-colors"
             >
               {t("common.cancel")}
             </button>
             <button
               type="submit"
               disabled={!newName.trim() || creatingBusy}
-              className="px-3.5 py-1.5 rounded-full bg-accent hover:bg-accent-hover text-text-on-accent text-[12px] font-semibold inline-flex items-center gap-1.5 cursor-pointer transition-colors disabled:opacity-50"
+              className="px-3.5 py-1.5 rounded-control bg-accent hover:bg-accent-hover text-text-on-accent text-[12px] font-semibold inline-flex items-center gap-1.5 cursor-pointer transition-colors disabled:opacity-50"
             >
               <Plus size={13} />
               <span>{t("collections.createButton")}</span>

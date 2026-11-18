@@ -286,7 +286,7 @@ export default function AddBooksModal({
               type="button"
               aria-label={t("common.cancel")}
               onClick={onClose}
-              className="size-7 rounded-full flex items-center justify-center text-text-tertiary hover:text-text-primary hover:bg-black/[0.05] cursor-pointer transition-colors shrink-0"
+              className="size-7 rounded-control flex items-center justify-center text-text-tertiary hover:text-text-primary hover:bg-black/[0.05] cursor-pointer transition-colors shrink-0"
             >
               <X size={16} />
             </button>
@@ -316,7 +316,7 @@ export default function AddBooksModal({
               <button
                 type="button"
                 onClick={handleRetry}
-                className="px-3.5 py-1.5 rounded-full bg-accent-tint hover:bg-violet-200/80 text-[12px] font-semibold text-accent-on-tint cursor-pointer transition-colors"
+                className="px-3.5 py-1.5 rounded-control bg-accent-tint hover:bg-violet-200/80 text-[12px] font-semibold text-accent-on-tint cursor-pointer transition-colors"
               >
                 {t("collections.pickerRetry")}
               </button>
@@ -392,7 +392,7 @@ export default function AddBooksModal({
                   <button
                     type="button"
                     onClick={handleRetry}
-                    className="px-3 py-1 rounded-full bg-accent-tint hover:bg-violet-200/80 text-[12px] font-semibold text-accent-on-tint cursor-pointer transition-colors"
+                    className="px-3 py-1 rounded-control bg-accent-tint hover:bg-violet-200/80 text-[12px] font-semibold text-accent-on-tint cursor-pointer transition-colors"
                   >
                     {t("collections.pickerRetry")}
                   </button>
@@ -405,7 +405,7 @@ export default function AddBooksModal({
                     <button
                       type="button"
                       onClick={() => void loadMore()}
-                      className="px-3 py-1 rounded-full text-[12px] font-medium text-accent-on-tint hover:bg-accent-tint cursor-pointer transition-colors"
+                      className="px-3 py-1 rounded-control text-[12px] font-medium text-accent-on-tint hover:bg-accent-tint cursor-pointer transition-colors"
                     >
                       {t("collections.pickerLoadMore")}
                     </button>
@@ -424,7 +424,7 @@ export default function AddBooksModal({
             <button
               type="button"
               onClick={onClose}
-              className="px-[13px] py-[7px] rounded-full bg-surface-chip border border-border-default hover:bg-surface-solid text-[12.5px] font-medium text-text-primary cursor-pointer transition-colors"
+              className="px-[13px] py-[7px] rounded-control bg-surface-chip border border-border-default hover:bg-surface-solid text-[12.5px] font-medium text-text-primary cursor-pointer transition-colors"
             >
               {t("common.cancel")}
             </button>
@@ -432,7 +432,7 @@ export default function AddBooksModal({
               type="button"
               disabled={selectedIds.size === 0 || submitting}
               onClick={handleConfirm}
-              className="px-3.5 py-[7px] rounded-full bg-accent hover:bg-accent-hover text-white text-[12.5px] font-semibold cursor-pointer transition-colors disabled:opacity-50"
+              className="px-3.5 py-[7px] rounded-control bg-accent hover:bg-accent-hover text-white text-[12.5px] font-semibold cursor-pointer transition-colors disabled:opacity-50"
             >
               {t("collections.pickerAddCount", { count: selectedIds.size })}
             </button>

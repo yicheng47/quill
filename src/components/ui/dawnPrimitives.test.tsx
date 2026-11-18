@@ -7,7 +7,11 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../../i18n";
 import Button from "./Button";
+import IconButton from "./IconButton";
 import Select from "./Select";
+import { Segment } from "./Segment";
+import Chip from "./Chip";
+import { StatusBadge } from "./Badge";
 import BookCover from "./BookCover";
 import SearchField from "./SearchField";
 import Stepper from "./Stepper";
@@ -82,14 +86,46 @@ describe("Dawn UI primitives scoping and accessibility", () => {
 
     const dawnBtn = container.querySelectorAll("button")[0];
     const dawnSelect = container.querySelectorAll("button")[1];
-    expect(dawnBtn.className).toContain("rounded-full");
+    expect(dawnBtn.className).toContain("rounded-control");
+    expect(dawnBtn.className).not.toContain("rounded-full");
     expect(dawnSelect.className).toContain("dawn-glass");
+    expect(dawnSelect.className).toContain("rounded-full");
 
     await act(async () => {
       dawnSelect.click();
     });
     const dawnMenu = document.body.querySelector(".dawn-menu");
     expect(dawnMenu).not.toBeNull();
+  });
+
+  it("applies 12px control radius to Dawn Button sizes and IconButton while keeping pills", async () => {
+    await act(async () => {
+      root.render(
+        <div>
+          <Button appearance="dawn" size="sm">Small</Button>
+          <Button appearance="dawn" size="md">Medium</Button>
+          <Button appearance="dawn" size="lg">Large</Button>
+          <IconButton aria-label="Search">+</IconButton>
+          <Segment label="All" selected />
+          <Chip>Reading</Chip>
+          <StatusBadge label="Connected" tone="success" />
+        </div>,
+      );
+    });
+
+    const buttons = Array.from(container.querySelectorAll("button"));
+    // sm, md, lg Button + IconButton -> rounded-control
+    for (const controlBtn of buttons.slice(0, 4)) {
+      expect(controlBtn.className).toContain("rounded-control");
+      expect(controlBtn.className).not.toContain("rounded-full");
+    }
+    // Segment + Chip -> stay pill
+    for (const pillBtn of buttons.slice(4, 6)) {
+      expect(pillBtn.className).toContain("rounded-full");
+      expect(pillBtn.className).not.toContain("rounded-control");
+    }
+    const badge = container.querySelector("span.rounded-full");
+    expect(badge?.textContent).toContain("Connected");
   });
 
   it("resets BookCover error state when cover source changes", async () => {

@@ -3,9 +3,12 @@ use base64::Engine;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+use crate::ai::{AI_NOT_CONFIGURED, AI_REAUTH_REQUIRED};
 use crate::error::{AppError, AppResult};
 use crate::secrets::Secrets;
 
@@ -17,6 +20,7 @@ const SCOPES: &str = "openid profile email offline_access";
 const CALLBACK_PORT: u16 = 1455;
 const REDIRECT_URI: &str = "http://localhost:1455/auth/callback";
 const CALLBACK_TIMEOUT_SECS: u64 = 60;
+pub const OAUTH_CANCELLED: &str = "OAUTH_CANCELLED";
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct OAuthTokens {
@@ -24,12 +28,16 @@ pub struct OAuthTokens {
     pub refresh_token: String,
     pub expires_at: u64,
     pub account_id: Option<String>,
+    #[serde(default)]
+    pub email: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct OAuthStatus {
     pub connected: bool,
     pub account_id: Option<String>,
+    #[serde(default)]
+    pub email: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -37,6 +45,88 @@ pub struct TokenResponse {
     pub access_token: String,
     pub refresh_token: Option<String>,
     pub expires_in: Option<u64>,
+    #[serde(default)]
+    pub id_token: Option<String>,
+}
+
+struct PendingLoginEntry {
+    id: u64,
+    cancel_tx: Option<tokio::sync::oneshot::Sender<()>>,
+    released_rx: tokio::sync::watch::Receiver<bool>,
+}
+
+#[derive(Default)]
+pub struct OAuthPendingLogin {
+    inner: Mutex<Option<PendingLoginEntry>>,
+    next_id: AtomicU64,
+}
+
+pub struct PendingLoginGuard<'a> {
+    state: &'a OAuthPendingLogin,
+    id: u64,
+    released_tx: Option<tokio::sync::watch::Sender<bool>>,
+}
+
+impl Drop for PendingLoginGuard<'_> {
+    fn drop(&mut self) {
+        if let Some(tx) = self.released_tx.take() {
+            let _ = tx.send(true);
+        }
+        if let Ok(mut guard) = self.state.inner.lock() {
+            if guard.as_ref().is_some_and(|entry| entry.id == self.id) {
+                *guard = None;
+            }
+        }
+    }
+}
+
+impl OAuthPendingLogin {
+    pub async fn begin(&self) -> (PendingLoginGuard<'_>, tokio::sync::oneshot::Receiver<()>) {
+        self.cancel_and_wait().await;
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
+        let (released_tx, released_rx) = tokio::sync::watch::channel(false);
+        if let Ok(mut guard) = self.inner.lock() {
+            *guard = Some(PendingLoginEntry {
+                id,
+                cancel_tx: Some(cancel_tx),
+                released_rx,
+            });
+        }
+        (
+            PendingLoginGuard {
+                state: self,
+                id,
+                released_tx: Some(released_tx),
+            },
+            cancel_rx,
+        )
+    }
+
+    pub async fn cancel_and_wait(&self) {
+        let (cancel_tx, released_rx) = {
+            let Ok(mut guard) = self.inner.lock() else {
+                return;
+            };
+            let Some(entry) = guard.as_mut() else {
+                return;
+            };
+            (entry.cancel_tx.take(), entry.released_rx.clone())
+        };
+
+        if let Some(tx) = cancel_tx {
+            let _ = tx.send(());
+        }
+
+        if !*released_rx.borrow() {
+            let mut rx = released_rx;
+            let _ = tokio::time::timeout(
+                Duration::from_secs(2),
+                rx.wait_for(|&released| released),
+            )
+            .await;
+        }
+    }
 }
 
 fn now_epoch() -> u64 {
@@ -79,35 +169,56 @@ pub fn build_auth_url(challenge: &str, state: &str) -> String {
     url.to_string()
 }
 
-/// Start a local HTTP server and wait for the OAuth callback.
-/// Returns the authorization code on success.
-pub async fn wait_for_callback(expected_state: &str) -> AppResult<String> {
-    let listener = tokio::net::TcpListener::bind(format!("127.0.0.1:{}", CALLBACK_PORT))
+/// Bind the local HTTP callback listener for OpenAI OAuth.
+pub async fn bind_callback_listener() -> AppResult<tokio::net::TcpListener> {
+    tokio::net::TcpListener::bind(format!("127.0.0.1:{}", CALLBACK_PORT))
         .await
         .map_err(|e| {
             AppError::Other(format!(
                 "Failed to bind callback port {}: {}",
                 CALLBACK_PORT, e
             ))
-        })?;
-    handle_callback(listener, expected_state).await
+        })
+}
+
+/// Start a local HTTP server and wait for the OAuth callback.
+/// Returns the authorization code on success.
+pub async fn wait_for_callback(expected_state: &str) -> AppResult<String> {
+    let listener = bind_callback_listener().await?;
+    let (_tx, mut rx) = tokio::sync::oneshot::channel();
+    handle_callback_cancellable(listener, expected_state, &mut rx).await
 }
 
 /// Accept a single connection on the listener, parse the OAuth callback, and return the code.
-async fn handle_callback(
+/// Dropping or firing `cancel_rx` immediately closes the listener and aborts the wait.
+pub async fn handle_callback_cancellable(
     listener: tokio::net::TcpListener,
     expected_state: &str,
+    cancel_rx: &mut tokio::sync::oneshot::Receiver<()>,
 ) -> AppResult<String> {
-    let (mut stream, _) = tokio::time::timeout(
-        std::time::Duration::from_secs(CALLBACK_TIMEOUT_SECS),
-        listener.accept(),
-    )
-    .await
-    .map_err(|_| AppError::Other("OAuth callback timed out after 60s".to_string()))?
-    .map_err(|e| AppError::Other(format!("Failed to accept connection: {}", e)))?;
+    let accept_res = tokio::select! {
+        biased;
+        _ = &mut *cancel_rx => {
+            drop(listener);
+            return Err(AppError::Other(OAUTH_CANCELLED.to_string()));
+        }
+        res = tokio::time::timeout(
+            Duration::from_secs(CALLBACK_TIMEOUT_SECS),
+            listener.accept(),
+        ) => res,
+    };
+
+    let (mut stream, _) = accept_res
+        .map_err(|_| AppError::Other("OAuth callback timed out after 60s".to_string()))?
+        .map_err(|e| AppError::Other(format!("Failed to accept connection: {}", e)))?;
+    drop(listener);
 
     let mut buf = [0u8; 4096];
-    let n = stream.read(&mut buf).await?;
+    let n = tokio::select! {
+        biased;
+        _ = &mut *cancel_rx => return Err(AppError::Other(OAUTH_CANCELLED.to_string())),
+        res = stream.read(&mut buf) => res?,
+    };
     let request = String::from_utf8_lossy(&buf[..n]);
 
     // Parse first line: "GET /callback?code=xxx&state=yyy HTTP/1.1"
@@ -176,11 +287,32 @@ pub async fn exchange_code(code: &str, verifier: &str) -> AppResult<TokenRespons
         .map_err(|e| AppError::Other(format!("Failed to parse token response: {}", e)))
 }
 
-/// Refresh an expired access token using the refresh token.
-pub async fn refresh_access_token(refresh_token: &str) -> AppResult<TokenResponse> {
+enum RefreshError {
+    Http {
+        status: reqwest::StatusCode,
+        body: String,
+    },
+    Transport(String),
+}
+
+impl RefreshError {
+    fn into_app_error(self) -> AppError {
+        match self {
+            Self::Http { status, body } => {
+                AppError::Other(format!("Token refresh error {}: {}", status, body))
+            }
+            Self::Transport(msg) => AppError::Other(msg),
+        }
+    }
+}
+
+async fn refresh_access_token_at(
+    token_url: &str,
+    refresh_token: &str,
+) -> Result<TokenResponse, RefreshError> {
     let client = reqwest::Client::new();
     let resp = client
-        .post(TOKEN_URL)
+        .post(token_url)
         .form(&[
             ("grant_type", "refresh_token"),
             ("client_id", CLIENT_ID),
@@ -188,34 +320,58 @@ pub async fn refresh_access_token(refresh_token: &str) -> AppResult<TokenRespons
         ])
         .send()
         .await
-        .map_err(|e| AppError::Other(format!("Token refresh request failed: {}", e)))?;
+        .map_err(|e| RefreshError::Transport(format!("Token refresh request failed: {}", e)))?;
 
     if !resp.status().is_success() {
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
-        return Err(AppError::Other(format!(
-            "Token refresh error {}: {}",
-            status, body
-        )));
+        return Err(RefreshError::Http { status, body });
     }
 
     resp.json::<TokenResponse>()
         .await
-        .map_err(|e| AppError::Other(format!("Failed to parse refresh response: {}", e)))
+        .map_err(|e| RefreshError::Transport(format!("Failed to parse refresh response: {}", e)))
 }
 
-/// Decode the chatgpt_account_id from an OpenAI JWT access token.
-pub fn decode_jwt_account_id(access_token: &str) -> Option<String> {
-    let parts: Vec<&str> = access_token.split('.').collect();
+/// Refresh an expired access token using the refresh token.
+pub async fn refresh_access_token(refresh_token: &str) -> AppResult<TokenResponse> {
+    refresh_access_token_at(TOKEN_URL, refresh_token)
+        .await
+        .map_err(RefreshError::into_app_error)
+}
+
+fn decode_jwt_payload(token: &str) -> Option<serde_json::Value> {
+    let parts: Vec<&str> = token.split('.').collect();
     if parts.len() != 3 {
         return None;
     }
     let payload = URL_SAFE_NO_PAD.decode(parts[1]).ok()?;
-    let json: serde_json::Value = serde_json::from_slice(&payload).ok()?;
+    serde_json::from_slice(&payload).ok()
+}
+
+/// Decode the chatgpt_account_id from an OpenAI JWT access token.
+pub fn decode_jwt_account_id(access_token: &str) -> Option<String> {
+    let json = decode_jwt_payload(access_token)?;
     json.get("https://api.openai.com/auth")?
         .get("chatgpt_account_id")?
         .as_str()
         .map(String::from)
+}
+
+/// Decode an email address from an OpenAI OIDC id_token or access_token JWT,
+/// without requiring any extra scopes beyond `openid profile email`.
+pub fn decode_jwt_email(token: &str) -> Option<String> {
+    let json = decode_jwt_payload(token)?;
+    let raw = json
+        .get("email")
+        .and_then(|v| v.as_str())
+        .or_else(|| {
+            json.get("https://api.openai.com/profile")
+                .and_then(|p| p.get("email"))
+                .and_then(|v| v.as_str())
+        })?;
+    let trimmed = raw.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
 }
 
 pub fn save_tokens(secrets: &Secrets, tokens: &OAuthTokens) -> AppResult<()> {
@@ -225,15 +381,24 @@ pub fn save_tokens(secrets: &Secrets, tokens: &OAuthTokens) -> AppResult<()> {
     if let Some(ref id) = tokens.account_id {
         secrets.set("oauth_account_id", id)?;
     }
+    if let Some(ref email) = tokens.email {
+        secrets.set("oauth_email", email)?;
+    }
     Ok(())
 }
 
 pub fn load_tokens(secrets: &Secrets) -> Option<OAuthTokens> {
+    let access_token = secrets.get("oauth_access_token")?;
+    let email = secrets
+        .get("oauth_email")
+        .filter(|e| !e.trim().is_empty())
+        .or_else(|| decode_jwt_email(&access_token));
     Some(OAuthTokens {
-        access_token: secrets.get("oauth_access_token")?,
+        access_token,
         refresh_token: secrets.get("oauth_refresh_token")?,
         expires_at: secrets.get("oauth_expires_at")?.parse().ok()?,
         account_id: secrets.get("oauth_account_id"),
+        email,
     })
 }
 
@@ -246,22 +411,59 @@ pub fn clear_tokens(secrets: &Secrets) -> AppResult<()> {
 /// This is the main entry point called by AI commands.
 /// Returns (access_token, account_id).
 pub async fn get_valid_token(secrets: &Secrets) -> AppResult<(String, Option<String>)> {
-    let tokens = load_tokens(secrets).ok_or_else(|| {
-        AppError::Other("AI_NOT_CONFIGURED".to_string())
-    })?;
+    get_valid_token_with_url(secrets, TOKEN_URL).await
+}
+
+async fn get_valid_token_with_url(
+    secrets: &Secrets,
+    token_url: &str,
+) -> AppResult<(String, Option<String>)> {
+    let tokens = load_tokens(secrets)
+        .ok_or_else(|| AppError::Other(AI_NOT_CONFIGURED.to_string()))?;
+
+    if tokens.refresh_token.trim().is_empty() {
+        if let Err(err) = clear_tokens(secrets) {
+            log::warn!("oauth: failed to clear tokens for empty refresh token: {err}");
+        }
+        return Err(AppError::Other(AI_REAUTH_REQUIRED.to_string()));
+    }
 
     if tokens.expires_at > now_epoch() + 60 {
         return Ok((tokens.access_token, tokens.account_id));
     }
 
     // Token expired — refresh it
-    let response = refresh_access_token(&tokens.refresh_token).await?;
+    let response = match refresh_access_token_at(token_url, &tokens.refresh_token).await {
+        Ok(resp) => resp,
+        Err(RefreshError::Http { status, .. })
+            if status == reqwest::StatusCode::BAD_REQUEST
+                || status == reqwest::StatusCode::UNAUTHORIZED =>
+        {
+            log::warn!("oauth: token refresh rejected with status {status}; clearing stored session");
+            if let Err(err) = clear_tokens(secrets) {
+                log::warn!("oauth: failed to clear tokens after refresh {status}: {err}");
+            }
+            return Err(AppError::Other(AI_REAUTH_REQUIRED.to_string()));
+        }
+        Err(err) => return Err(err.into_app_error()),
+    };
+
     let now = now_epoch();
+    let email = response
+        .id_token
+        .as_deref()
+        .and_then(decode_jwt_email)
+        .or_else(|| decode_jwt_email(&response.access_token))
+        .or(tokens.email);
     let new_tokens = OAuthTokens {
         access_token: response.access_token.clone(),
-        refresh_token: response.refresh_token.unwrap_or(tokens.refresh_token),
+        refresh_token: response
+            .refresh_token
+            .filter(|rt| !rt.trim().is_empty())
+            .unwrap_or(tokens.refresh_token),
         expires_at: now + response.expires_in.unwrap_or(3600),
         account_id: decode_jwt_account_id(&response.access_token).or(tokens.account_id),
+        email,
     };
 
     save_tokens(secrets, &new_tokens)?;
@@ -272,6 +474,33 @@ pub async fn get_valid_token(secrets: &Secrets) -> AppResult<(String, Option<Str
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+
+    fn make_jwt(payload: serde_json::Value) -> String {
+        let header = URL_SAFE_NO_PAD.encode(b"{}");
+        let payload_b64 = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&payload).unwrap());
+        let signature = URL_SAFE_NO_PAD.encode(b"fake_sig");
+        format!("{}.{}.{}", header, payload_b64, signature)
+    }
+
+    async fn spawn_mock_token_server(status_line: &str, body: &str) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let status_line = status_line.to_string();
+        let body = body.to_string();
+        tokio::spawn(async move {
+            if let Ok((mut stream, _)) = listener.accept().await {
+                let mut buf = [0u8; 4096];
+                let _ = stream.read(&mut buf).await;
+                let resp = format!(
+                    "HTTP/1.1 {status_line}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(resp.as_bytes()).await;
+            }
+        });
+        format!("http://{}/oauth/token", addr)
+    }
 
     #[test]
     fn test_generate_pkce_format() {
@@ -342,16 +571,11 @@ mod tests {
 
     #[test]
     fn test_decode_jwt_account_id_valid() {
-        // Build a fake JWT: header.payload.signature
-        let payload = serde_json::json!({
+        let token = make_jwt(serde_json::json!({
             "https://api.openai.com/auth": {
                 "chatgpt_account_id": "acct_abc123"
             }
-        });
-        let header = URL_SAFE_NO_PAD.encode(b"{}");
-        let payload_b64 = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&payload).unwrap());
-        let signature = URL_SAFE_NO_PAD.encode(b"fake_sig");
-        let token = format!("{}.{}.{}", header, payload_b64, signature);
+        }));
 
         assert_eq!(
             decode_jwt_account_id(&token),
@@ -361,12 +585,7 @@ mod tests {
 
     #[test]
     fn test_decode_jwt_account_id_missing_field() {
-        let payload = serde_json::json!({"sub": "user123"});
-        let header = URL_SAFE_NO_PAD.encode(b"{}");
-        let payload_b64 = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&payload).unwrap());
-        let sig = URL_SAFE_NO_PAD.encode(b"sig");
-        let token = format!("{}.{}.{}", header, payload_b64, sig);
-
+        let token = make_jwt(serde_json::json!({"sub": "user123"}));
         assert_eq!(decode_jwt_account_id(&token), None);
     }
 
@@ -375,6 +594,24 @@ mod tests {
         assert_eq!(decode_jwt_account_id("not.a.jwt"), None);
         assert_eq!(decode_jwt_account_id("only_one_part"), None);
         assert_eq!(decode_jwt_account_id("two.parts"), None);
+    }
+
+    #[test]
+    fn test_decode_jwt_email() {
+        let oidc = make_jwt(serde_json::json!({ "email": "reader@example.com" }));
+        assert_eq!(decode_jwt_email(&oidc), Some("reader@example.com".to_string()));
+
+        let profile = make_jwt(serde_json::json!({
+            "https://api.openai.com/profile": { "email": "profile@example.com" }
+        }));
+        assert_eq!(
+            decode_jwt_email(&profile),
+            Some("profile@example.com".to_string())
+        );
+
+        let empty = make_jwt(serde_json::json!({ "email": "   " }));
+        assert_eq!(decode_jwt_email(&empty), None);
+        assert_eq!(decode_jwt_email("bad"), None);
     }
 
     #[test]
@@ -390,6 +627,7 @@ mod tests {
             refresh_token: "refresh_456".to_string(),
             expires_at: 1700000000,
             account_id: Some("acct_789".to_string()),
+            email: Some("reader@example.com".to_string()),
         };
         save_tokens(&secrets, &tokens).unwrap();
 
@@ -398,6 +636,7 @@ mod tests {
         assert_eq!(loaded.refresh_token, "refresh_456");
         assert_eq!(loaded.expires_at, 1700000000);
         assert_eq!(loaded.account_id, Some("acct_789".to_string()));
+        assert_eq!(loaded.email, Some("reader@example.com".to_string()));
 
         // Overwrite (upsert)
         let tokens2 = OAuthTokens {
@@ -405,6 +644,7 @@ mod tests {
             refresh_token: "new_refresh".to_string(),
             expires_at: 1800000000,
             account_id: None,
+            email: None,
         };
         save_tokens(&secrets, &tokens2).unwrap();
 
@@ -417,6 +657,7 @@ mod tests {
         // Clear
         clear_tokens(&secrets).unwrap();
         assert!(load_tokens(&secrets).is_none());
+        assert!(secrets.get("oauth_email").is_none());
     }
 
     #[test]
@@ -428,12 +669,177 @@ mod tests {
             refresh_token: "rt".to_string(),
             expires_at: 999,
             account_id: None,
+            email: None,
         };
         save_tokens(&secrets, &tokens).unwrap();
 
         let loaded = load_tokens(&secrets).unwrap();
         assert_eq!(loaded.access_token, "at");
         assert_eq!(loaded.account_id, None);
+        assert_eq!(loaded.email, None);
+    }
+
+    #[tokio::test]
+    async fn test_get_valid_token_empty_refresh_token_clears_and_returns_sentinel() {
+        let cases = [
+            ("expired empty", 0, ""),
+            ("in-window empty", now_epoch() + 3600, ""),
+            ("in-window whitespace", now_epoch() + 3600, " \n\t "),
+        ];
+
+        for (label, expires_at, refresh_token) in cases {
+            let secrets = Secrets::init_in_memory().unwrap();
+            save_tokens(
+                &secrets,
+                &OAuthTokens {
+                    access_token: "access_at".to_string(),
+                    refresh_token: refresh_token.to_string(),
+                    expires_at,
+                    account_id: Some("acct".to_string()),
+                    email: Some("reader@example.com".to_string()),
+                },
+            )
+            .unwrap();
+
+            let err = get_valid_token_with_url(&secrets, "http://127.0.0.1:1")
+                .await
+                .unwrap_err();
+            assert_eq!(err.to_string(), AI_REAUTH_REQUIRED, "case {label}");
+            assert!(load_tokens(&secrets).is_none(), "case {label} must clear tokens");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_get_valid_token_refresh_400_clears_tokens_and_returns_sentinel() {
+        let secrets = Secrets::init_in_memory().unwrap();
+        save_tokens(
+            &secrets,
+            &OAuthTokens {
+                access_token: "stale_at".to_string(),
+                refresh_token: "dead_rt".to_string(),
+                expires_at: 0,
+                account_id: Some("acct".to_string()),
+                email: Some("reader@example.com".to_string()),
+            },
+        )
+        .unwrap();
+        let url = spawn_mock_token_server(
+            "400 Bad Request",
+            r#"{"error":"invalid_grant","error_description":"refresh token revoked"}"#,
+        )
+        .await;
+
+        let err = get_valid_token_with_url(&secrets, &url).await.unwrap_err();
+        assert_eq!(err.to_string(), AI_REAUTH_REQUIRED);
+        assert!(!err.to_string().contains("invalid_grant"));
+        assert!(load_tokens(&secrets).is_none());
+    }
+
+    #[tokio::test]
+    async fn test_get_valid_token_refresh_401_clears_tokens_and_returns_sentinel() {
+        let secrets = Secrets::init_in_memory().unwrap();
+        save_tokens(
+            &secrets,
+            &OAuthTokens {
+                access_token: "stale_at".to_string(),
+                refresh_token: "revoked_rt".to_string(),
+                expires_at: 0,
+                account_id: Some("acct".to_string()),
+                email: None,
+            },
+        )
+        .unwrap();
+        let url = spawn_mock_token_server("401 Unauthorized", r#"{"error":"unauthorized"}"#).await;
+
+        let err = get_valid_token_with_url(&secrets, &url).await.unwrap_err();
+        assert_eq!(err.to_string(), AI_REAUTH_REQUIRED);
+        assert!(!err.to_string().contains("unauthorized"));
+        assert!(load_tokens(&secrets).is_none());
+    }
+
+    #[tokio::test]
+    async fn test_get_valid_token_refresh_5xx_and_403_and_network_keep_tokens() {
+        for (status_line, body) in [
+            ("503 Service Unavailable", "upstream busy"),
+            ("403 Forbidden", "forbidden"),
+        ] {
+            let secrets = Secrets::init_in_memory().unwrap();
+            save_tokens(
+                &secrets,
+                &OAuthTokens {
+                    access_token: "stale_at".to_string(),
+                    refresh_token: "valid_rt".to_string(),
+                    expires_at: 0,
+                    account_id: Some("acct".to_string()),
+                    email: None,
+                },
+            )
+            .unwrap();
+            let url = spawn_mock_token_server(status_line, body).await;
+
+            let err = get_valid_token_with_url(&secrets, &url).await.unwrap_err();
+            assert_ne!(err.to_string(), AI_REAUTH_REQUIRED);
+            assert!(load_tokens(&secrets).is_some(), "tokens must survive {status_line}");
+        }
+
+        // Network failure must not log the user out
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+
+        let secrets = Secrets::init_in_memory().unwrap();
+        save_tokens(
+            &secrets,
+            &OAuthTokens {
+                access_token: "stale_at".to_string(),
+                refresh_token: "valid_rt".to_string(),
+                expires_at: 0,
+                account_id: Some("acct".to_string()),
+                email: None,
+            },
+        )
+        .unwrap();
+
+        let err = get_valid_token_with_url(&secrets, &format!("http://127.0.0.1:{port}/oauth/token"))
+            .await
+            .unwrap_err();
+        assert_ne!(err.to_string(), AI_REAUTH_REQUIRED);
+        assert!(load_tokens(&secrets).is_some());
+    }
+
+    #[tokio::test]
+    async fn test_get_valid_token_refresh_success_updates_tokens_and_email() {
+        let secrets = Secrets::init_in_memory().unwrap();
+        save_tokens(
+            &secrets,
+            &OAuthTokens {
+                access_token: "stale_at".to_string(),
+                refresh_token: "old_rt".to_string(),
+                expires_at: 0,
+                account_id: None,
+                email: None,
+            },
+        )
+        .unwrap();
+        let new_at = make_jwt(serde_json::json!({
+            "https://api.openai.com/auth": { "chatgpt_account_id": "acct_new" }
+        }));
+        let id_tok = make_jwt(serde_json::json!({ "email": "fresh@example.com" }));
+        let body = serde_json::json!({
+            "access_token": new_at,
+            "refresh_token": "new_rt",
+            "expires_in": 3600,
+            "id_token": id_tok,
+        })
+        .to_string();
+        let url = spawn_mock_token_server("200 OK", &body).await;
+
+        let (token, account_id) = get_valid_token_with_url(&secrets, &url).await.unwrap();
+        assert_eq!(token, new_at);
+        assert_eq!(account_id.as_deref(), Some("acct_new"));
+        let saved = load_tokens(&secrets).unwrap();
+        assert_eq!(saved.refresh_token, "new_rt");
+        assert_eq!(saved.email.as_deref(), Some("fresh@example.com"));
     }
 
     #[tokio::test]
@@ -444,7 +850,8 @@ mod tests {
         let state = "expected_state_123";
 
         let handle = tokio::spawn(async move {
-            handle_callback(listener, state).await
+            let (_tx, mut rx) = tokio::sync::oneshot::channel();
+            handle_callback_cancellable(listener, state, &mut rx).await
         });
 
         let mut stream = tokio::net::TcpStream::connect(format!("127.0.0.1:{}", port))
@@ -466,7 +873,8 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
 
         let handle = tokio::spawn(async move {
-            handle_callback(listener, "correct_state").await
+            let (_tx, mut rx) = tokio::sync::oneshot::channel();
+            handle_callback_cancellable(listener, "correct_state", &mut rx).await
         });
 
         let mut stream = tokio::net::TcpStream::connect(format!("127.0.0.1:{}", port))
@@ -478,5 +886,30 @@ mod tests {
         let result = handle.await.unwrap();
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("state mismatch"));
+    }
+
+    #[tokio::test]
+    async fn test_cancel_pending_login_aborts_wait_and_frees_port() {
+        let pending = Arc::new(OAuthPendingLogin::default());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let (tx_started, rx_started) = tokio::sync::oneshot::channel();
+        let pending_login = Arc::clone(&pending);
+        let login_task = tokio::spawn(async move {
+            let (_guard, mut cancel_rx) = pending_login.begin().await;
+            let _ = tx_started.send(());
+            handle_callback_cancellable(listener, "state_abc", &mut cancel_rx).await
+        });
+
+        rx_started.await.unwrap();
+        pending.cancel_and_wait().await;
+
+        // Listener must already be dropped and port immediately re-bindable.
+        let rebound = tokio::net::TcpListener::bind(format!("127.0.0.1:{}", port)).await;
+        assert!(rebound.is_ok(), "callback port should be freed immediately on cancel");
+
+        let login_res = login_task.await.unwrap();
+        assert_eq!(login_res.unwrap_err().to_string(), OAUTH_CANCELLED);
     }
 }

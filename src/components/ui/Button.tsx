@@ -37,9 +37,9 @@ const legacyVariantStyles: Record<ButtonVariant, string> = {
 };
 
 const dawnSizeStyles: Record<ButtonSize, string> = {
-  sm: "px-3.5 py-2 text-[13px] rounded-full gap-1.5 leading-none",
-  md: "px-5 py-3 text-[14px] rounded-full gap-2 leading-none",
-  lg: "px-6 py-3.5 text-[14px] rounded-full gap-2 leading-none",
+  sm: "px-3.5 py-2 text-[13px] rounded-control gap-1.5 leading-none",
+  md: "px-5 py-3 text-[14px] rounded-control gap-2 leading-none",
+  lg: "px-6 py-3.5 text-[14px] rounded-control gap-2 leading-none",
 };
 
 const legacySizeStyles: Record<ButtonSize, string> = {

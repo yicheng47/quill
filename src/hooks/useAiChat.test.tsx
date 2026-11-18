@@ -292,4 +292,106 @@ describe("useAiChat", () => {
     expect(mocks.invoke.mock.calls.some(([cmd]) => cmd === "ai_chat")).toBe(false);
     expect(listeners.has("ai-stream-chunk")).toBe(false);
   });
+
+  it("maps rejected AI_REAUTH_REQUIRED error and never persists sentinel", async () => {
+    mockCommands([{ id: "chat-1", messages: [] }]);
+    const baseImpl = mocks.invoke.getMockImplementation()!;
+    mocks.invoke.mockImplementation((command, args) => {
+      if (command === "ai_chat") {
+        return Promise.reject(new Error("AI_REAUTH_REQUIRED"));
+      }
+      return baseImpl(command, args);
+    });
+
+    await act(async () => {
+      root.render(<AiChatHarness />);
+    });
+    await act(async () => {
+      await current.initialize();
+    });
+
+    await act(async () => {
+      await current.send("Explain Chapter 3");
+    });
+
+    const assistant = current.messages[current.messages.length - 1];
+    expect(assistant.role).toBe("assistant");
+    expect(assistant.content).toBe("AI_REAUTH_REQUIRED");
+    const assistantSaves = mocks.invoke.mock.calls.filter(
+      ([cmd, args]) => cmd === "save_chat_message" && (args as { role?: string })?.role === "assistant",
+    );
+    expect(assistantSaves).toHaveLength(0);
+  });
+
+  it("skips persistence for streamed AI_REAUTH_REQUIRED and ignores sentinel in title stream", async () => {
+    mockCommands();
+
+    await act(async () => {
+      root.render(<AiChatHarness />);
+    });
+    await act(async () => {
+      await current.initialize();
+    });
+
+    await withoutActFlush(() => current.send("First message"));
+
+    const titleEventName = [...listeners.keys()].find((k) => k.startsWith("ai-title-chunk-"));
+    expect(titleEventName).toBeDefined();
+
+    await act(async () => {
+      listeners.get(titleEventName!)?.({ payload: { delta: "AI_REAUTH_REQUIRED", done: false } });
+      listeners.get(titleEventName!)?.({ payload: { delta: "", done: true } });
+      listeners.get("ai-stream-chunk")?.({ payload: { delta: "AI_REAUTH_REQUIRED", done: false } });
+      listeners.get("ai-stream-chunk")?.({ payload: { delta: "", done: true } });
+    });
+
+    const assistant = current.messages[current.messages.length - 1];
+    expect(assistant.content).toBe("AI_REAUTH_REQUIRED");
+    const assistantSaves = mocks.invoke.mock.calls.filter(
+      ([cmd, args]) => cmd === "save_chat_message" && (args as { role?: string })?.role === "assistant",
+    );
+    expect(assistantSaves).toHaveLength(0);
+    const renameCalls = mocks.invoke.mock.calls.filter(([cmd]) => cmd === "rename_chat");
+    expect(renameCalls.length).toBeGreaterThanOrEqual(1);
+    expect((renameCalls[0]?.[1] as { title?: string })?.title).toBe("First message");
+  });
+
+  it("preserves AI_REAUTH_REQUIRED on first message when first auth check clears the session", async () => {
+    mockCommands();
+    const baseImpl = mocks.invoke.getMockImplementation()!;
+    let sessionCleared = false;
+    const authCommandOrder: string[] = [];
+
+    mocks.invoke.mockImplementation((command, args) => {
+      if (command === "ai_chat" || command === "ai_generate_title") {
+        authCommandOrder.push(command);
+        if (!sessionCleared) {
+          sessionCleared = true;
+          return Promise.reject(new Error("AI_REAUTH_REQUIRED"));
+        }
+        return Promise.reject(new Error("AI_NOT_CONFIGURED"));
+      }
+      return baseImpl(command, args);
+    });
+
+    await act(async () => {
+      root.render(<AiChatHarness />);
+    });
+    await act(async () => {
+      await current.initialize();
+    });
+
+    await act(async () => {
+      await current.send("My very first question");
+    });
+
+    expect(authCommandOrder).toEqual(["ai_chat"]);
+    const assistant = current.messages[current.messages.length - 1];
+    expect(assistant.role).toBe("assistant");
+    expect(assistant.content).toBe("AI_REAUTH_REQUIRED");
+    const assistantSaves = mocks.invoke.mock.calls.filter(
+      ([cmd, args]) => cmd === "save_chat_message" && (args as { role?: string })?.role === "assistant",
+    );
+    expect(assistantSaves).toHaveLength(0);
+  });
 });

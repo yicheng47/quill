@@ -154,7 +154,7 @@ export default function BookmarksPanel({
         <button
           type="button"
           onClick={handleAddBookmark}
-          className={`inline-flex items-center gap-1.5 h-7 px-[11px] rounded-full text-[12px] cursor-pointer transition-colors shrink-0 ${
+          className={`inline-flex items-center gap-1.5 h-7 px-[11px] rounded-control text-[12px] cursor-pointer transition-colors shrink-0 ${
             isCurrentBookmarked
               ? "bg-accent-tint text-accent-on-tint font-semibold"
               : "bg-surface-solid border border-border-default text-text-primary font-medium hover:bg-surface-inset"
@@ -370,7 +370,7 @@ export default function BookmarksPanel({
                         e.stopPropagation();
                         void removeBookmark(bookmark.id);
                       }}
-                      className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 p-1 rounded-full text-text-tertiary hover:text-danger hover:bg-danger-tint transition-all cursor-pointer shrink-0"
+                      className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 p-1 rounded-control text-text-tertiary hover:text-danger hover:bg-danger-tint transition-all cursor-pointer shrink-0"
                     >
                       <Trash2 size={13.5} />
                     </button>

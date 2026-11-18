@@ -177,6 +177,7 @@ impl ModelListCache {
 static CACHE: ModelListCache = ModelListCache::new();
 
 async fn fetch_remote(
+    secrets: &Secrets,
     base_url: &str,
     token: &str,
     account_id: Option<&str>,
@@ -201,10 +202,15 @@ async fn fetch_remote(
         .await
         .map_err(|e| AppError::Ai(e.to_string()))?;
     if !response.status().is_success() {
-        return Err(AppError::Ai(format!(
-            "models fetch error {}",
-            response.status()
-        )));
+        let status = response.status();
+        if status == reqwest::StatusCode::UNAUTHORIZED {
+            log::warn!("codex models: received 401 Unauthorized; clearing stored OAuth tokens");
+            if let Err(err) = crate::ai::oauth::clear_tokens(secrets) {
+                log::warn!("codex models: failed to clear OAuth tokens: {err}");
+            }
+            return Err(AppError::Other(crate::ai::AI_REAUTH_REQUIRED.to_string()));
+        }
+        return Err(AppError::Ai(format!("models fetch error {}", status)));
     }
 
     let body = response
@@ -238,7 +244,7 @@ async fn resolve(secrets: &Secrets, base_url: &str, cache: &ModelListCache) -> C
         };
     }
 
-    match fetch_remote(base_url, &token, account_id.as_deref()).await {
+    match fetch_remote(secrets, base_url, &token, account_id.as_deref()).await {
         Ok(models) if !models.is_empty() => {
             cache.put_at(account_id.as_deref(), &models, Instant::now());
             CodexModelList {
@@ -503,9 +509,66 @@ mod tests {
                 refresh_token: "rt".to_string(),
                 expires_at: u64::MAX,
                 account_id: Some(account_id.to_string()),
+                email: None,
             },
         )
         .unwrap();
+    }
+
+    async fn spawn_mock_models_server(status_line: &str, body: &str) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let status_line = status_line.to_string();
+        let body = body.to_string();
+        tokio::spawn(async move {
+            if let Ok((mut stream, _)) = listener.accept().await {
+                let mut buf = [0u8; 4096];
+                let _ = stream.read(&mut buf).await;
+                let resp = format!(
+                    "HTTP/1.1 {status_line}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(resp.as_bytes()).await;
+            }
+        });
+        format!("http://{}", addr)
+    }
+
+    #[tokio::test]
+    async fn fetch_remote_401_clears_tokens_and_returns_sentinel_while_resolve_falls_back() {
+        let secrets = Secrets::init_in_memory().unwrap();
+        save_test_tokens(&secrets, "acct");
+        let base_url = spawn_mock_models_server("401 Unauthorized", r#"{"error":"revoked"}"#).await;
+
+        let err = fetch_remote(&secrets, &base_url, "test_token", Some("acct"))
+            .await
+            .unwrap_err();
+        assert_eq!(err.to_string(), crate::ai::AI_REAUTH_REQUIRED);
+        assert!(crate::ai::oauth::load_tokens(&secrets).is_none());
+
+        // Also test via resolve() directly
+        save_test_tokens(&secrets, "acct");
+        let base_url_2 =
+            spawn_mock_models_server("401 Unauthorized", r#"{"error":"revoked"}"#).await;
+        let cache = ModelListCache::new();
+        let list = resolve(&secrets, &base_url_2, &cache).await;
+        assert!(list.from_fallback);
+        assert_eq!(list.models, fallback_models());
+        assert!(crate::ai::oauth::load_tokens(&secrets).is_none());
+    }
+
+    #[tokio::test]
+    async fn resolve_403_falls_back_without_clearing_tokens() {
+        let secrets = Secrets::init_in_memory().unwrap();
+        save_test_tokens(&secrets, "acct");
+        let base_url = spawn_mock_models_server("403 Forbidden", r#"{"error":"forbidden"}"#).await;
+        let cache = ModelListCache::new();
+
+        let list = resolve(&secrets, &base_url, &cache).await;
+        assert!(list.from_fallback);
+        assert_eq!(list.models, fallback_models());
+        assert!(crate::ai::oauth::load_tokens(&secrets).is_some());
     }
 
     #[tokio::test]

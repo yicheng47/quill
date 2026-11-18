@@ -3,7 +3,6 @@ import { useTranslation } from "react-i18next";
 import { getAppVersion } from "../../platform";
 import { useSettings } from "../../hooks/useSettings";
 import { isMacOS } from "../../lib/platformEnv";
-import Button from "../ui/Button";
 import Toast from "../ui/Toast";
 import SettingsNav from "./SettingsNav";
 import GeneralSettings from "./GeneralSettings";
@@ -19,6 +18,7 @@ import { normalizeSettingsSection, type SettingsSection } from "./types";
 
 interface SettingsViewProps {
   section: SettingsSection;
+  visitSeq?: number;
   onSelectSection: (section: SettingsSection) => void;
   onClose: () => void;
   onBlockingChange?: (blocking: boolean) => void;
@@ -66,6 +66,7 @@ const SECTION_META: Record<SettingsSection, { titleKey: string; subtitleKey: str
 
 export default function SettingsView({
   section,
+  visitSeq = 0,
   onSelectSection,
   onClose,
   onBlockingChange,
@@ -76,10 +77,8 @@ export default function SettingsView({
   const activeSection = normalizeSettingsSection(section, isMac);
   const { settings, loading, save, saveBulk } = useSettings();
   const [appVersion, setAppVersion] = useState("");
-  const [aiDirty, setAiDirty] = useState(false);
   const [blockingSync, setBlockingSync] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
-  const aiSaveRef = useRef<(() => void) | null>(null);
   const toastTimerRef = useRef<number | null>(null);
   const paneRef = useRef<HTMLDivElement>(null);
 
@@ -175,40 +174,19 @@ export default function SettingsView({
           className="flex-1 min-w-0 h-full dawn-glass rounded-[24px] overflow-y-auto px-8 py-9"
         >
           <div className="w-full max-w-[720px] mx-auto flex flex-col gap-7">
-            <div className="flex items-start justify-between gap-4">
-              <div className="flex flex-col gap-1">
-                <h2 className="text-[22px] font-semibold tracking-[-0.4px] leading-tight text-text-primary">
-                  {t(sectionMeta.titleKey)}
-                </h2>
-                <p className="text-[14px] text-text-tertiary">
-                  {t(sectionMeta.subtitleKey)}
-                </p>
-              </div>
-
-              {activeSection === "ai" && (
-                <Button
-                  variant="primary"
-                  size="sm"
-                  disabled={!aiDirty}
-                  onClick={() => aiSaveRef.current?.()}
-                >
-                  {t("common.save")}
-                </Button>
-              )}
+            <div className="flex flex-col gap-1">
+              <h2 className="text-[22px] font-semibold tracking-[-0.4px] leading-tight text-text-primary">
+                {t(sectionMeta.titleKey)}
+              </h2>
+              <p className="text-[14px] text-text-tertiary">
+                {t(sectionMeta.subtitleKey)}
+              </p>
             </div>
 
             {activeSection === "general" && <GeneralSettings {...sectionProps} />}
             {activeSection === "appearance" && <AppearanceSettings />}
             {activeSection === "reading" && <ReadingSettings {...sectionProps} />}
-            {activeSection === "ai" && (
-              <AiSettings
-                {...sectionProps}
-                onSaveRef={(fn) => {
-                  aiSaveRef.current = fn;
-                }}
-                onDirtyChange={setAiDirty}
-              />
-            )}
+            {activeSection === "ai" && <AiSettings {...sectionProps} refreshNonce={visitSeq} />}
             {activeSection === "tools" && <ToolsSettings {...sectionProps} />}
             {activeSection === "librarySync" && (
               <LibrarySyncSettings

@@ -9,7 +9,6 @@ import {
   Loader2,
   MoreHorizontal,
   PenLine,
-  Settings,
   Sparkles,
   Trash2,
 } from "lucide-react";
@@ -21,6 +20,7 @@ import { useAllChats, useChatCounts, type ChatSummary } from "../hooks/useChats"
 import { invoke } from "../platform";
 import { openReaderWindow } from "../utils/openReaderWindow";
 import { formatMonthHeading, formatShortDate } from "../utils/vocabParse";
+import AiAuthPromptCard from "./AiAuthPromptCard";
 import type { SettingsSection } from "./settings/types";
 import BookCover from "./ui/BookCover";
 import { Menu, MenuDivider, MenuItem } from "./ui/Menu";
@@ -397,7 +397,7 @@ export default function ChatsView({
             <button
               type="button"
               onClick={onNavigateToLibrary}
-              className="h-10 px-5 rounded-full bg-accent hover:bg-accent-hover text-text-on-accent text-[13.5px] font-semibold inline-flex items-center gap-2 cursor-pointer transition-colors"
+              className="h-10 px-5 rounded-control bg-accent hover:bg-accent-hover text-text-on-accent text-[13.5px] font-semibold inline-flex items-center gap-2 cursor-pointer transition-colors"
             >
               <BookOpen size={15} />
               <span>{t("chats.emptyCta")}</span>
@@ -778,7 +778,7 @@ function ChatConversationPane({
           <button
             type="button"
             onClick={() => handleOpenInBook()}
-            className="h-9 px-3.5 rounded-full bg-surface-chip border border-border-default hover:bg-surface-solid text-[13px] font-medium text-text-primary inline-flex items-center gap-1.5 cursor-pointer transition-colors"
+            className="h-9 px-3.5 rounded-control bg-surface-chip border border-border-default hover:bg-surface-solid text-[13px] font-medium text-text-primary inline-flex items-center gap-1.5 cursor-pointer transition-colors"
           >
             <BookOpen size={14} className="text-text-secondary" />
             <span>{t("chats.openInBook")}</span>
@@ -791,7 +791,7 @@ function ChatConversationPane({
               aria-expanded={moreMenuOpen}
               aria-haspopup="menu"
               aria-label={t("chats.moreActions")}
-              className="size-9 rounded-full bg-surface-chip border border-border-default hover:bg-surface-solid text-text-secondary hover:text-text-primary inline-flex items-center justify-center cursor-pointer transition-colors"
+              className="size-9 rounded-control bg-surface-chip border border-border-default hover:bg-surface-solid text-text-secondary hover:text-text-primary inline-flex items-center justify-center cursor-pointer transition-colors"
             >
               <MoreHorizontal size={16} />
             </button>
@@ -859,24 +859,11 @@ function ChatConversationPane({
                   msg.content === "AI_REAUTH_REQUIRED"
                 ) {
                   return (
-                    <div
+                    <AiAuthPromptCard
                       key={msg.id}
-                      className="rounded-[12px] bg-surface-inset border border-border-default p-4"
-                    >
-                      <p className="text-[13.5px] text-text-secondary mb-2.5">
-                        {msg.content === "AI_REAUTH_REQUIRED"
-                          ? t("ai.reauthRequired")
-                          : t("ai.notConfigured")}
-                      </p>
-                      <button
-                        type="button"
-                        onClick={() => onOpenSettings("ai")}
-                        className="h-8 px-3.5 rounded-full bg-accent-tint hover:bg-accent-tint-hover text-accent-on-tint text-[12.5px] font-semibold inline-flex items-center gap-1.5 cursor-pointer"
-                      >
-                        <Settings size={13} />
-                        <span>{t("ai.openSettings")}</span>
-                      </button>
-                    </div>
+                      variant={msg.content === "AI_REAUTH_REQUIRED" ? "reauth" : "notConfigured"}
+                      onOpenSettings={() => onOpenSettings("ai")}
+                    />
                   );
                 }
 
@@ -963,7 +950,7 @@ function ChatConversationPane({
             onClick={handleSend}
             disabled={!input.trim() || streaming || initializing}
             aria-label={t("chats.send")}
-            className="size-8 rounded-full flex items-center justify-center shrink-0 transition-colors cursor-pointer bg-accent hover:bg-accent-hover text-text-on-accent disabled:bg-transparent disabled:text-text-tertiary disabled:cursor-default"
+            className="size-8 rounded-control flex items-center justify-center shrink-0 transition-colors cursor-pointer bg-accent hover:bg-accent-hover text-text-on-accent disabled:bg-transparent disabled:text-text-tertiary disabled:cursor-default"
           >
             {streaming ? <Loader2 size={14} className="animate-spin" /> : <ArrowUp size={15} />}
           </button>
@@ -1005,7 +992,7 @@ function ChatConversationPane({
                 type="button"
                 disabled={deleting}
                 onClick={() => setDeleteModalOpen(false)}
-                className="h-9 px-4 rounded-full bg-surface-chip border border-border-default hover:bg-surface-solid text-[13px] font-medium text-text-primary cursor-pointer"
+                className="h-9 px-4 rounded-control bg-surface-chip border border-border-default hover:bg-surface-solid text-[13px] font-medium text-text-primary cursor-pointer"
               >
                 {t("common.cancel")}
               </button>
@@ -1013,7 +1000,7 @@ function ChatConversationPane({
                 type="button"
                 disabled={deleting}
                 onClick={handleDeleteConfirm}
-                className="h-9 px-4 rounded-full bg-danger hover:bg-danger-hover text-white text-[13px] font-semibold cursor-pointer disabled:opacity-60"
+                className="h-9 px-4 rounded-control bg-danger hover:bg-danger-hover text-white text-[13px] font-semibold cursor-pointer disabled:opacity-60"
               >
                 {t("chats.deleteModalConfirm")}
               </button>
