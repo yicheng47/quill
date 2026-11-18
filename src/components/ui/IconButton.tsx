@@ -16,7 +16,7 @@ const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(
       <button
         ref={ref}
         type="button"
-        className={`inline-flex items-center justify-center shrink-0 rounded-full cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-focus-ring disabled:opacity-50 disabled:pointer-events-none ${sizeClass} ${stateClass} ${className}`}
+        className={`inline-flex items-center justify-center shrink-0 rounded-control cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-focus-ring disabled:opacity-50 disabled:pointer-events-none ${sizeClass} ${stateClass} ${className}`}
         {...props}
       >
         {children}

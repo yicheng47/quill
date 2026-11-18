@@ -428,7 +428,7 @@ export default function HighlightsView({
             <button
               type="button"
               onClick={onNavigateToLibrary}
-              className="h-10 px-5 rounded-full bg-accent hover:bg-accent-hover text-text-on-accent text-[13.5px] font-semibold inline-flex items-center gap-2 cursor-pointer transition-colors"
+              className="h-10 px-5 rounded-control bg-accent hover:bg-accent-hover text-text-on-accent text-[13.5px] font-semibold inline-flex items-center gap-2 cursor-pointer transition-colors"
             >
               <BookOpen size={15} />
               <span>{t("highlights.emptyCta")}</span>
@@ -545,7 +545,7 @@ export default function HighlightsView({
                 <button
                   type="button"
                   onClick={() => openReaderWindow(selectedBookSummary.book_id)}
-                  className="h-9 px-4 rounded-full bg-surface-chip border border-border-default hover:bg-surface-solid text-[13px] font-medium text-text-primary inline-flex items-center gap-2 cursor-pointer transition-colors shrink-0"
+                  className="h-9 px-4 rounded-control bg-surface-chip border border-border-default hover:bg-surface-solid text-[13px] font-medium text-text-primary inline-flex items-center gap-2 cursor-pointer transition-colors shrink-0"
                 >
                   <BookOpen size={14} className="text-text-secondary" />
                   <span>{t("highlights.openBook")}</span>
@@ -576,7 +576,7 @@ export default function HighlightsView({
                         setColorFilter(null);
                         setSearchQuery("");
                       }}
-                      className="h-8 px-4 rounded-full bg-surface-chip border border-border-default hover:bg-surface-solid text-[12.5px] font-medium text-text-primary cursor-pointer transition-colors"
+                      className="h-8 px-4 rounded-control bg-surface-chip border border-border-default hover:bg-surface-solid text-[12.5px] font-medium text-text-primary cursor-pointer transition-colors"
                     >
                       {t("highlights.clearFilters")}
                     </button>
@@ -768,7 +768,7 @@ export default function HighlightsView({
                               <button
                                 type="button"
                                 onClick={cancelEdit}
-                                className="h-8 px-3.5 rounded-full bg-surface-chip border border-border-default hover:bg-surface-solid text-[12.5px] font-medium text-text-primary cursor-pointer"
+                                className="h-8 px-3.5 rounded-control bg-surface-chip border border-border-default hover:bg-surface-solid text-[12.5px] font-medium text-text-primary cursor-pointer"
                               >
                                 {t("common.cancel")}
                               </button>
@@ -776,7 +776,7 @@ export default function HighlightsView({
                                 type="button"
                                 disabled={savingNote}
                                 onClick={() => saveEdit(h.id)}
-                                className="h-8 px-4 rounded-full bg-accent hover:bg-accent-hover text-text-on-accent text-[12.5px] font-semibold inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
+                                className="h-8 px-4 rounded-control bg-accent hover:bg-accent-hover text-text-on-accent text-[12.5px] font-semibold inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
                               >
                                 <Check size={13} />
                                 <span>{t("highlights.saveNote")}</span>
@@ -820,7 +820,7 @@ export default function HighlightsView({
                             <button
                               type="button"
                               onClick={() => setConfirmDeleteId(null)}
-                              className="h-8 px-3.5 rounded-full bg-surface-chip border border-border-default hover:bg-surface-solid text-[12.5px] font-medium text-text-primary cursor-pointer"
+                              className="h-8 px-3.5 rounded-control bg-surface-chip border border-border-default hover:bg-surface-solid text-[12.5px] font-medium text-text-primary cursor-pointer"
                             >
                               {t("common.cancel")}
                             </button>
@@ -828,7 +828,7 @@ export default function HighlightsView({
                               type="button"
                               disabled={deletingId === h.id}
                               onClick={() => handleConfirmDelete(h.id)}
-                              className="h-8 px-3.5 rounded-full bg-danger hover:bg-danger-hover text-white text-[12.5px] font-semibold cursor-pointer disabled:opacity-60"
+                              className="h-8 px-3.5 rounded-control bg-danger hover:bg-danger-hover text-white text-[12.5px] font-semibold cursor-pointer disabled:opacity-60"
                             >
                               {t("highlights.remove")}
                             </button>

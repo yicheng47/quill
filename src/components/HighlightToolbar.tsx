@@ -106,7 +106,7 @@ export default function HighlightToolbar({
         type="button"
         onClick={onDelete}
         aria-label={t("common.delete")}
-        className="size-6 rounded-full flex items-center justify-center text-text-tertiary hover:text-danger hover:bg-danger-tint cursor-pointer transition-colors"
+        className="size-6 rounded-control flex items-center justify-center text-text-tertiary hover:text-danger hover:bg-danger-tint cursor-pointer transition-colors"
       >
         <Trash2 size={13.5} />
       </button>

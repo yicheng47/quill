@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from "react";
 import { focusWindow, invoke, listen, type UnlistenFn } from "../platform";
-import { X, Loader2, WandSparkles, Check, Copy, Settings } from "lucide-react";
+import { X, Loader2, WandSparkles, Check, Copy } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import AiAuthPromptCard from "./AiAuthPromptCard";
 import { LOOKUP_PROSE } from "./lookup-prose";
 
 interface ExplainPopoverProps {
@@ -28,11 +29,16 @@ function useExplainStream(
   const [content, setContent] = useState("");
   const [streaming, setStreaming] = useState(true);
   const [notConfigured, setNotConfigured] = useState(false);
+  const [reauthRequired, setReauthRequired] = useState(false);
   const unlistenRef = useRef<UnlistenFn | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     contentRef.current = "";
+    setContent("");
+    setStreaming(true);
+    setNotConfigured(false);
+    setReauthRequired(false);
 
     const run = async () => {
       const requestId = crypto.randomUUID();
@@ -42,13 +48,28 @@ function useExplainStream(
         (event) => {
           if (cancelled) return;
           if (event.payload.done) {
+            const finalContent = contentRef.current.trim();
+            if (finalContent === "AI_REAUTH_REQUIRED") {
+              setReauthRequired(true);
+              contentRef.current = "";
+              setContent("");
+            } else if (finalContent === "AI_NOT_CONFIGURED") {
+              setNotConfigured(true);
+              contentRef.current = "";
+              setContent("");
+            }
             setStreaming(false);
             unlistenRef.current?.();
             unlistenRef.current = null;
             return;
           }
           contentRef.current += event.payload.delta;
-          setContent(contentRef.current);
+          if (
+            contentRef.current !== "AI_REAUTH_REQUIRED" &&
+            contentRef.current !== "AI_NOT_CONFIGURED"
+          ) {
+            setContent(contentRef.current);
+          }
         }
       );
 
@@ -65,6 +86,8 @@ function useExplainStream(
           const msg = String(err);
           if (msg.includes("AI_NOT_CONFIGURED")) {
             setNotConfigured(true);
+          } else if (msg.includes("AI_REAUTH_REQUIRED")) {
+            setReauthRequired(true);
           } else {
             setContent(`Error: ${msg}`);
           }
@@ -82,7 +105,7 @@ function useExplainStream(
     };
   }, [passage, surrounding, bookTitle, chapter]);
 
-  return { content, contentRef, streaming, notConfigured };
+  return { content, contentRef, streaming, notConfigured, reauthRequired };
 }
 
 export default function ExplainPopover({
@@ -98,12 +121,13 @@ export default function ExplainPopover({
   const [copied, setCopied] = useState(false);
   const popoverRef = useRef<HTMLDivElement>(null);
 
-  const { content, contentRef, streaming, notConfigured } = useExplainStream(
+  const { content, contentRef, streaming, notConfigured, reauthRequired } = useExplainStream(
     text,
     sentence,
     bookTitle,
     chapter
   );
+  const hasAuthOrConfigError = reauthRequired || notConfigured;
 
   // Position clamping — re-run whenever the popover resizes (e.g. as content streams in)
   const [pos, setPos] = useState({ left: x, top: y });
@@ -192,21 +216,16 @@ export default function ExplainPopover({
           <p className="text-[12px] italic text-text-muted line-clamp-3">{text}</p>
         </div>
 
-        {notConfigured ? (
-          <div className="flex flex-col items-center gap-2 py-4 text-center">
-            <p className="text-[13px] text-text-muted">{t("ai.notConfigured")}</p>
-            <button
-              onClick={async () => {
-                onClose();
-                await invoke("open_settings_on_main", { section: "ai" });
-                await focusWindow("main");
-              }}
-              className="flex items-center gap-1.5 text-[13px] font-medium text-accent-text hover:opacity-70 cursor-pointer"
-            >
-              <Settings size={14} />
-              {t("ai.openSettings")}
-            </button>
-          </div>
+        {hasAuthOrConfigError ? (
+          <AiAuthPromptCard
+            variant={reauthRequired ? "reauth" : "notConfigured"}
+            embedded
+            onOpenSettings={async () => {
+              onClose();
+              await invoke("open_settings_on_main", { section: "ai" });
+              await focusWindow("main");
+            }}
+          />
         ) : streaming && !content ? (
           <div className="flex items-center gap-1.5 py-3">
             <Loader2 size={14} className="animate-spin text-text-muted" />
@@ -223,7 +242,7 @@ export default function ExplainPopover({
       </div>
 
       {/* Footer — Copy */}
-      {!streaming && content && !notConfigured && (
+      {!streaming && content && !hasAuthOrConfigError && (
         <div className="flex items-center justify-end px-4 py-2.5 border-t border-border/40">
           <button
             onClick={handleCopy}

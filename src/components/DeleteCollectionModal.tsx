@@ -80,7 +80,7 @@ export default function DeleteCollectionModal({
             ref={cancelRef}
             type="button"
             onClick={onClose}
-            className="px-[15px] py-2 rounded-full bg-surface-chip border border-accent text-[13px] font-medium text-text-primary hover:bg-surface-inset cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-focus-ring"
+            className="px-[15px] py-2 rounded-control bg-surface-chip border border-accent text-[13px] font-medium text-text-primary hover:bg-surface-inset cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-focus-ring"
           >
             {t("common.cancel")}
           </button>
@@ -88,7 +88,7 @@ export default function DeleteCollectionModal({
             type="button"
             disabled={deleting}
             onClick={handleConfirm}
-            className="px-4 py-2 rounded-full bg-danger hover:bg-danger-hover text-white text-[13px] font-semibold cursor-pointer transition-colors disabled:opacity-50"
+            className="px-4 py-2 rounded-control bg-danger hover:bg-danger-hover text-white text-[13px] font-semibold cursor-pointer transition-colors disabled:opacity-50"
           >
             {t("collections.deleteConfirm")}
           </button>

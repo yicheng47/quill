@@ -68,7 +68,7 @@ export default function DeleteBookModal({ book, onClose, onConfirm }: DeleteBook
             ref={cancelRef}
             type="button"
             onClick={onClose}
-            className="px-[13px] py-[7px] rounded-full bg-surface-chip border border-accent text-[13px] font-medium text-text-primary hover:bg-surface-inset cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-focus-ring"
+            className="px-[13px] py-[7px] rounded-control bg-surface-chip border border-accent text-[13px] font-medium text-text-primary hover:bg-surface-inset cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-focus-ring"
           >
             {t("common.cancel")}
           </button>
@@ -76,7 +76,7 @@ export default function DeleteBookModal({ book, onClose, onConfirm }: DeleteBook
             type="button"
             disabled={deleting}
             onClick={handleConfirm}
-            className="px-3.5 py-[7px] rounded-full bg-danger hover:bg-danger-hover text-white text-[13px] font-semibold cursor-pointer transition-colors disabled:opacity-50"
+            className="px-3.5 py-[7px] rounded-control bg-danger hover:bg-danger-hover text-white text-[13px] font-semibold cursor-pointer transition-colors disabled:opacity-50"
           >
             {t("deleteBookModal.confirm")}
           </button>

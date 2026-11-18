@@ -323,7 +323,7 @@ export function UpdateIndicator({
               setReadyPopoverOpen(false);
               void restart();
             }}
-            className="w-full rounded-full bg-accent hover:bg-accent-hover active:bg-accent-pressed text-text-on-accent py-[9px] px-3.5 text-[13px] font-semibold inline-flex items-center justify-center gap-2 cursor-pointer transition-colors"
+            className="w-full rounded-control bg-accent hover:bg-accent-hover active:bg-accent-pressed text-text-on-accent py-[9px] px-3.5 text-[13px] font-semibold inline-flex items-center justify-center gap-2 cursor-pointer transition-colors"
           >
             <RotateCw size={14} />
             <span>{t("update.popover.restart")}</span>
@@ -335,7 +335,7 @@ export function UpdateIndicator({
               onClick={() => {
                 void openUrl(releaseNotesUrl(version)).catch(() => {});
               }}
-              className="flex-1 rounded-full bg-surface-inset border border-border-subtle hover:bg-surface-chip py-[7px] px-2.5 text-[12.5px] font-medium text-text-primary inline-flex items-center justify-center gap-[5px] cursor-pointer transition-colors"
+              className="flex-1 rounded-control bg-surface-inset border border-border-subtle hover:bg-surface-chip py-[7px] px-2.5 text-[12.5px] font-medium text-text-primary inline-flex items-center justify-center gap-[5px] cursor-pointer transition-colors"
             >
               <span>{t("update.popover.whatsNew")}</span>
               <ExternalLink size={11.5} className="text-text-tertiary shrink-0" />
@@ -343,7 +343,7 @@ export function UpdateIndicator({
             <button
               type="button"
               onClick={() => setReadyPopoverOpen(false)}
-              className="w-[84px] rounded-full bg-surface-inset border border-border-subtle hover:bg-surface-chip py-[7px] px-2.5 text-[12.5px] font-medium text-text-secondary inline-flex items-center justify-center cursor-pointer transition-colors"
+              className="w-[84px] rounded-control bg-surface-inset border border-border-subtle hover:bg-surface-chip py-[7px] px-2.5 text-[12.5px] font-medium text-text-secondary inline-flex items-center justify-center cursor-pointer transition-colors"
             >
               <span>{t("update.popover.later")}</span>
             </button>

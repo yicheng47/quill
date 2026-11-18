@@ -498,14 +498,14 @@ export default function LibrarySyncSettings({
                   ref={removeCancelRef}
                   type="button"
                   onClick={() => setPendingRemoval(null)}
-                  className="px-[15px] py-2 rounded-full bg-surface-chip border-[1.5px] border-accent text-[13px] font-medium text-text-primary hover:bg-surface-inset cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-focus-ring"
+                  className="px-[15px] py-2 rounded-control bg-surface-chip border-[1.5px] border-accent text-[13px] font-medium text-text-primary hover:bg-surface-inset cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-focus-ring"
                 >
                   {t("common.cancel")}
                 </button>
                 <button
                   type="button"
                   onClick={() => void onConfirmRemovePeer()}
-                  className="px-4 py-2 rounded-full bg-danger hover:bg-danger-hover text-white text-[13px] font-semibold cursor-pointer transition-colors"
+                  className="px-4 py-2 rounded-control bg-danger hover:bg-danger-hover text-white text-[13px] font-semibold cursor-pointer transition-colors"
                 >
                   {t("settings.librarySync.remove")}
                 </button>
@@ -549,14 +549,14 @@ export default function LibrarySyncSettings({
                   ref={rebuildCancelRef}
                   type="button"
                   onClick={() => setConfirmRebuild(false)}
-                  className="px-[15px] py-2 rounded-full bg-surface-chip border-[1.5px] border-accent text-[13px] font-medium text-text-primary hover:bg-surface-inset cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-focus-ring"
+                  className="px-[15px] py-2 rounded-control bg-surface-chip border-[1.5px] border-accent text-[13px] font-medium text-text-primary hover:bg-surface-inset cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-focus-ring"
                 >
                   {t("common.cancel")}
                 </button>
                 <button
                   type="button"
                   onClick={() => void onRebuild()}
-                  className="px-4 py-2 rounded-full bg-danger hover:bg-danger-hover text-white text-[13px] font-semibold cursor-pointer transition-colors"
+                  className="px-4 py-2 rounded-control bg-danger hover:bg-danger-hover text-white text-[13px] font-semibold cursor-pointer transition-colors"
                 >
                   {t("settings.librarySync.rebuildConfirmCta")}
                 </button>
@@ -858,7 +858,7 @@ export default function LibrarySyncSettings({
                     onClick={() => setConfirmRebuild(true)}
                     disabled={busy || syncing || !engineRunning}
                     title={!engineRunning ? t("settings.librarySync.paused") : undefined}
-                    className="px-3.5 py-[7px] rounded-full bg-danger-tint border border-[#D93F4C33] text-danger text-[13px] font-semibold inline-flex items-center gap-1.5 cursor-pointer hover:bg-danger/15 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+                    className="px-3.5 py-[7px] rounded-control bg-danger-tint border border-[#D93F4C33] text-danger text-[13px] font-semibold inline-flex items-center gap-1.5 cursor-pointer hover:bg-danger/15 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
                   >
                     <RotateCcw size={13.5} />
                     <span>{t("settings.librarySync.rebuildCta")}</span>

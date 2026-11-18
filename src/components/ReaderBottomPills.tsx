@@ -88,7 +88,7 @@ export default function ReaderBottomPills({
           type="button"
           onClick={onPrev}
           aria-label={t("reader.previousPage")}
-          className={`size-[26px] @[320px]/paper:size-[30px] rounded-full border flex items-center justify-center cursor-pointer transition-colors shrink-0 ${
+          className={`size-[26px] @[320px]/paper:size-[30px] rounded-control border flex items-center justify-center cursor-pointer transition-colors shrink-0 ${
             isDarkPaper
               ? "bg-white/[0.07] border-white/10 text-[#D4D2E0] hover:bg-white/15"
               : "bg-surface-glass border-surface-glass-border text-text-secondary hover:bg-surface-solid"
@@ -132,7 +132,7 @@ export default function ReaderBottomPills({
                 type="button"
                 onClick={() => onZoom(-10)}
                 aria-label={t("common.decrease")}
-                className={`size-[22px] @[320px]/paper:size-6 rounded-full flex items-center justify-center cursor-pointer transition-colors ${
+                className={`size-[22px] @[320px]/paper:size-6 rounded-control flex items-center justify-center cursor-pointer transition-colors ${
                   isDarkPaper
                     ? "bg-white/10 text-[#D4D2E0] hover:bg-white/20"
                     : "bg-surface-solid text-text-secondary hover:bg-surface-inset"
@@ -165,7 +165,7 @@ export default function ReaderBottomPills({
                 type="button"
                 onClick={() => onZoom(10)}
                 aria-label={t("common.increase")}
-                className={`size-[22px] @[320px]/paper:size-6 rounded-full flex items-center justify-center cursor-pointer transition-colors ${
+                className={`size-[22px] @[320px]/paper:size-6 rounded-control flex items-center justify-center cursor-pointer transition-colors ${
                   isDarkPaper
                     ? "bg-white/10 text-[#D4D2E0] hover:bg-white/20"
                     : "bg-surface-solid text-text-secondary hover:bg-surface-inset"
@@ -192,7 +192,7 @@ export default function ReaderBottomPills({
           type="button"
           onClick={onNext}
           aria-label={t("reader.nextPage")}
-          className={`size-[26px] @[320px]/paper:size-[30px] rounded-full border flex items-center justify-center cursor-pointer transition-colors shrink-0 ${
+          className={`size-[26px] @[320px]/paper:size-[30px] rounded-control border flex items-center justify-center cursor-pointer transition-colors shrink-0 ${
             isDarkPaper
               ? "bg-white/[0.07] border-white/10 text-[#D4D2E0] hover:bg-white/15"
               : "bg-surface-glass border-surface-glass-border text-text-secondary hover:bg-surface-solid"

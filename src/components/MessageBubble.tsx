@@ -1,9 +1,10 @@
 import { useTranslation } from "react-i18next";
-import { Loader2, Settings } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { focusWindow, invoke } from "../platform";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { ChatMessage } from "../hooks/useAiChat";
+import AiAuthPromptCard from "./AiAuthPromptCard";
 
 interface MessageBubbleProps {
   msg: ChatMessage;
@@ -17,21 +18,16 @@ export default function MessageBubble({ msg, messages, streaming, onNavigateToCf
   const isLast = msg === messages[messages.length - 1];
 
   if (msg.role === "assistant") {
-    if (msg.content === "AI_NOT_CONFIGURED") {
+    if (msg.content === "AI_NOT_CONFIGURED" || msg.content === "AI_REAUTH_REQUIRED") {
       return (
-        <div className="bg-bg-surface border border-border rounded-lg px-[13px] py-[13px] max-w-[85%]">
-          <p className="text-[14px] text-text-muted mb-2">{t("ai.notConfigured")}</p>
-          <button
-            onClick={async () => {
-              await invoke("open_settings_on_main", { section: "ai" });
-              await focusWindow("main");
-            }}
-            className="flex items-center gap-1.5 text-[13px] font-medium text-accent-text hover:opacity-70 cursor-pointer"
-          >
-            <Settings size={14} />
-            {t("ai.openSettings")}
-          </button>
-        </div>
+        <AiAuthPromptCard
+          variant={msg.content === "AI_REAUTH_REQUIRED" ? "reauth" : "notConfigured"}
+          className="max-w-[92%]"
+          onOpenSettings={async () => {
+            await invoke("open_settings_on_main", { section: "ai" });
+            await focusWindow("main");
+          }}
+        />
       );
     }
     return (

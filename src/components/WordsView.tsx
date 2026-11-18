@@ -484,7 +484,7 @@ export default function WordsView({
             <button
               type="button"
               onClick={onNavigateToLibrary}
-              className="h-10 px-5 rounded-full bg-accent hover:bg-accent-hover text-text-on-accent text-[13.5px] font-semibold inline-flex items-center gap-2 cursor-pointer transition-colors"
+              className="h-10 px-5 rounded-control bg-accent hover:bg-accent-hover text-text-on-accent text-[13.5px] font-semibold inline-flex items-center gap-2 cursor-pointer transition-colors"
             >
               <BookOpen size={15} />
               <span>{t("words.emptyCta")}</span>
@@ -521,7 +521,7 @@ export default function WordsView({
                     setSearchQuery("");
                     setBookFilter(null);
                   }}
-                  className="h-8 px-4 rounded-full bg-surface-chip border border-border-default hover:bg-surface-solid text-[12.5px] font-medium text-text-primary cursor-pointer transition-colors"
+                  className="h-8 px-4 rounded-control bg-surface-chip border border-border-default hover:bg-surface-solid text-[12.5px] font-medium text-text-primary cursor-pointer transition-colors"
                 >
                   {t("words.clearSearch")}
                 </button>
@@ -628,7 +628,7 @@ export default function WordsView({
                       disabled={deletingId === activeWord.id}
                       onClick={() => handleDeleteClick(activeWord.id)}
                       aria-label={t("words.deleteWord")}
-                      className="size-9 rounded-full bg-surface-chip border border-border-default hover:bg-danger-tint hover:text-danger hover:border-danger/30 text-text-secondary flex items-center justify-center cursor-pointer transition-colors disabled:opacity-50"
+                      className="size-9 rounded-control bg-surface-chip border border-border-default hover:bg-danger-tint hover:text-danger hover:border-danger/30 text-text-secondary flex items-center justify-center cursor-pointer transition-colors disabled:opacity-50"
                     >
                       <Trash2 size={15} />
                     </button>
@@ -638,7 +638,7 @@ export default function WordsView({
                         type="button"
                         disabled={deletingId === activeWord.id}
                         onClick={() => handleDeleteClick(activeWord.id)}
-                        className="h-9 px-3.5 rounded-full bg-danger hover:bg-danger-hover text-white text-[12.5px] font-semibold inline-flex items-center gap-1.5 cursor-pointer transition-colors disabled:opacity-60"
+                        className="h-9 px-3.5 rounded-control bg-danger hover:bg-danger-hover text-white text-[12.5px] font-semibold inline-flex items-center gap-1.5 cursor-pointer transition-colors disabled:opacity-60"
                       >
                         <Trash2 size={13} />
                         <span>{t("words.clickAgainToDelete")}</span>
@@ -654,7 +654,7 @@ export default function WordsView({
                         type="button"
                         onClick={() => speakWord(activeWord.word)}
                         aria-label={t("words.pronounce")}
-                        className="size-8 rounded-full bg-surface-chip border border-border-default hover:bg-surface-solid text-text-secondary hover:text-text-primary inline-flex items-center justify-center cursor-pointer transition-colors"
+                        className="size-8 rounded-control bg-surface-chip border border-border-default hover:bg-surface-solid text-text-secondary hover:text-text-primary inline-flex items-center justify-center cursor-pointer transition-colors"
                       >
                         <Volume2 size={15} />
                       </button>

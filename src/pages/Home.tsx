@@ -94,6 +94,7 @@ export default function Home() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("general");
   const [settingsBlocking, setSettingsBlocking] = useState(false);
+  const [settingsVisitSeq, setSettingsVisitSeq] = useState(0);
 
   const [collectionsOpen, setCollectionsOpen] = useState(false);
   const [deleteCollectionTarget, setDeleteCollectionTarget] = useState<Collection | null>(null);
@@ -298,12 +299,14 @@ export default function Home() {
         setSettingsOpen((prev) => {
           if (prev) return false;
           setSettingsSection("general");
+          setSettingsVisitSeq((n) => n + 1);
           return true;
         });
         return;
       }
       setSettingsSection(normalizeSettingsSection(section, isMacOS()));
       setSettingsOpen(true);
+      setSettingsVisitSeq((n) => n + 1);
     },
     [settingsBlocking],
   );
@@ -672,6 +675,7 @@ export default function Home() {
       {settingsOpen ? (
         <SettingsView
           section={settingsSection}
+          visitSeq={settingsVisitSeq}
           onSelectSection={(next) => setSettingsSection(normalizeSettingsSection(next, isMacOS()))}
           onClose={closeSettings}
           onBlockingChange={setSettingsBlocking}
@@ -714,7 +718,7 @@ export default function Home() {
                 <button
                   type="button"
                   onClick={() => setAddBooksOpen(true)}
-                  className="h-10 px-4 rounded-full bg-accent-tint hover:bg-violet-200/80 text-accent-on-tint text-[13px] font-semibold inline-flex items-center gap-1.5 cursor-pointer transition-colors"
+                  className="h-10 px-4 rounded-control bg-accent-tint hover:bg-violet-200/80 text-accent-on-tint text-[13px] font-semibold inline-flex items-center gap-1.5 cursor-pointer transition-colors"
                 >
                   <Plus size={14} strokeWidth={2.2} />
                   <span>{t("collections.addBooksButton")}</span>
@@ -781,7 +785,7 @@ export default function Home() {
                   onClick={() => handleViewModeChange("grid")}
                   aria-label={t("library.gridView")}
                   aria-pressed={viewMode === "grid"}
-                  className={`size-8 rounded-full flex items-center justify-center cursor-pointer transition-colors ${
+                  className={`size-8 rounded-control flex items-center justify-center cursor-pointer transition-colors ${
                     viewMode === "grid"
                       ? "bg-accent-tint text-accent-on-tint"
                       : "text-text-tertiary hover:text-text-primary"
@@ -794,7 +798,7 @@ export default function Home() {
                   onClick={() => handleViewModeChange("list")}
                   aria-label={t("library.listView")}
                   aria-pressed={viewMode === "list"}
-                  className={`size-8 rounded-full flex items-center justify-center cursor-pointer transition-colors ${
+                  className={`size-8 rounded-control flex items-center justify-center cursor-pointer transition-colors ${
                     viewMode === "list"
                       ? "bg-accent-tint text-accent-on-tint"
                       : "text-text-tertiary hover:text-text-primary"
@@ -827,14 +831,14 @@ export default function Home() {
                   <button
                     type="button"
                     onClick={() => setAddBooksOpen(true)}
-                    className="px-4 py-2 rounded-full bg-accent hover:bg-accent-hover text-white text-[13px] font-semibold cursor-pointer transition-colors"
+                    className="px-4 py-2 rounded-control bg-accent hover:bg-accent-hover text-white text-[13px] font-semibold cursor-pointer transition-colors"
                   >
                     {t("collections.addFromLibrary")}
                   </button>
                   <button
                     type="button"
                     onClick={() => void handleImport(activeCollection.id)}
-                    className="px-4 py-2 rounded-full bg-surface-chip border border-border-default hover:bg-surface-solid text-[13px] font-medium text-text-primary cursor-pointer transition-colors inline-flex items-center gap-1.5"
+                    className="px-4 py-2 rounded-control bg-surface-chip border border-border-default hover:bg-surface-solid text-[13px] font-medium text-text-primary cursor-pointer transition-colors inline-flex items-center gap-1.5"
                   >
                     <BookUp size={14} className="text-text-secondary" />
                     <span>{t("collections.importFile")}</span>
@@ -858,7 +862,7 @@ export default function Home() {
                   <button
                     type="button"
                     onClick={() => void handleImport()}
-                    className="px-4 py-2 rounded-full bg-accent hover:bg-accent-hover text-white text-[13px] font-semibold cursor-pointer transition-colors inline-flex items-center gap-1.5"
+                    className="px-4 py-2 rounded-control bg-accent hover:bg-accent-hover text-white text-[13px] font-semibold cursor-pointer transition-colors inline-flex items-center gap-1.5"
                   >
                     <Plus size={15} />
                     <span>{t("library.importBook")}</span>
@@ -877,7 +881,7 @@ export default function Home() {
                 <button
                   type="button"
                   onClick={() => setStatusFilter("all")}
-                  className="px-4 py-1.5 rounded-full bg-surface-chip border border-border-default hover:bg-surface-solid text-[12.5px] font-medium text-text-primary cursor-pointer transition-colors"
+                  className="px-4 py-1.5 rounded-control bg-surface-chip border border-border-default hover:bg-surface-solid text-[12.5px] font-medium text-text-primary cursor-pointer transition-colors"
                 >
                   {t("library.showAllBooks")}
                 </button>

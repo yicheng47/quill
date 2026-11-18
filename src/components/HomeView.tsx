@@ -189,7 +189,7 @@ export default function HomeView({
               <button
                 type="button"
                 onClick={onImport}
-                className="h-10 px-5 rounded-full bg-accent hover:bg-accent-hover active:bg-accent-pressed text-text-on-accent text-[13.5px] font-semibold inline-flex items-center gap-2 cursor-pointer transition-colors"
+                className="h-10 px-5 rounded-control bg-accent hover:bg-accent-hover active:bg-accent-pressed text-text-on-accent text-[13.5px] font-semibold inline-flex items-center gap-2 cursor-pointer transition-colors"
               >
                 <Plus size={15} strokeWidth={2.2} />
                 <span>{t("home.empty.importFirst")}</span>
@@ -198,7 +198,7 @@ export default function HomeView({
                 <button
                   type="button"
                   onClick={() => onOpenSettings("librarySync")}
-                  className="h-10 px-5 rounded-full bg-surface-chip border border-border-default hover:bg-surface-solid text-text-primary text-[13.5px] font-medium inline-flex items-center gap-2 cursor-pointer transition-colors"
+                  className="h-10 px-5 rounded-control bg-surface-chip border border-border-default hover:bg-surface-solid text-text-primary text-[13.5px] font-medium inline-flex items-center gap-2 cursor-pointer transition-colors"
                 >
                   <Cloud size={15} className="text-text-secondary" />
                   <span>{t("home.empty.turnOnICloud")}</span>
@@ -464,7 +464,7 @@ export default function HomeView({
                   <button
                     type="button"
                     onClick={() => void openReaderWindow(nowReadingBook.id)}
-                    className="rounded-full bg-accent hover:bg-accent-hover active:bg-accent-pressed text-text-on-accent px-5 py-3 text-[14px] font-semibold inline-flex items-center gap-2 cursor-pointer transition-colors"
+                    className="rounded-control bg-accent hover:bg-accent-hover active:bg-accent-pressed text-text-on-accent px-5 py-3 text-[14px] font-semibold inline-flex items-center gap-2 cursor-pointer transition-colors"
                   >
                     <BookOpen size={16} />
                     <span>{t("home.continueReading")}</span>
@@ -478,7 +478,7 @@ export default function HomeView({
                         cfi: heroHighlight?.cfi_range ?? undefined,
                       })
                     }
-                    className="rounded-full bg-surface-chip border border-border-default hover:bg-surface-solid text-text-primary px-5 py-3 text-[14px] font-medium inline-flex items-center gap-2 cursor-pointer transition-colors"
+                    className="rounded-control bg-surface-chip border border-border-default hover:bg-surface-solid text-text-primary px-5 py-3 text-[14px] font-medium inline-flex items-center gap-2 cursor-pointer transition-colors"
                   >
                     <Sparkles size={16} className="text-text-secondary" />
                     <span>{t("home.askAboutPart")}</span>

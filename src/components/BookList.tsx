@@ -187,7 +187,7 @@ export default function BookList({
                         onKeyDown={(e) => {
                           e.stopPropagation();
                         }}
-                        className="inline-flex items-center gap-1.5 px-[11px] py-1 rounded-full bg-accent-tint hover:bg-accent-tint-hover text-accent-on-tint text-[11.5px] font-semibold shrink-0 cursor-pointer transition-colors disabled:opacity-60"
+                        className="inline-flex items-center gap-1.5 px-[11px] py-1 rounded-control bg-accent-tint hover:bg-accent-tint-hover text-accent-on-tint text-[11.5px] font-semibold shrink-0 cursor-pointer transition-colors disabled:opacity-60"
                       >
                         <CloudDownload size={12.5} />
                         <span>

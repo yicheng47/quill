@@ -152,7 +152,10 @@ describe("SettingsView and redesigned sections", () => {
         return '{"mcpServers":{"quill":{"command":"/Applications/Quill.app/Contents/Resources/quill-mcp"}}}';
       }
       if (cmd === "openai_oauth_status") {
-        return { connected: false };
+        return { connected: false, account_id: null, email: null };
+      }
+      if (cmd === "check_ollama_status") {
+        return { running: false };
       }
       if (cmd === "sync_status") {
         return {
@@ -338,12 +341,13 @@ describe("SettingsView and redesigned sections", () => {
     expect(mocks.settingsMap.word_spacing).toBe("1");
   });
 
-  it("renders AI header Save button, Tools, MCP, and About with logs and links", async () => {
+  it("renders redesigned AI Assistant without header Save button, plus Tools, MCP, and About", async () => {
     await renderView("ai");
     const headerSaveBtn = Array.from(container.querySelectorAll("button")).find(
       (b) => b.textContent === "Save",
     );
-    expect(headerSaveBtn).toBeDefined();
+    expect(headerSaveBtn).toBeUndefined();
+    expect(container.textContent).toContain("Sign in with ChatGPT");
 
     await clickTab("tools");
     const briefToggle = container.querySelector<HTMLButtonElement>(

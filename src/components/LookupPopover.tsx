@@ -4,6 +4,7 @@ import { X, Loader2, Sparkles, BookmarkPlus, Check, Copy, Settings } from "lucid
 import { useTranslation } from "react-i18next";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import AiAuthPromptCard from "./AiAuthPromptCard";
 import { LOOKUP_PROSE } from "./lookup-prose";
 
 const TRANSLATION_MARKER = "[[QUILL_TRANSLATION]]";
@@ -31,6 +32,7 @@ function useStreamingLookup(
   const [content, setContent] = useState("");
   const [streaming, setStreaming] = useState(true);
   const [notConfigured, setNotConfigured] = useState(false);
+  const [reauthRequired, setReauthRequired] = useState(false);
   const [translationLanguageNotConfigured, setTranslationLanguageNotConfigured] = useState(false);
   const unlistenRef = useRef<UnlistenFn | null>(null);
 
@@ -40,6 +42,7 @@ function useStreamingLookup(
     setContent("");
     setStreaming(true);
     setNotConfigured(false);
+    setReauthRequired(false);
     setTranslationLanguageNotConfigured(false);
 
     const run = async () => {
@@ -50,13 +53,28 @@ function useStreamingLookup(
         (event) => {
           if (cancelled) return;
           if (event.payload.done) {
+            const finalContent = contentRef.current.trim();
+            if (finalContent === "AI_REAUTH_REQUIRED") {
+              setReauthRequired(true);
+              contentRef.current = "";
+              setContent("");
+            } else if (finalContent === "AI_NOT_CONFIGURED") {
+              setNotConfigured(true);
+              contentRef.current = "";
+              setContent("");
+            }
             setStreaming(false);
             unlistenRef.current?.();
             unlistenRef.current = null;
             return;
           }
           contentRef.current += event.payload.delta;
-          setContent(contentRef.current);
+          if (
+            contentRef.current !== "AI_REAUTH_REQUIRED" &&
+            contentRef.current !== "AI_NOT_CONFIGURED"
+          ) {
+            setContent(contentRef.current);
+          }
         }
       );
 
@@ -74,6 +92,8 @@ function useStreamingLookup(
           const msg = String(err);
           if (msg.includes("AI_NOT_CONFIGURED")) {
             setNotConfigured(true);
+          } else if (msg.includes("AI_REAUTH_REQUIRED")) {
+            setReauthRequired(true);
           } else if (msg.includes("LOOKUP_TRANSLATION_LANGUAGE_NOT_CONFIGURED")) {
             setTranslationLanguageNotConfigured(true);
           } else {
@@ -93,7 +113,7 @@ function useStreamingLookup(
     };
   }, [word, sentence, bookTitle, chapter, kind]);
 
-  return { content, contentRef, streaming, notConfigured, translationLanguageNotConfigured };
+  return { content, contentRef, streaming, notConfigured, reauthRequired, translationLanguageNotConfigured };
 }
 
 function splitDefinitionContent(content: string, streaming: boolean): {
@@ -150,10 +170,12 @@ export default function LookupPopover({
   // Split the backend-marked translation from the definition stream.
   const { translationLine, definitionText } = splitDefinitionContent(definition.content, definition.streaming);
 
-  const aiNotConfigured = definition.notConfigured || context.notConfigured;
+  const reauthRequired = definition.reauthRequired || context.reauthRequired;
+  const aiNotConfigured = !reauthRequired && (definition.notConfigured || context.notConfigured);
   const translationLanguageNotConfigured =
     definition.translationLanguageNotConfigured || context.translationLanguageNotConfigured;
-  const hasConfigurationError = aiNotConfigured || translationLanguageNotConfigured;
+  const hasConfigurationError =
+    reauthRequired || aiNotConfigured || translationLanguageNotConfigured;
   const allDone = !definition.streaming && !context.streaming;
   const hasContent = definition.content || context.content;
 
@@ -273,21 +295,31 @@ export default function LookupPopover({
           <h3 className="text-[20px] font-bold text-text-primary leading-6">{word}</h3>
         </div>
 
-        {hasConfigurationError ? (
+        {reauthRequired || aiNotConfigured ? (
+          <AiAuthPromptCard
+            variant={reauthRequired ? "reauth" : "notConfigured"}
+            embedded
+            onOpenSettings={async () => {
+              onClose();
+              await invoke("open_settings_on_main", { section: "ai" });
+              await focusWindow("main");
+            }}
+          />
+        ) : translationLanguageNotConfigured ? (
           <div className="flex flex-col items-center gap-2 py-4 text-center">
             <p className="text-[13px] text-text-muted">
-              {translationLanguageNotConfigured ? t("lookup.translationLanguageNotConfigured") : t("ai.notConfigured")}
+              {t("lookup.translationLanguageNotConfigured")}
             </p>
             <button
               onClick={async () => {
                 onClose();
-                await invoke("open_settings_on_main", { section: translationLanguageNotConfigured ? "tools" : "ai" });
+                await invoke("open_settings_on_main", { section: "tools" });
                 await focusWindow("main");
               }}
               className="flex items-center gap-1.5 text-[13px] font-medium text-accent-text hover:opacity-70 cursor-pointer"
             >
               <Settings size={14} />
-              {translationLanguageNotConfigured ? t("lookup.openSettings") : t("ai.openSettings")}
+              {t("lookup.openSettings")}
             </button>
           </div>
         ) : null}

@@ -93,7 +93,11 @@ async function generateAiTitle(
       resolve(title || null);
       return;
     }
-    if (!event.payload.delta.startsWith("Error:")) {
+    if (
+      !event.payload.delta.startsWith("Error:") &&
+      event.payload.delta !== "AI_REAUTH_REQUIRED" &&
+      event.payload.delta !== "AI_NOT_CONFIGURED"
+    ) {
       title += event.payload.delta;
     }
   });
@@ -275,30 +279,6 @@ export function useAiChat(bookId?: string, bookContext?: BookContext) {
       }
       if (!currentChatId) return;
 
-      // New chat: generate the title from the user's message, concurrently with
-      // the response stream (not after it), showing a loading state until it
-      // lands. Falls back to a truncated title if the AI call fails.
-      if (isNewChat && currentBookId) {
-        const titleSource = context || content;
-        setTitling(true);
-        generateAiTitle(titleSource).then(async (aiTitle) => {
-          try {
-            // Only auto-title if the chat is still untitled — the user (or a
-            // synced rename) may have renamed it while generation was pending.
-            const chat = await invoke<ChatRecord>("get_chat", { chatId: currentChatId });
-            if (chat.title === "New chat") {
-              const title = aiTitle || deriveTitle(titleSource);
-              if (title) {
-                await invoke("rename_chat", { chatId: currentChatId, title });
-                await refreshChats(currentBookId);
-              }
-            }
-          } catch { /* ignore */ } finally {
-            setTitling(false);
-          }
-        });
-      }
-
       const userMessage: ChatMessage = {
         id: nextMsgId(),
         role: "user",
@@ -348,7 +328,12 @@ export function useAiChat(bookId?: string, bookContext?: BookContext) {
             unlistenRef.current = null;
 
             // Persist assistant message
-            if (fullContent && !fullContent.startsWith("Error:")) {
+            if (
+              fullContent &&
+              !fullContent.startsWith("Error:") &&
+              fullContent !== "AI_REAUTH_REQUIRED" &&
+              fullContent !== "AI_NOT_CONFIGURED"
+            ) {
               try {
                 await invoke("save_chat_message", {
                   chatId: currentChatId,
@@ -400,14 +385,39 @@ export function useAiChat(bookId?: string, bookContext?: BookContext) {
           bookAuthor: bookContext?.author ?? null,
           currentChapter: bookContext?.chapter ?? null,
         });
+
+        // Start title generation only after ai_chat passes auth/token checks so a
+        // concurrent title request cannot clear an expired OAuth session first.
+        // Streaming runs in the background so title generation still runs concurrently.
+        if (isNewChat && currentBookId && chatIdRef.current === currentChatId) {
+          const titleSource = context || content;
+          setTitling(true);
+          generateAiTitle(titleSource).then(async (aiTitle) => {
+            try {
+              const chat = await invoke<ChatRecord>("get_chat", { chatId: currentChatId });
+              if (chat.title === "New chat") {
+                const title = aiTitle || deriveTitle(titleSource);
+                if (title) {
+                  await invoke("rename_chat", { chatId: currentChatId, title });
+                  await refreshChats(currentBookId);
+                }
+              }
+            } catch { /* ignore */ } finally {
+              setTitling(false);
+            }
+          });
+        }
       } catch (err) {
         setStreaming(false);
         streamingRef.current = false;
         unlistenRef.current?.();
         unlistenRef.current = null;
-        const errorContent = String(err).includes("AI_NOT_CONFIGURED")
+        const msg = String(err);
+        const errorContent = msg.includes("AI_NOT_CONFIGURED")
           ? "AI_NOT_CONFIGURED"
-          : `Error: ${err}`;
+          : msg.includes("AI_REAUTH_REQUIRED")
+            ? "AI_REAUTH_REQUIRED"
+            : `Error: ${err}`;
         updateMessages((prev) =>
           prev.map((m) =>
             m.id === assistantId
