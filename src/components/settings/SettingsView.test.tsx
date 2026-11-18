@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   getPlatformInfo: vi.fn<() => Promise<{ platform: string; arch: string }>>(),
   setZoom: vi.fn<(zoom: number) => Promise<void>>(),
   setTitlebarZoom: vi.fn<(zoom: number) => Promise<void>>(),
+  setWindowBackgroundColor: vi.fn<(color: string) => Promise<void>>(),
   openUrl: vi.fn<(url: string) => Promise<void>>(),
   settingsMap: {} as Record<string, string>,
 }));
@@ -25,6 +26,7 @@ vi.mock("../../platform", () => ({
   getOpenReaderCount: vi.fn().mockResolvedValue(0),
   setZoom: (z: number) => mocks.setZoom(z),
   setTitlebarZoom: (z: number) => mocks.setTitlebarZoom(z),
+  setWindowBackgroundColor: (color: string) => mocks.setWindowBackgroundColor(color),
   openUrl: (url: string) => mocks.openUrl(url),
   listen: () => Promise.resolve(() => {}),
   listenCurrentWindow: () => Promise.resolve(() => {}),
@@ -52,6 +54,7 @@ vi.mock("../../contexts/UpdateContext", () => ({
 
 import SettingsView from "./SettingsView";
 import type { SettingsSection } from "./types";
+import { resetThemeControllerForTests } from "../../lib/theme";
 
 function Harness({
   initialSection = "general",
@@ -134,6 +137,17 @@ describe("SettingsView and redesigned sections", () => {
     mocks.getPlatformInfo.mockReset().mockResolvedValue({ platform: "darwin", arch: "arm64" });
     mocks.setZoom.mockReset().mockResolvedValue(undefined);
     mocks.setTitlebarZoom.mockReset().mockResolvedValue(undefined);
+    mocks.setWindowBackgroundColor.mockReset().mockResolvedValue(undefined);
+    resetThemeControllerForTests();
+    document.documentElement.classList.remove("dawn", "dark");
+    Object.defineProperty(window, "matchMedia", {
+      writable: true,
+      value: vi.fn(() => ({
+        matches: false,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      })),
+    });
     mocks.openUrl.mockReset().mockResolvedValue(undefined);
     mocks.invoke.mockReset().mockImplementation(async (cmd, args) => {
       if (cmd === "get_all_settings") return { ...mocks.settingsMap };
@@ -280,22 +294,269 @@ describe("SettingsView and redesigned sections", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it("renders Appearance with Light active, System/Dark disabled, and App zoom Stepper", async () => {
+  it("renders Appearance with System, Light, and Dark cards enabled and switches live with a single native update", async () => {
     await renderView("appearance");
 
     const systemCard = container.querySelector<HTMLButtonElement>('button[data-theme-card="system"]');
     const lightCard = container.querySelector<HTMLButtonElement>('button[data-theme-card="light"]');
     const darkCard = container.querySelector<HTMLButtonElement>('button[data-theme-card="dark"]');
-    expect(systemCard?.disabled).toBe(true);
-    expect(darkCard?.disabled).toBe(true);
+    expect(systemCard?.disabled).toBe(false);
     expect(lightCard?.disabled).toBe(false);
+    expect(darkCard?.disabled).toBe(false);
+    expect(systemCard?.getAttribute("aria-pressed")).toBe("true");
+    expect(lightCard?.getAttribute("aria-pressed")).toBe("false");
+    expect(darkCard?.getAttribute("aria-pressed")).toBe("false");
+
+    mocks.setWindowBackgroundColor.mockClear();
+    await act(async () => {
+      darkCard?.click();
+    });
+    await flush();
+    expect(darkCard?.getAttribute("aria-pressed")).toBe("true");
+    expect(systemCard?.getAttribute("aria-pressed")).toBe("false");
+    expect(mocks.settingsMap.theme).toBe("dark");
+    expect(storage.get("quill-theme")).toBe("dark");
+    expect(document.documentElement.classList.contains("dawn")).toBe(true);
+    expect(document.documentElement.classList.contains("dark")).toBe(true);
+    expect(mocks.setWindowBackgroundColor).toHaveBeenCalledTimes(1);
+    expect(mocks.setWindowBackgroundColor).toHaveBeenCalledWith("#12111A");
+
+    mocks.setWindowBackgroundColor.mockClear();
+    await act(async () => {
+      lightCard?.click();
+    });
+    await flush();
     expect(lightCard?.getAttribute("aria-pressed")).toBe("true");
+    expect(darkCard?.getAttribute("aria-pressed")).toBe("false");
+    expect(mocks.settingsMap.theme).toBe("light");
+    expect(storage.get("quill-theme")).toBe("light");
+    expect(document.documentElement.classList.contains("dark")).toBe(false);
+    expect(mocks.setWindowBackgroundColor).toHaveBeenCalledTimes(1);
+    expect(mocks.setWindowBackgroundColor).toHaveBeenCalledWith("#EEEBF8");
 
     const zoomInBtn = container.querySelector<HTMLButtonElement>('button[aria-label="Zoom in"]');
     await act(async () => {
       zoomInBtn?.click();
     });
     expect(mocks.setZoom).toHaveBeenCalled();
+  });
+
+  it("restores committed theme, DOM, cache, and native background and shows an alert when saving theme fails", async () => {
+    mocks.settingsMap.theme = "light";
+    await renderView("appearance");
+
+    const lightCard = container.querySelector<HTMLButtonElement>('button[data-theme-card="light"]');
+    const darkCard = container.querySelector<HTMLButtonElement>('button[data-theme-card="dark"]');
+    expect(lightCard?.getAttribute("aria-pressed")).toBe("true");
+
+    mocks.invoke.mockImplementation(async (cmd, args) => {
+      if (cmd === "set_setting" && args?.key === "theme") {
+        throw new Error("DB locked");
+      }
+      return { ...mocks.settingsMap };
+    });
+
+    await act(async () => {
+      darkCard?.click();
+    });
+    await flush();
+
+    expect(lightCard?.getAttribute("aria-pressed")).toBe("true");
+    expect(darkCard?.getAttribute("aria-pressed")).toBe("false");
+    expect(mocks.settingsMap.theme).toBe("light");
+    expect(storage.get("quill-theme")).toBe("light");
+    expect(document.documentElement.classList.contains("dark")).toBe(false);
+    expect(mocks.setWindowBackgroundColor).toHaveBeenLastCalledWith("#EEEBF8");
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      "Could not save theme preference",
+    );
+  });
+
+  it("serializes rapid successive theme selections so slow earlier saves cannot overwrite newer selections", async () => {
+    mocks.settingsMap.theme = "light";
+    await renderView("appearance");
+
+    const systemCard = container.querySelector<HTMLButtonElement>('button[data-theme-card="system"]');
+    const darkCard = container.querySelector<HTMLButtonElement>('button[data-theme-card="dark"]');
+
+    let resolveFirstSave!: () => void;
+    const savedValues: string[] = [];
+    mocks.invoke.mockImplementation((cmd, args) => {
+      if (cmd === "set_setting" && args?.key === "theme") {
+        const value = String(args.value);
+        savedValues.push(value);
+        if (savedValues.length === 1) {
+          return new Promise<null>((resolve) => {
+            resolveFirstSave = () => {
+              mocks.settingsMap.theme = value;
+              resolve(null);
+            };
+          });
+        }
+        mocks.settingsMap.theme = value;
+        return Promise.resolve(null);
+      }
+      return Promise.resolve({ ...mocks.settingsMap });
+    });
+
+    await act(async () => {
+      darkCard?.click();
+      systemCard?.click();
+    });
+    await flush();
+
+    // Second write must wait behind the first in-flight save.
+    expect(savedValues).toEqual(["dark"]);
+    expect(systemCard?.getAttribute("aria-pressed")).toBe("true");
+
+    await act(async () => {
+      resolveFirstSave();
+    });
+    await flush();
+
+    expect(savedValues).toEqual(["dark", "system"]);
+    expect(mocks.settingsMap.theme).toBe("system");
+    expect(storage.get("quill-theme")).toBe("system");
+    expect(systemCard?.getAttribute("aria-pressed")).toBe("true");
+    expect(document.documentElement.classList.contains("dark")).toBe(false);
+    expect(mocks.setWindowBackgroundColor).toHaveBeenLastCalledWith("#EEEBF8");
+  });
+
+  it("preserves pending theme write across tab switches and ignores rejected earlier save when superseded", async () => {
+    Object.defineProperty(window, "matchMedia", {
+      writable: true,
+      value: vi.fn(() => ({
+        matches: true,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      })),
+    });
+    mocks.settingsMap.theme = "light";
+    await renderView("appearance");
+
+    // Verify Light and System previews include fallback for --color-bg-glow-peach in Dawn Light.
+    const lightPreview = container.querySelector<HTMLButtonElement>('button[data-theme-card="light"] > div');
+    expect(lightPreview?.getAttribute("style")).toContain("--color-bg-glow-peach, transparent");
+
+    let rejectFirstSave!: (reason: unknown) => void;
+    const savedCalls: string[] = [];
+    mocks.invoke.mockImplementation((cmd, args) => {
+      if (cmd === "set_setting" && args?.key === "theme") {
+        const value = String(args.value);
+        savedCalls.push(value);
+        if (savedCalls.length === 1) {
+          return new Promise<null>((_resolve, reject) => {
+            rejectFirstSave = reject;
+          });
+        }
+        mocks.settingsMap.theme = value;
+        return Promise.resolve(null);
+      }
+      return Promise.resolve({ ...mocks.settingsMap });
+    });
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('button[data-theme-card="dark"]')?.click();
+    });
+
+    // Navigate away to General and back to Appearance while Dark save is still pending.
+    await clickTab("general");
+    await clickTab("appearance");
+
+    const remountedDarkCard = container.querySelector<HTMLButtonElement>('button[data-theme-card="dark"]');
+    const remountedSystemCard = container.querySelector<HTMLButtonElement>('button[data-theme-card="system"]');
+    expect(remountedDarkCard?.getAttribute("aria-pressed")).toBe("true");
+
+    mocks.setWindowBackgroundColor.mockClear();
+    await act(async () => {
+      remountedSystemCard?.click();
+    });
+    await flush();
+
+    // System write is still queued behind the pending Dark write; OS is Dark so window stays Dark.
+    expect(savedCalls).toEqual(["dark"]);
+    expect(remountedSystemCard?.getAttribute("aria-pressed")).toBe("true");
+    expect(document.documentElement.classList.contains("dark")).toBe(true);
+    expect(mocks.setWindowBackgroundColor).toHaveBeenLastCalledWith("#12111A");
+
+    // Rejecting the obsolete Dark write must NOT revert System or report an error or send #EEEBF8.
+    mocks.setWindowBackgroundColor.mockClear();
+    await act(async () => {
+      rejectFirstSave(new Error("transient db error"));
+    });
+    await flush();
+
+    expect(savedCalls).toEqual(["dark", "system"]);
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(remountedSystemCard?.getAttribute("aria-pressed")).toBe("true");
+    expect(mocks.settingsMap.theme).toBe("system");
+    expect(storage.get("quill-theme")).toBe("system");
+    expect(document.documentElement.classList.contains("dark")).toBe(true);
+    expect(mocks.setWindowBackgroundColor).not.toHaveBeenCalled();
+  });
+
+  it("keeps dark card and rollback state authoritative when Settings unmounts and reopens during a deferred save", async () => {
+    mocks.settingsMap.theme = "light";
+    await renderView("appearance");
+
+    let resolveDarkSave!: () => void;
+    mocks.invoke.mockImplementation((cmd, args) => {
+      if (cmd === "get_all_settings") return Promise.resolve({ ...mocks.settingsMap });
+      if (cmd === "set_setting" && args?.key === "theme") {
+        const value = String(args.value);
+        if (value === "dark") {
+          return new Promise<null>((resolve) => {
+            resolveDarkSave = () => {
+              mocks.settingsMap.theme = value;
+              resolve(null);
+            };
+          });
+        }
+        mocks.settingsMap.theme = value;
+        return Promise.resolve(null);
+      }
+      return Promise.resolve(null);
+    });
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('button[data-theme-card="dark"]')?.click();
+    });
+
+    // Unmount Settings completely before Dark finishes persisting, then reopen on General
+    // (the fresh SettingsView snapshot still reads SQLite Light).
+    await act(async () => {
+      root.render(null);
+    });
+    await renderView("general");
+
+    // Original deferred Dark save now settles.
+    await act(async () => {
+      resolveDarkSave();
+    });
+    await flush();
+
+    // Opening Appearance must reflect committed Dark rather than the stale reopened snapshot,
+    // and clicking Light must persist cleanly instead of being treated as a no-op.
+    await clickTab("appearance");
+
+    const lightCard = container.querySelector<HTMLButtonElement>('button[data-theme-card="light"]');
+    const darkCard = container.querySelector<HTMLButtonElement>('button[data-theme-card="dark"]');
+    expect(mocks.settingsMap.theme).toBe("dark");
+    expect(storage.get("quill-theme")).toBe("dark");
+    expect(document.documentElement.classList.contains("dark")).toBe(true);
+    expect(darkCard?.getAttribute("aria-pressed")).toBe("true");
+    expect(lightCard?.getAttribute("aria-pressed")).toBe("false");
+
+    await act(async () => {
+      lightCard?.click();
+    });
+    await flush();
+
+    expect(mocks.settingsMap.theme).toBe("light");
+    expect(storage.get("quill-theme")).toBe("light");
+    expect(document.documentElement.classList.contains("dark")).toBe(false);
+    expect(lightCard?.getAttribute("aria-pressed")).toBe("true");
+    expect(mocks.setWindowBackgroundColor).toHaveBeenLastCalledWith("#EEEBF8");
   });
 
   it("renders Reading with 4 themes, Literata font, steppers, and nearest margin preset without mutating stored value", async () => {

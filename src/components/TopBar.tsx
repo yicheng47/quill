@@ -224,9 +224,9 @@ export function UpdateIndicator({
         title={tooltip}
         className={`size-6 rounded-[6px] inline-flex items-center justify-center transition-colors focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-focus-ring ${
           status === "ready" && readyPopoverOpen
-            ? "bg-accent-tint border border-violet-300 text-accent-on-tint cursor-pointer"
+            ? "bg-accent-tint border border-accent/45 text-accent-on-tint cursor-pointer"
             : interactive
-              ? "hover:bg-black/[0.05] cursor-pointer"
+              ? "hover:bg-surface-hover cursor-pointer"
               : "cursor-default"
         }`}
       >
@@ -467,7 +467,7 @@ export default function TopBar({
               className={`px-2 sm:px-3 md:px-4 py-[7px] rounded-full text-[12.5px] sm:text-[13px] whitespace-nowrap cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-focus-ring ${
                 isActive
                   ? "bg-accent-tint text-accent-on-tint font-semibold"
-                  : "text-text-secondary font-medium hover:bg-black/[0.04]"
+                  : "text-text-secondary font-medium hover:bg-surface-hover"
               }`}
             >
               {route.label}

@@ -23,7 +23,19 @@ export interface ReaderWindowParams {
   pageTheme?: string;
 }
 
-const MAIN_DAWN_BG = "#EEEBF8";
+export interface InitialAppearance {
+  /** Native backing color (uses OS appearance if DB lookup timed out or failed). */
+  dark: boolean;
+  /** Preload seed forwarded to renderer only when DB lookup succeeded. */
+  preloadDark: boolean | null;
+}
+
+export const MAIN_DAWN_BG = "#EEEBF8";
+export const MAIN_NOCTURNE_BG = "#12111A";
+
+export function mainWindowBackgroundColor(isDark: boolean): string {
+  return isDark ? MAIN_NOCTURNE_BG : MAIN_DAWN_BG;
+}
 
 export const READER_SHELL_BG: Record<ReaderPageTheme, string> = {
   original: "#EEEBF8",
@@ -318,11 +330,14 @@ function createWindow(options: {
   minWidth?: number;
   minHeight?: number;
   initialDark: boolean;
+  initialDarkSeed?: boolean | null;
   readerPageTheme?: string;
 }): BrowserWindow {
   const targetUrl = resolveWindowUrl(options.routePath, process.env.ELECTRON_RENDERER_URL);
   const isMac = process.platform === "darwin";
   const isMain = options.label === "main";
+  const initialDarkSeed =
+    options.initialDarkSeed !== undefined ? options.initialDarkSeed : options.initialDark;
   const trafficLightPosition = isMac ? trafficLightPositionFor(options.label, 1, false) : null;
 
   const win = new BrowserWindow({
@@ -334,7 +349,7 @@ function createWindow(options: {
     minHeight: options.minHeight,
     show: false,
     backgroundColor: isMain
-      ? MAIN_DAWN_BG
+      ? mainWindowBackgroundColor(Boolean(options.initialDark))
       : readerBackgroundColorForTheme(options.readerPageTheme),
     ...(defaultWindowIconPath ? { icon: defaultWindowIconPath } : {}),
     ...(isMac && trafficLightPosition
@@ -347,9 +362,11 @@ function createWindow(options: {
       preload: path.join(__dirname, "../preload/index.cjs"),
       additionalArguments: [
         `--quill-window-label=${options.label}`,
-        ...(!isMain
-          ? [`--quill-reader-theme=${options.readerPageTheme ?? "original"}`]
-          : []),
+        ...(isMain && initialDarkSeed !== null
+          ? [`--quill-initial-dark=${initialDarkSeed ? "1" : "0"}`]
+          : !isMain
+            ? [`--quill-reader-theme=${options.readerPageTheme ?? "original"}`]
+            : []),
       ],
       contextIsolation: true,
       nodeIntegration: false,
@@ -430,7 +447,15 @@ function createWindow(options: {
   return win;
 }
 
-export function createMainWindow(initialDark: boolean): BrowserWindow {
+export function createMainWindow(
+  initialAppearance: boolean | InitialAppearance,
+): BrowserWindow {
+  const initialDark =
+    typeof initialAppearance === "boolean" ? initialAppearance : initialAppearance.dark;
+  const initialDarkSeed =
+    typeof initialAppearance === "boolean"
+      ? initialAppearance
+      : initialAppearance.preloadDark;
   const existing = getWindow("main");
   if (existing) {
     focusManagedWindow("main");
@@ -456,6 +481,7 @@ export function createMainWindow(initialDark: boolean): BrowserWindow {
     minWidth: MAIN_MIN_WIDTH,
     minHeight: MAIN_MIN_HEIGHT,
     initialDark,
+    initialDarkSeed,
   });
 
   let restoring = true;

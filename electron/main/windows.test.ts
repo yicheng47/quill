@@ -251,7 +251,11 @@ describe("electron windows titlebar & lifecycle", () => {
 
     createMainWindow(true);
     const mainRec = mockState.instances[0];
-    expect(mainRec.options.backgroundColor).toBe("#EEEBF8");
+    expect(mainRec.options.backgroundColor).toBe("#12111A");
+    expect(
+      (mainRec.options.webPreferences as { additionalArguments?: string[] } | undefined)
+        ?.additionalArguments,
+    ).toContain("--quill-initial-dark=1");
     setTitlebarZoomForWindow("main", 1.5, "darwin");
     expect(mainRec.setWindowButtonPosition).toHaveBeenCalledWith({ x: 42, y: 46 });
 
@@ -269,10 +273,26 @@ describe("electron windows titlebar & lifecycle", () => {
 
     createMainWindow(false);
     const mainRec = mockState.instances[0];
+    expect(mainRec.options.backgroundColor).toBe("#EEEBF8");
+    expect(
+      (mainRec.options.webPreferences as { additionalArguments?: string[] } | undefined)
+        ?.additionalArguments,
+    ).toContain("--quill-initial-dark=0");
     mainRec.fullscreen = true;
     setTitlebarZoomForWindow("main", 1.5, "darwin");
     expect(mainRec.setWindowButtonPosition).not.toHaveBeenCalled();
 
+    closeIfOpen("main", mainRec);
+  });
+
+  it("omits --quill-initial-dark preload argument when InitialAppearance.preloadDark is null", () => {
+    createMainWindow({ dark: false, preloadDark: null });
+    const mainRec = mockState.instances[0];
+    expect(mainRec.options.backgroundColor).toBe("#EEEBF8");
+    const args =
+      (mainRec.options.webPreferences as { additionalArguments?: string[] } | undefined)
+        ?.additionalArguments ?? [];
+    expect(args.some((arg) => arg.startsWith("--quill-initial-dark="))).toBe(false);
     closeIfOpen("main", mainRec);
   });
 

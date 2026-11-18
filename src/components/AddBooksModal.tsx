@@ -263,7 +263,7 @@ export default function AddBooksModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-[#15151A]/26 backdrop-blur-[6px] flex items-center justify-center p-4"
+      className="fixed inset-0 z-50 bg-scrim backdrop-blur-[6px] flex items-center justify-center p-4"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -286,7 +286,7 @@ export default function AddBooksModal({
               type="button"
               aria-label={t("common.cancel")}
               onClick={onClose}
-              className="size-7 rounded-control flex items-center justify-center text-text-tertiary hover:text-text-primary hover:bg-black/[0.05] cursor-pointer transition-colors shrink-0"
+              className="size-7 rounded-control flex items-center justify-center text-text-tertiary hover:text-text-primary hover:bg-surface-hover cursor-pointer transition-colors shrink-0"
             >
               <X size={16} />
             </button>
@@ -316,7 +316,7 @@ export default function AddBooksModal({
               <button
                 type="button"
                 onClick={handleRetry}
-                className="px-3.5 py-1.5 rounded-control bg-accent-tint hover:bg-violet-200/80 text-[12px] font-semibold text-accent-on-tint cursor-pointer transition-colors"
+                className="px-3.5 py-1.5 rounded-control bg-accent-tint hover:bg-accent-tint-hover text-[12px] font-semibold text-accent-on-tint cursor-pointer transition-colors"
               >
                 {t("collections.pickerRetry")}
               </button>
@@ -339,7 +339,7 @@ export default function AddBooksModal({
                     aria-checked={selected}
                     onClick={() => toggleBook(book.id)}
                     className={`w-full px-2.5 py-[7px] rounded-[10px] flex items-center justify-between gap-2.5 text-left cursor-pointer transition-colors ${
-                      selected ? "bg-accent-tint" : "hover:bg-black/[0.04]"
+                      selected ? "bg-accent-tint" : "hover:bg-surface-hover"
                     }`}
                   >
                     <div className="flex items-center gap-2.5 min-w-0 flex-1">
@@ -364,7 +364,7 @@ export default function AddBooksModal({
                         </span>
                         <span
                           className={`text-[11.5px] truncate ${
-                            selected ? "text-violet-700" : "text-text-tertiary"
+                            selected ? "text-accent-on-tint/80" : "text-text-tertiary"
                           }`}
                         >
                           {book.author}
@@ -374,7 +374,7 @@ export default function AddBooksModal({
                     <span
                       className={`size-[18px] rounded-[6px] shrink-0 flex items-center justify-center transition-colors ${
                         selected
-                          ? "bg-accent text-white"
+                          ? "bg-accent text-text-on-accent"
                           : "bg-surface-inset border border-border-default"
                       }`}
                     >
@@ -392,7 +392,7 @@ export default function AddBooksModal({
                   <button
                     type="button"
                     onClick={handleRetry}
-                    className="px-3 py-1 rounded-control bg-accent-tint hover:bg-violet-200/80 text-[12px] font-semibold text-accent-on-tint cursor-pointer transition-colors"
+                    className="px-3 py-1 rounded-control bg-accent-tint hover:bg-accent-tint-hover text-[12px] font-semibold text-accent-on-tint cursor-pointer transition-colors"
                   >
                     {t("collections.pickerRetry")}
                   </button>
@@ -432,7 +432,7 @@ export default function AddBooksModal({
               type="button"
               disabled={selectedIds.size === 0 || submitting}
               onClick={handleConfirm}
-              className="px-3.5 py-[7px] rounded-control bg-accent hover:bg-accent-hover text-white text-[12.5px] font-semibold cursor-pointer transition-colors disabled:opacity-50"
+              className="px-3.5 py-[7px] rounded-control bg-accent hover:bg-accent-hover text-text-on-accent text-[12.5px] font-semibold cursor-pointer transition-colors disabled:opacity-50"
             >
               {t("collections.pickerAddCount", { count: selectedIds.size })}
             </button>

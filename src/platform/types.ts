@@ -68,6 +68,7 @@ export interface Platform {
   emitTo<T = unknown>(windowLabel: string, event: string, payload?: T): Promise<void>;
 
   getCurrentWindowLabel(): string;
+  getInitialDark(): boolean | null;
   getInitialReaderTheme(): string;
   setWindowTitle(title: string): Promise<void>;
   setWindowBackgroundColor(color: string): Promise<void>;

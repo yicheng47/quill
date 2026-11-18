@@ -187,13 +187,13 @@ export default function BookContextMenu({
       <div
         ref={menuRef}
         role="menu"
-        className="fixed z-50 w-[236px] p-1.5 rounded-[14px] bg-white/[0.96] border border-surface-glass-border backdrop-blur-[34px] shadow-[0_18px_44px_rgba(34,24,66,0.2)] flex flex-col gap-0.5"
+        className="fixed z-50 w-[236px] p-1.5 rounded-[14px] bg-surface-popover border border-surface-glass-border backdrop-blur-[34px] shadow-[var(--shadow-menu)] flex flex-col gap-0.5"
         style={{ left: menuPos.left, top: menuPos.top }}
       >
         <button
           type="button"
           onClick={onOpenBook}
-          className="flex items-center gap-2.5 w-full h-8 px-2.5 rounded-[8px] text-left cursor-pointer hover:bg-black/[0.04] transition-colors"
+          className="flex items-center gap-2.5 w-full h-8 px-2.5 rounded-[8px] text-left cursor-pointer hover:bg-surface-hover transition-colors"
         >
           <BookOpen size={15} className="text-text-tertiary shrink-0" />
           <span className="flex-1 text-[13px] font-medium text-text-primary truncate">
@@ -214,7 +214,7 @@ export default function BookContextMenu({
           <button
             type="button"
             onClick={onMarkReading}
-            className="flex items-center gap-2.5 w-full h-8 px-2.5 rounded-[8px] text-left cursor-pointer hover:bg-black/[0.04] transition-colors"
+            className="flex items-center gap-2.5 w-full h-8 px-2.5 rounded-[8px] text-left cursor-pointer hover:bg-surface-hover transition-colors"
           >
             <BookOpenCheck size={15} className="text-text-tertiary shrink-0" />
             <span className="flex-1 text-[13px] font-medium text-text-primary truncate">
@@ -234,7 +234,7 @@ export default function BookContextMenu({
           <button
             type="button"
             onClick={onMarkFinished}
-            className="flex items-center gap-2.5 w-full h-8 px-2.5 rounded-[8px] text-left cursor-pointer hover:bg-black/[0.04] transition-colors"
+            className="flex items-center gap-2.5 w-full h-8 px-2.5 rounded-[8px] text-left cursor-pointer hover:bg-surface-hover transition-colors"
           >
             <CircleCheck size={15} className="text-text-tertiary shrink-0" />
             <span className="flex-1 text-[13px] font-medium text-text-primary truncate">
@@ -254,7 +254,7 @@ export default function BookContextMenu({
           <button
             type="button"
             onClick={onMarkUnread}
-            className="flex items-center gap-2.5 w-full h-8 px-2.5 rounded-[8px] text-left cursor-pointer hover:bg-black/[0.04] transition-colors"
+            className="flex items-center gap-2.5 w-full h-8 px-2.5 rounded-[8px] text-left cursor-pointer hover:bg-surface-hover transition-colors"
           >
             <CircleDashed size={15} className="text-text-tertiary shrink-0" />
             <span className="flex-1 text-[13px] font-medium text-text-primary truncate">
@@ -268,7 +268,7 @@ export default function BookContextMenu({
         <button
           type="button"
           onClick={onEditInfo}
-          className="flex items-center gap-2.5 w-full h-8 px-2.5 rounded-[8px] text-left cursor-pointer hover:bg-black/[0.04] transition-colors"
+          className="flex items-center gap-2.5 w-full h-8 px-2.5 rounded-[8px] text-left cursor-pointer hover:bg-surface-hover transition-colors"
         >
           <Pencil size={15} className="text-text-tertiary shrink-0" />
           <span className="flex-1 text-[13px] font-medium text-text-primary truncate">
@@ -290,7 +290,7 @@ export default function BookContextMenu({
           className={`flex items-center justify-between w-full h-8 px-2.5 rounded-[8px] text-left cursor-pointer transition-colors ${
             showCollections
               ? "bg-accent-tint text-accent-on-tint font-semibold"
-              : "text-text-primary hover:bg-black/[0.04] font-medium"
+              : "text-text-primary hover:bg-surface-hover font-medium"
           }`}
         >
           <span className="flex items-center gap-2.5 min-w-0">
@@ -314,7 +314,7 @@ export default function BookContextMenu({
               onBooksChanged?.();
               onClose();
             }}
-            className="flex items-center gap-2.5 w-full h-8 px-2.5 rounded-[8px] text-left cursor-pointer hover:bg-black/[0.04] transition-colors"
+            className="flex items-center gap-2.5 w-full h-8 px-2.5 rounded-[8px] text-left cursor-pointer hover:bg-surface-hover transition-colors"
           >
             <FolderMinus size={15} className="text-text-tertiary shrink-0" />
             <span className="flex-1 text-[13px] font-medium text-text-primary truncate">
@@ -340,7 +340,7 @@ export default function BookContextMenu({
       {showCollections && (
         <div
           ref={submenuRef}
-          className="fixed z-[51] w-[254px] p-1.5 rounded-[14px] bg-white/[0.96] border border-surface-glass-border backdrop-blur-[34px] shadow-[0_18px_44px_rgba(34,24,66,0.2)] flex flex-col gap-0.5"
+          className="fixed z-[51] w-[254px] p-1.5 rounded-[14px] bg-surface-popover border border-surface-glass-border backdrop-blur-[34px] shadow-[var(--shadow-menu)] flex flex-col gap-0.5"
           style={submenuStyle}
           onMouseEnter={() => {
             if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
@@ -364,12 +364,12 @@ export default function BookContextMenu({
                     role="menuitemcheckbox"
                     aria-checked={checked}
                     onClick={() => void handleToggleCollection(c.id)}
-                    className="flex items-center gap-[9px] w-full h-[31px] px-2.5 rounded-[8px] text-left cursor-pointer hover:bg-black/[0.04] transition-colors"
+                    className="flex items-center gap-[9px] w-full h-[31px] px-2.5 rounded-[8px] text-left cursor-pointer hover:bg-surface-hover transition-colors"
                   >
                     <span
                       className={`size-4 rounded-[5px] shrink-0 flex items-center justify-center transition-colors ${
                         checked
-                          ? "bg-accent text-white"
+                          ? "bg-accent text-text-on-accent"
                           : "bg-surface-inset border border-border-default"
                       }`}
                     >
@@ -417,7 +417,7 @@ export default function BookContextMenu({
                 type="submit"
                 disabled={!newName.trim() || creatingBusy}
                 aria-label={t("bookMenu.createAndAdd")}
-                className="size-[30px] rounded-[8px] bg-accent hover:bg-accent-hover text-white flex items-center justify-center shrink-0 cursor-pointer transition-colors disabled:opacity-50"
+                className="size-[30px] rounded-[8px] bg-accent hover:bg-accent-hover text-text-on-accent flex items-center justify-center shrink-0 cursor-pointer transition-colors disabled:opacity-50"
               >
                 <Check size={14} />
               </button>

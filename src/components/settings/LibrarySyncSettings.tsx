@@ -360,7 +360,7 @@ export default function LibrarySyncSettings({
         {/* Turn on / Turn off iCloud Sync confirmation */}
         {confirm && (
           <div
-            className="fixed inset-0 z-[60] bg-[#15151A]/26 backdrop-blur-[6px] flex items-center justify-center p-4"
+            className="fixed inset-0 z-[60] bg-scrim backdrop-blur-[6px] flex items-center justify-center p-4"
             onClick={(e) => {
               if (e.target === e.currentTarget) setConfirm(null);
             }}
@@ -413,14 +413,14 @@ export default function LibrarySyncSettings({
 
         {/* Blocking local copy verification modal (non-dismissible) */}
         {disableProgress && (
-          <div className="fixed inset-0 z-[70] bg-[#15151A]/26 backdrop-blur-[6px] flex items-center justify-center p-4">
+          <div className="fixed inset-0 z-[70] bg-scrim backdrop-blur-[6px] flex items-center justify-center p-4">
             <div
               ref={copyingDialogRef}
               tabIndex={-1}
               role="dialog"
               aria-modal="true"
               aria-labelledby="sync-copying-title"
-              className="w-full max-w-[460px] p-[22px] rounded-[24px] bg-surface-solid border border-violet-200 shadow-menu flex flex-col gap-3.5 focus:outline-none"
+              className="w-full max-w-[460px] p-[22px] rounded-[24px] bg-surface-solid border border-accent/35 shadow-menu flex flex-col gap-3.5 focus:outline-none"
             >
               <div className="flex items-center gap-2.5">
                 <Loader2 size={18} className="text-accent animate-spin shrink-0" />
@@ -466,7 +466,7 @@ export default function LibrarySyncSettings({
         {/* Remove peer confirmation (Cancel-focused) */}
         {pendingRemoval && (
           <div
-            className="fixed inset-0 z-[60] bg-[#15151A]/26 backdrop-blur-[6px] flex items-center justify-center p-4"
+            className="fixed inset-0 z-[60] bg-scrim backdrop-blur-[6px] flex items-center justify-center p-4"
             onClick={(e) => {
               if (e.target === e.currentTarget) setPendingRemoval(null);
             }}
@@ -505,7 +505,7 @@ export default function LibrarySyncSettings({
                 <button
                   type="button"
                   onClick={() => void onConfirmRemovePeer()}
-                  className="px-4 py-2 rounded-control bg-danger hover:bg-danger-hover text-white text-[13px] font-semibold cursor-pointer transition-colors"
+                  className="px-4 py-2 rounded-control bg-danger hover:bg-danger-hover text-text-on-accent text-[13px] font-semibold cursor-pointer transition-colors"
                 >
                   {t("settings.librarySync.remove")}
                 </button>
@@ -517,7 +517,7 @@ export default function LibrarySyncSettings({
         {/* Rebuild library confirmation (Cancel-focused) */}
         {confirmRebuild && (
           <div
-            className="fixed inset-0 z-[60] bg-[#15151A]/26 backdrop-blur-[6px] flex items-center justify-center p-4"
+            className="fixed inset-0 z-[60] bg-scrim backdrop-blur-[6px] flex items-center justify-center p-4"
             onClick={(e) => {
               if (e.target === e.currentTarget) setConfirmRebuild(false);
             }}
@@ -556,7 +556,7 @@ export default function LibrarySyncSettings({
                 <button
                   type="button"
                   onClick={() => void onRebuild()}
-                  className="px-4 py-2 rounded-control bg-danger hover:bg-danger-hover text-white text-[13px] font-semibold cursor-pointer transition-colors"
+                  className="px-4 py-2 rounded-control bg-danger hover:bg-danger-hover text-text-on-accent text-[13px] font-semibold cursor-pointer transition-colors"
                 >
                   {t("settings.librarySync.rebuildConfirmCta")}
                 </button>
@@ -670,7 +670,7 @@ export default function LibrarySyncSettings({
         {syncOn && syncing && (
           <div
             data-testid="sync-active-card"
-            className="bg-surface-solid border border-violet-200 rounded-[14px] p-5 flex flex-col gap-3"
+            className="bg-surface-solid border border-accent/35 rounded-[14px] p-5 flex flex-col gap-3"
           >
             <div className="flex items-center justify-between gap-4">
               <div className="flex items-center gap-2.5 min-w-0">
@@ -707,7 +707,7 @@ export default function LibrarySyncSettings({
           <div
             role="alert"
             data-testid="sync-error-banner"
-            className="bg-danger-tint border border-[#D93F4C33] rounded-[14px] px-[18px] py-3.5 flex items-center justify-between gap-4"
+            className="bg-danger-tint border border-danger/25 rounded-[14px] px-[18px] py-3.5 flex items-center justify-between gap-4"
           >
             <div className="flex items-center gap-3 min-w-0">
               <AlertTriangle size={17} className="text-danger shrink-0" />
@@ -858,7 +858,7 @@ export default function LibrarySyncSettings({
                     onClick={() => setConfirmRebuild(true)}
                     disabled={busy || syncing || !engineRunning}
                     title={!engineRunning ? t("settings.librarySync.paused") : undefined}
-                    className="px-3.5 py-[7px] rounded-control bg-danger-tint border border-[#D93F4C33] text-danger text-[13px] font-semibold inline-flex items-center gap-1.5 cursor-pointer hover:bg-danger/15 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+                    className="px-3.5 py-[7px] rounded-control bg-danger-tint border border-danger/25 text-danger text-[13px] font-semibold inline-flex items-center gap-1.5 cursor-pointer hover:bg-danger/15 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
                   >
                     <RotateCcw size={13.5} />
                     <span>{t("settings.librarySync.rebuildCta")}</span>

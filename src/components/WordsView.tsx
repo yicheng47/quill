@@ -400,7 +400,7 @@ export default function WordsView({
                 aria-haspopup="menu"
                 className={`h-10 px-3.5 rounded-full text-[13px] inline-flex items-center gap-2 cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-focus-ring ${
                   bookFilter
-                    ? "bg-accent-tint border border-violet-300/60 text-accent-on-tint font-semibold"
+                    ? "bg-accent-tint border border-accent/35 text-accent-on-tint font-semibold"
                     : "dawn-glass text-text-primary font-medium hover:bg-surface-solid"
                 }`}
               >
@@ -581,7 +581,7 @@ export default function WordsView({
                             className={`w-full px-3 py-2.5 rounded-[10px] text-left cursor-pointer transition-colors ${
                               selected
                                 ? "bg-accent-tint text-accent-on-tint"
-                                : "text-text-primary hover:bg-black/[0.03]"
+                                : "text-text-primary hover:bg-surface-hover"
                             }`}
                           >
                             {sortMode === "az" ? (
@@ -667,7 +667,7 @@ export default function WordsView({
                         type="button"
                         disabled={deletingId === activeWord.id}
                         onClick={() => handleDeleteClick(activeWord.id)}
-                        className="h-9 px-3.5 rounded-control bg-danger hover:bg-danger-hover text-white text-[12.5px] font-semibold inline-flex items-center gap-1.5 cursor-pointer transition-colors disabled:opacity-60"
+                        className="h-9 px-3.5 rounded-control bg-danger hover:bg-danger-hover text-text-on-accent text-[12.5px] font-semibold inline-flex items-center gap-1.5 cursor-pointer transition-colors disabled:opacity-60"
                       >
                         <Trash2 size={13} />
                         <span>{t("words.clickAgainToDelete")}</span>

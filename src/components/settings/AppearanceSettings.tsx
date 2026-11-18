@@ -9,12 +9,25 @@ import {
   STORAGE_APP_ZOOM,
   ZOOM_STEPS,
 } from "../../lib/settings";
+import {
+  getThemeSelectionState,
+  selectAndSaveAppTheme,
+  subscribeThemeSelection,
+  type AppTheme,
+} from "../../lib/theme";
+import type { SettingsProps } from "./types";
 
-type ThemeOption = "system" | "light" | "dark";
-
-export default function AppearanceSettings() {
+export default function AppearanceSettings({ save }: Partial<SettingsProps> = {}) {
   const { t } = useTranslation();
   const [zoom, setZoom] = useState(readAppZoom);
+  const [selectionState, setSelectionState] = useState(() => getThemeSelectionState());
+
+  useEffect(() => {
+    setSelectionState(getThemeSelectionState());
+    return subscribeThemeSelection(() => {
+      setSelectionState(getThemeSelectionState());
+    });
+  }, []);
 
   useEffect(() => {
     const handleStorage = (event: StorageEvent) => {
@@ -28,11 +41,15 @@ export default function AppearanceSettings() {
   const canZoomOut = zoomIndex > 0;
   const canZoomIn = zoomIndex !== -1 && zoomIndex < ZOOM_STEPS.length - 1;
 
-  const cards: Array<{ id: ThemeOption; label: string; enabled: boolean }> = [
-    { id: "system", label: t("settings.appearance.system"), enabled: false },
-    { id: "light", label: t("settings.appearance.light"), enabled: true },
-    { id: "dark", label: t("settings.appearance.dark"), enabled: false },
+  const cards: Array<{ id: AppTheme; label: string }> = [
+    { id: "system", label: t("settings.appearance.system") },
+    { id: "light", label: t("settings.appearance.light") },
+    { id: "dark", label: t("settings.appearance.dark") },
   ];
+
+  const handleSelectTheme = (next: AppTheme) => {
+    void selectAndSaveAppTheme(next, save);
+  };
 
   return (
     <div className="flex flex-col gap-7">
@@ -41,45 +58,49 @@ export default function AppearanceSettings() {
 
         <div className="grid grid-cols-3 gap-4">
           {cards.map((card) => {
-            const active = card.id === "light";
+            const active = card.id === selectionState.activeTheme;
             return (
               <button
                 key={card.id}
                 type="button"
-                disabled={!card.enabled}
                 aria-pressed={active}
-                aria-disabled={!card.enabled}
                 data-theme-card={card.id}
-                title={!card.enabled ? t("settings.appearance.darkComingLater") : undefined}
+                onClick={() => handleSelectTheme(card.id)}
                 className={`rounded-[14px] p-2 flex flex-col gap-2.5 bg-surface-inset text-left transition-colors ${
                   active
                     ? "border-2 border-accent cursor-default"
-                    : "border border-border-subtle opacity-55 cursor-not-allowed"
+                    : "border border-border-subtle hover:border-border-default cursor-pointer"
                 }`}
               >
                 {/* Miniature window preview */}
                 <div
-                  className="h-[116px] w-full rounded-[8px] relative overflow-hidden"
+                  className="h-[116px] w-full rounded-[8px] relative overflow-hidden border border-border-subtle"
                   style={
                     card.id === "dark"
-                      ? { background: "linear-gradient(135deg, #1B1830 0%, #211A22 100%)" }
+                      ? {
+                          background:
+                            "linear-gradient(135deg, var(--color-preview-night-start) 0%, var(--color-preview-night-end) 100%)",
+                        }
                       : {
                           background:
-                            "radial-gradient(circle at 90% 10%, rgba(255, 224, 208, 0.45), transparent 60%), linear-gradient(135deg, #EEEBF8 0%, #F7F5F3 100%)",
+                            "radial-gradient(circle at 90% 10%, var(--color-bg-glow-peach, transparent), transparent 60%), linear-gradient(135deg, var(--color-bg-start) 0%, var(--color-bg-end) 100%)",
                         }
                   }
                 >
                   {card.id === "system" && (
                     <div
                       className="absolute right-0 top-0 bottom-0 w-1/2"
-                      style={{ background: "linear-gradient(135deg, #1B1830 0%, #211A22 100%)" }}
+                      style={{
+                        background:
+                          "linear-gradient(135deg, var(--color-preview-night-start) 0%, var(--color-preview-night-end) 100%)",
+                      }}
                     />
                   )}
 
                   {/* Top nav pill */}
                   <div
                     className={`absolute top-2.5 left-1/2 -translate-x-1/2 w-[76px] h-3 rounded-full ${
-                      card.id === "dark" ? "bg-[#2A2638]" : "bg-white/90"
+                      card.id === "dark" ? "bg-preview-night-surface" : "bg-preview-pill-light"
                     }`}
                   />
 
@@ -87,22 +108,20 @@ export default function AppearanceSettings() {
                   <div className="absolute inset-x-3.5 bottom-3.5 top-8 flex gap-2.5">
                     <div
                       className={`flex-1 rounded-[8px] relative ${
-                        card.id === "dark" ? "bg-[#2A2638]" : "bg-white/75"
+                        card.id === "dark" ? "bg-preview-night-surface" : "bg-preview-tile-light"
                       }`}
                     >
                       <div
                         className={`absolute left-2.5 bottom-2.5 w-10 h-2.5 rounded-full ${
-                          card.id === "dark" ? "bg-[#8F80FF]" : "bg-accent"
+                          card.id === "dark" ? "bg-preview-night-accent" : "bg-accent"
                         }`}
                       />
                     </div>
                     <div
                       className={`w-[38%] rounded-[8px] ${
-                        card.id === "dark"
-                          ? "bg-[#2A2638]"
-                          : card.id === "system"
-                            ? "bg-[#2A2638]"
-                            : "bg-white/75"
+                        card.id === "dark" || card.id === "system"
+                          ? "bg-preview-night-surface"
+                          : "bg-preview-tile-light"
                       }`}
                     />
                   </div>
@@ -130,6 +149,12 @@ export default function AppearanceSettings() {
         <p className="text-[12.5px] text-text-tertiary leading-[1.45]">
           {t("settings.appearance.themeNote")}
         </p>
+
+        {selectionState.saveError && (
+          <p role="alert" className="text-[12.5px] text-danger leading-[1.4]">
+            {t("settings.appearance.saveError")}
+          </p>
+        )}
       </section>
 
       <section className="flex flex-col gap-2.5">

@@ -177,7 +177,7 @@ export default function ExplainPopover({
       }
     >
       <div className="p-[18px] flex flex-col gap-3 max-h-[360px] overflow-y-auto">
-        <div className="border-l-2 border-violet-300 pl-3 py-0.5">
+        <div className="border-l-2 border-accent/55 pl-3 py-0.5">
           <p className="font-reading italic text-[13px] leading-[1.5] text-text-secondary line-clamp-3">
             “{text}”
           </p>

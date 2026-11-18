@@ -19,7 +19,7 @@ export default function Tile({
     <div
       onClick={onClick}
       className={`dawn-glass rounded-[24px] p-6 flex flex-col gap-3.5 ${
-        onClick ? "cursor-pointer transition-colors hover:bg-white/80" : ""
+        onClick ? "cursor-pointer transition-colors hover:bg-surface-solid" : ""
       } ${className}`}
     >
       {(title || action) && (

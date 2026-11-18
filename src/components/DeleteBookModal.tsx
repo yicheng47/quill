@@ -43,7 +43,7 @@ export default function DeleteBookModal({ book, onClose, onConfirm }: DeleteBook
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-[#15151A]/26 backdrop-blur-[6px] flex items-center justify-center p-4"
+      className="fixed inset-0 z-50 bg-scrim backdrop-blur-[6px] flex items-center justify-center p-4"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -76,7 +76,7 @@ export default function DeleteBookModal({ book, onClose, onConfirm }: DeleteBook
             type="button"
             disabled={deleting}
             onClick={handleConfirm}
-            className="px-3.5 py-[7px] rounded-control bg-danger hover:bg-danger-hover text-white text-[13px] font-semibold cursor-pointer transition-colors disabled:opacity-50"
+            className="px-3.5 py-[7px] rounded-control bg-danger hover:bg-danger-hover text-text-on-accent text-[13px] font-semibold cursor-pointer transition-colors disabled:opacity-50"
           >
             {t("deleteBookModal.confirm")}
           </button>

@@ -13,7 +13,7 @@ const TextField = forwardRef<HTMLInputElement, TextFieldProps>(
         className={`h-11 px-4 rounded-[14px] bg-surface-solid border inline-flex items-center gap-2.5 transition-colors ${
           error
             ? "border-danger focus-within:ring-[3px] focus-within:ring-danger/20"
-            : "border-border-default focus-within:border-violet-500 focus-within:ring-[3px] focus-within:ring-focus-ring"
+            : "border-border-default focus-within:border-accent focus-within:ring-[3px] focus-within:ring-focus-ring"
         } ${containerClassName}`}
       >
         <input

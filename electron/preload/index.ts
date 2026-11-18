@@ -13,8 +13,15 @@ function resolveInitialReaderTheme(): string {
   return arg ? arg.slice("--quill-reader-theme=".length) : "original";
 }
 
+function resolveInitialDark(): boolean | null {
+  const arg = process.argv.find((a) => a.startsWith("--quill-initial-dark="));
+  if (!arg) return null;
+  return arg.slice("--quill-initial-dark=".length) === "1";
+}
+
 const initialWindowLabel = resolveInitialWindowLabel();
 const initialReaderTheme = resolveInitialReaderTheme();
+const initialDark = resolveInitialDark();
 
 const bridge = {
   getWindowLabel(): string {
@@ -23,6 +30,10 @@ const bridge = {
 
   getInitialReaderTheme(): string {
     return initialReaderTheme;
+  },
+
+  getInitialDark(): boolean | null {
+    return initialDark;
   },
 
   async invoke<T = unknown>(command: string, args?: Record<string, unknown>): Promise<T> {

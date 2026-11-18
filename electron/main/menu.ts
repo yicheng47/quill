@@ -6,11 +6,12 @@ import {
   focusManagedWindow,
   toggleWindowZoom,
   whenWindowReady,
+  type InitialAppearance,
 } from "./windows";
 
 export function installAppMenu(
   core: QuillCoreInstance,
-  isInitialDark: () => Promise<boolean>,
+  isInitialDark: () => Promise<boolean | InitialAppearance>,
 ): void {
   const isMac = process.platform === "darwin";
   const isDev = !app.isPackaged;

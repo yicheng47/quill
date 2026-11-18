@@ -1,8 +1,9 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import {
   appReady,
   getCurrentWindowLabel,
+  getInitialDark,
   invoke,
   onWindowResized,
 } from "./platform";
@@ -21,46 +22,99 @@ import {
   STORAGE_APP_ZOOM,
   writeAppZoom,
 } from "./lib/settings";
-
-function applyTheme(isMainWindow: boolean) {
-  const root = document.documentElement;
-  root.classList.add("dawn");
-  // Reader page theme (Nocturne dark) owns .dark once Reader mounts; main stays light Dawn.
-  if (isMainWindow || !root.dataset.readerTheme) {
-    root.classList.remove("dark");
-  }
-}
+import {
+  applyMainWindowDark,
+  applyMainWindowTheme,
+  bumpAppThemeRevision,
+  getAppThemeRevision,
+  normalizeAppTheme,
+  readAppTheme,
+  seedCommittedAppTheme,
+  STORAGE_APP_THEME,
+  syncCommittedAppTheme,
+  writeAppTheme,
+  type AppTheme,
+} from "./lib/theme";
 
 const SETTINGS_REVEAL_TIMEOUT_MS = 250;
 
+function readInitialMainDark(): boolean | null {
+  try {
+    return typeof getInitialDark === "function" ? getInitialDark() : null;
+  } catch {
+    return null;
+  }
+}
+
+function applyInitialMainAppearance(
+  initialDark: boolean | null,
+  fallbackTheme: AppTheme,
+): void {
+  if (document.documentElement.dataset.readerTheme) return;
+  if (initialDark !== null) {
+    applyMainWindowDark(initialDark);
+  } else {
+    applyMainWindowTheme(fallbackTheme);
+  }
+}
+
 export default function App() {
   const isMainWindow = getCurrentWindowLabel() === "main";
+  const themeRef = useRef<AppTheme>(readAppTheme());
 
   useEffect(() => {
     const cachedZoom = readAppZoom();
     const cachedZoomReady = restoreAppZoom(cachedZoom);
-    applyTheme(isMainWindow);
+    const root = document.documentElement;
+    root.classList.add("dawn");
+
+    const startRevision = getAppThemeRevision();
+    const mainInitialDark = isMainWindow ? readInitialMainDark() : null;
+    let settingsResolved = false;
+
+    if (isMainWindow) {
+      themeRef.current = readAppTheme();
+      applyInitialMainAppearance(mainInitialDark, themeRef.current);
+    } else if (!root.dataset.readerTheme) {
+      // Reader windows follow their page theme only; never adopt main app theme.
+      root.classList.remove("dark");
+    }
 
     const settingsReady = invoke<Record<string, string>>("get_all_settings")
       .then((settings) => {
-        const theme = settings.theme ?? "system";
-        applyTheme(isMainWindow);
-        localStorage.setItem("quill-theme", theme);
+        settingsResolved = true;
+        if (isMainWindow && getAppThemeRevision() === startRevision) {
+          const theme = normalizeAppTheme(settings.theme);
+          themeRef.current = theme;
+          writeAppTheme(theme);
+          seedCommittedAppTheme(theme);
+          if (!document.documentElement.dataset.readerTheme) {
+            applyMainWindowTheme(theme);
+          }
+        } else if (!isMainWindow && !document.documentElement.dataset.readerTheme) {
+          document.documentElement.classList.remove("dark");
+        }
         const persistedZoom = snapAppZoom(settings.app_zoom);
         writeAppZoom(persistedZoom);
         if (persistedZoom !== cachedZoom) {
           return restoreAppZoom(persistedZoom);
         }
       })
-      .catch(() => applyTheme(isMainWindow));
+      .catch(() => {
+        settingsResolved = true;
+        if (isMainWindow && getAppThemeRevision() === startRevision) {
+          applyInitialMainAppearance(mainInitialDark, themeRef.current);
+        } else if (!isMainWindow && !document.documentElement.dataset.readerTheme) {
+          document.documentElement.classList.remove("dark");
+        }
+      });
 
     // Reconcile the language we picked synchronously from localStorage with
     // the persisted DB value (and persist to the DB on first launch).
     reconcileLanguage();
 
     // Bound first-launch settings wait so an unresponsive backend never keeps
-    // the window hidden indefinitely, while fast persisted dark applies pre-reveal
-    // and slower resolutions reconcile cleanly afterward.
+    // the window hidden indefinitely, while Electron's initialDark prevents flash.
     let revealTimer: number | undefined;
     const revealTimeout = new Promise<void>((resolve) => {
       revealTimer = window.setTimeout(resolve, SETTINGS_REVEAL_TIMEOUT_MS);
@@ -77,9 +131,13 @@ export default function App() {
 
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
     const handler = () => {
-      if (!document.documentElement.dataset.themeOverride) {
-        applyTheme(isMainWindow);
+      if (!isMainWindow) return;
+      if (document.documentElement.dataset.themeOverride) return;
+      if (document.documentElement.dataset.readerTheme) return;
+      if (!settingsResolved && mainInitialDark !== null && getAppThemeRevision() === startRevision) {
+        return;
       }
+      applyMainWindowTheme(themeRef.current);
     };
     mq.addEventListener("change", handler);
     return () => mq.removeEventListener("change", handler);
@@ -95,12 +153,26 @@ export default function App() {
 
   useEffect(() => {
     const handleStorage = (event: StorageEvent) => {
-      if (event.key !== STORAGE_APP_ZOOM || event.storageArea === null) return;
-      void restoreAppZoom(readAppZoom());
+      if (event.key === STORAGE_APP_ZOOM) {
+        if (event.storageArea === null) return;
+        void restoreAppZoom(readAppZoom());
+        return;
+      }
+      if (event.key === STORAGE_APP_THEME && isMainWindow) {
+        const nextTheme = readAppTheme();
+        themeRef.current = nextTheme;
+        bumpAppThemeRevision();
+        // Same-window notifications come from setAppTheme (storageArea === null),
+        // which has already updated the DOM class and native window background.
+        if (event.storageArea !== null && !document.documentElement.dataset.readerTheme) {
+          syncCommittedAppTheme(nextTheme);
+          applyMainWindowTheme(nextTheme);
+        }
+      }
     };
     window.addEventListener("storage", handleStorage);
     return () => window.removeEventListener("storage", handleStorage);
-  }, []);
+  }, [isMainWindow]);
 
   useEffect(() => {
     let timer: number | null = null;

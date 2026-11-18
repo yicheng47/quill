@@ -220,16 +220,16 @@ export default function HomeView({
                   {t("home.empty.specimenHighlightsEyebrow")}
                 </span>
                 <span className="px-[9px] py-[5px] rounded-full bg-surface-solid border border-border-subtle inline-flex items-center gap-[5px]">
-                  <span className="size-[9px] rounded-full bg-hl-yellow border border-[#15151A]/12" />
-                  <span className="size-[9px] rounded-full bg-hl-green border border-[#15151A]/12" />
-                  <span className="size-[9px] rounded-full bg-hl-blue border border-[#15151A]/12" />
-                  <span className="size-[9px] rounded-full bg-hl-pink border border-[#15151A]/12" />
+                  <span className="size-[9px] rounded-full bg-hl-yellow border border-border-default" />
+                  <span className="size-[9px] rounded-full bg-hl-green border border-border-default" />
+                  <span className="size-[9px] rounded-full bg-hl-blue border border-border-default" />
+                  <span className="size-[9px] rounded-full bg-hl-pink border border-border-default" />
                 </span>
               </div>
               <div className="bg-surface-inset border border-border-subtle rounded-[16px] p-3.5 flex-1 flex items-center justify-center min-h-[210px]">
                 <div className="bg-paper border border-border-subtle rounded-[12px] px-[15px] py-[13px] w-full flex flex-col gap-2.5">
                   <div className="border-l-2 border-hl-yellow pl-3 py-0.5">
-                    <div className="bg-hl-yellow/45 rounded-[6px] px-2 py-[5px]">
+                    <div className="bg-hl-yellow/60 rounded-[6px] px-2 py-[5px]">
                       <p className="font-reading text-[13px] leading-[1.45] text-text-primary">
                         {t("home.empty.specimenHighlightQuote")}
                       </p>
@@ -336,7 +336,7 @@ export default function HomeView({
                   </p>
                 </div>
                 <div className="bg-surface-solid border border-border-subtle rounded-[12px] rounded-tl-[4px] px-3 py-[9px] flex items-start gap-2">
-                  <span className="size-5 rounded-[6px] bg-accent text-white flex items-center justify-center shrink-0 mt-0.5">
+                  <span className="size-5 rounded-[6px] bg-accent text-text-on-accent flex items-center justify-center shrink-0 mt-0.5">
                     <Sparkles size={11} />
                   </span>
                   <p className="text-[12px] leading-[1.4] text-text-primary">
@@ -400,7 +400,7 @@ export default function HomeView({
                   author={nowReadingBook.author}
                   coverData={nowReadingBook.cover_data}
                   coverPath={nowReadingBook.cover_path}
-                  className="size-full transition-shadow duration-200 group-hover:shadow-[0_18px_34px_rgba(91,75,232,0.3)]"
+                  className="size-full transition-shadow duration-200 group-hover:shadow-[var(--shadow-cover-hover)]"
                 />
               </button>
 
@@ -549,7 +549,7 @@ export default function HomeView({
               }}
               className={`dawn-glass rounded-[24px] p-6 flex-1 flex flex-col gap-3.5 ${
                 lastChat
-                  ? "cursor-pointer hover:bg-white/80 transition-colors focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-focus-ring"
+                  ? "cursor-pointer hover:bg-surface-solid transition-colors focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-focus-ring"
                   : ""
               }`}
             >
@@ -626,7 +626,7 @@ export default function HomeView({
                     author={book.author}
                     coverData={book.cover_data}
                     coverPath={book.cover_path}
-                    className="w-full aspect-[169/238] transition-shadow duration-200 group-hover:shadow-[0_18px_34px_rgba(91,75,232,0.3)]"
+                    className="w-full aspect-[169/238] transition-shadow duration-200 group-hover:shadow-[var(--shadow-cover-hover)]"
                   />
                 </button>
               ))}
@@ -660,7 +660,7 @@ export default function HomeView({
                         key={book.id}
                         type="button"
                         onClick={() => void openReaderWindow(book.id)}
-                        className="w-full flex items-center gap-3.5 text-left rounded-[12px] p-1 -m-1 hover:bg-black/[0.03] cursor-pointer transition-colors"
+                        className="w-full flex items-center gap-3.5 text-left rounded-[12px] p-1 -m-1 hover:bg-surface-hover cursor-pointer transition-colors"
                       >
                         <BookCover
                           title={book.title}

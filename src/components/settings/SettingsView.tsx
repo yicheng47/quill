@@ -2,6 +2,11 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { getAppVersion } from "../../platform";
 import { useSettings } from "../../hooks/useSettings";
+import {
+  clearThemeSaveError,
+  normalizeAppTheme,
+  seedCommittedAppTheme,
+} from "../../lib/theme";
 import { isMacOS } from "../../lib/platformEnv";
 import Toast from "../ui/Toast";
 import SettingsNav from "./SettingsNav";
@@ -81,12 +86,20 @@ export default function SettingsView({
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const toastTimerRef = useRef<number | null>(null);
   const paneRef = useRef<HTMLDivElement>(null);
+  const seededThemeRef = useRef(false);
 
   useEffect(() => {
+    clearThemeSaveError();
     void getAppVersion()
       .then(setAppVersion)
       .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (loading || seededThemeRef.current) return;
+    seededThemeRef.current = true;
+    seedCommittedAppTheme(normalizeAppTheme(settings.theme));
+  }, [loading, settings]);
 
   useEffect(() => {
     return () => {
@@ -184,7 +197,7 @@ export default function SettingsView({
             </div>
 
             {activeSection === "general" && <GeneralSettings {...sectionProps} />}
-            {activeSection === "appearance" && <AppearanceSettings />}
+            {activeSection === "appearance" && <AppearanceSettings {...sectionProps} />}
             {activeSection === "reading" && <ReadingSettings {...sectionProps} />}
             {activeSection === "ai" && <AiSettings {...sectionProps} refreshNonce={visitSeq} />}
             {activeSection === "tools" && <ToolsSettings {...sectionProps} />}

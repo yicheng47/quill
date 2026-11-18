@@ -16,7 +16,7 @@ const SearchField = forwardRef<HTMLInputElement, SearchFieldProps>(
 
     return (
       <div
-        className={`h-10 px-4 rounded-full dawn-glass inline-flex items-center gap-[9px] transition-shadow focus-within:border-violet-400 focus-within:ring-[3px] focus-within:ring-focus-ring ${className}`}
+        className={`h-10 px-4 rounded-full dawn-glass inline-flex items-center gap-[9px] transition-shadow focus-within:border-accent focus-within:ring-[3px] focus-within:ring-focus-ring ${className}`}
       >
         <Search size={16} className="text-text-tertiary shrink-0" />
         <input
@@ -34,7 +34,7 @@ const SearchField = forwardRef<HTMLInputElement, SearchFieldProps>(
             type="button"
             onClick={onClear}
             aria-label={resolvedClearLabel}
-            className="size-5 rounded-full flex items-center justify-center text-text-tertiary hover:text-text-primary hover:bg-black/[0.06] cursor-pointer transition-colors shrink-0"
+            className="size-5 rounded-full flex items-center justify-center text-text-tertiary hover:text-text-primary hover:bg-surface-hover cursor-pointer transition-colors shrink-0"
           >
             <X size={13} />
           </button>

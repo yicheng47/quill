@@ -106,7 +106,7 @@ export default function SettingsNav({
                   className={`w-full px-3 py-[9px] rounded-[10px] flex items-center gap-3 text-left text-[14px] cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-focus-ring ${
                     isActive
                       ? "bg-accent-tint text-accent-on-tint font-semibold"
-                      : "text-text-primary font-normal hover:bg-black/[0.04]"
+                      : "text-text-primary font-normal hover:bg-surface-hover"
                   }`}
                 >
                   <Icon
