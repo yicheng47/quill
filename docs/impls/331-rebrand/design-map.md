@@ -119,4 +119,4 @@ Design source: `quill/desktop/specs/331-rebrand.pen` at revision `323c398` in `Y
 | `hl-yellow` / `green` / `blue` / `pink` / `violet` | `#FBE7A1` / `#CDEFD5` / `#CFE3FF` / `#FAD3E3` / `#E4DEFF` | `#E5B83B66` / `#3BB86E59` / `#4A8FE759` / `#E05A9459` / `#8477EE59` | Reader & Highlights passage colors |
 
 - **Typography:** `--font-ui: "Geist"`, `--font-mono: "Geist Mono"`, `--font-reading: "Literata"`. Headed views use `4px` top body padding above `Header`, `28px` (`font-weight: 600`, `letter-spacing: -0.75px`) page titles with `14px` inline subtitles, and `22px` (`-0.4px`) Settings right-pane section titles.
-- **Radii:** `xs` `4px`, `sm` `6px` (covers), `md` `10px`, `lg` `14px`, `xl` `24px` (glass panes/tiles), `pill` `999px`.
+- **Radii:** `xs` `4px`, `sm` `6px` (covers), `md` `10px`, `control` `12px` (buttons and icon buttons), `lg` `14px`, `xl` `24px` (glass panes/tiles), `pill` `999px` (tabs, segments, chips, badges).
