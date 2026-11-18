@@ -12,14 +12,14 @@ The spec says *what*; this directory says *how, in what order, and what has land
 
 ## Status (2026-11-18)
 
-Design is signed off and pushed to `YeelinksCo/yeelinks_design` `main` at `323c398` (`quill/desktop/specs/331-rebrand.pen`, 60 frames/boards + 29 reusable components). **M1** merged on 2026-11-18 ([#332](https://github.com/yicheng47/quill/pull/332)). **M2** is open as [#334](https://github.com/yicheng47/quill/pull/334), passed macOS QA and awaits Jason's remaining live checks; **M6** is in its second live QA run.
+Design is signed off and pushed to `YeelinksCo/yeelinks_design` `main` at `323c398` (`quill/desktop/specs/331-rebrand.pen`, 60 frames/boards + 29 reusable components). **M1** merged on 2026-11-18 ([#332](https://github.com/yicheng47/quill/pull/332)). **M2** merged on 2026-11-18 ([#334](https://github.com/yicheng47/quill/pull/334)). **M3**, **M4** and **M6** are in flight, driven by the operator chat under Jason's standing approval (see [`impl_log.md`](impl_log.md)).
 
 | Mission | Phase | Branch | Waits on | Pull request | State |
 |---|---|---|---|---|---|
 | **M1** — Foundations, Icons, `cmp/*` & Queries | 1 | `feat/331-rebrand` | — | [#332](https://github.com/yicheng47/quill/pull/332) | Merged |
-| **M2** — `TopBar`, Quiet Updates, `⌘K` (Books), `Library` & Collections | 1 | `feat/331-m2-topbar-and-library` | M1 | [#334](https://github.com/yicheng47/quill/pull/334) | In review |
-| **M3** — `Home` Bento, Full `⌘K`, `Highlights`, `Words` (#322) & `Chats` | 2 | `feat/331-m3-main-views` | M2 | — | Planned |
-| **M4** — 9-Tab In-Window `Settings`, `iCloud Sync` States, `Updates` & `About` | 2 | `feat/331-m4-settings-and-updates` | M2 (M3 preferred) | — | Planned |
+| **M2** — `TopBar`, Quiet Updates, `⌘K` (Books), `Library` & Collections | 1 | `feat/331-m2-topbar-and-library` | M1 | [#334](https://github.com/yicheng47/quill/pull/334) | Merged |
+| **M3** — `Home` Bento, Full `⌘K`, `Highlights`, `Words` (#322) & `Chats` | 2 | `feat/331-m3-main-views` | M2 | — | In progress |
+| **M4** — 9-Tab In-Window `Settings`, `iCloud Sync` States, `Updates` & `About` | 2 | `feat/331-m4-settings-and-updates` | M2 | — | In progress |
 | **M5** — `AI Assistant`, Auth Lifecycle & `#325` Session Expiry | 2 | `feat/331-m5-ai-assistant-and-auth` | M4 | — | Planned |
 | **M6** — `Reader` Dawn Shell, Themes, PDF Spread, Navigation Islands & iCloud | 3 | `feat/331-m6-reader-shell` | M1 | — | In QA |
 | **M7** — `Reader` Selection Menu, Reading Popovers, `Words in Book` & `Ask Quill` | 3 | `feat/331-m7-reader-ai-and-popovers` | M5, M6 | — | Planned |
