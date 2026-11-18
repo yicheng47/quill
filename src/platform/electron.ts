@@ -17,6 +17,7 @@ interface AvailableUpdateInfo {
 
 interface QuillShellBridge {
   getWindowLabel(): string;
+  getInitialReaderTheme?(): string;
   invoke<T = unknown>(command: string, args?: Record<string, unknown>): Promise<T>;
   listen<T = unknown>(eventName: string, handler: (payload: T) => void): UnlistenFn;
   listenCurrentWindow<T = unknown>(
@@ -26,6 +27,7 @@ interface QuillShellBridge {
   emitTo<T = unknown>(windowLabel: string, event: string, payload?: T): Promise<void>;
   appReady(): Promise<void>;
   setWindowTitle(title: string): Promise<void>;
+  setWindowBackgroundColor(color: string): Promise<void>;
   focusWindow(label: string): Promise<boolean>;
   openReaderWindow(params: ReaderWindowParams): Promise<void>;
   getOpenReaderCount(): Promise<number>;
@@ -87,8 +89,16 @@ export const electronPlatform: Platform = {
     return window.quillShell ? window.quillShell.getWindowLabel() : "main";
   },
 
+  getInitialReaderTheme(): string {
+    return window.quillShell?.getInitialReaderTheme?.() ?? "original";
+  },
+
   setWindowTitle(title: string): Promise<void> {
     return bridge().setWindowTitle(title);
+  },
+
+  setWindowBackgroundColor(color: string): Promise<void> {
+    return bridge().setWindowBackgroundColor(color);
   },
 
   appReady(): Promise<void> {

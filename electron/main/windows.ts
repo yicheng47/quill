@@ -1,6 +1,8 @@
 import path from "node:path";
-import { BrowserWindow, nativeTheme, shell } from "electron";
+import { BrowserWindow, nativeTheme, screen, shell } from "electron";
 import { isAllowedNavigation, isSafeHttpUrl, resolveWindowUrl } from "./urlSecurity";
+
+export type ReaderPageTheme = "original" | "paper" | "quiet" | "dark";
 
 export interface ReaderWindowParams {
   label: string;
@@ -10,19 +12,139 @@ export interface ReaderWindowParams {
   height: number;
   minWidth: number;
   minHeight: number;
+  pageTheme?: string;
 }
 
-const LIGHT_BG = "#f4f4f5";
-const DARK_BG = "#151518";
 const MAIN_DAWN_BG = "#EEEBF8";
+
+export const READER_SHELL_BG: Record<ReaderPageTheme, string> = {
+  original: "#EEEBF8",
+  paper: "#F0E7D4",
+  quiet: "#D2D2D8",
+  dark: "#12111A",
+};
+
+export const READER_CASCADE_OFFSET = 32;
+
+export interface WindowRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface ComputeReaderPlacementInput {
+  windowSize: { width: number; height: number };
+  mainWindow: { bounds: WindowRect; workArea: WindowRect } | null;
+  openReaderCount: number;
+  lastFocusedReader: { bounds: WindowRect; workArea: WindowRect } | null;
+  cursorWorkArea: WindowRect;
+  cascadeStep?: number;
+}
 
 const windowsByLabel = new Map<string, BrowserWindow>();
 const labelByWebContentsId = new Map<number, string>();
 const titlebarZoomByLabel = new Map<string, number>();
+const readerFocusOrder: string[] = [];
 const readyLabels = new Set<string>();
 const pendingReadyCallbacks = new Map<string, Array<() => void>>();
 let defaultWindowIconPath: string | undefined;
 let quitting = false;
+
+function recordReaderFocus(label: string): void {
+  if (label === "main") return;
+  const idx = readerFocusOrder.indexOf(label);
+  if (idx !== -1) readerFocusOrder.splice(idx, 1);
+  readerFocusOrder.unshift(label);
+}
+
+function removeReaderFocus(label: string): void {
+  const idx = readerFocusOrder.indexOf(label);
+  if (idx !== -1) readerFocusOrder.splice(idx, 1);
+}
+
+export function readerBackgroundColorForTheme(theme?: string | null): string {
+  if (theme === "paper" || theme === "quiet" || theme === "dark") {
+    return READER_SHELL_BG[theme];
+  }
+  return READER_SHELL_BG.original;
+}
+
+export function setWindowBackgroundColor(label: string, color: string): void {
+  const win = getWindow(label);
+  if (win) {
+    win.setBackgroundColor(color);
+  }
+}
+
+export function clampPositionToWorkArea(
+  x: number,
+  y: number,
+  windowSize: { width: number; height: number },
+  workArea: WindowRect,
+): { x: number; y: number } {
+  const maxX = workArea.x + Math.max(0, workArea.width - windowSize.width);
+  const maxY = workArea.y + Math.max(0, workArea.height - windowSize.height);
+  return {
+    x: Math.round(Math.min(Math.max(x, workArea.x), maxX)),
+    y: Math.round(Math.min(Math.max(y, workArea.y), maxY)),
+  };
+}
+
+export function computeReaderWindowPosition(
+  input: ComputeReaderPlacementInput,
+): { x: number; y: number } {
+  const step = input.cascadeStep ?? READER_CASCADE_OFFSET;
+
+  if (input.mainWindow) {
+    const { bounds: mainBounds, workArea } = input.mainWindow;
+    const clampedBase = clampPositionToWorkArea(
+      mainBounds.x,
+      mainBounds.y,
+      input.windowSize,
+      workArea,
+    );
+    const fitX = Math.floor(
+      Math.max(0, workArea.x + workArea.width - input.windowSize.width - clampedBase.x) / step,
+    );
+    const fitY = Math.floor(
+      Math.max(0, workArea.y + workArea.height - input.windowSize.height - clampedBase.y) / step,
+    );
+    const fitSteps = fitX >= 1 && fitY >= 1 ? Math.min(fitX, fitY) : Math.max(fitX, fitY);
+    const maxSteps = Math.max(1, fitSteps);
+    const offsetIndex = (Math.max(0, input.openReaderCount) % maxSteps) + 1;
+    return clampPositionToWorkArea(
+      clampedBase.x + offsetIndex * step,
+      clampedBase.y + offsetIndex * step,
+      input.windowSize,
+      workArea,
+    );
+  }
+
+  if (input.lastFocusedReader) {
+    const { bounds: readerBounds, workArea } = input.lastFocusedReader;
+    const nextX = readerBounds.x + step;
+    const nextY = readerBounds.y + step;
+    const overflowsRight = nextX + input.windowSize.width > workArea.x + workArea.width;
+    const overflowsBottom = nextY + input.windowSize.height > workArea.y + workArea.height;
+    if (overflowsRight || overflowsBottom) {
+      return clampPositionToWorkArea(
+        workArea.x + step,
+        workArea.y + step,
+        input.windowSize,
+        workArea,
+      );
+    }
+    return clampPositionToWorkArea(nextX, nextY, input.windowSize, workArea);
+  }
+
+  return clampPositionToWorkArea(
+    input.cursorWorkArea.x + (input.cursorWorkArea.width - input.windowSize.width) / 2,
+    input.cursorWorkArea.y + (input.cursorWorkArea.height - input.windowSize.height) / 2,
+    input.windowSize,
+    input.cursorWorkArea,
+  );
+}
 
 export function setDefaultWindowIcon(iconPath: string | undefined): void {
   defaultWindowIconPath = iconPath;
@@ -84,7 +206,7 @@ export function scaledTitlebarHeight(
   fullscreen: boolean,
 ): number | null {
   if (fullscreen) return null;
-  const baseHeight = label === "main" ? 71 : 32;
+  const baseHeight = label === "main" ? 71 : 64;
   return baseHeight * zoom;
 }
 
@@ -97,7 +219,7 @@ export function trafficLightPositionFor(
   if (height === null) return null;
   const buttonHeight = 14;
   return {
-    x: label === "main" ? Math.round(28 * zoom) : 16,
+    x: Math.round(28 * zoom),
     y: Math.max(4, Math.round((height - buttonHeight) / 2)),
   };
 }
@@ -127,6 +249,7 @@ export function focusManagedWindow(label: string): boolean {
   if (win.isMinimized()) win.restore();
   if (!win.isVisible()) win.show();
   win.focus();
+  recordReaderFocus(label);
   return true;
 }
 
@@ -164,9 +287,12 @@ function createWindow(options: {
   title: string;
   width: number;
   height: number;
+  x?: number;
+  y?: number;
   minWidth?: number;
   minHeight?: number;
   initialDark: boolean;
+  readerPageTheme?: string;
 }): BrowserWindow {
   const targetUrl = resolveWindowUrl(options.routePath, process.env.ELECTRON_RENDERER_URL);
   const isMac = process.platform === "darwin";
@@ -177,10 +303,13 @@ function createWindow(options: {
     title: options.title,
     width: options.width,
     height: options.height,
+    ...(options.x !== undefined && options.y !== undefined ? { x: options.x, y: options.y } : {}),
     minWidth: options.minWidth,
     minHeight: options.minHeight,
     show: false,
-    backgroundColor: isMain ? MAIN_DAWN_BG : options.initialDark ? DARK_BG : LIGHT_BG,
+    backgroundColor: isMain
+      ? MAIN_DAWN_BG
+      : readerBackgroundColorForTheme(options.readerPageTheme),
     ...(defaultWindowIconPath ? { icon: defaultWindowIconPath } : {}),
     ...(isMac && trafficLightPosition
       ? {
@@ -190,7 +319,12 @@ function createWindow(options: {
       : {}),
     webPreferences: {
       preload: path.join(__dirname, "../preload/index.cjs"),
-      additionalArguments: [`--quill-window-label=${options.label}`],
+      additionalArguments: [
+        `--quill-window-label=${options.label}`,
+        ...(!isMain
+          ? [`--quill-reader-theme=${options.readerPageTheme ?? "original"}`]
+          : []),
+      ],
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
@@ -198,6 +332,7 @@ function createWindow(options: {
   });
 
   windowsByLabel.set(options.label, win);
+  recordReaderFocus(options.label);
   const wcId = win.webContents.id;
   labelByWebContentsId.set(wcId, options.label);
   if (options.label.startsWith("reader-")) {
@@ -218,6 +353,10 @@ function createWindow(options: {
         void shell.openExternal(url);
       }
     }
+  });
+
+  win.on("focus", () => {
+    recordReaderFocus(options.label);
   });
 
   win.on("resize", () => {
@@ -246,6 +385,7 @@ function createWindow(options: {
 
   win.on("closed", () => {
     windowsByLabel.delete(options.label);
+    removeReaderFocus(options.label);
     labelByWebContentsId.delete(wcId);
     titlebarZoomByLabel.delete(options.label);
     readyLabels.delete(options.label);
@@ -291,14 +431,52 @@ export function createReaderWindow(
     focusManagedWindow(params.label);
     return existing;
   }
+
+  const mainWin = getWindow("main");
+  const mainWindow =
+    mainWin && mainWin.isVisible() && !mainWin.isMinimized()
+      ? (() => {
+          const bounds = mainWin.getBounds();
+          return { bounds, workArea: screen.getDisplayMatching(bounds).workArea };
+        })()
+      : null;
+
+  const openReaderCount = Array.from(windowsByLabel.entries()).filter(
+    ([label, win]) => label !== "main" && !win.isDestroyed(),
+  ).length;
+
+  let lastFocusedReader: { bounds: WindowRect; workArea: WindowRect } | null = null;
+  if (!mainWindow) {
+    for (const label of readerFocusOrder) {
+      const win = getWindow(label);
+      if (win) {
+        const bounds = win.getBounds();
+        lastFocusedReader = { bounds, workArea: screen.getDisplayMatching(bounds).workArea };
+        break;
+      }
+    }
+  }
+
+  const cursorWorkArea = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
+  const { x, y } = computeReaderWindowPosition({
+    windowSize: { width: params.width, height: params.height },
+    mainWindow,
+    openReaderCount,
+    lastFocusedReader,
+    cursorWorkArea,
+  });
+
   return createWindow({
     label: params.label,
     routePath: params.url,
     title: params.title,
     width: params.width,
     height: params.height,
+    x,
+    y,
     minWidth: params.minWidth,
     minHeight: params.minHeight,
     initialDark,
+    readerPageTheme: params.pageTheme,
   });
 }

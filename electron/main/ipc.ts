@@ -15,6 +15,7 @@ import {
   resolveInitialDark,
   sendEventToWindow,
   setTitlebarZoomForWindow,
+  setWindowBackgroundColor,
   type ReaderWindowParams,
 } from "./windows";
 
@@ -48,6 +49,39 @@ export async function readInitialDark(
     return resolveInitialDark(parsed);
   } catch {
     return resolveInitialDark(null);
+  } finally {
+    if (timer !== undefined) {
+      clearTimeout(timer);
+    }
+  }
+}
+
+export async function readStoredReaderTheme(
+  core: Pick<QuillCoreInstance, "dispatch">,
+  bookOverride?: string | null,
+  timeoutMs = INITIAL_THEME_TIMEOUT_MS,
+): Promise<string> {
+  if (
+    bookOverride === "original" ||
+    bookOverride === "paper" ||
+    bookOverride === "quiet" ||
+    bookOverride === "dark"
+  ) {
+    return bookOverride;
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const raw = await Promise.race([
+      core.dispatch("get_setting", JSON.stringify({ key: "reader_theme" })),
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), timeoutMs);
+      }),
+    ]);
+    if (raw === null) return "original";
+    const parsed = JSON.parse(raw) as string | null;
+    return parsed || "original";
+  } catch {
+    return "original";
   } finally {
     if (timer !== undefined) {
       clearTimeout(timer);
@@ -95,6 +129,19 @@ export function registerIpcHandlers(
     }
   });
 
+  ipcMain.handle("quill:set-window-background", (event, color: string) => {
+    if (typeof color !== "string" || !/^#[0-9a-fA-F]{6}$/.test(color)) return;
+    const label = labelForWebContents(event.sender.id);
+    if (label) {
+      setWindowBackgroundColor(label, color);
+      return;
+    }
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (win && !win.isDestroyed()) {
+      win.setBackgroundColor(color);
+    }
+  });
+
   ipcMain.handle("quill:focus-window", (_event, label: string): boolean => {
     return focusManagedWindow(label);
   });
@@ -102,8 +149,11 @@ export function registerIpcHandlers(
   ipcMain.handle(
     "quill:open-reader-window",
     async (_event, params: ReaderWindowParams) => {
-      const dark = await readInitialDark(core);
-      createReaderWindow(params, dark);
+      const [dark, pageTheme] = await Promise.all([
+        readInitialDark(core),
+        readStoredReaderTheme(core, params.pageTheme),
+      ]);
+      createReaderWindow({ ...params, pageTheme }, dark);
     },
   );
 

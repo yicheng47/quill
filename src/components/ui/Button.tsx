@@ -12,13 +12,13 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 
 const dawnVariantStyles: Record<ButtonVariant, string> = {
   primary:
-    "bg-accent text-text-on-accent font-semibold hover:bg-accent-hover active:bg-accent-pressed disabled:bg-violet-200 disabled:text-text-on-accent disabled:opacity-100",
+    "bg-accent text-text-on-accent font-semibold hover:bg-accent-hover active:bg-accent-pressed disabled:bg-accent/45 disabled:text-text-on-accent disabled:opacity-100",
   secondary:
     "bg-surface-chip border border-border-default text-text-primary font-medium hover:bg-surface-solid active:bg-surface-inset",
   tonal:
     "bg-accent-tint text-accent-on-tint font-semibold hover:bg-accent-tint-hover",
   ghost:
-    "text-text-secondary font-medium hover:bg-black/[0.04]",
+    "text-text-secondary font-medium hover:bg-border-subtle",
   icon:
     "text-text-muted hover:bg-bg-input justify-center",
 };

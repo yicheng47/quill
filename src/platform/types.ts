@@ -28,6 +28,7 @@ export interface ReaderWindowParams {
   height: number;
   minWidth: number;
   minHeight: number;
+  pageTheme?: string;
 }
 
 export interface WindowSize {
@@ -59,7 +60,9 @@ export interface Platform {
   emitTo<T = unknown>(windowLabel: string, event: string, payload?: T): Promise<void>;
 
   getCurrentWindowLabel(): string;
+  getInitialReaderTheme(): string;
   setWindowTitle(title: string): Promise<void>;
+  setWindowBackgroundColor(color: string): Promise<void>;
   appReady(): Promise<void>;
   focusWindow(label: string): Promise<boolean>;
   openReaderWindow(params: ReaderWindowParams): Promise<void>;

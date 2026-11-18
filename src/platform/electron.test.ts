@@ -21,12 +21,14 @@ describe("electronPlatform", () => {
     progressListeners.clear();
     window.quillShell = {
       getWindowLabel: () => "main",
+      getInitialReaderTheme: () => "paper",
       invoke: invokeMock,
       listen: () => () => {},
       listenCurrentWindow: () => () => {},
       emitTo: async () => {},
       appReady: async () => {},
       setWindowTitle: async () => {},
+      setWindowBackgroundColor: async () => {},
       focusWindow: async () => true,
       openReaderWindow: async () => {},
       getOpenReaderCount: async () => 0,
@@ -99,9 +101,11 @@ describe("electronPlatform", () => {
     unlisten();
   });
 
-  it("defaults getCurrentWindowLabel to main outside Electron", () => {
+  it("defaults getCurrentWindowLabel and getInitialReaderTheme outside Electron", () => {
+    expect(electronPlatform.getInitialReaderTheme()).toBe("paper");
     delete window.quillShell;
     expect(electronPlatform.getCurrentWindowLabel()).toBe("main");
+    expect(electronPlatform.getInitialReaderTheme()).toBe("original");
   });
 
   it("bridges checkForUpdate null, UpdateHandle download progress, and relaunch", async () => {

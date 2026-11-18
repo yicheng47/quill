@@ -22,40 +22,29 @@ import {
   writeAppZoom,
 } from "./lib/settings";
 
-const isMainWindow = getCurrentWindowLabel() === "main";
-
-function applyTheme(theme: string) {
+function applyTheme(isMainWindow: boolean) {
   const root = document.documentElement;
-  if (theme === "dark") {
-    root.classList.add("dark");
-  } else if (theme === "light") {
+  root.classList.add("dawn");
+  // Reader page theme (Nocturne dark) owns .dark once Reader mounts; main stays light Dawn.
+  if (isMainWindow || !root.dataset.readerTheme) {
     root.classList.remove("dark");
-  } else {
-    const dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-    root.classList.toggle("dark", dark);
   }
 }
 
 const SETTINGS_REVEAL_TIMEOUT_MS = 250;
 
 export default function App() {
+  const isMainWindow = getCurrentWindowLabel() === "main";
+
   useEffect(() => {
-    const isMain = getCurrentWindowLabel() === "main";
     const cachedZoom = readAppZoom();
     const cachedZoomReady = restoreAppZoom(cachedZoom);
-    if (isMain) {
-      document.documentElement.classList.add("dawn");
-      document.documentElement.classList.remove("dark");
-    } else {
-      applyTheme(localStorage.getItem("quill-theme") ?? "system");
-    }
+    applyTheme(isMainWindow);
 
     const settingsReady = invoke<Record<string, string>>("get_all_settings")
       .then((settings) => {
         const theme = settings.theme ?? "system";
-        if (!isMain) {
-          applyTheme(theme);
-        }
+        applyTheme(isMainWindow);
         localStorage.setItem("quill-theme", theme);
         const persistedZoom = snapAppZoom(settings.app_zoom);
         writeAppZoom(persistedZoom);
@@ -63,9 +52,7 @@ export default function App() {
           return restoreAppZoom(persistedZoom);
         }
       })
-      .catch(() => {
-        if (!isMain) applyTheme("system");
-      });
+      .catch(() => applyTheme(isMainWindow));
 
     // Reconcile the language we picked synchronously from localStorage with
     // the persisted DB value (and persist to the DB on first launch).
@@ -90,13 +77,13 @@ export default function App() {
 
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
     const handler = () => {
-      if (!isMain && !document.documentElement.dataset.themeOverride) {
-        applyTheme("system");
+      if (!document.documentElement.dataset.themeOverride) {
+        applyTheme(isMainWindow);
       }
     };
     mq.addEventListener("change", handler);
     return () => mq.removeEventListener("change", handler);
-  }, []);
+  }, [isMainWindow]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -104,7 +91,7 @@ export default function App() {
     };
     window.addEventListener("keydown", handleKeyDown, true);
     return () => window.removeEventListener("keydown", handleKeyDown, true);
-  }, []);
+  }, [isMainWindow]);
 
   useEffect(() => {
     const handleStorage = (event: StorageEvent) => {

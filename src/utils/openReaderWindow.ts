@@ -28,6 +28,25 @@ function loadSavedSize(bookId: string): { width: number; height: number } {
   }
 }
 
+function loadSavedPageTheme(bookId: string): string | undefined {
+  try {
+    const raw = localStorage.getItem(`reader-settings-${bookId}`);
+    if (!raw) return undefined;
+    const parsed = JSON.parse(raw) as { theme?: unknown };
+    if (
+      parsed.theme === "original" ||
+      parsed.theme === "paper" ||
+      parsed.theme === "quiet" ||
+      parsed.theme === "dark"
+    ) {
+      return parsed.theme;
+    }
+  } catch {
+    // Ignore malformed localStorage state
+  }
+  return undefined;
+}
+
 export async function openReaderWindow(
   bookId: string,
   options?: ReaderWindowOptions
@@ -56,6 +75,7 @@ export async function openReaderWindow(
   }
 
   const { width, height } = loadSavedSize(bookId);
+  const pageTheme = loadSavedPageTheme(bookId);
 
   await openPlatformReaderWindow({
     label,
@@ -65,5 +85,6 @@ export async function openReaderWindow(
     height,
     minWidth: MIN_WIDTH,
     minHeight: MIN_HEIGHT,
+    ...(pageTheme ? { pageTheme } : {}),
   });
 }
