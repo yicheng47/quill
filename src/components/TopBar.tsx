@@ -16,12 +16,39 @@ import QuillLogo from "./QuillLogo";
 import IconButton from "./ui/IconButton";
 import { useUpdate } from "../contexts/UpdateContext";
 import { getOpenReaderCount, listen, listenCurrentWindow, openUrl } from "../platform";
+import type { UpdateStatus } from "../hooks/useUpdateChecker";
 import {
   isMacOS,
   MAC_TRAFFIC_LIGHT_SPACER_CLASS,
   shortcutModSymbol,
 } from "../lib/platformEnv";
-import type { SettingsSection } from "./SettingsModal";
+import type { SettingsSection } from "./settings/types";
+
+interface UpdateIndicatorProps {
+  onOpenSettings: (section?: SettingsSection) => void;
+  showUpToDateOverride?: boolean;
+}
+
+function useManualUpToDate(status: UpdateStatus, upToDateSeq: number, enabled = true): boolean {
+  const [showUpToDate, setShowUpToDate] = useState(false);
+  const prevUpToDateSeq = useRef(upToDateSeq);
+
+  useEffect(() => {
+    if (!enabled) return;
+    const hasNewUpToDate = upToDateSeq !== prevUpToDateSeq.current;
+    prevUpToDateSeq.current = upToDateSeq;
+    if (status !== "idle") {
+      setShowUpToDate(false);
+      return;
+    }
+    if (!hasNewUpToDate) return;
+    setShowUpToDate(true);
+    const timer = window.setTimeout(() => setShowUpToDate(false), 4000);
+    return () => window.clearTimeout(timer);
+  }, [enabled, status, upToDateSeq]);
+
+  return showUpToDate;
+}
 
 export type MainRoute = "home" | "library" | "highlights" | "words" | "chats";
 
@@ -43,11 +70,10 @@ function releaseNotesUrl(version: string | undefined): string {
   return `https://github.com/yicheng47/quill/releases/tag/${tag}`;
 }
 
-interface UpdateIndicatorProps {
-  onOpenSettings: (section?: SettingsSection | "updates") => void;
-}
-
-export function UpdateIndicator({ onOpenSettings }: UpdateIndicatorProps) {
+export function UpdateIndicator({
+  onOpenSettings,
+  showUpToDateOverride,
+}: UpdateIndicatorProps) {
   const { t } = useTranslation();
   const {
     status,
@@ -62,28 +88,19 @@ export function UpdateIndicator({ onOpenSettings }: UpdateIndicatorProps) {
 
   const [readyPopoverOpen, setReadyPopoverOpen] = useState(false);
   const [openReaderCount, setOpenReaderCount] = useState(0);
-  const [showUpToDate, setShowUpToDate] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
-  const prevUpToDateSeq = useRef(upToDateSeq);
+  const internalShowUpToDate = useManualUpToDate(
+    status,
+    upToDateSeq,
+    showUpToDateOverride === undefined,
+  );
+  const showUpToDate = showUpToDateOverride ?? internalShowUpToDate;
 
   useEffect(() => {
     if (status !== "ready") {
       setReadyPopoverOpen(false);
     }
   }, [status]);
-
-  useEffect(() => {
-    const hasNewUpToDate = upToDateSeq !== prevUpToDateSeq.current;
-    prevUpToDateSeq.current = upToDateSeq;
-    if (status !== "idle") {
-      setShowUpToDate(false);
-      return;
-    }
-    if (!hasNewUpToDate) return;
-    setShowUpToDate(true);
-    const timer = window.setTimeout(() => setShowUpToDate(false), 4000);
-    return () => window.clearTimeout(timer);
-  }, [status, upToDateSeq]);
 
   useEffect(() => {
     if (status !== "ready") return;
@@ -111,6 +128,8 @@ export function UpdateIndicator({ onOpenSettings }: UpdateIndicatorProps) {
     };
     const handleEsc = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
         setReadyPopoverOpen(false);
       }
     };
@@ -126,10 +145,14 @@ export function UpdateIndicator({ onOpenSettings }: UpdateIndicatorProps) {
     return (
       <span
         data-testid="update-manual-checking"
-        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full dawn-chip text-[11px] font-medium text-text-secondary shrink-0"
+        title={t("update.checking")}
+        className="inline-flex items-center gap-1.5 px-2 lg:px-2.5 py-1 rounded-full dawn-chip text-[11px] font-medium text-text-secondary min-w-0 max-w-full overflow-hidden"
       >
         <Loader2 size={11} className="animate-spin text-accent shrink-0" />
-        <span>{t("update.checking")}</span>
+        <span className="truncate">
+          <span className="hidden lg:inline">{t("update.checking")}</span>
+          <span className="lg:hidden">{t("settings.updates.checkingButton")}</span>
+        </span>
       </span>
     );
   }
@@ -139,10 +162,11 @@ export function UpdateIndicator({ onOpenSettings }: UpdateIndicatorProps) {
     return (
       <span
         data-testid="update-manual-uptodate"
-        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-success-tint text-success text-[11px] font-medium shrink-0"
+        title={t("update.upToDate")}
+        className="inline-flex items-center gap-1.5 px-2 lg:px-2.5 py-1 rounded-full bg-success-tint text-success text-[11px] font-medium min-w-0 max-w-full overflow-hidden"
       >
         <Check size={11} className="shrink-0" />
-        <span>{t("update.upToDate")}</span>
+        <span className="truncate">{t("update.upToDate")}</span>
       </span>
     );
   }
@@ -187,7 +211,7 @@ export function UpdateIndicator({ onOpenSettings }: UpdateIndicatorProps) {
   return (
     <div
       ref={containerRef}
-      className={`relative flex items-center ${interactive || readyPopoverOpen ? "no-drag" : ""}`}
+      className={`relative flex items-center shrink-0 ${interactive || readyPopoverOpen ? "no-drag" : ""}`}
     >
       <button
         type="button"
@@ -338,7 +362,7 @@ interface TopBarProps {
   importing: boolean;
   onImport: () => void;
   settingsOpen: boolean;
-  onOpenSettings: (section?: SettingsSection | "updates") => void;
+  onOpenSettings: (section?: SettingsSection) => void;
 }
 
 export default function TopBar({
@@ -352,7 +376,13 @@ export default function TopBar({
   onOpenSettings,
 }: TopBarProps) {
   const { t } = useTranslation();
+  const { status: updateStatus, manualCheck, upToDateSeq } = useUpdate();
   const [syncProgress, setSyncProgress] = useState<{ percent: number | null } | null>(null);
+  const showUpToDate = useManualUpToDate(updateStatus, upToDateSeq);
+  const hasCompactBadge =
+    Boolean(syncProgress) ||
+    (updateStatus === "checking" && manualCheck) ||
+    (updateStatus === "idle" && showUpToDate);
   const isMac = isMacOS();
   const mod = shortcutModSymbol();
 
@@ -391,24 +421,26 @@ export default function TopBar({
   return (
     <header
       data-drag-region
-      className="h-[71px] shrink-0 w-full pl-7 pr-4 sm:px-7 py-4 flex items-center justify-between gap-2 sm:gap-3 select-none relative z-30"
+      className="h-[71px] shrink-0 w-full pl-7 pr-4 lg:px-7 py-4 flex items-center justify-between gap-2 lg:gap-3 select-none relative z-30"
     >
-      <div className="flex items-center gap-[18px] flex-1 basis-0 min-w-fit">
+      <div className="flex items-center gap-2.5 lg:gap-[18px] flex-1 basis-0 min-w-0 lg:min-w-fit">
         {isMac && <div className={`${MAC_TRAFFIC_LIGHT_SPACER_CLASS} shrink-0`} aria-hidden="true" />}
 
-        <div className="flex items-center gap-[9px] shrink-0">
-          <QuillLogo size={28} />
-          <span className="hidden sm:inline text-[16px] font-semibold text-text-primary leading-none">
+        <div className="flex items-center gap-2 lg:gap-[9px] min-w-0">
+          <QuillLogo size={28} className="shrink-0" />
+          <span
+            className={`${hasCompactBadge ? "hidden lg:inline" : "hidden sm:inline"} shrink-0 text-[16px] font-semibold text-text-primary leading-none`}
+          >
             Quill
           </span>
-          <UpdateIndicator onOpenSettings={onOpenSettings} />
+          <UpdateIndicator onOpenSettings={onOpenSettings} showUpToDateOverride={showUpToDate} />
         </div>
 
         {syncProgress && (
           <span
             data-testid="topbar-sync-chip"
             title={t("topBar.syncing")}
-            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-accent-tint text-accent-on-tint shrink-0"
+            className="inline-flex items-center gap-1.5 px-2 lg:px-2.5 py-1 rounded-full bg-accent-tint text-accent-on-tint shrink-0"
           >
             <RefreshCw size={12} className="animate-spin shrink-0" />
             {syncProgress.percent != null && (
@@ -425,7 +457,7 @@ export default function TopBar({
         className="no-drag inline-flex items-center gap-0.5 p-1 rounded-full dawn-glass shrink-0"
       >
         {routes.map((route) => {
-          const isActive = activeRoute === route.id;
+          const isActive = !settingsOpen && activeRoute === route.id;
           return (
             <button
               key={route.id}
@@ -444,13 +476,13 @@ export default function TopBar({
         })}
       </nav>
 
-      <div className="flex items-center justify-end gap-1.5 sm:gap-2.5 flex-1 basis-0 min-w-fit">
+      <div className="flex items-center justify-end gap-1.5 lg:gap-2.5 shrink-0 lg:flex-1 lg:basis-0 lg:min-w-fit">
         <IconButton
           active={searchOpen}
           onClick={onOpenSearch}
           aria-label={t("topBar.search")}
           title={`${t("topBar.search")} (${mod}K)`}
-          className="max-sm:size-8"
+          className="max-lg:size-8"
         >
           <Search size={16} />
         </IconButton>
@@ -459,7 +491,7 @@ export default function TopBar({
           onClick={onImport}
           aria-label={t("topBar.import")}
           title={t("topBar.import")}
-          className="max-sm:size-8"
+          className="max-lg:size-8"
         >
           <Plus size={16} />
         </IconButton>
@@ -468,7 +500,7 @@ export default function TopBar({
           onClick={() => onOpenSettings()}
           aria-label={t("topBar.settings")}
           title={`${t("topBar.settings")} (${mod},)`}
-          className="max-sm:size-8"
+          className="max-lg:size-8"
         >
           <Settings size={16} />
         </IconButton>

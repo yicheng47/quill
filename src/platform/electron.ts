@@ -3,6 +3,7 @@ import type {
   EventMessage,
   OpenFileDialogOptions,
   Platform,
+  PlatformInfo,
   ReaderWindowParams,
   UnlistenFn,
   UpdateHandle,
@@ -13,6 +14,7 @@ import type {
 interface AvailableUpdateInfo {
   version: string;
   body?: string;
+  sizeBytes?: number;
 }
 
 interface QuillShellBridge {
@@ -37,11 +39,34 @@ interface QuillShellBridge {
   openFileDialog(options: OpenFileDialogOptions): Promise<string | null>;
   openUrl(url: string): Promise<void>;
   getAppVersion(): Promise<string>;
+  getPlatformInfo?(): Promise<PlatformInfo>;
   checkForUpdate(): Promise<AvailableUpdateInfo | null>;
-  downloadUpdate(): Promise<void>;
+  downloadUpdate(): Promise<{ cancelled: boolean } | void>;
+  cancelUpdateDownload?(): Promise<boolean>;
   onUpdateProgress(handler: (event: UpdateProgressEvent) => void): UnlistenFn;
   relaunch(): Promise<void>;
   getPathForFile(file: File): string;
+}
+
+function fallbackPlatformInfo(): PlatformInfo {
+  if (typeof navigator === "undefined") {
+    return { platform: "", arch: "" };
+  }
+  const ua = navigator.userAgent.toLowerCase();
+  const arch =
+    ua.includes("arm64") || ua.includes("aarch64")
+      ? "arm64"
+      : ua.includes("x86_64") || ua.includes("x64")
+        ? "x64"
+        : "";
+  const platform = ua.includes("mac")
+    ? "darwin"
+    : ua.includes("win")
+      ? "win32"
+      : ua.includes("linux")
+        ? "linux"
+        : "";
+  return { platform, arch };
 }
 
 declare global {
@@ -203,6 +228,11 @@ export const electronPlatform: Platform = {
     return bridge().getAppVersion();
   },
 
+  getPlatformInfo(): Promise<PlatformInfo> {
+    const fn = window.quillShell?.getPlatformInfo;
+    return fn ? fn() : Promise.resolve(fallbackPlatformInfo());
+  },
+
   async checkForUpdate(): Promise<UpdateHandle | null> {
     const info = await bridge().checkForUpdate();
     if (!info) {
@@ -211,17 +241,26 @@ export const electronPlatform: Platform = {
     return {
       version: info.version,
       body: info.body,
-      async downloadAndInstall(onEvent?: (event: UpdateProgressEvent) => void): Promise<void> {
+      sizeBytes: info.sizeBytes,
+      async downloadAndInstall(
+        onEvent?: (event: UpdateProgressEvent) => void,
+      ): Promise<{ cancelled: boolean }> {
         const unsubscribe = onEvent
           ? bridge().onUpdateProgress((event) => onEvent(event))
           : undefined;
         try {
-          await bridge().downloadUpdate();
+          const res = await bridge().downloadUpdate();
+          return res ?? { cancelled: false };
         } finally {
           unsubscribe?.();
         }
       },
     };
+  },
+
+  cancelUpdateDownload(): Promise<boolean> {
+    const fn = bridge().cancelUpdateDownload;
+    return fn ? fn() : Promise.resolve(false);
   },
 
   relaunch(): Promise<void> {

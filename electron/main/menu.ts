@@ -1,6 +1,12 @@
 import { app, Menu, type MenuItemConstructorOptions } from "electron";
 import type { QuillCoreInstance } from "./core";
-import { broadcastEvent, createMainWindow, focusManagedWindow, whenWindowReady } from "./windows";
+import {
+  broadcastEvent,
+  createMainWindow,
+  focusManagedWindow,
+  toggleWindowZoom,
+  whenWindowReady,
+} from "./windows";
 
 export function installAppMenu(
   core: QuillCoreInstance,
@@ -27,6 +33,13 @@ export function installAppMenu(
       whenWindowReady("main", () => {
         broadcastEvent("menu:check-for-updates", null);
       });
+    },
+  };
+
+  const zoomWindowItem: MenuItemConstructorOptions = {
+    label: "Zoom",
+    click: (_item, focusedWindow) => {
+      toggleWindowZoom(focusedWindow);
     },
   };
 
@@ -66,7 +79,19 @@ export function installAppMenu(
         { role: "togglefullscreen" },
       ],
     },
-    { role: "windowMenu" },
+    ...(isMac
+      ? [
+          {
+            role: "windowMenu" as const,
+            submenu: [
+              { role: "minimize" as const },
+              zoomWindowItem,
+              { type: "separator" as const },
+              { role: "front" as const },
+            ],
+          },
+        ]
+      : [{ role: "windowMenu" as const }]),
     {
       role: "help",
       submenu: isMac ? [revealLogsItem] : [revealLogsItem, checkForUpdatesItem],

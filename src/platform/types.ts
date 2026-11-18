@@ -44,10 +44,18 @@ export interface UpdateProgressEvent {
   };
 }
 
+export interface PlatformInfo {
+  platform: string;
+  arch: string;
+}
+
 export interface UpdateHandle {
   version: string;
   body?: string;
-  downloadAndInstall(onEvent?: (event: UpdateProgressEvent) => void): Promise<void>;
+  sizeBytes?: number;
+  downloadAndInstall(
+    onEvent?: (event: UpdateProgressEvent) => void,
+  ): Promise<{ cancelled: boolean } | void>;
 }
 
 export interface Platform {
@@ -78,7 +86,9 @@ export interface Platform {
 
   openUrl(url: string): Promise<void>;
   getAppVersion(): Promise<string>;
+  getPlatformInfo(): Promise<PlatformInfo>;
 
   checkForUpdate(): Promise<UpdateHandle | null>;
+  cancelUpdateDownload(): Promise<boolean>;
   relaunch(): Promise<void>;
 }

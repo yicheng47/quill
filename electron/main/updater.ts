@@ -19,6 +19,16 @@ const TAG_HREF_REGEXP = /\/tag\/(v?[^/]+)$/;
 export interface AvailableUpdateInfo {
   version: string;
   body?: string;
+  sizeBytes?: number;
+}
+
+export interface CancellationTokenLike {
+  readonly cancelled: boolean;
+  cancel(): void;
+}
+
+export interface DownloadResult {
+  cancelled: boolean;
 }
 
 export type UpdaterFeedConfig =
@@ -103,7 +113,8 @@ interface LoadedUpdaterInternals {
   parseUpdateInfo: typeof parseUpdateInfoFn;
   getChannelFilename: (channel: string) => string;
   newUrlFromBase: (pathname: string, baseUrl: URL) => URL;
-  CancellationToken: new () => unknown;
+  CancellationToken: new () => CancellationTokenLike;
+  CancellationError: new () => Error;
   HttpError: new (...args: never[]) => Error & { statusCode?: number };
   newError: (message: string, code: string) => Error;
   parseXml: (xml: string) => {
@@ -135,7 +146,8 @@ function loadUpdaterInternals(): LoadedUpdaterInternals {
     newUrlFromBase: (pathname: string, baseUrl: URL) => URL;
   };
   const runtimeMod = updaterRequire("builder-util-runtime") as {
-    CancellationToken: new () => unknown;
+    CancellationToken: new () => CancellationTokenLike;
+    CancellationError: new () => Error;
     HttpError: new (...args: never[]) => Error & { statusCode?: number };
     newError: (message: string, code: string) => Error;
     parseXml: LoadedUpdaterInternals["parseXml"];
@@ -149,6 +161,7 @@ function loadUpdaterInternals(): LoadedUpdaterInternals {
     getChannelFilename: utilMod.getChannelFilename,
     newUrlFromBase: utilMod.newUrlFromBase,
     CancellationToken: runtimeMod.CancellationToken,
+    CancellationError: runtimeMod.CancellationError,
     HttpError: runtimeMod.HttpError,
     newError: runtimeMod.newError,
     parseXml: runtimeMod.parseXml,
@@ -329,7 +342,7 @@ export interface UpdaterLike {
   allowPrerelease: boolean;
   setFeedURL(options: Parameters<AppUpdater["setFeedURL"]>[0]): void;
   checkForUpdates(): Promise<UpdateCheckResult | null>;
-  downloadUpdate(): Promise<string[]>;
+  downloadUpdate(cancellationToken?: unknown): Promise<string[]>;
   quitAndInstall(): void;
   on(event: "download-progress", listener: (info: ProgressInfo) => void): unknown;
   on(event: "error", listener: (error: Error, message?: string) => void): unknown;
@@ -343,13 +356,58 @@ export interface QuillUpdaterDeps {
   loadAutoUpdater: () => UpdaterLike;
   markQuitting: () => void;
   registerNativeQuitForUpdate?: (onQuitForUpdate: () => void) => void;
+  createCancellationToken?: () => CancellationTokenLike;
+  platform?: () => NodeJS.Platform;
+  arch?: () => string;
+  isRosetta?: () => boolean;
+}
+
+interface UpdateArtifactFile {
+  url?: string;
+  size?: number;
+}
+
+export function selectUpdateArtifactSize(
+  files: ReadonlyArray<UpdateArtifactFile> | undefined,
+  opts: { platform: NodeJS.Platform; arch: string; isRosetta?: boolean },
+): number | undefined {
+  if (!Array.isArray(files) || files.length === 0) {
+    return undefined;
+  }
+
+  let selected: UpdateArtifactFile | undefined;
+  if (opts.platform === "darwin") {
+    const isArm64Mac = opts.arch === "arm64" || Boolean(opts.isRosetta);
+    const isArm64Url = (file: UpdateArtifactFile) =>
+      (file.url ?? "").toLowerCase().includes("arm64");
+    const hasArm64 = files.some(isArm64Url);
+    const archFiles =
+      isArm64Mac && hasArm64
+        ? files.filter(isArm64Url)
+        : files.filter((file) => !isArm64Url(file));
+    const zips = archFiles.filter((file) => (file.url ?? "").toLowerCase().endsWith(".zip"));
+    const preferredArch = isArm64Mac ? "arm64" : opts.arch.toLowerCase();
+    selected =
+      zips.find((file) => (file.url ?? "").toLowerCase().includes(preferredArch)) ?? zips[0];
+  } else if (opts.platform === "win32") {
+    const exes = files.filter((file) => (file.url ?? "").toLowerCase().endsWith(".exe"));
+    const preferredArch = opts.arch.toLowerCase();
+    selected =
+      exes.find((file) => (file.url ?? "").toLowerCase().includes(preferredArch)) ?? exes[0];
+  }
+
+  if (!selected || typeof selected.size !== "number" || selected.size <= 0) {
+    return undefined;
+  }
+  return selected.size;
 }
 
 export class QuillUpdaterService {
   private readonly deps: QuillUpdaterDeps;
   private cachedUpdater: UpdaterLike | null = null;
   private hooksRegistered = false;
-  private activeDownload: Promise<void> | null = null;
+  private activeDownload: Promise<DownloadResult> | null = null;
+  private activeCancellationToken: CancellationTokenLike | null = null;
   private isDownloading = false;
   private activeInstallPromise: Promise<void> | null = null;
   private activeInstallResolve: (() => void) | null = null;
@@ -435,6 +493,27 @@ export class QuillUpdaterService {
     return updater;
   }
 
+  private createCancellationToken(): CancellationTokenLike {
+    if (this.deps.createCancellationToken) {
+      return this.deps.createCancellationToken();
+    }
+    const internals = loadUpdaterInternals();
+    return new internals.CancellationToken();
+  }
+
+  private isCancellationError(err: unknown, token: CancellationTokenLike): boolean {
+    if (err instanceof loadUpdaterInternals().CancellationError) {
+      return true;
+    }
+    return (
+      token.cancelled &&
+      err instanceof Error &&
+      (err.name === "CancellationError" ||
+        err.constructor?.name === "CancellationError" ||
+        err.message === "cancelled")
+    );
+  }
+
   async checkForUpdate(): Promise<AvailableUpdateInfo | null> {
     if (!this.deps.isPackaged()) {
       return null;
@@ -448,13 +527,28 @@ export class QuillUpdaterService {
       return null;
     }
 
+    const sizeBytes = selectUpdateArtifactSize(result.updateInfo.files, {
+      platform: this.deps.platform?.() ?? process.platform,
+      arch: this.deps.arch?.() ?? process.arch,
+      isRosetta: this.deps.isRosetta?.() ?? false,
+    });
+
     return {
       version: result.updateInfo.version,
       body: formatReleaseNotes(result.updateInfo.releaseNotes),
+      ...(sizeBytes !== undefined ? { sizeBytes } : {}),
     };
   }
 
-  async downloadAndInstall(onProgress: (event: UpdateProgressEvent) => void): Promise<void> {
+  cancelDownload(): boolean {
+    if (!this.activeDownload || !this.activeCancellationToken) {
+      return false;
+    }
+    this.activeCancellationToken.cancel();
+    return true;
+  }
+
+  async downloadAndInstall(onProgress: (event: UpdateProgressEvent) => void): Promise<DownloadResult> {
     if (!this.deps.isPackaged()) {
       throw new Error("In-app updates are only available in packaged builds");
     }
@@ -466,10 +560,13 @@ export class QuillUpdaterService {
     this.installPhaseActive = true;
 
     const updater = this.getConfiguredUpdater();
+    const token = this.createCancellationToken();
+    this.activeCancellationToken = token;
     let started = false;
     let emittedBytes = 0;
 
     const handleProgress = (info: ProgressInfo) => {
+      if (token.cancelled) return;
       if (!started && info.total > 0) {
         started = true;
         onProgress({
@@ -491,24 +588,31 @@ export class QuillUpdaterService {
     };
 
     updater.on("download-progress", handleProgress);
-    const run = (async () => {
+    const run = (async (): Promise<DownloadResult> => {
       this.isDownloading = true;
       try {
-        await updater.downloadUpdate();
+        await updater.downloadUpdate(token);
         this.isDownloading = false;
         onProgress({
           event: "Finished",
           data: { chunkLength: 0 },
         });
+        return { cancelled: false };
       } catch (err) {
         this.isDownloading = false;
         this.installPhaseActive = false;
         this.pendingInstallError = null;
+        if (this.isCancellationError(err, token)) {
+          return { cancelled: true };
+        }
         throw err;
       } finally {
         this.isDownloading = false;
         updater.removeListener("download-progress", handleProgress);
         this.activeDownload = null;
+        if (this.activeCancellationToken === token) {
+          this.activeCancellationToken = null;
+        }
       }
     })();
 
@@ -569,6 +673,14 @@ export function createElectronUpdaterService(options: {
         electron.autoUpdater?.on?.("before-quit-for-update", onQuitForUpdate);
       } catch {
         // Not running inside Electron's autoUpdater runtime.
+      }
+    },
+    isRosetta: () => {
+      try {
+        const electron = require("electron") as typeof import("electron");
+        return Boolean(electron.app?.runningUnderARM64Translation);
+      } catch {
+        return false;
       }
     },
   });

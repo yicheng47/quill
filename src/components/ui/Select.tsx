@@ -66,7 +66,11 @@ export default function Select({
     };
     const handleResize = () => setOpen(false);
     const handleKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        setOpen(false);
+      }
     };
     document.addEventListener("mousedown", handleClickOutside);
     window.addEventListener("scroll", handleScroll, true);
@@ -130,6 +134,8 @@ export default function Select({
       <button
         ref={buttonRef}
         type="button"
+        aria-haspopup="listbox"
+        aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
         className={
           dawn
@@ -181,6 +187,7 @@ export default function Select({
         createPortal(
           <div
             ref={menuRef}
+            role="listbox"
             style={menuStyle}
             // The menu lives under document.body, so without this, pressing an
             // option registers as an outside click for ancestor popovers

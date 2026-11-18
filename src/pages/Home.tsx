@@ -22,11 +22,13 @@ import DeleteCollectionModal from "../components/DeleteCollectionModal";
 import AddBooksModal from "../components/AddBooksModal";
 import BookGrid from "../components/BookGrid";
 import BookList from "../components/BookList";
-import SettingsModal, { type SettingsSection } from "../components/SettingsModal";
+import SettingsView from "../components/settings/SettingsView";
+import { normalizeSettingsSection, type SettingsSection } from "../components/settings/types";
 import { SegmentedControl } from "../components/ui/Segment";
 import { useBooks, importBookDialog, type Book } from "../hooks/useBooks";
 import { useCollections, type Collection } from "../hooks/useCollections";
 import { invoke, listen, listenCurrentWindow, onDragDrop } from "../platform";
+import { isMacOS } from "../lib/platformEnv";
 
 interface BookCounts {
   all: number;
@@ -43,24 +45,6 @@ const SUPPORTED_BOOK_EXT = /\.(epub|pdf)$/i;
 function basenameFromPath(filePath: string): string {
   const parts = filePath.split(/[\\/]/);
   return parts[parts.length - 1] || filePath;
-}
-
-function normalizeSettingsSection(section?: string): SettingsSection {
-  if (section === "lookup" || section === "translation" || section === "tools") {
-    return "tools";
-  }
-  if (
-    section === "general" ||
-    section === "appearance" ||
-    section === "reading" ||
-    section === "ai" ||
-    section === "librarySync" ||
-    section === "mcp" ||
-    section === "about"
-  ) {
-    return section;
-  }
-  return "general";
 }
 
 function subscribeAsync(register: (isActive: () => boolean) => Promise<() => void>): () => void {
@@ -109,6 +93,7 @@ export default function Home() {
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("general");
+  const [settingsBlocking, setSettingsBlocking] = useState(false);
 
   const [collectionsOpen, setCollectionsOpen] = useState(false);
   const [deleteCollectionTarget, setDeleteCollectionTarget] = useState<Collection | null>(null);
@@ -300,59 +285,82 @@ export default function Home() {
   const collectionsRefreshRef = useRef(refreshCollections);
   collectionsRefreshRef.current = refreshCollections;
 
-  const openSettings = useCallback((section?: SettingsSection | "updates") => {
-    setSettingsSection(normalizeSettingsSection(section));
-    setSettingsOpen(true);
-  }, []);
+  const closeSettings = useCallback(() => {
+    if (settingsBlocking) return;
+    setSettingsOpen(false);
+  }, [settingsBlocking]);
 
-  const handleNavigate = useCallback((route: MainRoute, options?: MainNavigateOptions) => {
-    setCollectionsOpen(false);
-    setActiveRoute(route);
-    if (route === "library") {
-      if (options?.collectionId !== undefined) {
-        setCollectionFilter(options.collectionId);
-      }
-      if (options?.statusFilter !== undefined) {
-        setStatusFilter(options.statusFilter);
-      }
-    } else if (route === "highlights") {
-      if (options !== undefined) {
-        setHighlightsTarget({
-          bookId: options.bookId ?? null,
-          highlightId: options.highlightId ?? null,
-          seq: ++navSeqRef.current,
+  const openSettings = useCallback(
+    (section?: SettingsSection) => {
+      if (settingsBlocking) return;
+      setCollectionsOpen(false);
+      if (section === undefined) {
+        setSettingsOpen((prev) => {
+          if (prev) return false;
+          setSettingsSection("general");
+          return true;
         });
+        return;
       }
-    } else if (route === "words") {
-      if (options !== undefined) {
-        setWordsTarget({
-          wordId: options.wordId ?? null,
-          seq: ++navSeqRef.current,
-        });
-      }
-    } else if (route === "chats") {
-      if (options !== undefined) {
-        setChatsTarget({
-          bookId: options.bookId ?? null,
-          chatId: options.chatId ?? null,
-          seq: ++navSeqRef.current,
-        });
-      }
-    }
-  }, []);
+      setSettingsSection(normalizeSettingsSection(section, isMacOS()));
+      setSettingsOpen(true);
+    },
+    [settingsBlocking],
+  );
 
-  // Settings modal listeners
+  const handleNavigate = useCallback(
+    (route: MainRoute, options?: MainNavigateOptions) => {
+      if (settingsBlocking) return;
+      setCollectionsOpen(false);
+      setSettingsOpen(false);
+      setActiveRoute(route);
+      if (route === "library") {
+        if (options?.collectionId !== undefined) {
+          setCollectionFilter(options.collectionId);
+        }
+        if (options?.statusFilter !== undefined) {
+          setStatusFilter(options.statusFilter);
+        }
+      } else if (route === "highlights") {
+        if (options !== undefined) {
+          setHighlightsTarget({
+            bookId: options.bookId ?? null,
+            highlightId: options.highlightId ?? null,
+            seq: ++navSeqRef.current,
+          });
+        }
+      } else if (route === "words") {
+        if (options !== undefined) {
+          setWordsTarget({
+            wordId: options.wordId ?? null,
+            seq: ++navSeqRef.current,
+          });
+        }
+      } else if (route === "chats") {
+        if (options !== undefined) {
+          setChatsTarget({
+            bookId: options.bookId ?? null,
+            chatId: options.chatId ?? null,
+            seq: ++navSeqRef.current,
+          });
+        }
+      }
+    },
+    [settingsBlocking],
+  );
+
+  // Settings view listeners
   useEffect(() => {
     const domHandler = (e: Event) => {
       const section = (e as CustomEvent<{ section?: string }>).detail?.section;
-      openSettings(section as SettingsSection | "updates" | undefined);
+      openSettings(normalizeSettingsSection(section, isMacOS()));
     };
     window.addEventListener("open-settings", domHandler);
 
     const disposeIpc = subscribeAsync((isActive) =>
       listenCurrentWindow<string>("open-settings", (e) => {
         if (!isActive()) return;
-        openSettings(e.payload as SettingsSection | "updates");
+        openSettings(normalizeSettingsSection(e.payload, isMacOS()));
       }),
     );
 
@@ -362,13 +370,17 @@ export default function Home() {
     };
   }, [openSettings]);
 
+  const settingsBlockingRef = useRef(settingsBlocking);
+  settingsBlockingRef.current = settingsBlocking;
+
   // Global keyboard shortcuts: Cmd+, Settings, Cmd+K Command Search, Cmd+O Import, Cmd+F View Filter / Books Search
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      if (settingsBlockingRef.current) return;
       if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
       if (e.key === ",") {
         e.preventDefault();
-        openSettings("general");
+        openSettings();
         return;
       }
       const lower = e.key.toLowerCase();
@@ -568,7 +580,7 @@ export default function Home() {
   useEffect(() => {
     return subscribeAsync((isActive) =>
       onDragDrop((event) => {
-        if (!isActive()) return;
+        if (!isActive() || settingsBlockingRef.current) return;
         if (event.type === "enter" || event.type === "over") {
           setIsDragging(true);
         } else if (event.type === "drop") {
@@ -585,7 +597,7 @@ export default function Home() {
   useEffect(() => {
     return subscribeAsync((isActive) =>
       listen<string[]>("file-open", (event) => {
-        if (!isActive()) return;
+        if (!isActive() || settingsBlockingRef.current) return;
         void importFiles(event.payload, undefined);
       }),
     );
@@ -634,36 +646,56 @@ export default function Home() {
   const isFilteredEmpty = !loading && books.length === 0 && !isCollectionEmpty && !isLibraryEmpty;
 
   return (
-    <div className="h-screen dawn-atmosphere flex flex-col overflow-hidden text-text-primary">
+    <div
+      className="h-screen dawn-atmosphere flex flex-col overflow-hidden text-text-primary"
+      inert={settingsBlocking || undefined}
+    >
       <TopBar
         activeRoute={activeRoute}
         onRouteChange={(route) => handleNavigate(route)}
         searchOpen={searchOpen}
         onOpenSearch={() => {
+          if (settingsBlocking) return;
           setCollectionsOpen(false);
           setSearchScope("all");
           setSearchOpen(true);
         }}
         importing={importing}
-        onImport={() => void handleImport(activeRoute === "library" ? activeCollectionId : undefined)}
+        onImport={() => {
+          if (settingsBlocking) return;
+          void handleImport(activeRoute === "library" ? activeCollectionId : undefined);
+        }}
         settingsOpen={settingsOpen}
         onOpenSettings={openSettings}
       />
 
-      {activeRoute === "home" && (
-        <HomeView
-          books={effectiveAllBooks}
-          totalBooksCount={totalBooksCount}
-          booksLoading={allBooksLoading && loading}
-          collections={collectionList}
-          onNavigate={handleNavigate}
-          onImport={() => void handleImport()}
-          onOpenSettings={openSettings}
+      {settingsOpen ? (
+        <SettingsView
+          section={settingsSection}
+          onSelectSection={(next) => setSettingsSection(normalizeSettingsSection(next, isMacOS()))}
+          onClose={closeSettings}
+          onBlockingChange={setSettingsBlocking}
+          suppressEscape={searchOpen || addBooksOpen || Boolean(deleteCollectionTarget)}
         />
-      )}
+      ) : (
+        <>
+          {activeRoute === "home" && (
+            <HomeView
+              books={effectiveAllBooks}
+              totalBooksCount={totalBooksCount}
+              booksLoading={allBooksLoading && loading}
+              collections={collectionList}
+              onNavigate={handleNavigate}
+              onImport={() => {
+                if (settingsBlocking) return;
+                void handleImport();
+              }}
+              onOpenSettings={openSettings}
+            />
+          )}
 
-      {activeRoute === "library" && (
-        <main className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-6 sm:px-10 pt-1 pb-10">
+          {activeRoute === "library" && (
+            <main className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-6 sm:px-10 pt-1 pb-10">
           {/* Library Header */}
           <div className="flex flex-wrap items-center justify-between gap-4 pb-6">
             <div className="flex items-baseline gap-3 min-w-0">
@@ -906,6 +938,8 @@ export default function Home() {
           onNavigateToLibrary={() => handleNavigate("library")}
         />
       )}
+        </>
+      )}
 
       <CommandSearchModal
         open={searchOpen}
@@ -935,12 +969,6 @@ export default function Home() {
         collection={activeCollection}
         onClose={() => setAddBooksOpen(false)}
         onConfirm={handleAddBooksConfirm}
-      />
-
-      <SettingsModal
-        open={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
-        initialSection={settingsSection}
       />
     </div>
   );

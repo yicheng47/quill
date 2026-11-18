@@ -4,6 +4,7 @@ import { app, nativeImage, protocol } from "electron";
 import { bootQuillCore, findRepoRoot, getLogDir, type QuillCoreInstance } from "./core";
 import { registerIpcHandlers, readInitialDark } from "./ipc";
 import { installAppMenu } from "./menu";
+import { refreshMacBundleIconIfVersionChanged } from "./macIconRefresh";
 import { registerProtocols } from "./protocols";
 import { createElectronUpdaterService } from "./updater";
 import {
@@ -129,6 +130,21 @@ if (!gotSingleInstanceLock) {
         emitAll: (event, payload) => broadcastEvent(event, payload),
         emitTo: (windowLabel, event, payload) =>
           sendEventToWindow(windowLabel, event, payload),
+      });
+
+      const liveCore = core;
+      void refreshMacBundleIconIfVersionChanged({
+        isPackaged: app.isPackaged,
+        platform: process.platform,
+        currentVersion: app.getVersion(),
+        execPath: process.execPath,
+        dispatch: (cmd, argsJson) => liveCore.dispatch(cmd, argsJson),
+        setDockIconFromPath: (icnsPath) => {
+          const icon = nativeImage.createFromPath(icnsPath);
+          if (!icon.isEmpty()) {
+            app.dock?.setIcon(icon);
+          }
+        },
       });
 
       const updater = createElectronUpdaterService({

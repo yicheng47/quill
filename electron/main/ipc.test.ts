@@ -2,13 +2,19 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const state = vi.hoisted(() => ({
   systemDark: false,
+  handlers: new Map<string, (...args: unknown[]) => unknown>(),
 }));
 
 vi.mock("electron", () => ({
   app: { isPackaged: false, getVersion: () => "2.0.0", getAppPath: () => process.cwd() },
-  BrowserWindow: vi.fn(),
+  BrowserWindow: Object.assign(vi.fn(), { fromWebContents: vi.fn() }),
   dialog: { showOpenDialog: vi.fn() },
-  ipcMain: { on: vi.fn(), handle: vi.fn() },
+  ipcMain: {
+    on: vi.fn(),
+    handle: vi.fn((channel: string, fn: (...args: unknown[]) => unknown) => {
+      state.handlers.set(channel, fn);
+    }),
+  },
   shell: { openExternal: vi.fn() },
   nativeTheme: {
     get shouldUseDarkColors() {
@@ -17,10 +23,11 @@ vi.mock("electron", () => ({
   },
 }));
 
-import { readInitialDark, readStoredReaderTheme } from "./ipc";
+import { readInitialDark, readStoredReaderTheme, registerIpcHandlers } from "./ipc";
 
 afterEach(() => {
   state.systemDark = false;
+  state.handlers.clear();
   vi.useRealTimers();
 });
 
@@ -73,5 +80,38 @@ describe("readStoredReaderTheme", () => {
     const promise = readStoredReaderTheme(hangingCore, undefined, 50);
     await vi.advanceTimersByTimeAsync(50);
     await expect(promise).resolves.toBe("original");
+  });
+});
+
+describe("registerIpcHandlers platform and updater channels", () => {
+  it("exposes quill:get-platform-info and update download/cancel channels", async () => {
+    const core = { dispatch: vi.fn() } as never;
+    const updater = {
+      checkForUpdate: vi.fn(),
+      downloadAndInstall: vi.fn().mockResolvedValue({ cancelled: true }),
+      cancelDownload: vi.fn().mockReturnValue(true),
+      relaunchAndInstall: vi.fn(),
+    } as never;
+
+    registerIpcHandlers(core, undefined, updater);
+
+    const getPlatform = state.handlers.get("quill:get-platform-info");
+    expect(getPlatform?.()).toEqual({
+      platform: process.platform,
+      arch: process.arch,
+    });
+
+    const download = state.handlers.get("quill:download-update");
+    const fakeEvent = {
+      sender: { isDestroyed: () => false, send: vi.fn() },
+    };
+    await expect(download?.(fakeEvent)).resolves.toEqual({
+      ok: true,
+      data: { cancelled: true },
+    });
+
+    const cancel = state.handlers.get("quill:cancel-update-download");
+    expect(cancel?.()).toBe(true);
+    expect((updater as { cancelDownload: ReturnType<typeof vi.fn> }).cancelDownload).toHaveBeenCalledTimes(1);
   });
 });

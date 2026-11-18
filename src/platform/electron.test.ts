@@ -9,6 +9,8 @@ describe("electronPlatform", () => {
   const invokeMock = vi.fn();
   const checkForUpdateMock = vi.fn();
   const downloadUpdateMock = vi.fn();
+  const cancelUpdateDownloadMock = vi.fn();
+  const getPlatformInfoMock = vi.fn();
   const relaunchMock = vi.fn();
   const progressListeners = new Set<(event: UpdateProgressEvent) => void>();
 
@@ -17,6 +19,8 @@ describe("electronPlatform", () => {
     invokeMock.mockReset();
     checkForUpdateMock.mockReset();
     downloadUpdateMock.mockReset();
+    cancelUpdateDownloadMock.mockReset();
+    getPlatformInfoMock.mockReset();
     relaunchMock.mockReset();
     progressListeners.clear();
     window.quillShell = {
@@ -38,8 +42,10 @@ describe("electronPlatform", () => {
       openFileDialog: async () => null,
       openUrl: async () => {},
       getAppVersion: async () => "2.0.0",
+      getPlatformInfo: getPlatformInfoMock,
       checkForUpdate: checkForUpdateMock,
       downloadUpdate: downloadUpdateMock,
+      cancelUpdateDownload: cancelUpdateDownloadMock,
       onUpdateProgress: (handler) => {
         progressListeners.add(handler);
         return () => {
@@ -108,30 +114,56 @@ describe("electronPlatform", () => {
     expect(electronPlatform.getInitialReaderTheme()).toBe("original");
   });
 
-  it("bridges checkForUpdate null, UpdateHandle download progress, and relaunch", async () => {
+  it("bridges checkForUpdate null, sizeBytes, DownloadResult, cancelUpdateDownload, and getPlatformInfo", async () => {
+    getPlatformInfoMock.mockResolvedValueOnce({ platform: "darwin", arch: "arm64" });
+    await expect(electronPlatform.getPlatformInfo()).resolves.toEqual({
+      platform: "darwin",
+      arch: "arm64",
+    });
+
     checkForUpdateMock.mockResolvedValueOnce(null);
     await expect(electronPlatform.checkForUpdate()).resolves.toBeNull();
 
-    checkForUpdateMock.mockResolvedValueOnce({ version: "2.0.1", body: "Notes" });
+    checkForUpdateMock.mockResolvedValueOnce({
+      version: "2.0.1",
+      body: "Notes",
+      sizeBytes: 48_200_000,
+    });
     downloadUpdateMock.mockImplementationOnce(async () => {
       for (const listener of progressListeners) {
         listener({ event: "Started", data: { contentLength: 100, chunkLength: 0 } });
         listener({ event: "Progress", data: { chunkLength: 100 } });
         listener({ event: "Finished", data: { chunkLength: 0 } });
       }
+      return { cancelled: false };
     });
 
     const handle = await electronPlatform.checkForUpdate();
     expect(handle?.version).toBe("2.0.1");
     expect(handle?.body).toBe("Notes");
+    expect(handle?.sizeBytes).toBe(48_200_000);
 
     const received: UpdateProgressEvent[] = [];
-    await handle!.downloadAndInstall((ev) => received.push(ev));
+    const result = await handle!.downloadAndInstall((ev) => received.push(ev));
+    expect(result).toEqual({ cancelled: false });
     expect(received).toHaveLength(3);
     expect(progressListeners.size).toBe(0);
+
+    cancelUpdateDownloadMock.mockResolvedValueOnce(true);
+    await expect(electronPlatform.cancelUpdateDownload()).resolves.toBe(true);
 
     relaunchMock.mockResolvedValueOnce(undefined);
     await electronPlatform.relaunch();
     expect(relaunchMock).toHaveBeenCalledTimes(1);
+
+    // Browser fallback vs Electron-only bridge
+    delete window.quillShell;
+    expect(() => electronPlatform.cancelUpdateDownload()).toThrow(
+      "Electron preload bridge",
+    );
+    await expect(electronPlatform.getPlatformInfo()).resolves.toMatchObject({
+      platform: expect.any(String),
+      arch: expect.any(String),
+    });
   });
 });

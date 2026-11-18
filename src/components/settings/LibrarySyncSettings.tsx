@@ -1,12 +1,28 @@
-import { useState, useEffect, useCallback } from "react";
-import { invoke, listen } from "../../platform";
-import { Loader2, Monitor, Smartphone, Laptop, Trash2 } from "lucide-react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { createPortal } from "react-dom";
+import { getAppVersion, invoke, listen } from "../../platform";
+import {
+  AlertTriangle,
+  Cloud,
+  CloudOff,
+  Laptop,
+  Layers,
+  Loader2,
+  Monitor,
+  RefreshCw,
+  RotateCcw,
+  Smartphone,
+  Trash2,
+} from "lucide-react";
 import { useTranslation } from "react-i18next";
 import Button from "../ui/Button";
-import Toggle from "../ui/Toggle";
+import ProgressBar from "../ui/ProgressBar";
+import Switch from "../ui/Switch";
+import { StatusBadge } from "../ui/Badge";
+import { SettingsGroup, SettingsOverline, SettingsRow } from "../ui/SettingsRow";
 import type { SettingsProps } from "./types";
 
-interface PeerInfo {
+export interface PeerInfo {
   device_uuid: string;
   name: string;
   platform: string;
@@ -15,7 +31,7 @@ interface PeerInfo {
   pending_events: number;
 }
 
-interface SyncStatus {
+export interface SyncStatus {
   enabled: boolean;
   available: boolean;
   sync_enabled: boolean;
@@ -40,23 +56,32 @@ interface SyncCompactResult {
   bytes_freed: number;
 }
 
-interface SyncDisableProgress {
+export interface SyncDisableProgress {
   phase: "preparing" | "downloading" | "copying" | "skipped" | "done";
   copied: number;
   total: number;
   current: string | null;
 }
 
-function formatRelative(ts: number | null, now: number): string {
+interface SyncProgressPayload {
+  applied: number;
+  total: number;
+}
+
+function formatRelative(
+  ts: number | null,
+  now: number,
+  t: (key: string, opts?: Record<string, unknown>) => string,
+): string {
   if (ts == null) return "—";
   const diffSec = Math.max(0, Math.floor((now - ts) / 1000));
-  if (diffSec < 60) return `${diffSec}s ago`;
+  if (diffSec < 60) return t("settings.updates.relativeJustNow");
   const diffMin = Math.floor(diffSec / 60);
-  if (diffMin < 60) return `${diffMin}m ago`;
+  if (diffMin < 60) return t("settings.updates.relativeMinutes", { count: diffMin });
   const diffHr = Math.floor(diffMin / 60);
-  if (diffHr < 24) return `${diffHr}h ago`;
+  if (diffHr < 24) return t("settings.updates.relativeHours", { count: diffHr });
   const diffDay = Math.floor(diffHr / 24);
-  return `${diffDay}d ago`;
+  return t("settings.updates.relativeDays", { count: diffDay });
 }
 
 function platformIcon(platform: string) {
@@ -70,10 +95,16 @@ function progressPercent(progress: SyncDisableProgress): number {
   return Math.min(100, Math.round((progress.copied / progress.total) * 100));
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-export default function LibrarySyncSettings(_props: SettingsProps) {
+interface LibrarySyncSettingsProps extends SettingsProps {
+  onBlockingChange?: (blocking: boolean) => void;
+}
+
+export default function LibrarySyncSettings({
+  onBlockingChange,
+}: LibrarySyncSettingsProps) {
   const { t } = useTranslation();
   const [status, setStatus] = useState<SyncStatus | null>(null);
+  const [appVersion, setAppVersion] = useState("");
   const [loadingStatus, setLoadingStatus] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -84,16 +115,16 @@ export default function LibrarySyncSettings(_props: SettingsProps) {
   // Disable flow (because `sync_enabled` is now true), leaving
   // the user with no UI path to finish the half-completed enable.
   const [lastFailedAction, setLastFailedAction] = useState<"enable" | "disable" | null>(null);
-  // Peer the user clicked the trash icon on; opens a confirmation
-  // modal until cleared (cancel) or acted on (remove).
   const [pendingRemoval, setPendingRemoval] = useState<PeerInfo | null>(null);
-  // Rebuild-from-iCloud confirmation dialog (#300).
   const [confirmRebuild, setConfirmRebuild] = useState(false);
-  // Tick once a minute so "Last seen 2m ago" stays fresh while the modal
-  // is open. Cheap; the component re-renders are bounded.
-  const [now, setNow] = useState(Date.now());
+  const [now, setNow] = useState(() => Date.now());
   const [syncing, setSyncing] = useState(false);
+  const [syncProgress, setSyncProgress] = useState<SyncProgressPayload | null>(null);
   const [disableProgress, setDisableProgress] = useState<SyncDisableProgress | null>(null);
+
+  const copyingDialogRef = useRef<HTMLDivElement>(null);
+  const removeCancelRef = useRef<HTMLButtonElement>(null);
+  const rebuildCancelRef = useRef<HTMLButtonElement>(null);
 
   const refresh = useCallback(async () => {
     setLoadingStatus(true);
@@ -108,28 +139,98 @@ export default function LibrarySyncSettings(_props: SettingsProps) {
   }, []);
 
   useEffect(() => {
-    const unProgress = listen<{ applied: number; total: number }>("sync-progress", () => setSyncing(true));
+    void getAppVersion()
+      .then(setAppVersion)
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    const unProgress = listen<SyncProgressPayload>("sync-progress", (e) => {
+      setSyncing(true);
+      setSyncProgress(e.payload ?? null);
+    });
     const unDone = listen("sync-initial-tick-done", () => {
       setSyncing(false);
-      refresh();
+      setSyncProgress(null);
+      void refresh();
     });
-    const unStatusChanged = listen("sync-status-changed", () => refresh());
+    const unStatusChanged = listen("sync-status-changed", () => {
+      void refresh();
+    });
     const unDisableProgress = listen<SyncDisableProgress>("sync-disable-progress", (e) => {
       setDisableProgress(e.payload);
     });
     return () => {
-      unProgress.then((fn) => fn());
-      unDone.then((fn) => fn());
-      unStatusChanged.then((fn) => fn());
-      unDisableProgress.then((fn) => fn());
+      void unProgress.then((fn) => fn()).catch(() => {});
+      void unDone.then((fn) => fn()).catch(() => {});
+      void unStatusChanged.then((fn) => fn()).catch(() => {});
+      void unDisableProgress.then((fn) => fn()).catch(() => {});
     };
   }, [refresh]);
 
   useEffect(() => {
-    refresh();
+    void refresh();
     const interval = setInterval(() => setNow(Date.now()), 60_000);
     return () => clearInterval(interval);
   }, [refresh]);
+
+  useEffect(() => {
+    onBlockingChange?.(disableProgress !== null);
+    if (disableProgress !== null) {
+      copyingDialogRef.current?.focus();
+    }
+    return () => onBlockingChange?.(false);
+  }, [disableProgress, onBlockingChange]);
+
+  useEffect(() => {
+    if (pendingRemoval) {
+      removeCancelRef.current?.focus();
+    }
+  }, [pendingRemoval]);
+
+  useEffect(() => {
+    if (confirmRebuild) {
+      rebuildCancelRef.current?.focus();
+    }
+  }, [confirmRebuild]);
+
+  useEffect(() => {
+    const hasModal =
+      confirm !== null ||
+      pendingRemoval !== null ||
+      confirmRebuild ||
+      disableProgress !== null;
+    if (!hasModal) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (disableProgress !== null) {
+        if (
+          e.key === "Escape" ||
+          e.key === "Tab" ||
+          e.key === "Enter" ||
+          e.key === " "
+        ) {
+          e.preventDefault();
+          e.stopPropagation();
+          e.stopImmediatePropagation();
+        }
+        return;
+      }
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      if (pendingRemoval) {
+        setPendingRemoval(null);
+      } else if (confirmRebuild) {
+        setConfirmRebuild(false);
+      } else if (confirm) {
+        setConfirm(null);
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown, true);
+    return () => document.removeEventListener("keydown", handleKeyDown, true);
+  }, [confirm, pendingRemoval, confirmRebuild, disableProgress]);
 
   const onToggleClick = () => {
     if (!status) return;
@@ -158,9 +259,7 @@ export default function LibrarySyncSettings(_props: SettingsProps) {
     } finally {
       // Always refresh — sync_enable's Phase 2 may have committed
       // the marker before erroring on the binary move, so a failed
-      // call can still flip the durable "sync on" state. Without
-      // refreshing here the toggle would lie about reality and the
-      // user wouldn't see they can retry to finish the move.
+      // call can still flip the durable "sync on" state.
       await refresh();
       setDisableProgress(null);
       setBusy(false);
@@ -176,16 +275,8 @@ export default function LibrarySyncSettings(_props: SettingsProps) {
 
   const onRetry = async () => {
     if (lastFailedAction) {
-      // Re-invoke the operation that errored. `sync_enable` is
-      // idempotent — the early `engine_snapshot()` guard returns
-      // None after a failed move (engine wasn't stored), so we
-      // re-enter Phase 1, then Phase 2 skips the already-done
-      // small-file writes (idempotent) and retries the move.
-      // Same shape for `sync_disable`.
       await runToggle(lastFailedAction);
     } else {
-      // No tracked action — just clear the error and pull fresh
-      // status so the user can decide what to do next.
       setError(null);
       await refresh();
     }
@@ -247,329 +338,541 @@ export default function LibrarySyncSettings(_props: SettingsProps) {
     }
   };
 
-  // Two orthogonal states surfaced by the backend:
-  //  - `sync_enabled` is the user's durable intent ("sync is on
-  //    for this install"). This drives the Toggle and the visibility
-  //    of the "Other devices" / actions sections — if the user said
-  //    they want sync, those affordances should stay put even when
-  //    the engine happens to be paused this session.
-  //  - `enabled` is the per-session runtime state ("engine + watcher
-  //    booted in this process"). False during a queue-only session
-  //    (iCloud unreachable at launch); new writes still persist into
-  //    `_pending_publish` and drain on the next successful boot.
-  // Splitting the two keeps a user with sync on but iCloud temporarily
-  // offline from seeing the toggle flip itself off — and from being
-  // re-offered `sync_enable` as if they never turned it on.
   const syncOn = status?.sync_enabled ?? false;
   const engineRunning = status?.enabled ?? false;
   const available = status?.available ?? false;
   const peers = status?.peers ?? [];
   const initialStatusLoading = loadingStatus && !status;
   const disableProgressValue = disableProgress ? progressPercent(disableProgress) : 0;
+  const syncPercent =
+    syncProgress && syncProgress.total > 0
+      ? Math.min(100, Math.round((syncProgress.applied / syncProgress.total) * 100))
+      : 0;
+  const lastSyncTime = formatRelative(status?.last_replay_at ?? null, now, t);
+  const pendingEvents = status?.pending_events ?? 0;
+
+  const modalOverlays =
+    confirm !== null ||
+    disableProgress !== null ||
+    pendingRemoval !== null ||
+    confirmRebuild ? (
+      <>
+        {/* Turn on / Turn off iCloud Sync confirmation */}
+        {confirm && (
+          <div
+            className="fixed inset-0 z-[60] bg-[#15151A]/26 backdrop-blur-[6px] flex items-center justify-center p-4"
+            onClick={(e) => {
+              if (e.target === e.currentTarget) setConfirm(null);
+            }}
+          >
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="sync-toggle-confirm-title"
+              className="w-full max-w-[460px] p-[22px] rounded-[24px] bg-surface-solid border border-border-subtle shadow-menu flex flex-col gap-4"
+            >
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center gap-2.5">
+                  <div
+                    className={`size-8 rounded-[10px] flex items-center justify-center shrink-0 ${
+                      confirm === "enable"
+                        ? "bg-accent-tint text-accent-on-tint"
+                        : "bg-warning-tint text-warning"
+                    }`}
+                  >
+                    {confirm === "enable" ? <Cloud size={15} /> : <CloudOff size={15} />}
+                  </div>
+                  <h3
+                    id="sync-toggle-confirm-title"
+                    className="text-[16.5px] font-semibold text-text-primary tracking-[-0.3px]"
+                  >
+                    {confirm === "enable"
+                      ? t("settings.librarySync.confirmEnable")
+                      : t("settings.librarySync.confirmDisable")}
+                  </h3>
+                </div>
+                <p className="text-[13px] text-text-secondary leading-[1.5]">
+                  {confirm === "enable"
+                    ? t("settings.librarySync.confirmEnableMsg")
+                    : t("settings.librarySync.confirmDisableMsg")}
+                </p>
+              </div>
+              <div className="flex items-center justify-end gap-2">
+                <Button variant="secondary" size="sm" onClick={() => setConfirm(null)}>
+                  {t("common.cancel")}
+                </Button>
+                <Button variant="primary" size="sm" onClick={() => void onConfirmToggle()}>
+                  {confirm === "enable"
+                    ? t("settings.librarySync.confirmEnableCta")
+                    : t("settings.librarySync.confirmDisableCta")}
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Blocking local copy verification modal (non-dismissible) */}
+        {disableProgress && (
+          <div className="fixed inset-0 z-[70] bg-[#15151A]/26 backdrop-blur-[6px] flex items-center justify-center p-4">
+            <div
+              ref={copyingDialogRef}
+              tabIndex={-1}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="sync-copying-title"
+              className="w-full max-w-[460px] p-[22px] rounded-[24px] bg-surface-solid border border-violet-200 shadow-menu flex flex-col gap-3.5 focus:outline-none"
+            >
+              <div className="flex items-center gap-2.5">
+                <Loader2 size={18} className="text-accent animate-spin shrink-0" />
+                <h3
+                  id="sync-copying-title"
+                  className="text-[16.5px] font-semibold text-text-primary tracking-[-0.3px]"
+                >
+                  {t("settings.librarySync.copyingTitle")}
+                </h3>
+              </div>
+              <p className="text-[13px] text-text-secondary leading-[1.5]">
+                {t("settings.librarySync.copyingMsg")}
+              </p>
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[12.5px] font-semibold text-text-primary">
+                  {disableProgress.total > 0
+                    ? t("settings.librarySync.copyPhaseWithCount", {
+                        phase: t(`settings.librarySync.copyPhase.${disableProgress.phase}`),
+                        copied: disableProgress.copied,
+                        total: disableProgress.total,
+                      })
+                    : t(`settings.librarySync.copyPhase.${disableProgress.phase}`)}
+                </p>
+                <p className="font-mono text-[12px] text-accent-on-tint">
+                  {disableProgress.total > 0
+                    ? `${disableProgressValue}%`
+                    : t("settings.librarySync.working")}
+                </p>
+              </div>
+              <ProgressBar
+                value={disableProgress.total > 0 ? disableProgressValue : 12}
+                className="h-2 rounded-[4px]"
+              />
+              {disableProgress.current && (
+                <p className="font-mono text-[11.5px] text-text-tertiary truncate">
+                  {disableProgress.current}
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Remove peer confirmation (Cancel-focused) */}
+        {pendingRemoval && (
+          <div
+            className="fixed inset-0 z-[60] bg-[#15151A]/26 backdrop-blur-[6px] flex items-center justify-center p-4"
+            onClick={(e) => {
+              if (e.target === e.currentTarget) setPendingRemoval(null);
+            }}
+          >
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="sync-remove-peer-title"
+              className="w-full max-w-[460px] p-[22px] rounded-[24px] bg-surface-solid border border-border-subtle shadow-menu flex flex-col gap-4"
+            >
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center gap-2.5">
+                  <div className="size-8 rounded-[10px] bg-danger-tint flex items-center justify-center text-danger shrink-0">
+                    <Trash2 size={15} />
+                  </div>
+                  <h3
+                    id="sync-remove-peer-title"
+                    className="text-[16.5px] font-semibold text-text-primary tracking-[-0.3px] truncate"
+                  >
+                    {t("settings.librarySync.removeDeviceTitle", { name: pendingRemoval.name })}
+                  </h3>
+                </div>
+                <p className="text-[13px] text-text-secondary leading-[1.5]">
+                  {t("settings.librarySync.removeDeviceBody")}
+                </p>
+              </div>
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  ref={removeCancelRef}
+                  type="button"
+                  onClick={() => setPendingRemoval(null)}
+                  className="px-[15px] py-2 rounded-full bg-surface-chip border-[1.5px] border-accent text-[13px] font-medium text-text-primary hover:bg-surface-inset cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-focus-ring"
+                >
+                  {t("common.cancel")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void onConfirmRemovePeer()}
+                  className="px-4 py-2 rounded-full bg-danger hover:bg-danger-hover text-white text-[13px] font-semibold cursor-pointer transition-colors"
+                >
+                  {t("settings.librarySync.remove")}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Rebuild library confirmation (Cancel-focused) */}
+        {confirmRebuild && (
+          <div
+            className="fixed inset-0 z-[60] bg-[#15151A]/26 backdrop-blur-[6px] flex items-center justify-center p-4"
+            onClick={(e) => {
+              if (e.target === e.currentTarget) setConfirmRebuild(false);
+            }}
+          >
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="sync-rebuild-title"
+              className="w-full max-w-[460px] p-[22px] rounded-[24px] bg-surface-solid border border-border-subtle shadow-menu flex flex-col gap-4"
+            >
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center gap-2.5">
+                  <div className="size-8 rounded-[10px] bg-danger-tint flex items-center justify-center text-danger shrink-0">
+                    <RotateCcw size={15} />
+                  </div>
+                  <h3
+                    id="sync-rebuild-title"
+                    className="text-[16.5px] font-semibold text-text-primary tracking-[-0.3px]"
+                  >
+                    {t("settings.librarySync.rebuildConfirmTitle")}
+                  </h3>
+                </div>
+                <p className="text-[13px] text-text-secondary leading-[1.5]">
+                  {t("settings.librarySync.rebuildConfirmMsg")}
+                </p>
+              </div>
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  ref={rebuildCancelRef}
+                  type="button"
+                  onClick={() => setConfirmRebuild(false)}
+                  className="px-[15px] py-2 rounded-full bg-surface-chip border-[1.5px] border-accent text-[13px] font-medium text-text-primary hover:bg-surface-inset cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-focus-ring"
+                >
+                  {t("common.cancel")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void onRebuild()}
+                  className="px-4 py-2 rounded-full bg-danger hover:bg-danger-hover text-white text-[13px] font-semibold cursor-pointer transition-colors"
+                >
+                  {t("settings.librarySync.rebuildConfirmCta")}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </>
+    ) : null;
 
   return (
     <>
-      <div>
-        {/* Sync toggle */}
-        <div className="flex items-center justify-between h-[73px]">
-          {busy || initialStatusLoading ? (
-            <div className="flex items-center gap-2">
-              <Loader2 size={16} className="text-text-muted animate-spin" />
-              <p className="text-[13px] text-text-muted">
-                {t("settings.librarySync.working")}
-              </p>
-            </div>
-          ) : (
-            <>
-              <div>
-                <p className="text-[14px] font-medium text-text-primary tracking-[-0.15px]">
-                  {t("settings.librarySync.toggle")}
-                </p>
-                <p className="text-[12px] text-text-muted mt-0.5">
-                  {!available
-                    ? t("settings.librarySync.signIn")
-                    : syncOn && !engineRunning
-                      ? t("settings.librarySync.paused")
-                      : t("settings.librarySync.toggleSub")}
+      <div className="flex flex-col gap-6">
+        {/* ICLOUD section */}
+        <section className="flex flex-col gap-2.5">
+          <SettingsOverline>{t("settings.librarySync.icloudGroup")}</SettingsOverline>
+          <SettingsGroup>
+            {busy || initialStatusLoading ? (
+              <div className="min-h-[72px] px-5 py-3 flex items-center gap-2.5">
+                <Loader2 size={16} className="text-text-tertiary animate-spin shrink-0" />
+                <p className="text-[13.5px] text-text-secondary">
+                  {t("settings.librarySync.working")}
                 </p>
               </div>
-              <Toggle
-                checked={syncOn}
-                onChange={onToggleClick}
-                disabled={!available && !syncOn}
-              />
-            </>
-          )}
-        </div>
+            ) : (
+              <>
+                <SettingsRow
+                  title={t("settings.librarySync.toggle")}
+                  hint={
+                    !available && !syncOn
+                      ? t("settings.librarySync.signIn")
+                      : syncOn && !engineRunning
+                        ? t("settings.librarySync.paused")
+                        : syncOn
+                          ? t("settings.librarySync.toggleSub")
+                          : t("settings.librarySync.offSub")
+                  }
+                >
+                  <Switch
+                    aria-label={t("settings.librarySync.toggle")}
+                    checked={syncOn}
+                    onChange={onToggleClick}
+                    disabled={!available && !syncOn}
+                  />
+                </SettingsRow>
 
-        {/* Other devices — visible whenever the user has sync on,
-            including queue-only sessions where the engine hasn't
-            booted this launch. The peer list reads from manifest
-            files on disk, not from the running engine, so it's still
-            meaningful offline. The empty state still renders so a
-            single-device user understands why the list is empty. */}
+                {!available && !syncOn && (
+                  <div
+                    data-testid="icloud-unavailable-hint"
+                    className="px-5 py-3 bg-warning-tint flex items-center gap-2.5 text-warning text-[12.5px]"
+                  >
+                    <CloudOff size={15} className="shrink-0" />
+                    <span>{t("settings.librarySync.unavailableBanner")}</span>
+                  </div>
+                )}
+
+                {syncOn && !syncing && (
+                  <SettingsRow
+                    title={t("settings.librarySync.statusRow")}
+                    hint={
+                      !engineRunning && pendingEvents > 0
+                        ? t("settings.librarySync.queuedStatus", {
+                            count: pendingEvents,
+                            time: lastSyncTime,
+                          })
+                        : t("settings.librarySync.lastSyncAt", { time: lastSyncTime })
+                    }
+                  >
+                    <StatusBadge
+                      tone={engineRunning ? "success" : "warning"}
+                      label={
+                        engineRunning
+                          ? t("settings.librarySync.syncedBadge")
+                          : t("settings.librarySync.pausedBadge")
+                      }
+                    />
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      disabled={busy || !engineRunning}
+                      title={!engineRunning ? t("settings.librarySync.paused") : undefined}
+                      onClick={() => void onCompact()}
+                    >
+                      <Layers size={13.5} className="text-text-secondary" />
+                      <span>{t("settings.librarySync.compact")}</span>
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      disabled={busy || !engineRunning}
+                      title={!engineRunning ? t("settings.librarySync.paused") : undefined}
+                      onClick={() => void onSyncNow()}
+                    >
+                      <RefreshCw size={13.5} className="text-text-secondary" />
+                      <span>{t("settings.librarySync.syncNow")}</span>
+                    </Button>
+                  </SettingsRow>
+                )}
+              </>
+            )}
+          </SettingsGroup>
+
+          {!syncOn && available && (
+            <p className="text-[12.5px] text-text-tertiary leading-[1.5]">
+              {t("settings.librarySync.offMergeNote")}
+            </p>
+          )}
+        </section>
+
+        {/* Active syncing progress card */}
+        {syncOn && syncing && (
+          <div
+            data-testid="sync-active-card"
+            className="bg-surface-solid border border-violet-200 rounded-[14px] p-5 flex flex-col gap-3"
+          >
+            <div className="flex items-center justify-between gap-4">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <Loader2 size={18} className="text-accent animate-spin shrink-0" />
+                <div className="min-w-0">
+                  <p className="text-[14px] font-semibold text-text-primary">
+                    {t("settings.librarySync.syncingTitle")}
+                  </p>
+                  <p className="font-mono text-[11.5px] text-text-secondary mt-0.5">
+                    {syncProgress && syncProgress.total > 0
+                      ? t("settings.librarySync.syncingProgressDetail", {
+                          applied: syncProgress.applied,
+                          total: syncProgress.total,
+                          percent: syncPercent,
+                        })
+                      : t("settings.librarySync.syncingPreparing")}
+                  </p>
+                </div>
+              </div>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => void invoke("sync_cancel")}
+              >
+                {t("settings.librarySync.cancelSync")}
+              </Button>
+            </div>
+            <ProgressBar value={syncProgress && syncProgress.total > 0 ? syncPercent : 15} />
+          </div>
+        )}
+
+        {/* Error banner */}
+        {error && (
+          <div
+            role="alert"
+            data-testid="sync-error-banner"
+            className="bg-danger-tint border border-[#D93F4C33] rounded-[14px] px-[18px] py-3.5 flex items-center justify-between gap-4"
+          >
+            <div className="flex items-center gap-3 min-w-0">
+              <AlertTriangle size={17} className="text-danger shrink-0" />
+              <div className="min-w-0">
+                <p className="text-[13.5px] font-semibold text-text-primary break-words">
+                  {error}
+                </p>
+                {lastFailedAction && (
+                  <p className="text-[12.5px] text-danger mt-0.5">
+                    {t("settings.librarySync.retryHint")}
+                  </p>
+                )}
+              </div>
+            </div>
+            <Button
+              variant="primary"
+              size="sm"
+              disabled={busy}
+              onClick={() => void onRetry()}
+            >
+              <RefreshCw size={13.5} />
+              <span>{t("settings.ai.retry")}</span>
+            </Button>
+          </div>
+        )}
+
+        {/* DEVICES & REPAIR when sync intent is ON */}
         {syncOn && (
           <>
-            <div className="h-px bg-border-light" />
-            <div className="pt-4 pb-2">
-              <p className="text-[11px] font-semibold text-text-muted tracking-[0.6px]">
-                {t("settings.librarySync.otherDevices").toUpperCase()}
-              </p>
-              {peers.length === 0 ? (
-                <p className="text-[12px] text-text-muted mt-2 leading-[1.5]">
-                  {t("settings.librarySync.noPeers")}
-                </p>
-              ) : (
-                <div className="flex flex-col gap-2 mt-3">
+            <section className="flex flex-col gap-2.5">
+              <SettingsOverline>{t("settings.librarySync.devicesGroup")}</SettingsOverline>
+              {status && (
+                <SettingsGroup>
+                  {/* This Mac */}
+                  <div className="min-h-[64px] px-5 py-2.5 flex items-center justify-between gap-4">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="size-[34px] rounded-[10px] bg-surface-solid border border-border-subtle flex items-center justify-center shrink-0">
+                        <Laptop size={16} className="text-accent-on-tint" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-[14px] font-medium text-text-primary truncate">
+                          {status.device_name}
+                        </p>
+                        <p className="text-[12px] text-text-tertiary truncate">
+                          {!engineRunning && pendingEvents > 0
+                            ? t("settings.librarySync.thisDeviceQueued", { count: pendingEvents })
+                            : appVersion
+                              ? t("settings.librarySync.thisDeviceVersion", { version: appVersion })
+                              : t("settings.librarySync.thisDevice")}
+                        </p>
+                      </div>
+                    </div>
+                    <span className="px-2.5 py-1 rounded-full bg-accent-tint text-accent-on-tint text-[11.5px] font-semibold shrink-0">
+                      {t("settings.librarySync.thisMacBadge")}
+                    </span>
+                  </div>
+
+                  {/* Peer devices */}
                   {peers.map((p) => {
                     const Icon = platformIcon(p.platform);
+                    const lastSeen = formatRelative(p.last_seen, now, t);
                     return (
                       <div
                         key={p.device_uuid}
-                        className="flex items-center gap-3 bg-bg-muted rounded-[10px] px-3 py-2.5"
+                        className="min-h-[64px] px-5 py-2.5 flex items-center justify-between gap-4"
                       >
-                        <Icon size={16} className="text-text-muted shrink-0" />
-                        <div className="flex-1 min-w-0">
-                          <p className="text-[13px] font-medium text-text-primary truncate">
-                            {p.name}
-                          </p>
-                          <p className="text-[11px] text-text-muted">
-                            {t("settings.librarySync.lastSeen", {
-                              time: formatRelative(p.last_seen, now),
-                            })}
-                          </p>
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="size-[34px] rounded-[10px] bg-surface-solid border border-border-subtle flex items-center justify-center shrink-0">
+                            <Icon size={16} className="text-text-secondary" />
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-[14px] font-medium text-text-primary truncate">
+                              {p.name}
+                            </p>
+                            <p className="text-[12px] text-text-tertiary truncate">
+                              {p.app_version
+                                ? t("settings.librarySync.lastSeenVersion", {
+                                    time: lastSeen,
+                                    version: p.app_version,
+                                  })
+                                : t("settings.librarySync.lastSeen", { time: lastSeen })}
+                            </p>
+                          </div>
                         </div>
-                        {p.pending_events > 0 && (
-                          <span className="text-[11px] font-medium text-text-muted bg-white dark:bg-bg-surface rounded-full px-2 py-0.5">
-                            {p.pending_events}
-                          </span>
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => setPendingRemoval(p)}
-                          disabled={busy}
-                          aria-label={t("settings.librarySync.removeDevice")}
-                          title={t("settings.librarySync.removeDevice")}
-                          className="text-text-muted hover:text-danger-text disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer p-1 -m-1"
-                        >
-                          <Trash2 size={14} />
-                        </button>
+                        <div className="flex items-center gap-2 shrink-0">
+                          {p.pending_events > 0 && (
+                            <span className="px-[9px] py-[3px] rounded-full bg-surface-solid border border-border-subtle font-mono text-[11px] text-text-secondary">
+                              {t("settings.librarySync.pendingEvents", { count: p.pending_events })}
+                            </span>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => setPendingRemoval(p)}
+                            disabled={busy || !engineRunning}
+                            aria-label={t("settings.librarySync.removeDeviceNamed", { name: p.name })}
+                            title={t("settings.librarySync.removeDevice")}
+                            className="size-[30px] rounded-[8px] flex items-center justify-center text-text-tertiary hover:text-danger hover:bg-danger-tint/60 disabled:opacity-35 disabled:cursor-not-allowed cursor-pointer transition-colors"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
                       </div>
                     );
                   })}
+                </SettingsGroup>
+              )}
+
+              {peers.length === 0 && (
+                <div
+                  data-testid="sync-empty-peers-card"
+                  className="bg-surface-solid border border-border-subtle rounded-[14px] px-5 py-[22px] flex items-center gap-3.5"
+                >
+                  <div className="size-[38px] rounded-[12px] bg-surface-inset border border-border-subtle flex items-center justify-center shrink-0">
+                    <Laptop size={17} className="text-text-tertiary" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-[13.5px] font-semibold text-text-primary">
+                      {t("settings.librarySync.onlyThisMacTitle")}
+                    </p>
+                    <p className="text-[12.5px] text-text-tertiary leading-[1.45] mt-0.5">
+                      {t("settings.librarySync.noPeers")}
+                    </p>
+                  </div>
                 </div>
               )}
-            </div>
-            <div className="h-px bg-border-light mt-3" />
 
-            {/* Actions row. Sync now / Compact log both require the
-                engine to be running this session — disable them when
-                we're in queue-only mode so the user isn't confused by
-                an error toast. The "Last sync" caption still renders
-                whatever the backend reports. */}
-            <div className="flex items-center justify-between pt-4 pb-2">
-              <div className="flex items-center gap-4">
-                <button
-                  type="button"
-                  onClick={syncing ? () => invoke("sync_cancel") : onSyncNow}
-                  disabled={(!syncing && busy) || !engineRunning}
-                  title={!engineRunning ? t("settings.librarySync.paused") : undefined}
-                  className="text-[13px] font-medium text-accent-text hover:underline disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-                >
-                  {syncing ? t("settings.librarySync.cancelSync") : t("settings.librarySync.syncNow")}
-                </button>
-                <button
-                  type="button"
-                  onClick={onCompact}
-                  disabled={busy || !engineRunning}
-                  title={!engineRunning ? t("settings.librarySync.paused") : undefined}
-                  className="text-[13px] font-medium text-accent-text hover:underline disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-                >
-                  {t("settings.librarySync.compact")}
-                </button>
-              </div>
-              <p className="text-[12px] text-text-muted">
-                {t("settings.librarySync.lastSyncAt", {
-                  time: formatRelative(status?.last_replay_at ?? null, now),
-                })}
+              <p className="text-[12.5px] text-text-tertiary leading-[1.45]">
+                {t("settings.librarySync.privacyAndMergeNote")}
               </p>
-            </div>
+            </section>
 
-            {/* Rebuild from iCloud — danger row. Requires the engine,
-                same as Sync now / Compact: the wipe must never run
-                without a live replay to pull the data back. */}
-            <div className="h-px bg-border-light mt-2" />
-            <div className="flex items-center justify-between h-[73px]">
-              <div>
-                <p className="text-[14px] font-medium text-text-primary tracking-[-0.15px]">
-                  {t("settings.librarySync.rebuild")}
-                </p>
-                <p className="text-[12px] text-text-muted mt-0.5">
-                  {t("settings.librarySync.rebuildSub")}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setConfirmRebuild(true)}
-                disabled={busy || syncing || !engineRunning}
-                title={!engineRunning ? t("settings.librarySync.paused") : undefined}
-                className="bg-danger hover:bg-danger-hover text-white text-[13px] font-medium rounded-md h-8 px-3 shrink-0 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {t("settings.librarySync.rebuildCta")}
-              </button>
-            </div>
-          </>
-        )}
-
-        {/* Notes — always visible. */}
-        <div className="h-px bg-border-light mt-2" />
-        <p className="text-[12px] text-text-muted leading-[1.5] mt-3">
-          {t("settings.librarySync.keysNote")}
-        </p>
-        <p className="text-[12px] text-text-muted leading-[1.5] mt-1">
-          {t("settings.librarySync.simultaneityNote")}
-        </p>
-
-        {/* Error */}
-        {error && (
-          <div className="flex items-center justify-between bg-danger-bg border border-danger-border rounded-lg px-3.5 py-2 mt-3">
-            <span className="text-[12px] text-danger-text truncate">
-              {error}
-            </span>
-            <button
-              type="button"
-              disabled={busy}
-              className="text-[12px] font-medium text-danger-text underline cursor-pointer ml-2 shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
-              onClick={onRetry}
+            {/* REPAIR section */}
+            <section
+              className={`flex flex-col gap-2.5 ${!engineRunning ? "opacity-50" : ""}`}
             >
-              {t("settings.ai.retry")}
-            </button>
-          </div>
+              <SettingsOverline>{t("settings.librarySync.repairGroup")}</SettingsOverline>
+              <SettingsGroup>
+                <SettingsRow
+                  title={t("settings.librarySync.rebuild")}
+                  hint={
+                    !engineRunning
+                      ? t("settings.librarySync.rebuildPausedHint")
+                      : t("settings.librarySync.rebuildSub")
+                  }
+                >
+                  <button
+                    type="button"
+                    onClick={() => setConfirmRebuild(true)}
+                    disabled={busy || syncing || !engineRunning}
+                    title={!engineRunning ? t("settings.librarySync.paused") : undefined}
+                    className="px-3.5 py-[7px] rounded-full bg-danger-tint border border-[#D93F4C33] text-danger text-[13px] font-semibold inline-flex items-center gap-1.5 cursor-pointer hover:bg-danger/15 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+                  >
+                    <RotateCcw size={13.5} />
+                    <span>{t("settings.librarySync.rebuildCta")}</span>
+                  </button>
+                </SettingsRow>
+              </SettingsGroup>
+            </section>
+          </>
         )}
       </div>
 
-      {/* Remove-device confirmation. Mirrors iOS's destructive alert
-          copy so the cross-platform UX matches. */}
-      {pendingRemoval && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-overlay">
-          <div className="bg-bg-surface rounded-xl shadow-lg w-[400px] p-6">
-            <h3 className="text-[18px] font-semibold text-text-primary mb-2">
-              {t("settings.librarySync.removeDeviceTitle", { name: pendingRemoval.name })}
-            </h3>
-            <p className="text-[14px] text-text-secondary leading-5 mb-6">
-              {t("settings.librarySync.removeDeviceBody")}
-            </p>
-            <div className="flex justify-end gap-3">
-              <Button variant="ghost" size="md" onClick={() => setPendingRemoval(null)}>
-                {t("common.cancel")}
-              </Button>
-              <button
-                type="button"
-                onClick={onConfirmRemovePeer}
-                className="bg-danger hover:bg-danger-hover text-white text-[14px] font-medium rounded-md px-4 py-2 cursor-pointer"
-              >
-                {t("settings.librarySync.remove")}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Rebuild confirmation. Cancel is the default (autofocused)
-          action; the destructive button requires an explicit click. */}
-      {confirmRebuild && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-overlay">
-          <div className="bg-bg-surface rounded-xl shadow-lg w-[400px] p-6">
-            <h3 className="text-[18px] font-semibold text-text-primary mb-2">
-              {t("settings.librarySync.rebuildConfirmTitle")}
-            </h3>
-            <p className="text-[14px] text-text-secondary leading-5 mb-6">
-              {t("settings.librarySync.rebuildConfirmMsg")}
-            </p>
-            <div className="flex justify-end gap-3">
-              <Button variant="ghost" size="md" autoFocus onClick={() => setConfirmRebuild(false)}>
-                {t("common.cancel")}
-              </Button>
-              <button
-                type="button"
-                onClick={onRebuild}
-                className="bg-danger hover:bg-danger-hover text-white text-[14px] font-medium rounded-md px-4 py-2 cursor-pointer"
-              >
-                {t("settings.librarySync.rebuildConfirmCta")}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {disableProgress && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-overlay">
-          <div className="bg-bg-surface rounded-xl shadow-lg w-[420px] p-6">
-            <div className="flex items-center gap-3 mb-4">
-              <Loader2 size={18} className="text-accent-text animate-spin" />
-              <h3 className="text-[18px] font-semibold text-text-primary">
-                {t("settings.librarySync.copyingTitle")}
-              </h3>
-            </div>
-            <p className="text-[14px] text-text-secondary leading-5 mb-5">
-              {t("settings.librarySync.copyingMsg")}
-            </p>
-            <div className="flex items-center justify-between mb-2">
-              <p className="text-[12px] font-medium text-text-primary">
-                {t(`settings.librarySync.copyPhase.${disableProgress.phase}`)}
-              </p>
-              <p className="text-[12px] text-text-muted">
-                {disableProgress.total > 0
-                  ? t("settings.librarySync.copyingCount", {
-                    copied: disableProgress.copied,
-                    total: disableProgress.total,
-                  })
-                  : t("settings.librarySync.working")}
-              </p>
-            </div>
-            <div className="h-2 rounded-full bg-bg-muted overflow-hidden">
-              <div
-                className="h-full bg-accent transition-[width] duration-200"
-                style={{ width: `${disableProgress.total > 0 ? disableProgressValue : 12}%` }}
-              />
-            </div>
-            {disableProgress.current && (
-              <p className="text-[12px] text-text-muted truncate mt-3">
-                {disableProgress.current}
-              </p>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Confirmation dialog — same shape as the legacy iCloud one so
-          the UX is identical at the point of decision. */}
-      {confirm && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-overlay">
-          <div className="bg-bg-surface rounded-xl shadow-lg w-[400px] p-6">
-            <h3 className="text-[18px] font-semibold text-text-primary mb-2">
-              {confirm === "enable"
-                ? t("settings.librarySync.confirmEnable")
-                : t("settings.librarySync.confirmDisable")}
-            </h3>
-            <p className="text-[14px] text-text-secondary leading-5 mb-6">
-              {confirm === "enable"
-                ? t("settings.librarySync.confirmEnableMsg")
-                : t("settings.librarySync.confirmDisableMsg")}
-            </p>
-            <div className="flex justify-end gap-3">
-              <Button variant="ghost" size="md" onClick={() => setConfirm(null)}>
-                {t("common.cancel")}
-              </Button>
-              <Button variant="primary" size="md" onClick={onConfirmToggle}>
-                {confirm === "enable"
-                  ? t("settings.librarySync.confirmEnableCta")
-                  : t("settings.librarySync.confirmDisableCta")}
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
+      {modalOverlays && typeof document !== "undefined"
+        ? createPortal(modalOverlays, document.body)
+        : modalOverlays}
     </>
   );
 }
