@@ -37,8 +37,8 @@ export function MenuItem({
     tone === "danger"
       ? "text-danger hover:bg-danger-tint"
       : active
-        ? "bg-violet-50 text-accent-on-tint"
-        : "text-text-primary hover:bg-violet-50 hover:text-accent-on-tint";
+        ? "bg-accent-tint text-accent-on-tint"
+        : "text-text-primary hover:bg-accent-tint hover:text-accent-on-tint";
 
   return (
     <button

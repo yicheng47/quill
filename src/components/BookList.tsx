@@ -6,6 +6,7 @@ import type { Collection } from "../hooks/useCollections";
 import { checkBookAvailable } from "../hooks/useBooks";
 import { openReaderWindow } from "../utils/openReaderWindow";
 import BookCover from "./ui/BookCover";
+import { CloudDownloadBadge } from "./ui/Badge";
 import {
   BookActionsOverlay,
   LoadMoreSentinel,
@@ -135,7 +136,7 @@ export default function BookList({
                 }}
               onContextMenu={(e) => handleContextMenu(e, book)}
               className={`w-full min-h-[122px] px-3.5 py-3 rounded-[14px] border border-border-subtle flex items-center gap-[18px] text-left cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-focus-ring ${
-                isICloud ? "bg-surface-inset hover:bg-white/80" : "hover:bg-white/55"
+                isICloud ? "bg-surface-inset hover:bg-surface-solid" : "hover:bg-surface-chip"
               }`}
             >
               <BookCover
@@ -148,12 +149,10 @@ export default function BookList({
               >
                 {isICloud ? (
                   <div className="absolute inset-0 flex items-center justify-center">
-                    <span className="size-[30px] rounded-full bg-[#15151A]/70 flex items-center justify-center text-white">
-                      <CloudDownload size={15} />
-                    </span>
+                    <CloudDownloadBadge size="sm" />
                   </div>
                 ) : isFinished ? (
-                  <span className="absolute top-1.5 right-1.5 size-5 rounded-full bg-success flex items-center justify-center text-white">
+                  <span className="absolute top-1.5 right-1.5 size-5 rounded-full bg-success flex items-center justify-center text-text-on-accent">
                     <Check size={11} strokeWidth={2.5} />
                   </span>
                 ) : null}

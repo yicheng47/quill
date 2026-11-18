@@ -503,7 +503,7 @@ export default function CommandSearchModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-[#15151A]/26 backdrop-blur-[6px] flex justify-center items-start pt-[92px] px-4"
+      className="fixed inset-0 z-50 bg-scrim backdrop-blur-[6px] flex justify-center items-start pt-[92px] px-4"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -512,7 +512,7 @@ export default function CommandSearchModal({
         role="dialog"
         aria-modal="true"
         aria-label={t("commandSearch.ariaLabel")}
-        className="w-full max-w-[680px] rounded-[22px] bg-white/[0.92] border border-surface-glass-border backdrop-blur-[36px] shadow-[0_24px_56px_rgba(30,22,56,0.24)] overflow-hidden flex flex-col"
+        className="w-full max-w-[680px] rounded-[22px] bg-surface-popover border border-surface-glass-border backdrop-blur-[36px] shadow-[var(--shadow-modal)] overflow-hidden flex flex-col"
       >
         <div className="h-[58px] px-5 flex items-center justify-between gap-3 border-b border-border-subtle">
           <div className="flex-1 min-w-0 flex items-center gap-3">
@@ -641,7 +641,7 @@ export default function CommandSearchModal({
                         onMouseEnter={() => setActiveIndex(idx)}
                         onClick={(e) => handleActivate(hit, Boolean(e.metaKey || e.ctrlKey))}
                         className={`w-full flex items-center justify-between gap-3 px-2.5 py-2 rounded-[12px] text-left cursor-pointer transition-colors ${
-                          isSelected ? "bg-accent-tint" : "hover:bg-black/[0.04]"
+                          isSelected ? "bg-accent-tint" : "hover:bg-surface-hover"
                         }`}
                       >
                         <div className="flex items-center gap-3 min-w-0 flex-1">
@@ -664,7 +664,7 @@ export default function CommandSearchModal({
                             </span>
                             <span
                               className={`text-[12px] truncate ${
-                                isSelected ? "text-violet-700" : "text-text-tertiary"
+                                isSelected ? "text-accent-on-tint/80" : "text-text-tertiary"
                               }`}
                             >
                               {book.author}
@@ -681,7 +681,7 @@ export default function CommandSearchModal({
                             {statusText}
                           </span>
                           {isSelected && (
-                            <span className="px-[7px] py-[3px] rounded-[6px] bg-white/70 font-mono text-[10.5px] font-semibold text-accent-on-tint">
+                            <span className="px-[7px] py-[3px] rounded-[6px] bg-surface-chip font-mono text-[10.5px] font-semibold text-accent-on-tint">
                               {t("commandSearch.openHint")} ↵
                             </span>
                           )}
@@ -707,7 +707,7 @@ export default function CommandSearchModal({
                         onMouseEnter={() => setActiveIndex(idx)}
                         onClick={(e) => handleActivate(hit, Boolean(e.metaKey || e.ctrlKey))}
                         className={`w-full flex items-center justify-between gap-3 px-2.5 py-2.5 rounded-[12px] text-left cursor-pointer transition-colors ${
-                          isSelected ? "bg-accent-tint" : "hover:bg-black/[0.04]"
+                          isSelected ? "bg-accent-tint" : "hover:bg-surface-hover"
                         }`}
                       >
                         <div className="flex items-center gap-3 min-w-0 flex-1">
@@ -722,7 +722,7 @@ export default function CommandSearchModal({
                             </span>
                             <span
                               className={`text-[11.5px] truncate ${
-                                isSelected ? "text-violet-700" : "text-text-tertiary"
+                                isSelected ? "text-accent-on-tint/80" : "text-text-tertiary"
                               }`}
                             >
                               {highlight.book_title || t("common.unknownBook")}
@@ -731,7 +731,7 @@ export default function CommandSearchModal({
                           </div>
                         </div>
                         {isSelected && (
-                          <span className="px-[7px] py-[3px] rounded-[6px] bg-white/70 font-mono text-[10.5px] font-semibold text-accent-on-tint shrink-0">
+                          <span className="px-[7px] py-[3px] rounded-[6px] bg-surface-chip font-mono text-[10.5px] font-semibold text-accent-on-tint shrink-0">
                             {t("commandSearch.openHint")} ↵
                           </span>
                         )}
@@ -755,7 +755,7 @@ export default function CommandSearchModal({
                         onMouseEnter={() => setActiveIndex(idx)}
                         onClick={(e) => handleActivate(hit, Boolean(e.metaKey || e.ctrlKey))}
                         className={`w-full flex items-center justify-between gap-3 px-2.5 py-2 rounded-[12px] text-left cursor-pointer transition-colors ${
-                          isSelected ? "bg-accent-tint" : "hover:bg-black/[0.04]"
+                          isSelected ? "bg-accent-tint" : "hover:bg-surface-hover"
                         }`}
                       >
                         <div className="flex items-center gap-2.5 min-w-0 flex-1">
@@ -772,7 +772,7 @@ export default function CommandSearchModal({
                             </span>
                             <span
                               className={`text-[12px] truncate ${
-                                isSelected ? "text-violet-700" : "text-text-tertiary"
+                                isSelected ? "text-accent-on-tint/80" : "text-text-tertiary"
                               }`}
                             >
                               {defSnippet}
@@ -788,7 +788,7 @@ export default function CommandSearchModal({
                             {t("commandSearch.tagWords")}
                           </span>
                           {isSelected && (
-                            <span className="px-[7px] py-[3px] rounded-[6px] bg-white/70 font-mono text-[10.5px] font-semibold text-accent-on-tint">
+                            <span className="px-[7px] py-[3px] rounded-[6px] bg-surface-chip font-mono text-[10.5px] font-semibold text-accent-on-tint">
                               {t("commandSearch.openHint")} ↵
                             </span>
                           )}
@@ -816,7 +816,7 @@ export default function CommandSearchModal({
                       onMouseEnter={() => setActiveIndex(idx)}
                       onClick={(e) => handleActivate(hit, Boolean(e.metaKey || e.ctrlKey))}
                       className={`w-full flex items-center justify-between gap-3 px-2.5 py-2 rounded-[12px] text-left cursor-pointer transition-colors ${
-                        isSelected ? "bg-accent-tint" : "hover:bg-black/[0.04]"
+                        isSelected ? "bg-accent-tint" : "hover:bg-surface-hover"
                       }`}
                     >
                       <div className="flex items-center gap-2.5 min-w-0 flex-1">
@@ -833,7 +833,7 @@ export default function CommandSearchModal({
                           </span>
                           <span
                             className={`text-[12px] truncate ${
-                              isSelected ? "text-violet-700" : "text-text-tertiary"
+                              isSelected ? "text-accent-on-tint/80" : "text-text-tertiary"
                             }`}
                           >
                             {chatMeta}
@@ -849,7 +849,7 @@ export default function CommandSearchModal({
                           {t("commandSearch.tagChat")}
                         </span>
                         {isSelected && (
-                          <span className="px-[7px] py-[3px] rounded-[6px] bg-white/70 font-mono text-[10.5px] font-semibold text-accent-on-tint">
+                          <span className="px-[7px] py-[3px] rounded-[6px] bg-surface-chip font-mono text-[10.5px] font-semibold text-accent-on-tint">
                             {t("commandSearch.openHint")} ↵
                           </span>
                         )}

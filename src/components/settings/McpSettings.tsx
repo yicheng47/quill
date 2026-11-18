@@ -170,7 +170,7 @@ export default function McpSettings() {
       {error && (
         <div
           role="alert"
-          className="bg-danger-tint border border-[#D93F4C33] rounded-[14px] px-[18px] py-3.5 flex items-center justify-between gap-4"
+          className="bg-danger-tint border border-danger/25 rounded-[14px] px-[18px] py-3.5 flex items-center justify-between gap-4"
         >
           <p className="text-[12.5px] text-danger min-w-0 break-words">{error}</p>
           <Button

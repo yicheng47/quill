@@ -27,9 +27,9 @@ export default function ImportOverlays({
       {isDragging && (
         <div
           data-testid="import-drop-overlay"
-          className="fixed inset-0 z-50 no-drag bg-[#15151A]/22 backdrop-blur-[6px] flex items-center justify-center p-4"
+          className="fixed inset-0 z-50 no-drag bg-scrim backdrop-blur-[6px] flex items-center justify-center p-4"
         >
-          <div className="w-full max-w-[500px] px-10 py-11 rounded-[26px] bg-white/[0.95] border-2 border-accent backdrop-blur-[36px] shadow-[0_24px_56px_rgba(30,22,56,0.24)] flex flex-col items-center text-center gap-3.5">
+          <div className="w-full max-w-[500px] px-10 py-11 rounded-[26px] bg-surface-popover border-2 border-accent backdrop-blur-[36px] shadow-[var(--shadow-modal)] flex flex-col items-center text-center gap-3.5">
             <div className="size-16 rounded-[20px] bg-accent-tint flex items-center justify-center text-accent-on-tint">
               <BookUp size={28} />
             </div>
@@ -54,9 +54,9 @@ export default function ImportOverlays({
       {!isDragging && importing && (
         <div
           data-testid="import-progress-overlay"
-          className="fixed inset-0 z-50 no-drag bg-[#15151A]/22 backdrop-blur-[6px] flex items-center justify-center p-4"
+          className="fixed inset-0 z-50 no-drag bg-scrim backdrop-blur-[6px] flex items-center justify-center p-4"
         >
-          <div className="w-full max-w-[440px] px-9 py-[38px] rounded-[26px] bg-white/[0.95] border border-surface-glass-border backdrop-blur-[36px] shadow-[0_24px_56px_rgba(30,22,56,0.24)] flex flex-col items-center text-center gap-3.5">
+          <div className="w-full max-w-[440px] px-9 py-[38px] rounded-[26px] bg-surface-popover border border-surface-glass-border backdrop-blur-[36px] shadow-[var(--shadow-modal)] flex flex-col items-center text-center gap-3.5">
             <svg
               width="44"
               height="44"
@@ -104,7 +104,7 @@ export default function ImportOverlays({
         <div
           role="alert"
           data-testid="import-error-toast"
-          className="fixed top-5 left-1/2 -translate-x-1/2 z-[60] no-drag w-[560px] max-w-[calc(100vw-32px)] px-4 py-3 rounded-[16px] bg-surface-solid border border-[#D93F4C]/25 backdrop-blur-[36px] shadow-[0_24px_56px_rgba(30,22,56,0.24)] flex items-center gap-3"
+          className="fixed top-5 left-1/2 -translate-x-1/2 z-[60] no-drag w-[560px] max-w-[calc(100vw-32px)] px-4 py-3 rounded-[16px] bg-surface-solid border border-danger/25 backdrop-blur-[36px] shadow-[var(--shadow-modal)] flex items-center gap-3"
         >
           <div className="size-[30px] rounded-[9px] bg-danger-tint flex items-center justify-center text-danger shrink-0">
             <AlertCircle size={16} />
@@ -119,7 +119,7 @@ export default function ImportOverlays({
             type="button"
             aria-label={t("common.dismiss")}
             onClick={onDismissError}
-            className="size-[26px] rounded-[8px] flex items-center justify-center text-text-tertiary hover:bg-black/[0.05] cursor-pointer transition-colors shrink-0"
+            className="size-[26px] rounded-[8px] flex items-center justify-center text-text-tertiary hover:bg-surface-hover cursor-pointer transition-colors shrink-0"
           >
             <X size={14} />
           </button>

@@ -25,7 +25,7 @@ const dawnVariantStyles: Record<ButtonVariant, string> = {
 
 const legacyVariantStyles: Record<ButtonVariant, string> = {
   primary:
-    "bg-accent text-white hover:opacity-90 font-medium",
+    "bg-accent text-text-on-accent hover:opacity-90 font-medium",
   secondary:
     "border border-border text-text-secondary hover:bg-bg-input font-medium",
   tonal:

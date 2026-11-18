@@ -56,7 +56,7 @@ export default function ReaderCloudState({
           author={book.author}
           coverData={book.cover_data}
           coverPath={book.cover_path}
-          className="w-[124px] h-[184px] !rounded-[10px] border border-border-subtle !shadow-[0_16px_40px_rgba(42,31,77,0.16)]"
+          className="w-[124px] h-[184px] !rounded-[10px] border border-border-subtle !shadow-[var(--shadow-menu)]"
         />
 
         <div

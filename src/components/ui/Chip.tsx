@@ -14,7 +14,7 @@ const Chip = forwardRef<HTMLButtonElement, ChipProps>(
         type="button"
         className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-full text-[13px] cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-focus-ring disabled:opacity-50 disabled:pointer-events-none ${
           selected
-            ? "bg-accent-tint border border-violet-200 text-accent-on-tint font-semibold"
+            ? "bg-accent-tint border border-accent/35 text-accent-on-tint font-semibold"
             : "dawn-chip text-text-primary font-normal hover:bg-surface-solid"
         } ${className}`}
         {...props}
@@ -32,7 +32,7 @@ const Chip = forwardRef<HTMLButtonElement, ChipProps>(
         {count !== undefined && (
           <span
             className={`font-mono text-[11px] leading-none shrink-0 ${
-              selected ? "text-violet-600" : "text-text-tertiary"
+              selected ? "text-accent-on-tint" : "text-text-tertiary"
             }`}
           >
             {count}

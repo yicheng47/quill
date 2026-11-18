@@ -45,7 +45,7 @@ export default function BookCover({
   const imgFailed = src !== null && failedSrc === src;
 
   const radiusClass = radius === "xs" ? "rounded-[3px]" : "rounded-[6px]";
-  const shadowClass = shadow ? "shadow-[0_12px_26px_rgba(42,31,77,0.20)]" : "";
+  const shadowClass = shadow ? "shadow-[var(--shadow-cover)]" : "";
 
   return (
     <div

@@ -18,7 +18,7 @@ export default function Switch({ checked, onChange, disabled = false, ...rest }:
       } ${checked ? "bg-accent justify-end" : "bg-border-strong justify-start"}`}
       {...rest}
     >
-      <span className="size-4 rounded-full bg-surface-solid shadow-[0_1px_3px_rgba(21,21,26,0.2)] transition-transform" />
+      <span className="size-4 rounded-full bg-text-on-accent shadow-[0_1px_3px_rgba(21,21,26,0.2)] transition-transform" />
     </button>
   );
 }

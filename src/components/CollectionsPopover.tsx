@@ -212,7 +212,7 @@ export default function CollectionsPopover({
       ref={popoverRef}
       role="dialog"
       aria-label={t("collections.popoverLabel")}
-      className="absolute right-0 top-full mt-2 w-[348px] max-w-[calc(100vw-32px)] rounded-[18px] bg-white/[0.96] border border-surface-glass-border backdrop-blur-[34px] shadow-[0_18px_44px_rgba(34,24,66,0.2)] overflow-hidden z-40 flex flex-col"
+      className="absolute right-0 top-full mt-2 w-[348px] max-w-[calc(100vw-32px)] rounded-[18px] bg-surface-popover border border-surface-glass-border backdrop-blur-[34px] shadow-[var(--shadow-menu)] overflow-hidden z-40 flex flex-col"
     >
       <div className="px-2 pt-2 pb-1.5 flex flex-col gap-0.5">
         <button
@@ -224,7 +224,7 @@ export default function CollectionsPopover({
           className={`w-full flex items-center justify-between px-2.5 py-2 rounded-[10px] cursor-pointer transition-colors ${
             allSelected
               ? "bg-accent-tint text-accent-on-tint font-semibold"
-              : "text-text-primary hover:bg-black/[0.04]"
+              : "text-text-primary hover:bg-surface-hover"
           }`}
         >
           <span className="flex items-center gap-2.5 min-w-0">
@@ -297,7 +297,7 @@ export default function CollectionsPopover({
                         onMouseDown={(e) => e.preventDefault()}
                         disabled={renamingBusy || !renameValue.trim()}
                         aria-label={t("common.save")}
-                        className="size-8 rounded-[8px] bg-accent hover:bg-accent-hover text-white flex items-center justify-center shrink-0 cursor-pointer disabled:opacity-50"
+                        className="size-8 rounded-[8px] bg-accent hover:bg-accent-hover text-text-on-accent flex items-center justify-center shrink-0 cursor-pointer disabled:opacity-50"
                       >
                         <Check size={14} />
                       </button>
@@ -330,7 +330,7 @@ export default function CollectionsPopover({
                   className={`group w-full flex items-center justify-between px-2.5 py-2 rounded-[10px] cursor-pointer transition-colors ${
                     isActive
                       ? "bg-accent-tint text-accent-on-tint"
-                      : "hover:bg-black/[0.04] text-text-primary"
+                      : "hover:bg-surface-hover text-text-primary"
                   } ${dragId === collection.id ? "opacity-50" : ""}`}
                 >
                   <div className="flex items-center gap-2 min-w-0 flex-1">
@@ -339,7 +339,7 @@ export default function CollectionsPopover({
                       onClick={(e) => e.stopPropagation()}
                       aria-label={t("collections.dragHandle")}
                       className={`inline-flex items-center justify-center cursor-grab touch-none shrink-0 ${
-                        isActive ? "text-violet-500" : "text-text-disabled"
+                        isActive ? "text-accent-on-tint" : "text-text-disabled"
                       }`}
                     >
                       <GripVertical size={13} />
@@ -369,8 +369,8 @@ export default function CollectionsPopover({
                       }}
                       className={`p-1 rounded-[6px] cursor-pointer transition-opacity ${
                         isActive
-                          ? "text-accent-on-tint hover:bg-black/[0.06] opacity-100"
-                          : "text-text-tertiary hover:text-text-primary hover:bg-black/[0.06] opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+                          ? "text-accent-on-tint hover:bg-surface-hover opacity-100"
+                          : "text-text-tertiary hover:text-text-primary hover:bg-surface-hover opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
                       }`}
                     >
                       <Pencil size={12.5} />
@@ -385,7 +385,7 @@ export default function CollectionsPopover({
                       }}
                       className={`p-1 rounded-[6px] cursor-pointer transition-opacity ${
                         isActive
-                          ? "text-accent-on-tint hover:bg-black/[0.06] opacity-100"
+                          ? "text-accent-on-tint hover:bg-surface-hover opacity-100"
                           : "text-text-tertiary hover:text-danger hover:bg-danger-tint opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
                       }`}
                     >

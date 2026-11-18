@@ -321,7 +321,7 @@ export default function HighlightsView({
                 className={`h-7 px-3 rounded-full text-[13px] cursor-pointer transition-colors ${
                   colorFilter === null
                     ? "bg-accent-tint text-accent-on-tint font-semibold"
-                    : "text-text-secondary hover:text-text-primary hover:bg-black/[0.04]"
+                    : "text-text-secondary hover:text-text-primary hover:bg-surface-hover"
                 }`}
               >
                 {t("highlights.colorAll")}
@@ -339,9 +339,9 @@ export default function HighlightsView({
                     }
                     aria-label={t(c.i18nKey)}
                     aria-pressed={active}
-                    className={`size-[22px] rounded-full cursor-pointer transition-transform border border-black/10 ${c.swatchClass} ${
+                    className={`size-[22px] rounded-full cursor-pointer transition-transform border border-border-default ${c.swatchClass} ${
                       active
-                        ? "ring-2 ring-accent ring-offset-2 ring-offset-white scale-105"
+                        ? "ring-2 ring-accent ring-offset-2 ring-offset-surface-solid scale-105"
                         : "hover:scale-110"
                     }`}
                   />
@@ -420,10 +420,10 @@ export default function HighlightsView({
               {t("highlights.emptyBody")}
             </p>
             <div className="flex items-center gap-2 mb-6" aria-hidden="true">
-              <span className="w-7 h-1.5 rounded-full bg-hl-yellow border border-black/5" />
-              <span className="w-7 h-1.5 rounded-full bg-hl-green border border-black/5" />
-              <span className="w-7 h-1.5 rounded-full bg-hl-blue border border-black/5" />
-              <span className="w-7 h-1.5 rounded-full bg-hl-pink border border-black/5" />
+              <span className="w-7 h-1.5 rounded-full bg-hl-yellow border border-border-subtle" />
+              <span className="w-7 h-1.5 rounded-full bg-hl-green border border-border-subtle" />
+              <span className="w-7 h-1.5 rounded-full bg-hl-blue border border-border-subtle" />
+              <span className="w-7 h-1.5 rounded-full bg-hl-pink border border-border-subtle" />
             </div>
             <button
               type="button"
@@ -449,7 +449,7 @@ export default function HighlightsView({
               className={`w-full px-3 py-2.5 rounded-[10px] flex items-center gap-2.5 text-left cursor-pointer transition-colors ${
                 selectedBookId === null
                   ? "bg-accent-tint text-accent-on-tint font-semibold"
-                  : "text-text-primary hover:bg-black/[0.03] font-medium"
+                  : "text-text-primary hover:bg-surface-hover font-medium"
               }`}
             >
               <Highlighter
@@ -484,7 +484,7 @@ export default function HighlightsView({
                   className={`w-full px-2.5 py-2 rounded-[10px] flex items-center gap-2.5 text-left cursor-pointer transition-colors ${
                     active
                       ? "bg-accent-tint text-accent-on-tint font-semibold"
-                      : "text-text-primary hover:bg-black/[0.03]"
+                      : "text-text-primary hover:bg-surface-hover"
                   }`}
                 >
                   <BookCover
@@ -600,8 +600,8 @@ export default function HighlightsView({
                       data-highlight-id={h.id}
                       className={`group relative rounded-[12px] border p-4 transition-all ${
                         isEditing || isActiveTarget
-                          ? "border-violet-300 bg-surface-solid/85 ring-2 ring-violet-200/60"
-                          : "border-border-subtle bg-white/55 hover:border-violet-300/70 hover:bg-white/75"
+                          ? "border-accent/55 bg-surface-solid ring-2 ring-focus-ring"
+                          : "border-border-subtle bg-surface-inset hover:border-accent/40 hover:bg-surface-solid"
                       }`}
                     >
                       {/* Top attribution / hover action row */}
@@ -658,7 +658,7 @@ export default function HighlightsView({
                                   color: t(swatch.i18nKey),
                                 })}
                                 aria-pressed={current}
-                                className={`size-3.5 rounded-full cursor-pointer border border-black/15 transition-transform ${swatch.swatchClass} ${
+                                className={`size-3.5 rounded-full cursor-pointer border border-border-default transition-transform ${swatch.swatchClass} ${
                                   current ? "ring-1.5 ring-text-primary scale-110" : "hover:scale-110"
                                 }`}
                               />
@@ -671,7 +671,7 @@ export default function HighlightsView({
                             type="button"
                             onClick={() => startEdit(h)}
                             aria-label={t("highlights.editNote")}
-                            className="px-2 py-0.5 rounded-full text-[11.5px] font-medium text-text-secondary hover:text-text-primary hover:bg-black/[0.04] inline-flex items-center gap-1 cursor-pointer"
+                            className="px-2 py-0.5 rounded-full text-[11.5px] font-medium text-text-secondary hover:text-text-primary hover:bg-surface-hover inline-flex items-center gap-1 cursor-pointer"
                           >
                             <PenLine size={12} />
                             <span>{t("highlights.editNote")}</span>
@@ -681,7 +681,7 @@ export default function HighlightsView({
                             type="button"
                             onClick={() => handleCopy(h)}
                             aria-label={t("highlights.copy")}
-                            className="px-2 py-0.5 rounded-full text-[11.5px] font-medium text-text-secondary hover:text-text-primary hover:bg-black/[0.04] inline-flex items-center gap-1 cursor-pointer"
+                            className="px-2 py-0.5 rounded-full text-[11.5px] font-medium text-text-secondary hover:text-text-primary hover:bg-surface-hover inline-flex items-center gap-1 cursor-pointer"
                           >
                             {copiedId === h.id ? <Check size={12} /> : <Copy size={12} />}
                             <span>
@@ -713,7 +713,7 @@ export default function HighlightsView({
                               })
                             }
                             aria-label={t("highlights.openInBook")}
-                            className="px-2 py-0.5 rounded-full text-[11.5px] font-medium text-text-secondary hover:text-text-primary hover:bg-black/[0.04] inline-flex items-center gap-1 cursor-pointer"
+                            className="px-2 py-0.5 rounded-full text-[11.5px] font-medium text-text-secondary hover:text-text-primary hover:bg-surface-hover inline-flex items-center gap-1 cursor-pointer"
                           >
                             <BookOpen size={12} />
                             <span>{t("highlights.open")}</span>
@@ -741,7 +741,7 @@ export default function HighlightsView({
 
                       {/* Inline Note Editor or Saved Note */}
                       {isEditing ? (
-                        <div className="mt-3 rounded-[10px] border border-violet-300/90 bg-surface-solid p-3">
+                        <div className="mt-3 rounded-[10px] border border-accent/60 bg-surface-solid p-3">
                           <textarea
                             autoFocus
                             rows={3}
@@ -789,7 +789,7 @@ export default function HighlightsView({
                           <button
                             type="button"
                             onClick={() => startEdit(h)}
-                            className="mt-2.5 w-full text-left px-3 py-2 rounded-[8px] bg-black/[0.025] hover:bg-black/[0.04] border border-border-subtle flex items-start gap-2 cursor-pointer transition-colors"
+                            className="mt-2.5 w-full text-left px-3 py-2 rounded-[8px] bg-surface-hover hover:bg-border-subtle border border-border-subtle flex items-start gap-2 cursor-pointer transition-colors"
                           >
                             <StickyNote size={13} className="text-accent mt-0.5 shrink-0" />
                             <span className="text-[13px] leading-[1.45] text-text-secondary whitespace-pre-wrap">
@@ -828,7 +828,7 @@ export default function HighlightsView({
                               type="button"
                               disabled={deletingId === h.id}
                               onClick={() => handleConfirmDelete(h.id)}
-                              className="h-8 px-3.5 rounded-control bg-danger hover:bg-danger-hover text-white text-[12.5px] font-semibold cursor-pointer disabled:opacity-60"
+                              className="h-8 px-3.5 rounded-control bg-danger hover:bg-danger-hover text-text-on-accent text-[12.5px] font-semibold cursor-pointer disabled:opacity-60"
                             >
                               {t("highlights.remove")}
                             </button>

@@ -75,7 +75,7 @@ export default function MessageBubble({
           type="button"
           onClick={() => msg.contextCfi && onNavigateToCfi?.(msg.contextCfi)}
           disabled={!msg.contextCfi || !onNavigateToCfi}
-          className={`border-l-2 border-violet-300 pl-3 py-0.5 text-left ${
+          className={`border-l-2 border-accent/55 pl-3 py-0.5 text-left ${
             msg.contextCfi && onNavigateToCfi
               ? "cursor-pointer hover:opacity-80"
               : "cursor-default"

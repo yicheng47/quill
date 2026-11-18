@@ -54,7 +54,7 @@ export default function EditMetadataModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-[#15151A]/26 backdrop-blur-[6px] p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-scrim backdrop-blur-[6px] p-4"
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
       <form

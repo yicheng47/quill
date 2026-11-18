@@ -25,6 +25,7 @@ export const emitTo: Platform["emitTo"] = (windowLabel, event, payload) =>
   platform.emitTo(windowLabel, event, payload);
 export const getCurrentWindowLabel: Platform["getCurrentWindowLabel"] = () =>
   platform.getCurrentWindowLabel();
+export const getInitialDark: Platform["getInitialDark"] = () => platform.getInitialDark();
 export const getInitialReaderTheme: Platform["getInitialReaderTheme"] = () =>
   platform.getInitialReaderTheme();
 export const setWindowTitle: Platform["setWindowTitle"] = (title) =>

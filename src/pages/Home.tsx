@@ -748,7 +748,7 @@ export default function Home() {
                 <button
                   type="button"
                   onClick={() => setAddBooksOpen(true)}
-                  className="h-10 px-4 rounded-control bg-accent-tint hover:bg-violet-200/80 text-accent-on-tint text-[13px] font-semibold inline-flex items-center gap-1.5 cursor-pointer transition-colors"
+                  className="h-10 px-4 rounded-control bg-accent-tint hover:bg-accent-tint-hover text-accent-on-tint text-[13px] font-semibold inline-flex items-center gap-1.5 cursor-pointer transition-colors"
                 >
                   <Plus size={14} strokeWidth={2.2} />
                   <span>{t("collections.addBooksButton")}</span>
@@ -770,7 +770,7 @@ export default function Home() {
                   aria-haspopup="dialog"
                   className={`h-10 px-3.5 rounded-full inline-flex items-center gap-2 text-[13px] cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-focus-ring ${
                     activeCollection
-                      ? "bg-accent-tint border border-violet-300/60 text-accent-on-tint font-semibold"
+                      ? "bg-accent-tint border border-accent/35 text-accent-on-tint font-semibold"
                       : "dawn-glass text-text-primary font-medium hover:bg-surface-solid"
                   }`}
                 >
@@ -861,7 +861,7 @@ export default function Home() {
                   <button
                     type="button"
                     onClick={() => setAddBooksOpen(true)}
-                    className="px-4 py-2 rounded-control bg-accent hover:bg-accent-hover text-white text-[13px] font-semibold cursor-pointer transition-colors"
+                    className="px-4 py-2 rounded-control bg-accent hover:bg-accent-hover text-text-on-accent text-[13px] font-semibold cursor-pointer transition-colors"
                   >
                     {t("collections.addFromLibrary")}
                   </button>
@@ -892,7 +892,7 @@ export default function Home() {
                   <button
                     type="button"
                     onClick={() => void handleImport()}
-                    className="px-4 py-2 rounded-control bg-accent hover:bg-accent-hover text-white text-[13px] font-semibold cursor-pointer transition-colors inline-flex items-center gap-1.5"
+                    className="px-4 py-2 rounded-control bg-accent hover:bg-accent-hover text-text-on-accent text-[13px] font-semibold cursor-pointer transition-colors inline-flex items-center gap-1.5"
                   >
                     <Plus size={15} />
                     <span>{t("library.importBook")}</span>

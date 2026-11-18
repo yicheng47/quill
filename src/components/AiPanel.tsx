@@ -519,7 +519,7 @@ export default function AiPanel({
           </div>
         )}
 
-        <div className="bg-surface-solid border border-border-default focus-within:border-violet-400 focus-within:ring-[3px] focus-within:ring-focus-ring rounded-[14px] px-3.5 py-2 flex items-end gap-2 shadow-xs transition-shadow">
+        <div className="bg-surface-solid border border-border-default focus-within:border-accent focus-within:ring-[3px] focus-within:ring-focus-ring rounded-[14px] px-3.5 py-2 flex items-end gap-2 shadow-xs transition-shadow">
           <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}

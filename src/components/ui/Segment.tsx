@@ -30,14 +30,14 @@ export function Segment({
       className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-[13px] whitespace-nowrap cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-focus-ring ${
         selected
           ? selectedClass
-          : "text-text-secondary font-medium hover:bg-black/[0.04]"
+          : "text-text-secondary font-medium hover:bg-surface-hover"
       } ${className}`}
     >
       <span>{label}</span>
       {count !== undefined && (
         <span
           className={`font-mono text-[11px] leading-none ${
-            selected ? "text-violet-600" : "text-text-tertiary"
+            selected ? "text-accent-on-tint" : "text-text-tertiary"
           }`}
         >
           {count}
@@ -73,7 +73,7 @@ export function SegmentedControl<T extends string>({
   return (
     <div
       className={`inline-flex items-center gap-0.5 p-1 rounded-full ${
-        surface === "inset" ? "bg-black/[0.05]" : "dawn-glass"
+        surface === "inset" ? "bg-segment-well" : "dawn-glass"
       } ${className}`}
     >
       {options.map((opt) => (

@@ -7,7 +7,12 @@ import "@fontsource-variable/literata/wght-italic.css";
 import App from "./App";
 import "./index.css";
 import "./i18n";
-import { getCurrentWindowLabel } from "./platform";
+import {
+  getCurrentWindowLabel,
+  getInitialDark,
+  getInitialReaderTheme,
+} from "./platform";
+import { readAppTheme, resolveAppThemeIsDark } from "./lib/theme";
 
 // Polyfill Map.getOrInsertComputed for PDF.js v5.5+ (Stage 3 proposal, not yet in WebKit)
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -21,20 +26,21 @@ if (!(Map.prototype as any).getOrInsertComputed) {
   };
 }
 
-// Main window uses Dawn light exclusively until M8; reader windows keep legacy
-// theme handling until M6.
+// Apply Dawn/Nocturne classes synchronously before React mounts so first paint
+// matches Electron main's initial appearance without a white/light flash; reader
+// windows follow their own page theme only.
+document.documentElement.classList.add("dawn");
 if (getCurrentWindowLabel() === "main") {
-  document.documentElement.classList.add("dawn");
-  document.documentElement.classList.remove("dark");
+  const initialDark = getInitialDark();
+  document.documentElement.classList.toggle(
+    "dark",
+    initialDark !== null ? initialDark : resolveAppThemeIsDark(readAppTheme()),
+  );
 } else {
-  // Apply cached theme synchronously before React mounts so the window doesn't
-  // flash light-mode on cold start. Reconciled with the DB in App.tsx.
-  const cachedTheme = localStorage.getItem("quill-theme") ?? "system";
-  const prefersDark =
-    cachedTheme === "dark" ||
-    (cachedTheme === "system" &&
-      window.matchMedia("(prefers-color-scheme: dark)").matches);
-  if (prefersDark) document.documentElement.classList.add("dark");
+  document.documentElement.classList.toggle(
+    "dark",
+    getInitialReaderTheme() === "dark",
+  );
 }
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(

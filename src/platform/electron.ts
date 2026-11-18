@@ -19,6 +19,7 @@ interface AvailableUpdateInfo {
 
 interface QuillShellBridge {
   getWindowLabel(): string;
+  getInitialDark?(): boolean | null;
   getInitialReaderTheme?(): string;
   invoke<T = unknown>(command: string, args?: Record<string, unknown>): Promise<T>;
   listen<T = unknown>(eventName: string, handler: (payload: T) => void): UnlistenFn;
@@ -112,6 +113,10 @@ export const electronPlatform: Platform = {
 
   getCurrentWindowLabel(): string {
     return window.quillShell ? window.quillShell.getWindowLabel() : "main";
+  },
+
+  getInitialDark(): boolean | null {
+    return window.quillShell?.getInitialDark?.() ?? null;
   },
 
   getInitialReaderTheme(): string {

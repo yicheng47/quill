@@ -1,9 +1,9 @@
-import { Check } from "lucide-react";
+import { Check, CloudDownload } from "lucide-react";
 
 export function PercentBadge({ percent, className = "" }: { percent: number; className?: string }) {
   return (
     <span
-      className={`inline-flex items-center px-2 py-[3px] rounded-full bg-white/90 backdrop-blur-[10px] font-mono text-[11px] font-medium text-text-primary leading-none ${className}`}
+      className={`inline-flex items-center px-2 py-[3px] rounded-full bg-surface-chip border border-surface-glass-border backdrop-blur-[10px] font-mono text-[11px] font-medium text-text-primary leading-none ${className}`}
     >
       {percent}%
     </span>
@@ -13,9 +13,27 @@ export function PercentBadge({ percent, className = "" }: { percent: number; cla
 export function DoneBadge({ className = "" }: { className?: string }) {
   return (
     <span
-      className={`inline-flex items-center justify-center size-[22px] rounded-full bg-white/90 backdrop-blur-[10px] text-success ${className}`}
+      className={`inline-flex items-center justify-center size-[22px] rounded-full bg-surface-chip border border-surface-glass-border backdrop-blur-[10px] text-success ${className}`}
     >
       <Check size={12} strokeWidth={2.5} />
+    </span>
+  );
+}
+
+export function CloudDownloadBadge({
+  size = "md",
+  className = "",
+}: {
+  size?: "sm" | "md";
+  className?: string;
+}) {
+  return (
+    <span
+      className={`rounded-full bg-cover-overlay flex items-center justify-center text-text-on-accent ${
+        size === "sm" ? "size-[30px]" : "size-8"
+      } ${className}`}
+    >
+      <CloudDownload size={size === "sm" ? 15 : 16} />
     </span>
   );
 }
@@ -27,7 +45,7 @@ const TONE_STYLES: Record<StatusTone, { bg: string; dot: string; text: string }>
   accent: { bg: "bg-accent-tint", dot: "bg-accent", text: "text-accent-on-tint" },
   warning: { bg: "bg-warning-tint", dot: "bg-warning", text: "text-warning" },
   danger: { bg: "bg-danger-tint", dot: "bg-danger", text: "text-danger" },
-  neutral: { bg: "bg-black/[0.06]", dot: "bg-text-tertiary", text: "text-text-secondary" },
+  neutral: { bg: "bg-track", dot: "bg-text-tertiary", text: "text-text-secondary" },
 };
 
 export function StatusBadge({

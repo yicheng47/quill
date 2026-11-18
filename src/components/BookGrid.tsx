@@ -1,9 +1,8 @@
 import { memo, useState } from "react";
-import { CloudDownload } from "lucide-react";
 import type { Book } from "../hooks/useBooks";
 import { openReaderWindow } from "../utils/openReaderWindow";
 import BookCover from "./ui/BookCover";
-import { DoneBadge, PercentBadge } from "./ui/Badge";
+import { CloudDownloadBadge, DoneBadge, PercentBadge } from "./ui/Badge";
 import {
   BookActionsOverlay,
   LoadMoreSentinel,
@@ -52,15 +51,13 @@ function BookGrid({
               author={book.author}
               coverData={book.cover_data}
               coverPath={book.cover_path}
-              className={`w-full aspect-[3/4] transition-shadow duration-200 group-hover:shadow-[0_18px_34px_rgba(91,75,232,0.3)] group-focus-visible:ring-[3px] group-focus-visible:ring-focus-ring ${
+              className={`w-full aspect-[3/4] transition-shadow duration-200 group-hover:shadow-[var(--shadow-cover-hover)] group-focus-visible:ring-[3px] group-focus-visible:ring-focus-ring ${
                 book.available === false ? "opacity-75" : ""
               }`}
             >
               {book.available === false ? (
                 <div className="absolute inset-0 flex items-center justify-center">
-                  <span className="size-8 rounded-full bg-[#15151A]/70 flex items-center justify-center text-white">
-                    <CloudDownload size={16} />
-                  </span>
+                  <CloudDownloadBadge />
                 </div>
               ) : (
                 <div className="absolute inset-0 p-2.5 flex items-end justify-end pointer-events-none">

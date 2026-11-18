@@ -16,6 +16,7 @@ import {
   sendEventToWindow,
   setTitlebarZoomForWindow,
   setWindowBackgroundColor,
+  type InitialAppearance,
   type ReaderWindowParams,
 } from "./windows";
 
@@ -30,30 +31,39 @@ interface OpenFileDialogOptions {
 
 const INITIAL_THEME_TIMEOUT_MS = 250;
 
-export async function readInitialDark(
+export async function readInitialAppearance(
   core: Pick<QuillCoreInstance, "dispatch">,
   timeoutMs = INITIAL_THEME_TIMEOUT_MS,
-): Promise<boolean> {
+): Promise<InitialAppearance> {
+  const TIMEOUT = Symbol("timeout");
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const raw = await Promise.race([
       core.dispatch("get_setting", JSON.stringify({ key: "theme" })),
-      new Promise<null>((resolve) => {
-        timer = setTimeout(() => resolve(null), timeoutMs);
+      new Promise<typeof TIMEOUT>((resolve) => {
+        timer = setTimeout(() => resolve(TIMEOUT), timeoutMs);
       }),
     ]);
-    if (raw === null) {
-      return resolveInitialDark(null);
+    if (raw === TIMEOUT) {
+      return { dark: resolveInitialDark(null), preloadDark: null };
     }
-    const parsed = JSON.parse(raw) as string | null;
-    return resolveInitialDark(parsed);
+    const parsed = raw ? (JSON.parse(raw) as string | null) : null;
+    const dark = resolveInitialDark(parsed);
+    return { dark, preloadDark: dark };
   } catch {
-    return resolveInitialDark(null);
+    return { dark: resolveInitialDark(null), preloadDark: null };
   } finally {
     if (timer !== undefined) {
       clearTimeout(timer);
     }
   }
+}
+
+export async function readInitialDark(
+  core: Pick<QuillCoreInstance, "dispatch">,
+  timeoutMs = INITIAL_THEME_TIMEOUT_MS,
+): Promise<boolean> {
+  return (await readInitialAppearance(core, timeoutMs)).dark;
 }
 
 export async function readStoredReaderTheme(

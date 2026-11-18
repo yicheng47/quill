@@ -96,7 +96,7 @@ Use an inexpensive model with tiny prompts.
 | SET-01 | smoke | mac, win | dev | Retired (#331 M4); replaced by SET-04 (in-window Settings view and Light-only Appearance until M8). |
 | SET-02 | full | mac | dev | The theme and language survive a restart, with no flash of the wrong theme at launch. |
 | SET-03 | full | mac, win | dev | Reveal Logs, from settings and from the Help menu, opens the log folder, and `quill.log` is being written. |
-| SET-04 | smoke | mac, win | dev | Every in-window settings tab opens and saves (`⌘,` and gear toggle; `Esc` or a TopBar route exits). Switching the language to 中文 and back re-renders the UI. Appearance keeps Light active with System and Dark disabled. About shows the version and platform pill, and its links open in the browser. |
+| SET-04 | smoke | mac, win | dev | Every in-window settings tab opens and saves (`⌘,` and gear toggle; `Esc` or a TopBar route exits). Switching the language to 中文 and back re-renders the UI. Appearance switches live between System, Light and Dark (moving the active border and check badge onto the chosen card). About shows the version and platform pill, and its links open in the browser. |
 
 ### MCP
 

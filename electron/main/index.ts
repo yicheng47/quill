@@ -2,7 +2,7 @@ import path from "node:path";
 import fs from "node:fs";
 import { app, nativeImage, protocol } from "electron";
 import { bootQuillCore, findRepoRoot, getLogDir, type QuillCoreInstance } from "./core";
-import { registerIpcHandlers, readInitialDark } from "./ipc";
+import { registerIpcHandlers, readInitialAppearance } from "./ipc";
 import { installAppMenu } from "./menu";
 import { refreshMacBundleIconIfVersionChanged } from "./macIconRefresh";
 import { registerProtocols } from "./protocols";
@@ -87,7 +87,7 @@ if (!gotSingleInstanceLock) {
 
   app.on("second-instance", async (_event, argv) => {
     if (core && !focusManagedWindow("main")) {
-      createMainWindow(await readInitialDark(core));
+      createMainWindow(await readInitialAppearance(core));
     }
     dispatchFileOpen(extractBookPaths(argv.slice(1)));
   });
@@ -99,7 +99,7 @@ if (!gotSingleInstanceLock) {
   app.on("activate", async () => {
     if (!core) return;
     if (!focusManagedWindow("main")) {
-      createMainWindow(await readInitialDark(core));
+      createMainWindow(await readInitialAppearance(core));
     }
   });
 
@@ -165,10 +165,10 @@ if (!gotSingleInstanceLock) {
         },
         updater,
       );
-      installAppMenu(core, () => readInitialDark(core!));
+      installAppMenu(core, () => readInitialAppearance(core!));
 
-      const initialDark = await readInitialDark(core);
-      createMainWindow(initialDark);
+      const initialAppearance = await readInitialAppearance(core);
+      createMainWindow(initialAppearance);
     })
     .catch((err) => {
       console.error("Failed to boot Quill:", err);

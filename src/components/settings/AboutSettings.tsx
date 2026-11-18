@@ -105,7 +105,7 @@ export default function AboutSettings() {
           <button
             type="button"
             onClick={() => open(GITHUB_URL)}
-            className="w-full h-[52px] px-5 flex items-center justify-between text-left cursor-pointer hover:bg-black/[0.03] transition-colors"
+            className="w-full h-[52px] px-5 flex items-center justify-between text-left cursor-pointer hover:bg-surface-hover transition-colors"
           >
             <div className="flex items-center gap-2.5">
               <Github size={15} className="text-text-secondary shrink-0" />
@@ -119,7 +119,7 @@ export default function AboutSettings() {
           <button
             type="button"
             onClick={() => open(DOCS_URL)}
-            className="w-full h-[52px] px-5 flex items-center justify-between text-left cursor-pointer hover:bg-black/[0.03] transition-colors"
+            className="w-full h-[52px] px-5 flex items-center justify-between text-left cursor-pointer hover:bg-surface-hover transition-colors"
           >
             <div className="flex items-center gap-2.5">
               <BookOpen size={15} className="text-text-secondary shrink-0" />

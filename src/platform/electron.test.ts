@@ -25,6 +25,7 @@ describe("electronPlatform", () => {
     progressListeners.clear();
     window.quillShell = {
       getWindowLabel: () => "main",
+      getInitialDark: () => true,
       getInitialReaderTheme: () => "paper",
       invoke: invokeMock,
       listen: () => () => {},
@@ -107,10 +108,12 @@ describe("electronPlatform", () => {
     unlisten();
   });
 
-  it("defaults getCurrentWindowLabel and getInitialReaderTheme outside Electron", () => {
+  it("defaults getCurrentWindowLabel, getInitialDark, and getInitialReaderTheme outside Electron", () => {
+    expect(electronPlatform.getInitialDark()).toBe(true);
     expect(electronPlatform.getInitialReaderTheme()).toBe("paper");
     delete window.quillShell;
     expect(electronPlatform.getCurrentWindowLabel()).toBe("main");
+    expect(electronPlatform.getInitialDark()).toBeNull();
     expect(electronPlatform.getInitialReaderTheme()).toBe("original");
   });
 

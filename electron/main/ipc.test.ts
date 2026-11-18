@@ -23,7 +23,12 @@ vi.mock("electron", () => ({
   },
 }));
 
-import { readInitialDark, readStoredReaderTheme, registerIpcHandlers } from "./ipc";
+import {
+  readInitialAppearance,
+  readInitialDark,
+  readStoredReaderTheme,
+  registerIpcHandlers,
+} from "./ipc";
 
 afterEach(() => {
   state.systemDark = false;
@@ -53,6 +58,49 @@ describe("readInitialDark", () => {
     const promise = readInitialDark(core, 100);
     await vi.advanceTimersByTimeAsync(100);
     await expect(promise).resolves.toBe(true);
+  });
+
+  it("distinguishes confirmed DB lookup from timeout or error in readInitialAppearance", async () => {
+    const confirmedDark = {
+      dispatch: vi.fn().mockResolvedValue(JSON.stringify("dark")),
+    };
+    await expect(readInitialAppearance(confirmedDark, 50)).resolves.toEqual({
+      dark: true,
+      preloadDark: true,
+    });
+
+    // Confirmed missing row ("null") resolves as System and produces a confirmed seed.
+    state.systemDark = false;
+    const confirmedMissing = {
+      dispatch: vi.fn().mockResolvedValue("null"),
+    };
+    await expect(readInitialAppearance(confirmedMissing, 50)).resolves.toEqual({
+      dark: false,
+      preloadDark: false,
+    });
+
+    // Hung DB query uses OS appearance for native backing, but leaves preloadDark null.
+    vi.useFakeTimers();
+    state.systemDark = true;
+    const hangingCore = {
+      dispatch: vi.fn(() => new Promise<string>(() => {})),
+    };
+    const timeoutPromise = readInitialAppearance(hangingCore, 100);
+    await vi.advanceTimersByTimeAsync(100);
+    await expect(timeoutPromise).resolves.toEqual({
+      dark: true,
+      preloadDark: null,
+    });
+
+    // Rejected DB query also falls back provisionally with preloadDark null.
+    state.systemDark = false;
+    const failingCore = {
+      dispatch: vi.fn().mockRejectedValue(new Error("db error")),
+    };
+    await expect(readInitialAppearance(failingCore, 50)).resolves.toEqual({
+      dark: false,
+      preloadDark: null,
+    });
   });
 });
 

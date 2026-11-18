@@ -340,7 +340,7 @@ export default function ChatsView({
               aria-haspopup="menu"
               className={`h-10 px-3.5 rounded-full text-[13px] inline-flex items-center gap-2 cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-focus-ring ${
                 bookFilter
-                  ? "bg-accent-tint border border-violet-300/60 text-accent-on-tint font-semibold"
+                  ? "bg-accent-tint border border-accent/35 text-accent-on-tint font-semibold"
                   : "dawn-glass text-text-primary font-medium hover:bg-surface-solid"
               }`}
             >
@@ -437,7 +437,7 @@ export default function ChatsView({
                         className={`w-full px-2.5 py-2.5 rounded-[10px] flex items-center gap-3 text-left cursor-pointer transition-colors ${
                           selected
                             ? "bg-accent-tint text-accent-on-tint"
-                            : "text-text-primary hover:bg-black/[0.03]"
+                            : "text-text-primary hover:bg-surface-hover"
                         }`}
                       >
                         <BookCover
@@ -743,7 +743,7 @@ function ChatConversationPane({
                   }}
                   onBlur={() => void submitRename()}
                   aria-label={t("chats.renameInputLabel")}
-                  className="w-full max-w-[360px] h-9 px-3 rounded-[9px] bg-surface-solid border border-violet-400 ring-[3px] ring-focus-ring text-[15px] font-semibold text-text-primary outline-none"
+                  className="w-full max-w-[360px] h-9 px-3 rounded-[9px] bg-surface-solid border border-accent ring-[3px] ring-focus-ring text-[15px] font-semibold text-text-primary outline-none"
                 />
                 <span className="font-mono text-[11px] text-text-tertiary shrink-0">
                   {t("chats.renameHint")}
@@ -918,7 +918,7 @@ function ChatConversationPane({
                       type="button"
                       onClick={() => msg.contextCfi && handleOpenInBook(msg.contextCfi)}
                       disabled={!msg.contextCfi}
-                      className={`border-l-2 border-violet-300 pl-3.5 py-0.5 text-left ${
+                      className={`border-l-2 border-accent/55 pl-3.5 py-0.5 text-left ${
                         msg.contextCfi
                           ? "cursor-pointer hover:opacity-80"
                           : "cursor-default"
@@ -945,7 +945,7 @@ function ChatConversationPane({
 
       {/* Bottom Composer */}
       <div className="px-6 pb-5 pt-2 shrink-0">
-        <div className="max-w-[640px] mx-auto bg-surface-solid border border-border-default focus-within:border-violet-400 focus-within:ring-[3px] focus-within:ring-focus-ring rounded-[12px] px-4 py-2.5 flex items-center gap-2.5 shadow-sm transition-shadow">
+        <div className="max-w-[640px] mx-auto bg-surface-solid border border-border-default focus-within:border-accent focus-within:ring-[3px] focus-within:ring-focus-ring rounded-[12px] px-4 py-2.5 flex items-center gap-2.5 shadow-sm transition-shadow">
           <textarea
             rows={1}
             value={input}
@@ -976,7 +976,7 @@ function ChatConversationPane({
       {/* Delete Conversation Modal */}
       {deleteModalOpen && (
         <div
-          className="fixed inset-0 z-50 bg-black/25 backdrop-blur-[2px] flex items-center justify-center p-4"
+          className="fixed inset-0 z-50 bg-scrim backdrop-blur-[6px] flex items-center justify-center p-4"
           onClick={() => !deleting && setDeleteModalOpen(false)}
         >
           <div
@@ -1016,7 +1016,7 @@ function ChatConversationPane({
                 type="button"
                 disabled={deleting}
                 onClick={handleDeleteConfirm}
-                className="h-9 px-4 rounded-control bg-danger hover:bg-danger-hover text-white text-[13px] font-semibold cursor-pointer disabled:opacity-60"
+                className="h-9 px-4 rounded-control bg-danger hover:bg-danger-hover text-text-on-accent text-[13px] font-semibold cursor-pointer disabled:opacity-60"
               >
                 {t("chats.deleteModalConfirm")}
               </button>
