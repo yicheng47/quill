@@ -9,25 +9,24 @@ import {
   List,
   BookOpen,
   BookUp,
-  SearchX,
 } from "lucide-react";
-import TopBar, { type MainRoute } from "../components/TopBar";
-import CommandSearchModal from "../components/CommandSearchModal";
+import TopBar, { type MainNavigateOptions, type MainRoute } from "../components/TopBar";
+import CommandSearchModal, { type CommandSearchScope } from "../components/CommandSearchModal";
+import HomeView from "../components/HomeView";
+import HighlightsView from "../components/HighlightsView";
+import WordsView from "../components/WordsView";
+import ChatsView from "../components/ChatsView";
 import ImportOverlays from "../components/ImportOverlays";
 import CollectionsPopover from "../components/CollectionsPopover";
 import DeleteCollectionModal from "../components/DeleteCollectionModal";
 import AddBooksModal from "../components/AddBooksModal";
 import BookGrid from "../components/BookGrid";
 import BookList from "../components/BookList";
-import DictionaryContent from "../components/DictionaryContent";
-import ChatsContent from "../components/ChatsContent";
 import SettingsModal, { type SettingsSection } from "../components/SettingsModal";
-import SearchField from "../components/ui/SearchField";
 import { SegmentedControl } from "../components/ui/Segment";
-import { useBooks, importBookDialog } from "../hooks/useBooks";
+import { useBooks, importBookDialog, type Book } from "../hooks/useBooks";
 import { useCollections, type Collection } from "../hooks/useCollections";
 import { invoke, listen, listenCurrentWindow, onDragDrop } from "../platform";
-import { shortcutModSymbol } from "../lib/platformEnv";
 
 interface BookCounts {
   all: number;
@@ -82,18 +81,31 @@ function subscribeAsync(register: (isActive: () => boolean) => Promise<() => voi
 
 export default function Home() {
   const { t } = useTranslation();
-  const mod = shortcutModSymbol();
 
-  const [activeRoute, setActiveRoute] = useState<MainRoute>("library");
+  const [activeRoute, setActiveRoute] = useState<MainRoute>("home");
   const [searchOpen, setSearchOpen] = useState(false);
+  const [searchScope, setSearchScope] = useState<CommandSearchScope>("all");
+
+  const [highlightsTarget, setHighlightsTarget] = useState<{
+    bookId?: string | null;
+    highlightId?: string | null;
+    seq?: number;
+  }>({});
+  const [wordsTarget, setWordsTarget] = useState<{
+    wordId?: string | null;
+    seq?: number;
+  }>({});
+  const [chatsTarget, setChatsTarget] = useState<{
+    bookId?: string | null;
+    chatId?: string | null;
+    seq?: number;
+  }>({});
 
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [collectionFilter, setCollectionFilter] = useState<string>("all");
   const [viewMode, setViewMode] = useState<ViewMode>(() =>
     localStorage.getItem("quill-library-view") === "list" ? "list" : "grid",
   );
-  const [searchQuery, setSearchQuery] = useState("");
-  const [debouncedSearch, setDebouncedSearch] = useState("");
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("general");
@@ -102,13 +114,6 @@ export default function Home() {
   const [deleteCollectionTarget, setDeleteCollectionTarget] = useState<Collection | null>(null);
   const [addBooksOpen, setAddBooksOpen] = useState(false);
 
-  const [isDragging, setIsDragging] = useState(false);
-  const [importing, setImporting] = useState(false);
-  const [importingCount, setImportingCount] = useState(1);
-  const [importingFileName, setImportingFileName] = useState<string | null>(null);
-  const [importSlow, setImportSlow] = useState(false);
-  const [importError, setImportError] = useState<string | null>(null);
-
   const [bookCounts, setBookCounts] = useState<BookCounts>({
     all: 0,
     reading: 0,
@@ -116,12 +121,27 @@ export default function Home() {
     unread: 0,
   });
   const [totalBooksCount, setTotalBooksCount] = useState(0);
+  const [allBooks, setAllBooks] = useState<Book[]>([]);
+  const [allBooksLoading, setAllBooksLoading] = useState(true);
   const [bookCollectionsMap, setBookCollectionsMap] = useState<Map<string, Collection[]>>(
     () => new Map(),
   );
 
+  const [isDragging, setIsDragging] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [importingCount, setImportingCount] = useState(1);
+  const [importingFileName, setImportingFileName] = useState<string | null>(null);
+  const [importSlow, setImportSlow] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
+
   const collectionsAnchorRef = useRef<HTMLButtonElement>(null);
-  const filterInputRef = useRef<HTMLInputElement>(null);
+  const highlightsFilterInputRef = useRef<HTMLInputElement>(null);
+  const wordsFilterInputRef = useRef<HTMLInputElement>(null);
+  const handleImportRef = useRef<((targetCollectionId?: string) => Promise<void>) | null>(null);
+  const navSeqRef = useRef(0);
+  const countsRequestIdRef = useRef(0);
+  const allBooksRequestIdRef = useRef(0);
+  const hasReturnedToHomeRef = useRef(false);
 
   const collections = useCollections();
   const {
@@ -129,11 +149,6 @@ export default function Home() {
     refresh: refreshCollections,
     getBooksInCollection,
   } = collections;
-
-  useEffect(() => {
-    const timer = window.setTimeout(() => setDebouncedSearch(searchQuery.trim()), 250);
-    return () => window.clearTimeout(timer);
-  }, [searchQuery]);
 
   const activeCollection = useMemo(() => {
     if (collectionFilter === "all") return null;
@@ -144,18 +159,43 @@ export default function Home() {
   const activeCollectionId = collectionFilter === "all" ? undefined : collectionFilter;
 
   const { books, loading, loadingMore, hasMore, loadMore, refreshSilently, patchBook } =
-    useBooks(statusArg, debouncedSearch || undefined, activeCollectionId);
+    useBooks(statusArg, undefined, activeCollectionId);
 
   const fetchCounts = useCallback(async (colId?: string) => {
+    const requestId = ++countsRequestIdRef.current;
     try {
       const [scoped, overall] = await Promise.all([
         invoke<BookCounts>("get_book_counts", { collectionId: colId ?? null }),
         colId ? invoke<BookCounts>("get_book_counts", { collectionId: null }) : Promise.resolve(null),
       ]);
+      if (requestId !== countsRequestIdRef.current) return;
       setBookCounts(scoped);
       setTotalBooksCount(overall ? overall.all : scoped.all);
     } catch {
       // ignore initial count race
+    }
+  }, []);
+
+  const fetchAllBooks = useCallback(async () => {
+    const requestId = ++allBooksRequestIdRef.current;
+    try {
+      const res = await invoke<{ books: Book[] }>("list_books", {
+        filter: null,
+        search: null,
+        collectionId: null,
+        cursor: null,
+        limit: 500,
+      });
+      if (requestId !== allBooksRequestIdRef.current) return;
+      if (Array.isArray(res?.books)) {
+        setAllBooks(res.books);
+      }
+    } catch {
+      // ignore initial load race
+    } finally {
+      if (requestId === allBooksRequestIdRef.current) {
+        setAllBooksLoading(false);
+      }
     }
   }, []);
 
@@ -193,6 +233,46 @@ export default function Home() {
   }, [fetchCounts, activeCollectionId]);
 
   useEffect(() => {
+    void fetchAllBooks();
+  }, [fetchAllBooks]);
+
+  // Refresh books and counts when returning to the main window (e.g. after reading)
+  useEffect(() => {
+    const refreshAfterExternalActivity = () => {
+      void Promise.all([
+        fetchAllBooks(),
+        fetchCountsRef.current(activeCollectionIdRef.current),
+        silentRefreshRef.current(),
+      ]);
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        refreshAfterExternalActivity();
+      }
+    };
+    window.addEventListener("focus", refreshAfterExternalActivity);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      window.removeEventListener("focus", refreshAfterExternalActivity);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [fetchAllBooks]);
+
+  // Refresh Home's book snapshot when navigating back to Home from another route
+  useEffect(() => {
+    if (!hasReturnedToHomeRef.current) {
+      hasReturnedToHomeRef.current = true;
+      return;
+    }
+    if (activeRoute === "home") {
+      void Promise.all([
+        fetchAllBooks(),
+        fetchCountsRef.current(activeCollectionIdRef.current),
+      ]);
+    }
+  }, [activeRoute, fetchAllBooks]);
+
+  useEffect(() => {
     void refreshBookCollectionsMap(collectionList);
   }, [refreshBookCollectionsMap, collectionList]);
 
@@ -201,8 +281,9 @@ export default function Home() {
       refreshSilently(),
       refreshCollections(),
       fetchCounts(activeCollectionId),
+      fetchAllBooks(),
     ]);
-  }, [refreshSilently, refreshCollections, fetchCounts, activeCollectionId]);
+  }, [refreshSilently, refreshCollections, fetchCounts, activeCollectionId, fetchAllBooks]);
 
   const refreshAllSilentlyRef = useRef(refreshAllSilently);
   refreshAllSilentlyRef.current = refreshAllSilently;
@@ -222,6 +303,42 @@ export default function Home() {
   const openSettings = useCallback((section?: SettingsSection | "updates") => {
     setSettingsSection(normalizeSettingsSection(section));
     setSettingsOpen(true);
+  }, []);
+
+  const handleNavigate = useCallback((route: MainRoute, options?: MainNavigateOptions) => {
+    setCollectionsOpen(false);
+    setActiveRoute(route);
+    if (route === "library") {
+      if (options?.collectionId !== undefined) {
+        setCollectionFilter(options.collectionId);
+      }
+      if (options?.statusFilter !== undefined) {
+        setStatusFilter(options.statusFilter);
+      }
+    } else if (route === "highlights") {
+      if (options !== undefined) {
+        setHighlightsTarget({
+          bookId: options.bookId ?? null,
+          highlightId: options.highlightId ?? null,
+          seq: ++navSeqRef.current,
+        });
+      }
+    } else if (route === "words") {
+      if (options !== undefined) {
+        setWordsTarget({
+          wordId: options.wordId ?? null,
+          seq: ++navSeqRef.current,
+        });
+      }
+    } else if (route === "chats") {
+      if (options !== undefined) {
+        setChatsTarget({
+          bookId: options.bookId ?? null,
+          chatId: options.chatId ?? null,
+          seq: ++navSeqRef.current,
+        });
+      }
+    }
   }, []);
 
   // Settings modal listeners
@@ -245,7 +362,7 @@ export default function Home() {
     };
   }, [openSettings]);
 
-  // Global keyboard shortcuts: Cmd+, Settings, Cmd+K Command Search, Cmd+F Inline Library Filter
+  // Global keyboard shortcuts: Cmd+, Settings, Cmd+K Command Search, Cmd+O Import, Cmd+F View Filter / Books Search
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
@@ -259,20 +376,35 @@ export default function Home() {
         if (settingsOpen || addBooksOpen || Boolean(deleteCollectionTarget)) return;
         e.preventDefault();
         setCollectionsOpen(false);
+        setSearchScope("all");
         setSearchOpen((prev) => !prev);
         return;
       }
+      if (lower === "o" && !e.shiftKey) {
+        if (searchOpen || settingsOpen || addBooksOpen || Boolean(deleteCollectionTarget)) return;
+        e.preventDefault();
+        void handleImportRef.current?.(activeRoute === "library" ? activeCollectionId : undefined);
+        return;
+      }
       if (lower === "f" && !e.shiftKey) {
-        if (
-          activeRoute === "library" &&
-          !searchOpen &&
-          !addBooksOpen &&
-          !settingsOpen &&
-          !deleteCollectionTarget
-        ) {
+        if (searchOpen || addBooksOpen || settingsOpen || Boolean(deleteCollectionTarget)) return;
+        if (activeRoute === "library") {
           e.preventDefault();
-          filterInputRef.current?.focus();
-          filterInputRef.current?.select();
+          setCollectionsOpen(false);
+          setSearchScope("books");
+          setSearchOpen(true);
+          return;
+        }
+        const targetRef =
+          activeRoute === "highlights"
+            ? highlightsFilterInputRef
+            : activeRoute === "words"
+              ? wordsFilterInputRef
+              : null;
+        if (targetRef?.current) {
+          e.preventDefault();
+          targetRef.current.focus();
+          targetRef.current.select();
         }
       }
     };
@@ -280,6 +412,7 @@ export default function Home() {
     return () => window.removeEventListener("keydown", handler);
   }, [
     activeRoute,
+    activeCollectionId,
     searchOpen,
     addBooksOpen,
     settingsOpen,
@@ -417,6 +550,20 @@ export default function Home() {
     }
   }, [importFiles]);
 
+  handleImportRef.current = handleImport;
+
+  const effectiveAllBooks = useMemo(
+    () => (allBooks.length > 0 ? allBooks : books),
+    [allBooks, books],
+  );
+
+  const booksById = useMemo(() => {
+    const map = new Map<string, Book>();
+    for (const b of allBooks) map.set(b.id, b);
+    for (const b of books) map.set(b.id, b);
+    return map;
+  }, [allBooks, books]);
+
   // Drag-and-drop file import
   useEffect(() => {
     return subscribeAsync((isActive) =>
@@ -475,28 +622,26 @@ export default function Home() {
     !loading &&
     books.length === 0 &&
     Boolean(activeCollection) &&
-    statusFilter === "all" &&
-    !debouncedSearch;
+    statusFilter === "all";
 
   const isLibraryEmpty =
     !loading &&
     books.length === 0 &&
     !activeCollection &&
     statusFilter === "all" &&
-    !debouncedSearch &&
     totalBooksCount === 0;
 
-  const isNoSearchMatch = !loading && books.length === 0 && debouncedSearch.length > 0;
-  const isFilteredEmpty = !loading && books.length === 0 && !isCollectionEmpty && !isLibraryEmpty && !isNoSearchMatch;
+  const isFilteredEmpty = !loading && books.length === 0 && !isCollectionEmpty && !isLibraryEmpty;
 
   return (
     <div className="h-screen dawn-atmosphere flex flex-col overflow-hidden text-text-primary">
       <TopBar
         activeRoute={activeRoute}
-        onRouteChange={setActiveRoute}
+        onRouteChange={(route) => handleNavigate(route)}
         searchOpen={searchOpen}
         onOpenSearch={() => {
           setCollectionsOpen(false);
+          setSearchScope("all");
           setSearchOpen(true);
         }}
         importing={importing}
@@ -505,8 +650,20 @@ export default function Home() {
         onOpenSettings={openSettings}
       />
 
+      {activeRoute === "home" && (
+        <HomeView
+          books={effectiveAllBooks}
+          totalBooksCount={totalBooksCount}
+          booksLoading={allBooksLoading && loading}
+          collections={collectionList}
+          onNavigate={handleNavigate}
+          onImport={() => void handleImport()}
+          onOpenSettings={openSettings}
+        />
+      )}
+
       {activeRoute === "library" && (
-        <main className="flex-1 min-h-0 overflow-y-auto px-10 pt-1 pb-10">
+        <main className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-6 sm:px-10 pt-1 pb-10">
           {/* Library Header */}
           <div className="flex flex-wrap items-center justify-between gap-4 pb-6">
             <div className="flex items-baseline gap-3 min-w-0">
@@ -520,7 +677,7 @@ export default function Home() {
               </span>
             </div>
 
-            <div className="flex flex-wrap items-center justify-end gap-2.5">
+            <div className="flex flex-wrap items-center justify-end gap-2.5 min-w-0 max-w-full">
               {activeCollection && (
                 <button
                   type="button"
@@ -531,17 +688,6 @@ export default function Home() {
                   <span>{t("collections.addBooksButton")}</span>
                 </button>
               )}
-
-              <SearchField
-                ref={filterInputRef}
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                onClear={() => setSearchQuery("")}
-                placeholder={t("library.searchPlaceholder")}
-                aria-label={t("library.searchPlaceholder")}
-                shortcutHint={`${mod}F`}
-                className="w-[210px] sm:w-[235px]"
-              />
 
               <SegmentedControl
                 value={statusFilter}
@@ -688,29 +834,6 @@ export default function Home() {
                 </div>
               </div>
             </div>
-          ) : isNoSearchMatch ? (
-            <div className="flex items-center justify-center py-20">
-              <div className="dawn-glass rounded-[24px] p-8 max-w-[440px] w-full flex flex-col items-center text-center gap-3">
-                <div className="size-12 rounded-[16px] bg-surface-inset flex items-center justify-center text-text-tertiary">
-                  <SearchX size={22} />
-                </div>
-                <h2 className="text-[16px] font-semibold text-text-primary">
-                  {t("library.noMatchTitle", { query: debouncedSearch })}
-                </h2>
-                <p className="text-[13px] text-text-secondary leading-[1.5]">
-                  {t("library.noMatchSub")}
-                </p>
-                <div className="pt-1.5">
-                  <button
-                    type="button"
-                    onClick={() => setSearchQuery("")}
-                    className="px-4 py-1.5 rounded-full bg-surface-chip border border-border-default hover:bg-surface-solid text-[12.5px] font-medium text-text-primary cursor-pointer transition-colors"
-                  >
-                    {t("library.clearSearch")}
-                  </button>
-                </div>
-              </div>
-            </div>
           ) : isFilteredEmpty ? (
             <div className="flex items-center justify-center py-20">
               <div className="dawn-glass rounded-[24px] p-8 max-w-[420px] w-full flex flex-col items-center text-center gap-3">
@@ -752,19 +875,44 @@ export default function Home() {
         </main>
       )}
 
+      {activeRoute === "highlights" && (
+        <HighlightsView
+          booksById={booksById}
+          initialBookId={highlightsTarget.bookId}
+          initialHighlightId={highlightsTarget.highlightId}
+          navigationSeq={highlightsTarget.seq}
+          searchInputRef={highlightsFilterInputRef}
+          onNavigateToLibrary={() => handleNavigate("library")}
+        />
+      )}
+
       {activeRoute === "words" && (
-        <div className="flex-1 min-h-0 flex overflow-hidden">
-          <DictionaryContent />
-        </div>
+        <WordsView
+          booksById={booksById}
+          initialWordId={wordsTarget.wordId}
+          navigationSeq={wordsTarget.seq}
+          searchInputRef={wordsFilterInputRef}
+          onNavigateToLibrary={() => handleNavigate("library")}
+        />
       )}
 
       {activeRoute === "chats" && (
-        <div className="flex-1 min-h-0 flex overflow-hidden">
-          <ChatsContent />
-        </div>
+        <ChatsView
+          booksById={booksById}
+          initialBookId={chatsTarget.bookId}
+          initialChatId={chatsTarget.chatId}
+          navigationSeq={chatsTarget.seq}
+          onOpenSettings={openSettings}
+          onNavigateToLibrary={() => handleNavigate("library")}
+        />
       )}
 
-      <CommandSearchModal open={searchOpen} onClose={() => setSearchOpen(false)} />
+      <CommandSearchModal
+        open={searchOpen}
+        onClose={() => setSearchOpen(false)}
+        onNavigate={handleNavigate}
+        initialScope={searchScope}
+      />
 
       <ImportOverlays
         isDragging={isDragging}

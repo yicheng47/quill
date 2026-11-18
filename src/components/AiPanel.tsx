@@ -12,11 +12,12 @@ interface AiPanelProps {
   currentChapter?: string;
   context?: { text: string; cfi?: string };
   initialChatId?: string;
+  initialChatSeq?: number;
   onContextConsumed?: () => void;
   onNavigateToCfi?: (cfi: string) => void;
 }
 
-export default function AiPanel({ bookId, bookTitle, bookAuthor, currentChapter, context, initialChatId, onContextConsumed, onNavigateToCfi }: AiPanelProps) {
+export default function AiPanel({ bookId, bookTitle, bookAuthor, currentChapter, context, initialChatId, initialChatSeq, onContextConsumed, onNavigateToCfi }: AiPanelProps) {
   const { t } = useTranslation();
 
   const SUGGESTED_PROMPTS = [
@@ -37,6 +38,7 @@ export default function AiPanel({ bookId, bookTitle, bookAuthor, currentChapter,
   const [newChatFlash, setNewChatFlash] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const titleInputRef = useRef<HTMLInputElement>(null);
+  const appliedChatSeqRef = useRef<number | null>(null);
 
   const currentChat = chats.find((c) => c.id === chatId);
 
@@ -47,12 +49,14 @@ export default function AiPanel({ bookId, bookTitle, bookAuthor, currentChapter,
     initialize();
   }, [initialize]);
 
-  // Load specific chat when navigating from ChatsPage
+  // Load requested chat on initial navigation and repeat reader-navigate requests
   useEffect(() => {
-    if (initialChatId && chats.length > 0) {
-      loadChat(initialChatId);
-    }
-  }, [initialChatId, chats.length, loadChat]);
+    if (!initialChatId || chats.length === 0) return;
+    const seq = initialChatSeq ?? 0;
+    if (appliedChatSeqRef.current === seq) return;
+    appliedChatSeqRef.current = seq;
+    loadChat(initialChatId);
+  }, [initialChatId, initialChatSeq, chats.length, loadChat]);
 
   // Auto-scroll to bottom on new messages
   useEffect(() => {

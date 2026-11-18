@@ -72,6 +72,7 @@ export function useDictionary(bookId: string) {
 
 export function useAllDictionary() {
   const [words, setWords] = useState<DictionaryWord[]>([]);
+  const [loading, setLoading] = useState(true);
 
   const refresh = useCallback(async () => {
     try {
@@ -79,6 +80,8 @@ export function useAllDictionary() {
       setWords(result);
     } catch (err) {
       console.error("Failed to load all vocab words:", err);
+    } finally {
+      setLoading(false);
     }
   }, []);
 
@@ -91,5 +94,5 @@ export function useAllDictionary() {
     setWords((prev) => prev.filter((w) => w.id !== id));
   }, []);
 
-  return { words, refresh, remove };
+  return { words, loading, refresh, remove };
 }

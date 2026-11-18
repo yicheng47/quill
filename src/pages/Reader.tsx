@@ -43,15 +43,22 @@ import {
   getCurrentWindowLabel,
   getInitialReaderTheme,
   invoke,
+  listenCurrentWindow,
   onWindowResized,
   setWindowBackgroundColor,
   setWindowTitle,
 } from "../platform";
 import {
+  parseReaderNavigation,
+  READER_NAVIGATE_EVENT,
+  type ReaderWindowOptions,
+} from "../utils/openReaderWindow";
+import {
   handleAppZoomShortcut,
   refreshAppZoom,
   zoomShortcutActionForEvent,
 } from "../lib/appZoom";
+import { MAC_TRAFFIC_LIGHT_SPACER_CLASS } from "../lib/platformEnv";
 import { createAnnotationDrawCallback } from "../lib/highlightPalette";
 import {
   canShowDualIslands,
@@ -300,7 +307,8 @@ export default function Reader() {
     cfiRange?: string;
   } | null>(null);
   const [aiContext, setAiContext] = useState<{ text: string; cfi?: string } | undefined>();
-  const [initialChatId, setInitialChatId] = useState<string | undefined>();
+  const [initialChatNav, setInitialChatNav] = useState<{ chatId?: string; seq: number }>({ seq: 0 });
+  const chatNavSeqRef = useRef(0);
   const [lookup, setLookup] = useState<{
     x: number;
     y: number;
@@ -1345,49 +1353,79 @@ export default function Reader() {
     viewRef.current?.goTo(cfi);
   }, []);
 
-  const consumedChatStartupRef = useRef<string | null>(null);
-  const consumedVocabStartupRef = useRef<string | null>(null);
+  const consumedNavStartupRef = useRef<string | null>(null);
 
-  // Handle navigation state from ChatsPage ("Open in Reader")
+  const applyNavigationOptions = useCallback(
+    (opts: ReaderWindowOptions) => {
+      const cfi = opts.cfi || undefined;
+      if (opts.openVocab) {
+        openSidePanel("vocab");
+        if (cfi) {
+          pendingJumpFromPageRef.current = currentPageNumRef.current;
+          viewRef.current?.goTo(cfi).then(() => {
+            viewRef.current?.addAnnotation({ value: cfi, color: "#c27aff" });
+            setTimeout(() => {
+              viewRef.current?.deleteAnnotation({ value: cfi });
+            }, 3000);
+          });
+        }
+        return;
+      }
+
+      if (opts.quote) {
+        setAiContext({ text: opts.quote, cfi });
+        openSidePanel("ai");
+      } else if (opts.openChat) {
+        openSidePanel("ai");
+      }
+
+      if (opts.chatId) {
+        setInitialChatNav({ chatId: opts.chatId, seq: ++chatNavSeqRef.current });
+      }
+
+      if (cfi) {
+        pendingJumpFromPageRef.current = currentPageNumRef.current;
+        viewRef.current?.goTo(cfi);
+      }
+    },
+    [openSidePanel],
+  );
+
+  // Handle deep-link navigation on reader open (Chats, Words, Highlights, Home, Cmd+K)
   // Supports both location.state (main window) and URL search params (standalone window)
   useEffect(() => {
-    const state = location.state as { openChat?: boolean; chatId?: string } | null;
-    const searchParams = new URLSearchParams(window.location.search);
-    const openChat = state?.openChat || searchParams.get("openChat") === "true";
-    const chatId = state?.chatId || searchParams.get("chatId") || undefined;
-    if (!openChat || !bookReady) return;
-    const requestKey = `${state?.openChat ? "state" : "query"}:${bookId ?? ""}:${chatId ?? ""}`;
-    if (consumedChatStartupRef.current === requestKey) return;
-    consumedChatStartupRef.current = requestKey;
-    openSidePanel("ai");
-    if (chatId) setInitialChatId(chatId);
-    if (!isStandaloneWindow) navigate(location.pathname, { replace: true });
-  }, [bookId, bookReady, location.state, location.pathname, navigate, openSidePanel]);
-
-  // Handle navigation state from DictionaryPage ("Open in Reader")
-  // Supports both location.state (main window) and URL search params (standalone window)
-  useEffect(() => {
-    const state = location.state as { openVocab?: boolean; cfi?: string } | null;
-    const searchParams = new URLSearchParams(window.location.search);
-    const openVocab = state?.openVocab || searchParams.get("openVocab") === "true";
-    const cfi = state?.cfi || searchParams.get("cfi") || undefined;
-    if (!openVocab || !bookReady) return;
-    const requestKey = `${state?.openVocab ? "state" : "query"}:${bookId ?? ""}:${cfi ?? ""}`;
-    if (consumedVocabStartupRef.current === requestKey) return;
-    consumedVocabStartupRef.current = requestKey;
-    openSidePanel("vocab");
-    if (cfi) {
-      pendingJumpFromPageRef.current = currentPageNumRef.current;
-      viewRef.current?.goTo(cfi).then(() => {
-        viewRef.current?.addAnnotation({ value: cfi, color: "#c27aff" });
-        setTimeout(() => {
-          viewRef.current?.deleteAnnotation({ value: cfi });
-        }, 3000);
-      });
+    if (!bookReady) return;
+    const nav = parseReaderNavigation(
+      location.state as ReaderWindowOptions | null,
+      window.location.search,
+    );
+    if (!nav) return;
+    const o = nav.options;
+    const requestKey = `${nav.source}:${bookId ?? ""}:${Boolean(o.openVocab)}:${Boolean(o.openChat)}:${o.chatId ?? ""}:${o.cfi ?? ""}:${o.quote ?? ""}`;
+    if (consumedNavStartupRef.current === requestKey) return;
+    consumedNavStartupRef.current = requestKey;
+    applyNavigationOptions(o);
+    if (!isStandaloneWindow && nav.source === "state") {
+      navigate(location.pathname, { replace: true });
     }
-    // Clear the state so it doesn't re-trigger
-    if (!isStandaloneWindow) navigate(location.pathname, { replace: true });
-  }, [bookId, bookReady, location.state, location.pathname, navigate, openSidePanel]);
+  }, [bookId, bookReady, location.state, location.pathname, navigate, applyNavigationOptions]);
+
+  // Handle deep-link navigation delivered to an already-open reader window after focusWindow
+  useEffect(() => {
+    if (!bookReady) return;
+    let active = true;
+    const unlistenPromise = listenCurrentWindow<ReaderWindowOptions>(
+      READER_NAVIGATE_EVENT,
+      (event) => {
+        if (!active || !event.payload) return;
+        applyNavigationOptions(event.payload);
+      },
+    );
+    return () => {
+      active = false;
+      void unlistenPromise.then((fn) => fn()).catch(() => {});
+    };
+  }, [bookReady, applyNavigationOptions]);
 
   const toggleTocPanel = () => {
     setTocOpen((open) => {
@@ -1505,7 +1543,7 @@ export default function Reader() {
       >
         {/* Left cluster */}
         <div className="flex items-center gap-4 min-w-0">
-          {isMac && <div className="w-[56px] h-3 shrink-0" aria-hidden="true" />}
+          {isMac && <div className={`${MAC_TRAFFIC_LIGHT_SPACER_CLASS} h-3 shrink-0`} aria-hidden="true" />}
 
           <IconButton
             onClick={handleToolbarLibraryClick}
@@ -1746,7 +1784,8 @@ export default function Reader() {
                   bookAuthor={book.author}
                   currentChapter={currentChapter?.title}
                   context={aiContext}
-                  initialChatId={initialChatId}
+                  initialChatId={initialChatNav.chatId}
+                  initialChatSeq={initialChatNav.seq}
                   onContextConsumed={() => setAiContext(undefined)}
                   onNavigateToCfi={(cfi) => {
                     pendingJumpFromPageRef.current = currentPageNumRef.current;

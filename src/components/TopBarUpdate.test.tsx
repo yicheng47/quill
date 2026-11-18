@@ -275,7 +275,7 @@ describe("TopBar and UpdateIndicator states", () => {
     await renderTopBar();
     const header = container.querySelector("header");
     expect(header?.hasAttribute("data-drag-region")).toBe(true);
-    expect(container.querySelector(".w-\\[52px\\]")).toBeNull();
+    expect(container.querySelector(".w-\\[60px\\]")).toBeNull();
 
     await act(async () => {
       for (const cb of mocks.genericListeners.get("sync-progress") ?? []) {
@@ -284,6 +284,7 @@ describe("TopBar and UpdateIndicator states", () => {
     });
     const chip = container.querySelector('[data-testid="topbar-sync-chip"]');
     expect(chip?.textContent).toContain("42%");
+    expect(chip?.className).not.toContain("no-drag");
 
     await act(async () => {
       for (const cb of mocks.genericListeners.get("sync-initial-tick-done") ?? []) {
@@ -291,5 +292,36 @@ describe("TopBar and UpdateIndicator states", () => {
       }
     });
     expect(container.querySelector('[data-testid="topbar-sync-chip"]')).toBeNull();
+  });
+
+  it("renders a 60px macOS traffic-light spacer and leaves empty right-cluster wrapper draggable", async () => {
+    const origUa = navigator.userAgent;
+    Object.defineProperty(window.navigator, "userAgent", {
+      value: "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_0)",
+      configurable: true,
+    });
+    try {
+      await renderTopBar();
+      const spacer = container.querySelector("header .w-\\[60px\\]");
+      expect(spacer).toBeTruthy();
+
+      const header = container.querySelector("header")!;
+      const leftCluster = header.firstElementChild as HTMLElement;
+      const nav = header.querySelector("nav")!;
+      const rightCluster = header.lastElementChild as HTMLElement;
+      expect(leftCluster.className).toContain("min-w-fit");
+      expect(rightCluster.className).toContain("min-w-fit");
+      expect(rightCluster.className).not.toContain("no-drag");
+      expect(leftCluster.querySelector("span")?.className).toContain("hidden sm:inline");
+      for (const tab of Array.from(nav.querySelectorAll("button"))) {
+        expect(tab.className).toContain("whitespace-nowrap");
+        expect(tab.className).toContain("px-2 sm:px-3 md:px-4");
+      }
+    } finally {
+      Object.defineProperty(window.navigator, "userAgent", {
+        value: origUa,
+        configurable: true,
+      });
+    }
   });
 });

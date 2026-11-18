@@ -5,6 +5,7 @@ import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { DictionaryWord } from "../hooks/useDictionary";
 import { openReaderWindow } from "../utils/openReaderWindow";
+import { parseDefinition } from "../utils/vocabParse";
 import { LOOKUP_PROSE } from "./lookup-prose";
 
 interface VocabDetailModalProps {
@@ -27,36 +28,6 @@ interface VocabDetailModalProps {
    * then the unknown-book string.
    */
   bookTitle?: string;
-}
-
-interface ParsedDefinition {
-  pronunciation: string | null;
-  partOfSpeech: string | null;
-  definition: string;
-}
-
-// Pulls the leading /.../ phonetic + optional "noun."/"verb."/etc. off the
-// first paragraph so they can render in the subtitle. Everything else — the
-// rest of the first paragraph plus all following paragraphs — stays in the
-// Definition region verbatim. Legacy rows saved before #214 had the in-context
-// blurb concatenated into `definition` with a `\n\n` separator; we now keep
-// that blob whole here (the In Context sub-card reads from
-// `word.context_explanation` instead).
-function parseDefinition(raw: string): ParsedDefinition {
-  const breakIdx = raw.search(/\n\n+/);
-  const head = breakIdx === -1 ? raw : raw.slice(0, breakIdx);
-  const tail = breakIdx === -1 ? "" : raw.slice(breakIdx).replace(/^\n+/, "");
-  const match = head.match(/^\s*(\/[^/]+\/)\s*(?:(\w+)\.)?\s*([\s\S]*)$/);
-  const headRemainder = (match ? match[3] ?? "" : head).trim();
-  const definition =
-    headRemainder && tail
-      ? `${headRemainder}\n\n${tail}`
-      : headRemainder || tail;
-  return {
-    pronunciation: match?.[1] ?? null,
-    partOfSpeech: match?.[2] ?? null,
-    definition,
-  };
 }
 
 export default function VocabDetailModal({
