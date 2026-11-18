@@ -4,6 +4,7 @@ type Listener = (...args: unknown[]) => void;
 
 interface MockWindowRecord {
   id: number;
+  options: Record<string, unknown>;
   fullscreen: boolean;
   destroyed: boolean;
   setWindowButtonPosition: ReturnType<typeof vi.fn<(pos: { x: number; y: number }) => void>>;
@@ -26,11 +27,12 @@ vi.mock("electron", () => {
     };
     private record: MockWindowRecord;
 
-    constructor() {
+    constructor(options: Record<string, unknown> = {}) {
       const id = mockState.nextId++;
       const listeners = new Map<string, Listener[]>();
       const record: MockWindowRecord = {
         id,
+        options,
         fullscreen: false,
         destroyed: false,
         setWindowButtonPosition: vi.fn<(pos: { x: number; y: number }) => void>(),
@@ -86,6 +88,7 @@ import {
   getWindow,
   labelForWebContents,
   scaledTitlebarHeight,
+  setDefaultWindowIcon,
   setTitlebarZoomForWindow,
   trafficLightPositionFor,
   whenWindowReady,
@@ -216,5 +219,14 @@ describe("electron windows titlebar & lifecycle", () => {
     closeIfOpen("main", secondRec);
     appReadyForWindow("main");
     expect(cancelledCb).not.toHaveBeenCalled();
+  });
+
+  it("applies default window icon when configured for dev windows", () => {
+    setDefaultWindowIcon("/tmp/dev-icon.png");
+    createMainWindow(false);
+    const mainRec = mockState.instances[0];
+    expect(mainRec.options.icon).toBe("/tmp/dev-icon.png");
+    setDefaultWindowIcon(undefined);
+    closeIfOpen("main", mainRec);
   });
 });

@@ -1,79 +1,40 @@
+import { useId } from "react";
+
 interface QuillLogoProps {
   size?: number;
   className?: string;
 }
 
-export default function QuillLogo({ size = 32, className = "" }: QuillLogoProps) {
+export default function QuillLogo({ size = 28, className = "" }: QuillLogoProps) {
+  const gradientId = useId();
+
   return (
     <svg
       width={size}
       height={size}
-      viewBox="0 0 280 280"
+      viewBox="0 0 28 28"
       fill="none"
       xmlns="http://www.w3.org/2000/svg"
       className={className}
     >
-      <rect x="2" y="2" width="276" height="276" rx="48" fill="url(#ql_bg)" />
-      <circle cx="120" cy="112" r="97" fill="white" fillOpacity="0.07" />
-      <g transform="translate(109, 88)">
-        <path
-          opacity="0.95"
-          d="M54.6 0.35C46.2 11.55 26.6 39.55 15.4 67.55C7 84.35 1.4 101.15 4.2 112.35L9.8 117.95L15.4 109.55C21 89.95 32.2 67.55 43.4 50.75C54.6 33.95 63 17.15 65.8 5.95L54.6 0.35Z"
-          fill="url(#ql_f1)"
-        />
-        <path
-          opacity="0.85"
-          d="M54.6 0.35C71.4 11.55 88.2 33.95 82.6 56.35C77 73.15 65.8 89.95 54.6 101.15L15.4 109.55C32.2 67.55 43.4 50.75 43.4 50.75C54.6 33.95 63 17.15 65.8 5.95L54.6 0.35Z"
-          fill="url(#ql_f2)"
-        />
-        <path opacity="0.7" d="M54.6 0.35L9.8 117.95" stroke="url(#ql_s1)" strokeWidth="1.96" />
-        <path opacity="0.2" d="M47.88 17.99L31.08 26.39" stroke="white" strokeWidth="0.84" />
-        <path opacity="0.23" d="M43.4 29.75L25.2 38.15" stroke="white" strokeWidth="0.84" />
-        <path opacity="0.26" d="M38.92 41.51L19.32 49.91" stroke="white" strokeWidth="0.84" />
-        <path opacity="0.29" d="M34.44 53.27L13.44 61.67" stroke="white" strokeWidth="0.84" />
-        <path opacity="0.32" d="M29.96 65.03L7.56 73.43" stroke="white" strokeWidth="0.84" />
-        <path opacity="0.35" d="M25.48 76.79L1.68 85.19" stroke="white" strokeWidth="0.84" />
-        <path opacity="0.15" d="M49.22 14.46L71.62 20.06" stroke="white" strokeWidth="0.84" />
-        <path opacity="0.18" d="M44.74 26.22L67.98 31.82" stroke="white" strokeWidth="0.84" />
-        <path opacity="0.21" d="M40.26 37.98L64.34 43.58" stroke="white" strokeWidth="0.84" />
-        <path opacity="0.24" d="M35.78 49.74L60.7 55.34" stroke="white" strokeWidth="0.84" />
-        <path opacity="0.27" d="M31.3 61.5L57.06 67.1" stroke="white" strokeWidth="0.84" />
-        <path opacity="0.9" d="M9.8 117.95L4.2 134.75L12.6 126.35L9.8 117.95Z" fill="white" />
-        <circle cx="4.2" cy="141.75" r="4.2" fill="url(#ql_ink)" />
-        <path
-          d="M4.2 134.75C3.27 136.62 3.27 138.95 4.2 141.75"
-          stroke="url(#ql_inks)"
-          strokeWidth="1.4"
-          strokeLinecap="round"
-        />
-      </g>
       <defs>
-        <linearGradient id="ql_bg" x1="0" y1="0" x2="280" y2="280" gradientUnits="userSpaceOnUse">
-          <stop stopColor="#4F46E5" />
-          <stop offset="0.5" stopColor="#7C3AED" />
-          <stop offset="1" stopColor="#A855F7" />
-        </linearGradient>
-        <linearGradient id="ql_f1" x1="22" y1="0" x2="96" y2="78" gradientUnits="userSpaceOnUse">
-          <stop stopColor="white" />
-          <stop offset="1" stopColor="#E0E7FF" />
-        </linearGradient>
-        <linearGradient id="ql_f2" x1="36" y1="0" x2="102" y2="84" gradientUnits="userSpaceOnUse">
-          <stop stopColor="white" />
-          <stop offset="1" stopColor="#E0E7FF" />
-        </linearGradient>
-        <linearGradient id="ql_s1" x1="10" y1="0" x2="88" y2="30" gradientUnits="userSpaceOnUse">
-          <stop stopColor="white" stopOpacity="0.9" />
-          <stop offset="1" stopColor="#C7D2FE" stopOpacity="0.8" />
-        </linearGradient>
-        <linearGradient id="ql_ink" x1="0" y1="138" x2="8.4" y2="146" gradientUnits="userSpaceOnUse">
-          <stop stopColor="#818CF8" stopOpacity="0.6" />
-          <stop offset="1" stopColor="#C084FC" stopOpacity="0.3" />
-        </linearGradient>
-        <linearGradient id="ql_inks" x1="3.5" y1="135" x2="5" y2="135" gradientUnits="userSpaceOnUse">
-          <stop stopColor="#818CF8" stopOpacity="0.6" />
-          <stop offset="1" stopColor="#C084FC" stopOpacity="0.3" />
+        <linearGradient
+          id={gradientId}
+          x1="-1"
+          x2="1"
+          gradientUnits="userSpaceOnUse"
+          gradientTransform="matrix(4.788282 13.155697 -13.155697 4.788282 14 14)"
+        >
+          <stop offset="0" stopColor="#6d5bff" />
+          <stop offset="1" stopColor="#9d7bff" />
         </linearGradient>
       </defs>
+      <rect width="28" height="28" rx="7" fill={`url(#${gradientId})`} />
+      <path
+        transform="translate(7.3581 7.1788)"
+        d="M6.583 0c1.719-.004 3.374 .654 4.619 1.839 1.291 1.203 2.039 2.877 2.076 4.641 .03 1.309-.274 2.53-.977 3.64-.16 .253-.376 .566-.582 .783 .015 .013 .029 .026 .043 .04 .226 .219 .451 .446 .674 .669 .208 .214 .442 .405 .598 .663 .239 .396 .167 .85-.154 1.174-.188 .194-.447 .303-.718 .302-.534-.001-.879-.444-1.228-.792-.271-.266-.541-.533-.809-.803-.359 .245-.541 .345-.93 .538-.696 .333-1.606 .535-2.372 .554-1.756 .054-3.46-.597-4.732-1.809-1.289-1.225-2.047-2.715-2.088-4.511-.054-1.764 .536-3.506 1.763-4.798 1.299-1.369 2.936-2.084 4.817-2.13zM7.776 11.053c.168-.043 .61-.19 .752-.281-.2-.172-.332-.323-.437-.565-.293-.671 .276-1.293 .946-1.335 .376-.023 .701 .115 .983 .364 .071 .064 .136 .133 .206 .198 .777-.981 1.124-2.097 .978-3.347-.137-1.232-.762-2.358-1.735-3.126-.744-.578-1.649-.912-2.591-.954-.139-.007-.319-.016-.457-.005-1.207 .052-2.344 .58-3.163 1.468-.958 1.042-1.392 2.633-1.139 4.011 .396 2.156 2.58 3.863 4.769 3.712 .228-.016 .676-.058 .888-.14z"
+        fill="#fefdfe"
+      />
     </svg>
   );
 }

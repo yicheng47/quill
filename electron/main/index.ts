@@ -1,7 +1,7 @@
 import path from "node:path";
 import fs from "node:fs";
-import { app, protocol } from "electron";
-import { bootQuillCore, getLogDir, type QuillCoreInstance } from "./core";
+import { app, nativeImage, protocol } from "electron";
+import { bootQuillCore, findRepoRoot, getLogDir, type QuillCoreInstance } from "./core";
 import { registerIpcHandlers, readInitialDark } from "./ipc";
 import { installAppMenu } from "./menu";
 import { registerProtocols } from "./protocols";
@@ -12,6 +12,7 @@ import {
   focusManagedWindow,
   markQuitting,
   sendEventToWindow,
+  setDefaultWindowIcon,
 } from "./windows";
 
 const isDev = !app.isPackaged;
@@ -111,6 +112,18 @@ if (!gotSingleInstanceLock) {
     .whenReady()
     .then(async () => {
       app.setAppLogsPath(getLogDir(isDev));
+
+      if (isDev) {
+        const repoRoot = findRepoRoot([__dirname, process.cwd(), app.getAppPath()]);
+        const devIconPath = path.join(repoRoot, "build/icons/icon.png");
+        if (fs.existsSync(devIconPath)) {
+          if (process.platform === "darwin") {
+            app.dock?.setIcon(nativeImage.createFromPath(devIconPath));
+          } else {
+            setDefaultWindowIcon(devIconPath);
+          }
+        }
+      }
 
       core = await bootQuillCore({
         emitAll: (event, payload) => broadcastEvent(event, payload),

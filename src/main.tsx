@@ -1,5 +1,9 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
+import "@fontsource-variable/geist";
+import "@fontsource-variable/geist-mono";
+import "@fontsource-variable/literata";
+import "@fontsource-variable/literata/wght-italic.css";
 import App from "./App";
 import "./index.css";
 import "./i18n";

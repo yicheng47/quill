@@ -20,7 +20,12 @@ const labelByWebContentsId = new Map<number, string>();
 const titlebarZoomByLabel = new Map<string, number>();
 const readyLabels = new Set<string>();
 const pendingReadyCallbacks = new Map<string, Array<() => void>>();
+let defaultWindowIconPath: string | undefined;
 let quitting = false;
+
+export function setDefaultWindowIcon(iconPath: string | undefined): void {
+  defaultWindowIconPath = iconPath;
+}
 
 export function markQuitting(): void {
   quitting = true;
@@ -155,8 +160,7 @@ function createWindow(options: {
   const targetUrl = resolveWindowUrl(options.routePath, process.env.ELECTRON_RENDERER_URL);
   const isMac = process.platform === "darwin";
   const isMain = options.label === "main";
-  const baseHeight = isMain ? 44 : 32;
-  const buttonHeight = 14;
+  const trafficLightPosition = isMac ? trafficLightPositionFor(options.label, 1, false) : null;
 
   const win = new BrowserWindow({
     title: options.title,
@@ -166,13 +170,11 @@ function createWindow(options: {
     minHeight: options.minHeight,
     show: false,
     backgroundColor: options.initialDark ? DARK_BG : LIGHT_BG,
-    ...(isMac
+    ...(defaultWindowIconPath ? { icon: defaultWindowIconPath } : {}),
+    ...(isMac && trafficLightPosition
       ? {
           titleBarStyle: "hiddenInset" as const,
-          trafficLightPosition: {
-            x: 16,
-            y: Math.round((baseHeight - buttonHeight) / 2),
-          },
+          trafficLightPosition,
         }
       : {}),
     webPreferences: {

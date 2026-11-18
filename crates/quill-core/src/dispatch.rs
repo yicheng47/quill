@@ -169,6 +169,17 @@ struct UpdateHighlightColorArgs {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct ListAllHighlightsArgs {
+    #[serde(default)]
+    book_id: Option<String>,
+    #[serde(default)]
+    search: Option<String>,
+    #[serde(default)]
+    sort: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct CreateCollectionArgs {
     name: String,
 }
@@ -543,6 +554,15 @@ command_table! {
             run_blocking(core, move |c| {
                 commands::bookmarks::list_highlights(c, a.book_id)
             })
+        },
+        "list_all_highlights" => |core, args| {
+            let a: ListAllHighlightsArgs = parse_args(args)?;
+            run_blocking(core, move |c| {
+                commands::bookmarks::list_all_highlights(c, a.book_id, a.search, a.sort)
+            })
+        },
+        "get_highlight_counts" => |core, _args| {
+            run_blocking(core, commands::bookmarks::get_highlight_counts)
         },
         "update_highlight_note" => |core, args| {
             let a: UpdateHighlightNoteArgs = parse_args(args)?;
@@ -990,7 +1010,21 @@ mod tests {
         let counts = dispatch(Arc::clone(&core), "get_book_counts", "{}")
             .await
             .expect("get_book_counts");
-        assert_eq!(counts, json!({"all": 0, "reading": 0, "finished": 0}));
+        assert_eq!(counts, json!({"all": 0, "reading": 0, "finished": 0, "unread": 0}));
+
+        let all_hls = dispatch(
+            Arc::clone(&core),
+            "list_all_highlights",
+            r#"{"bookId":null,"search":null,"sort":"newest"}"#,
+        )
+        .await
+        .expect("list_all_highlights");
+        assert_eq!(all_hls, json!([]));
+
+        let hl_counts = dispatch(Arc::clone(&core), "get_highlight_counts", "{}")
+            .await
+            .expect("get_highlight_counts");
+        assert_eq!(hl_counts, json!({"total": 0, "book_count": 0, "books": []}));
 
         // Collections + bookmarks + vocab + chats round-trip with camelCase inputs.
         let collection = dispatch(
@@ -1124,7 +1158,7 @@ mod tests {
             CORE_COMMAND_NAMES.len(),
             "duplicate entries in CORE_COMMAND_NAMES"
         );
-        assert_eq!(CORE_COMMAND_NAMES.len(), 74);
+        assert_eq!(CORE_COMMAND_NAMES.len(), 76);
 
         let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()

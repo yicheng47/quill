@@ -405,6 +405,9 @@
   "settings.appearance.zoomOut": "Zoom out",
 
   "common.cancel": "Cancel",
+  "common.clear": "Clear",
+  "common.decrease": "Decrease",
+  "common.increase": "Increase",
   "common.delete": "Delete",
   "common.save": "Save",
   "common.allBooks": "All Books",

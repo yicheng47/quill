@@ -17,7 +17,7 @@ use crate::pdfium;
 use crate::sync::events::{BookImportPayload, EventBody};
 use crate::sync::writer::SyncWriter;
 
-fn cover_blob_to_data_uri(bytes: &[u8]) -> String {
+pub(crate) fn cover_blob_to_data_uri(bytes: &[u8]) -> String {
     let mime = if bytes.starts_with(b"\x89PNG") {
         "image/png"
     } else if bytes.starts_with(b"\xFF\xD8\xFF") {
@@ -710,10 +710,11 @@ pub struct BookCounts {
     pub all: usize,
     pub reading: usize,
     pub finished: usize,
+    pub unread: usize,
 }
 
-pub fn get_book_counts(core: &Core) -> AppResult<BookCounts> {
-    let conn = core.db.reader();
+pub(crate) fn query_book_counts(db: &Db) -> AppResult<BookCounts> {
+    let conn = db.reader();
     let all: usize = conn.query_row("SELECT COUNT(*) FROM books", [], |r| r.get(0))?;
     let reading: usize = conn.query_row(
         "SELECT COUNT(*) FROM books WHERE status = 'reading'", [], |r| r.get(0),
@@ -721,7 +722,14 @@ pub fn get_book_counts(core: &Core) -> AppResult<BookCounts> {
     let finished: usize = conn.query_row(
         "SELECT COUNT(*) FROM books WHERE status = 'finished'", [], |r| r.get(0),
     )?;
-    Ok(BookCounts { all, reading, finished })
+    let unread: usize = conn.query_row(
+        "SELECT COUNT(*) FROM books WHERE status = 'unread'", [], |r| r.get(0),
+    )?;
+    Ok(BookCounts { all, reading, finished, unread })
+}
+
+pub fn get_book_counts(core: &Core) -> AppResult<BookCounts> {
+    query_book_counts(&core.db)
 }
 
 pub fn get_book(core: &Core, id: String) -> AppResult<Book> {
@@ -1536,5 +1544,26 @@ mod tests {
             .unwrap();
         let bytes = stored.expect("cover_data BLOB present");
         assert_eq!(&bytes[..3], &[0xFF, 0xD8, 0xFF], "stored bytes are JPEG");
+    }
+
+    #[test]
+    fn query_book_counts_reports_all_statuses() {
+        let (_dir, db) = setup();
+        let empty = query_book_counts(&db).unwrap();
+        assert_eq!(empty.all, 0);
+        assert_eq!(empty.reading, 0);
+        assert_eq!(empty.finished, 0);
+        assert_eq!(empty.unread, 0);
+
+        insert_book_with_ts(&db, "b1", "reading", 1000);
+        insert_book_with_ts(&db, "b2", "finished", 1001);
+        insert_book_with_ts(&db, "b3", "unread", 1002);
+        insert_book_with_ts(&db, "b4", "unread", 1003);
+
+        let counts = query_book_counts(&db).unwrap();
+        assert_eq!(counts.all, 4);
+        assert_eq!(counts.reading, 1);
+        assert_eq!(counts.finished, 1);
+        assert_eq!(counts.unread, 2);
     }
 }
