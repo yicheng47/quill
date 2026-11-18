@@ -75,19 +75,19 @@ Use an inexpensive model with tiny prompts.
 
 | ID | Tier | Platforms | Env | Check |
 |---|---|---|---|---|
-| AI-01 | smoke | mac, win | dev | Look up a word: the definition streams in, and Save adds it to vocabulary. |
-| AI-02 | full | mac | dev | Explain a passage: the answer streams, and Quote puts the passage in the chat composer. |
-| AI-03 | full | mac | dev | Translate a selection: the translation streams in the configured language. |
-| AI-04 | smoke | mac, win | dev | In a reader, chat with the AI panel: the reply streams, the chat gets a generated title, and "open in reader" from a message jumps to the passage. |
+| AI-01 | smoke | mac, win | dev | Look up a word: the definition and "In this passage" explanation stream in, and "Save to Words" adds it to the book's saved words. |
+| AI-02 | full | mac | dev | Explain a passage: the answer streams, and "Quote in Chat" puts the passage in the Ask Quill composer. |
+| AI-03 | full | mac | dev | Translate a selection: the translation streams in the target language, and switching the target-language chip or toggling surrounding context updates the view. |
+| AI-04 | smoke | mac, win | dev | In a reader, chat in the Ask Quill island: the reply streams, the chat gets a generated title, and "open in reader" from a message jumps to the passage. |
 | AI-05 | full | mac | dev | The Chats view shows a visible scrollbar and loads more month-grouped chats as it scrolls; the book filter narrows threads, clicking a thread displays its conversation inline with inline rename, thread menu actions (`Copy as Markdown`, `Open in book`, `Delete conversation…`) and live streaming replies, and confirming delete removes the thread. |
 | AI-06 | full | mac | dev | Providers in Dawn `Settings → AI Assistant` (auto-saved without a Save button): an API-key provider works with `Saved` badge and reveal/clear; `Sign in with ChatGPT` shows waiting state (with `Cancel` freeing callback port) and returns to `Connected` with model list and reasoning-effort tiers (#294); Ollama shows `Running` / `Not running` status badge and keep-alive selector when available. Restore the provider settings afterwards. |
-| AI-07 | full | mac | dev | With no provider configured, AI actions (Chat, Look Up, Explain, Translate) render the Dawn `Set up an AI provider` card with `Open AI Settings` instead of failing silently or flashing raw sentinel text. Restore the provider afterwards. |
+| AI-07 | full | mac | dev | With no provider configured, AI actions (Ask Quill, Look Up, Explain, Translate) render the Dawn `Set up an AI provider` card with `Open AI Settings` instead of failing silently or flashing raw sentinel text. Restore the provider afterwards. |
 
 ### Vocabulary
 
 | ID | Tier | Platforms | Env | Check |
 |---|---|---|---|---|
-| VOC-01 | full | mac | dev | The Words master-detail view shows a visible scrollbar with no view toggle, filters by word prefix and book popover, sorts by Newest/Oldest/A–Z, renders IPA/POS/meaning/context/explanation inline, "Go to passage" jumps to the saved location in the reader, and the 3-second two-click delete removes the word. |
+| VOC-01 | full | mac | dev | The Words master-detail view shows a visible scrollbar with no view toggle, filters by word prefix and book popover, sorts by Newest/Oldest/A–Z, renders IPA/POS/meaning/context/explanation inline, "Go to passage" jumps to the saved location in the reader, and the 3-second two-click delete removes the word; in the reader, the Words in Book panel jumps to a saved word or opens Words via "Open in Words →". |
 
 ### Settings
 

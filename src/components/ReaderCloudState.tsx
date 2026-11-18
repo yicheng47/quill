@@ -49,7 +49,7 @@ export default function ReaderCloudState({
       : t("reader.icloudDesc");
 
   return (
-    <div className="flex-1 min-w-0 h-full dawn-glass rounded-[24px] flex items-center justify-center p-6">
+    <div className="flex-1 min-w-0 h-full reader-island rounded-[24px] flex items-center justify-center p-6">
       <div className="w-full max-w-[420px] flex flex-col items-center text-center gap-[18px]">
         <BookCover
           title={book.title}

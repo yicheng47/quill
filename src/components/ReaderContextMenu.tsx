@@ -8,14 +8,8 @@ import {
   Languages,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
-
-const HIGHLIGHT_COLORS = [
-  { name: "yellow", hex: "#FBBF24" },
-  { name: "green", hex: "#34D399" },
-  { name: "blue", hex: "#60A5FA" },
-  { name: "pink", hex: "#F472B6" },
-  { name: "purple", hex: "#A78BFA" },
-];
+import { HIGHLIGHT_SWATCHES } from "./HighlightToolbar";
+import { shortcutModSymbol } from "../lib/platformEnv";
 
 interface ReaderContextMenuProps {
   x: number;
@@ -29,6 +23,9 @@ interface ReaderContextMenuProps {
   onTranslate: () => void;
   onHighlight?: (color: string) => void;
 }
+
+const MENU_ROW_CLASS =
+  "group flex items-center gap-2.5 w-full px-2.5 py-2 rounded-[8px] text-left cursor-pointer text-text-primary hover:bg-surface-tint hover:text-accent-on-tint transition-colors";
 
 export default function ReaderContextMenu({
   x,
@@ -46,6 +43,7 @@ export default function ReaderContextMenu({
   const wordCount = text.trim().split(/\s+/).length;
   const showLookup = wordCount <= 5;
   const menuRef = useRef<HTMLDivElement>(null);
+  const mod = shortcutModSymbol();
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -64,110 +62,86 @@ export default function ReaderContextMenu({
     };
   }, [onClose]);
 
-  // Clamp menu position so it stays within viewport
   useEffect(() => {
     if (!menuRef.current) return;
     const rect = menuRef.current.getBoundingClientRect();
     const vw = window.innerWidth;
     const vh = window.innerHeight;
-    if (rect.right > vw) {
-      menuRef.current.style.left = `${x - rect.width}px`;
-    }
-    if (rect.bottom > vh) {
-      menuRef.current.style.top = `${y - rect.height}px`;
-    }
+    let left = x;
+    let top = y;
+    if (left + rect.width > vw - 12) left = x - rect.width;
+    if (left < 12) left = 12;
+    if (top + rect.height > vh - 12) top = y - rect.height;
+    if (top < 12) top = 12;
+    menuRef.current.style.left = `${left}px`;
+    menuRef.current.style.top = `${top}px`;
   }, [x, y]);
 
   return (
     <div
       ref={menuRef}
-      className="fixed z-50 bg-bg-surface/95 border border-border/80 rounded-lg py-1 w-[240px] backdrop-blur-sm shadow-context"
+      role="menu"
+      className="fixed z-50 w-[252px] reader-popover rounded-[14px] p-1.5 flex flex-col gap-0.5"
       style={{ left: x, top: y }}
     >
-      {/* Look Up (short selections only) */}
       {showLookup && (
-        <button
-          onClick={onLookup}
-          className="flex items-center gap-3 w-[calc(100%-8px)] mx-1 px-3 h-[31.5px] rounded-sm text-left cursor-pointer hover:bg-accent-bg transition-colors"
-        >
-          <Sparkles size={16} className="text-text-muted" />
-          <span className="flex-1 text-[13px] font-medium text-text-primary tracking-[-0.08px]">
+        <button type="button" role="menuitem" onClick={onLookup} className={MENU_ROW_CLASS}>
+          <Sparkles size={15} className="text-text-secondary group-hover:text-accent-on-tint shrink-0" />
+          <span className="flex-1 text-[13.5px] font-medium truncate">
             {t("contextMenu.lookUp")}
           </span>
         </button>
       )}
 
-      {/* Explain */}
-      <button
-        onClick={onExplain}
-        className="flex items-center gap-3 w-[calc(100%-8px)] mx-1 px-3 h-[31.5px] rounded-sm text-left cursor-pointer hover:bg-accent-bg transition-colors"
-      >
-        <WandSparkles size={16} className="text-text-muted" />
-        <span className="flex-1 text-[13px] font-medium text-text-primary tracking-[-0.08px]">
-          {t("contextMenu.explain")}
-        </span>
+      <button type="button" role="menuitem" onClick={onExplain} className={MENU_ROW_CLASS}>
+        <WandSparkles size={15} className="text-text-secondary group-hover:text-accent-on-tint shrink-0" />
+        <span className="flex-1 text-[13.5px] truncate">{t("contextMenu.explain")}</span>
       </button>
 
-      {/* Quote */}
-      <button
-        onClick={onQuote}
-        className="flex items-center gap-3 w-[calc(100%-8px)] mx-1 px-3 h-[31.5px] rounded-sm text-left cursor-pointer hover:bg-accent-bg transition-colors"
-      >
-        <Quote size={16} className="text-text-muted" />
-        <span className="flex-1 text-[13px] font-medium text-text-primary tracking-[-0.08px]">
-          {t("contextMenu.quote")}
-        </span>
+      <button type="button" role="menuitem" onClick={onQuote} className={MENU_ROW_CLASS}>
+        <Quote size={15} className="text-text-secondary group-hover:text-accent-on-tint shrink-0" />
+        <span className="flex-1 text-[13.5px] truncate">{t("contextMenu.quote")}</span>
       </button>
 
-      {/* Translate */}
-      <button
-        onClick={onTranslate}
-        className="flex items-center gap-3 w-[calc(100%-8px)] mx-1 px-3 h-[31.5px] rounded-sm text-left cursor-pointer hover:bg-accent-bg transition-colors"
-      >
-        <Languages size={16} className="text-text-muted" />
-        <span className="flex-1 text-[13px] font-medium text-text-primary tracking-[-0.08px]">
-          {t("contextMenu.translate")}
-        </span>
+      <button type="button" role="menuitem" onClick={onTranslate} className={MENU_ROW_CLASS}>
+        <Languages size={15} className="text-text-secondary group-hover:text-accent-on-tint shrink-0" />
+        <span className="flex-1 text-[13.5px] truncate">{t("contextMenu.translate")}</span>
       </button>
 
-      {/* Highlight with color dots */}
       {onHighlight && (
         <>
-          <div className="mx-3 my-1 h-px bg-border/80" />
-          <button
-            className="flex items-center gap-3 w-[calc(100%-8px)] mx-1 px-3 h-[31.5px] rounded-sm text-left cursor-default"
-          >
-            <Highlighter size={16} className="text-text-muted" />
-            <span className="text-[13px] font-medium text-text-primary tracking-[-0.08px]">
-              {t("contextMenu.highlight")}
-            </span>
-            <div className="flex items-center gap-1.5 ml-auto">
-              {HIGHLIGHT_COLORS.map((c) => (
-                <div
+          <div className="my-[3px] mx-2 h-px bg-border-subtle" />
+          <div className="flex items-center justify-between gap-2 px-2.5 py-2 rounded-[8px]">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <Highlighter size={15} className="text-text-secondary shrink-0" />
+              <span className="text-[13.5px] text-text-primary truncate">
+                {t("contextMenu.highlight")}
+              </span>
+            </div>
+            <div className="flex items-center gap-1.5 shrink-0">
+              {HIGHLIGHT_SWATCHES.map((c) => (
+                <button
                   key={c.name}
-                  onClick={(e) => { e.stopPropagation(); onHighlight(c.name); }}
-                  className="w-[14px] h-[14px] rounded-full cursor-pointer hover:scale-125 transition-transform"
+                  type="button"
+                  aria-label={t(`highlights.color.${c.name === "purple" ? "violet" : c.name}`)}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onHighlight(c.name);
+                  }}
+                  className="size-[14px] rounded-full cursor-pointer hover:scale-125 transition-transform"
                   style={{ backgroundColor: c.hex }}
                 />
               ))}
             </div>
-          </button>
-          <div className="mx-3 my-1 h-px bg-border/80" />
+          </div>
+          <div className="my-[3px] mx-2 h-px bg-border-subtle" />
         </>
       )}
 
-      {/* Copy */}
-      <button
-        onClick={onCopy}
-        className="flex items-center gap-3 w-[calc(100%-8px)] mx-1 px-3 h-[31.5px] rounded-sm text-left cursor-pointer hover:bg-accent-bg transition-colors"
-      >
-        <Copy size={16} className="text-text-muted" />
-        <span className="flex-1 text-[13px] font-medium text-text-primary tracking-[-0.08px]">
-          {t("contextMenu.copy")}
-        </span>
-        <span className="text-[11px] font-medium text-text-muted tracking-[0.06px]">
-          ⌘C
-        </span>
+      <button type="button" role="menuitem" onClick={onCopy} className={MENU_ROW_CLASS}>
+        <Copy size={15} className="text-text-secondary group-hover:text-accent-on-tint shrink-0" />
+        <span className="flex-1 text-[13.5px] truncate">{t("contextMenu.copy")}</span>
+        <span className="font-mono text-[11px] text-text-tertiary shrink-0">{mod}C</span>
       </button>
     </div>
   );

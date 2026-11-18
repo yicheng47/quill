@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
+  AlertCircle,
   ArrowUp,
   BookOpen,
   Check,
@@ -18,6 +19,7 @@ import type { Book } from "../hooks/useBooks";
 import { useAiChat } from "../hooks/useAiChat";
 import { useAllChats, useChatCounts, type ChatSummary } from "../hooks/useChats";
 import { invoke } from "../platform";
+import { parseAiErrorMessage } from "../utils/aiStream";
 import { openReaderWindow } from "../utils/openReaderWindow";
 import { formatMonthHeading, formatShortDate } from "../utils/vocabParse";
 import AiAuthPromptCard from "./AiAuthPromptCard";
@@ -879,10 +881,24 @@ function ChatConversationPane({
                   );
                 }
 
+                const errorMessage = parseAiErrorMessage(msg.content);
+                if (errorMessage) {
+                  return (
+                    <div
+                      key={msg.id}
+                      role="alert"
+                      className="flex items-start gap-2 rounded-[12px] bg-danger-tint/70 border border-danger/20 px-3.5 py-2.5 text-[14px] text-danger"
+                    >
+                      <AlertCircle size={15} className="shrink-0 mt-0.5" />
+                      <span>{errorMessage}</span>
+                    </div>
+                  );
+                }
+
                 return (
                   <div
                     key={msg.id}
-                    className="markdown-body text-[15px] leading-[1.65] text-text-primary select-text"
+                    className="markdown-body text-[16px] leading-[1.6] text-text-primary select-text"
                   >
                     <Markdown remarkPlugins={[remarkGfm]}>{msg.content}</Markdown>
                     {streaming && msg.content && isLast && (
@@ -908,14 +924,14 @@ function ChatConversationPane({
                           : "cursor-default"
                       }`}
                     >
-                      <p className="font-reading italic text-[14.5px] leading-[1.6] text-text-secondary select-text">
+                      <p className="font-reading italic text-[16px] leading-[1.6] text-text-secondary select-text">
                         “{msg.context}”
                       </p>
                     </button>
                   )}
 
                   <div className="flex justify-end">
-                    <div className="max-w-[78%] rounded-[14px] bg-accent-tint px-4 py-3 text-[14.5px] leading-[1.55] text-accent-on-tint whitespace-pre-wrap select-text">
+                    <div className="max-w-[78%] rounded-[16px] bg-accent-tint px-3.5 py-2.5 text-[16px] leading-[1.5] text-accent-on-tint whitespace-pre-wrap select-text">
                       {msg.content}
                     </div>
                   </div>
@@ -943,7 +959,7 @@ function ChatConversationPane({
             placeholder={t("chats.composerPlaceholder")}
             aria-label={t("chats.composerPlaceholder")}
             disabled={streaming || initializing}
-            className="flex-1 min-w-0 resize-none bg-transparent text-[14px] leading-[1.45] text-text-primary placeholder:text-text-tertiary outline-none max-h-32 py-1"
+            className="flex-1 min-w-0 resize-none bg-transparent text-[15px] leading-[1.45] text-text-primary placeholder:text-text-tertiary outline-none max-h-32 py-1"
           />
           <button
             type="button"

@@ -1,11 +1,15 @@
 import { useState, useEffect, useRef } from "react";
 import { focusWindow, invoke, listen, type UnlistenFn } from "../platform";
-import { X, Loader2, Sparkles, BookmarkPlus, Check, Copy, Settings } from "lucide-react";
+import { AlertCircle, Loader2, Sparkles, BookmarkPlus, Check, Copy, Settings } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import AiAuthPromptCard from "./AiAuthPromptCard";
+import ReaderPopover from "./ReaderPopover";
+import Button from "./ui/Button";
 import { LOOKUP_PROSE } from "./lookup-prose";
+import { parseAiErrorMessage } from "../utils/aiStream";
+import { parseDefinition } from "../utils/vocabParse";
 
 const TRANSLATION_MARKER = "[[QUILL_TRANSLATION]]";
 
@@ -18,6 +22,7 @@ interface LookupPopoverProps {
   chapter?: string;
   bookId: string;
   cfi?: string;
+  onSaved?: () => void;
   onClose: () => void;
 }
 
@@ -26,7 +31,7 @@ function useStreamingLookup(
   sentence: string,
   bookTitle: string | undefined,
   chapter: string | undefined,
-  kind: "definition" | "context"
+  kind: "definition" | "context",
 ) {
   const contentRef = useRef("");
   const [content, setContent] = useState("");
@@ -75,7 +80,7 @@ function useStreamingLookup(
           ) {
             setContent(contentRef.current);
           }
-        }
+        },
       );
 
       try {
@@ -97,7 +102,8 @@ function useStreamingLookup(
           } else if (msg.includes("LOOKUP_TRANSLATION_LANGUAGE_NOT_CONFIGURED")) {
             setTranslationLanguageNotConfigured(true);
           } else {
-            setContent(`Error: ${msg}`);
+            contentRef.current = `Error: ${msg}`;
+            setContent(contentRef.current);
           }
           setStreaming(false);
         }
@@ -156,19 +162,24 @@ export default function LookupPopover({
   chapter,
   bookId,
   cfi,
+  onSaved,
   onClose,
 }: LookupPopoverProps) {
   const { t } = useTranslation();
   const [saved, setSaved] = useState(false);
   const [copied, setCopied] = useState(false);
-  const popoverRef = useRef<HTMLDivElement>(null);
 
-  // Two concurrent AI streams
   const definition = useStreamingLookup(word, sentence, bookTitle, chapter, "definition");
   const context = useStreamingLookup(word, sentence, bookTitle, chapter, "context");
 
-  // Split the backend-marked translation from the definition stream.
-  const { translationLine, definitionText } = splitDefinitionContent(definition.content, definition.streaming);
+  const { translationLine, definitionText } = splitDefinitionContent(
+    definition.content,
+    definition.streaming,
+  );
+
+  const definitionError = parseAiErrorMessage(definitionText);
+  const contextError = parseAiErrorMessage(context.content);
+  const parsedEntry = definitionError ? null : parseDefinition(definitionText);
 
   const reauthRequired = definition.reauthRequired || context.reauthRequired;
   const aiNotConfigured = !reauthRequired && (definition.notConfigured || context.notConfigured);
@@ -177,37 +188,16 @@ export default function LookupPopover({
   const hasConfigurationError =
     reauthRequired || aiNotConfigured || translationLanguageNotConfigured;
   const allDone = !definition.streaming && !context.streaming;
-  const hasContent = definition.content || context.content;
-
-  // Position clamping — re-run whenever the popover resizes (e.g. as content streams in)
-  const [pos, setPos] = useState({ left: x, top: y });
+  const hasContent = Boolean(definition.content || context.content);
+  const hasSavableContent = Boolean(!definitionError && (definitionText.trim() || translationLine));
+  const showFooter = allDone && hasContent && !hasConfigurationError && hasSavableContent;
 
   useEffect(() => {
-    const el = popoverRef.current;
-    if (!el) return;
-    const clamp = () => {
-      const rect = el.getBoundingClientRect();
-      const vw = window.innerWidth;
-      const vh = window.innerHeight;
-      let left = x;
-      let top = y;
-      if (left + rect.width > vw - 16) left = vw - rect.width - 16;
-      if (left < 16) left = 16;
-      if (top + rect.height > vh - 16) top = y - rect.height - 8;
-      if (top < 16) top = 16;
-      setPos({ left, top });
-    };
-    const observer = new ResizeObserver(clamp);
-    observer.observe(el);
-    return () => observer.disconnect();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Check if word is already saved
-  useEffect(() => {
-    invoke<string | null>("check_vocab_exists", { bookId, word }).then((id) => {
-      if (id) setSaved(true);
-    }).catch(() => {});
+    invoke<string | null>("check_vocab_exists", { bookId, word })
+      .then((id) => {
+        if (id) setSaved(true);
+      })
+      .catch(() => {});
   }, [bookId, word]);
 
   const handleSave = async () => {
@@ -217,10 +207,11 @@ export default function LookupPopover({
         word,
         definition: displayedDefinitionContent(definition.contentRef.current ?? ""),
         contextSentence: sentence || null,
-        contextExplanation: context.contentRef.current || null,
+        contextExplanation: contextError ? null : context.contentRef.current || null,
         cfi: cfi || null,
       });
       setSaved(true);
+      onSaved?.();
     } catch (err) {
       console.error("Failed to save vocab word:", err);
     }
@@ -229,7 +220,7 @@ export default function LookupPopover({
   const handleCopy = () => {
     const fullText = [
       displayedDefinitionContent(definition.contentRef.current),
-      context.contentRef.current,
+      contextError ? "" : context.contentRef.current,
     ]
       .filter(Boolean)
       .join("\n\n");
@@ -238,61 +229,53 @@ export default function LookupPopover({
     setTimeout(() => setCopied(false), 2000);
   };
 
-  // Dismiss on Escape
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [onClose]);
-
-  // Dismiss on click outside — delay registration to avoid catching the
-  // context-menu click that opened us
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
-        onClose();
-      }
-    };
-    const id = requestAnimationFrame(() => {
-      document.addEventListener("mousedown", handler);
-    });
-    return () => {
-      cancelAnimationFrame(id);
-      document.removeEventListener("mousedown", handler);
-    };
-  }, [onClose]);
-
   return (
-    <>
-    <div className="fixed inset-0 z-40" onClick={onClose} />
-    <div
-      ref={popoverRef}
-      className="fixed z-50 w-[440px] bg-bg-surface border border-border/80 rounded-xl shadow-context"
-      style={{ left: pos.left, top: pos.top }}
+    <ReaderPopover
+      x={x}
+      y={y}
+      widthClass="w-[420px]"
+      title={t("lookup.title")}
+      icon={<Sparkles size={15} />}
+      onClose={onClose}
+      footer={
+        showFooter ? (
+          <>
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={saved}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-control bg-accent-tint hover:bg-accent-tint-hover text-accent-on-tint text-[12.5px] font-semibold cursor-pointer transition-colors disabled:opacity-70 disabled:cursor-default"
+            >
+              {saved ? <Check size={13} /> : <BookmarkPlus size={13} />}
+              <span>{saved ? t("lookup.saved") : t("lookup.saveToDict")}</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleCopy}
+              className="inline-flex items-center gap-[5px] px-2 py-1 rounded-control text-[12.5px] font-medium text-text-secondary hover:text-text-primary hover:bg-border-subtle cursor-pointer transition-colors"
+            >
+              {copied ? <Check size={13} /> : <Copy size={13} />}
+              <span>{copied ? t("lookup.copied") : t("lookup.copy")}</span>
+            </button>
+          </>
+        ) : undefined
+      }
     >
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 pt-3 pb-2.5 bg-accent-bg rounded-t-xl border-b border-border/40">
-        <div className="flex items-center gap-2">
-          <Sparkles size={16} className="text-accent-text" />
-          <span className="text-[14px] font-medium text-accent-text tracking-[-0.15px]">
-            {t("lookup.title")}
-          </span>
-        </div>
-        <button
-          onClick={onClose}
-          className="size-6 flex items-center justify-center rounded hover:bg-bg-surface/60 cursor-pointer"
-        >
-          <X size={14} className="text-text-muted" />
-        </button>
-      </div>
-
-      {/* Content */}
-      <div className="px-4 pb-2 max-h-[360px] overflow-auto">
-        {/* Word heading */}
-        <div className="flex items-center gap-2 pt-3 pb-2">
-          <h3 className="text-[20px] font-bold text-text-primary leading-6">{word}</h3>
+      <div className="p-[18px] flex flex-col gap-2.5 max-h-[360px] overflow-y-auto">
+        <div className="flex flex-wrap items-baseline gap-2">
+          <h3 className="font-reading text-[24px] font-semibold leading-tight text-text-primary">
+            {word}
+          </h3>
+          {parsedEntry?.partOfSpeech && (
+            <span className="px-2 py-0.5 rounded-full bg-accent-tint text-accent-on-tint text-[11.5px] font-semibold leading-none">
+              {parsedEntry.partOfSpeech}
+            </span>
+          )}
+          {parsedEntry?.pronunciation && (
+            <span className="font-mono text-[12px] text-text-tertiary">
+              {parsedEntry.pronunciation}
+            </span>
+          )}
         </div>
 
         {reauthRequired || aiNotConfigured ? (
@@ -306,88 +289,86 @@ export default function LookupPopover({
             }}
           />
         ) : translationLanguageNotConfigured ? (
-          <div className="flex flex-col items-center gap-2 py-4 text-center">
-            <p className="text-[13px] text-text-muted">
+          <div className="flex flex-col items-center gap-3 py-4 text-center">
+            <p className="text-[13px] text-text-secondary">
               {t("lookup.translationLanguageNotConfigured")}
             </p>
-            <button
+            <Button
+              type="button"
+              appearance="dawn"
+              variant="tonal"
+              size="sm"
               onClick={async () => {
                 onClose();
                 await invoke("open_settings_on_main", { section: "tools" });
                 await focusWindow("main");
               }}
-              className="flex items-center gap-1.5 text-[13px] font-medium text-accent-text hover:opacity-70 cursor-pointer"
             >
               <Settings size={14} />
-              {t("lookup.openSettings")}
-            </button>
+              <span>{t("lookup.openSettings")}</span>
+            </Button>
           </div>
         ) : null}
 
-        {/* Definition section */}
-        {!hasConfigurationError && (definition.streaming && !definition.content ? (
-          <div className="flex items-center gap-1.5 py-1">
-            <Loader2 size={14} className="animate-spin text-text-muted" />
-            <span className="text-[13px] text-text-muted">{t("lookup.lookingUp")}</span>
-          </div>
-        ) : (
-          <>
-            {translationLine && (
-              <p className="text-[13px] text-accent-text mb-1.5">{translationLine}</p>
-            )}
-            <div className={`${LOOKUP_PROSE} text-[13px] text-text-primary`}>
-              <Markdown remarkPlugins={[remarkGfm]}>{definitionText}</Markdown>
-              {definition.streaming && (
-                <Loader2 size={12} className="inline-block ml-0.5 animate-spin text-text-muted" />
-              )}
+        {!hasConfigurationError &&
+          (definition.streaming && !definition.content ? (
+            <div className="flex items-center gap-2 py-1 text-text-tertiary">
+              <Loader2 size={14} className="animate-spin text-accent" />
+              <span className="text-[13px]">{t("lookup.lookingUp")}</span>
             </div>
-          </>
-        ))}
+          ) : definitionError ? (
+            <div
+              role="alert"
+              className="flex items-start gap-2 rounded-[10px] bg-danger-tint/70 border border-danger/20 px-3 py-2.5 text-[13px] text-danger"
+            >
+              <AlertCircle size={15} className="shrink-0 mt-0.5" />
+              <span>{definitionError}</span>
+            </div>
+          ) : (
+            <>
+              {translationLine && (
+                <p className="text-[13.5px] font-medium text-accent-on-tint leading-snug">
+                  {translationLine}
+                </p>
+              )}
+              {(parsedEntry?.definition || definition.streaming) && (
+                <div className={`${LOOKUP_PROSE} text-[13.5px] leading-[1.5] text-text-primary`}>
+                  <Markdown remarkPlugins={[remarkGfm]}>
+                    {parsedEntry?.definition ?? definitionText}
+                  </Markdown>
+                  {definition.streaming && (
+                    <Loader2 size={12} className="inline-block ml-1 animate-spin text-text-tertiary" />
+                  )}
+                </div>
+              )}
+            </>
+          ))}
 
-        {/* In this context — card */}
-        {!hasConfigurationError && (context.content || context.streaming) && (
-          <div className="mt-3 mb-1 p-3 rounded-lg bg-bg-muted border border-border/50">
-            <span className="block text-[12px] font-medium text-text-muted mb-1">
+        {!hasConfigurationError && !definitionError && (context.content || context.streaming) && (
+          <div className="mt-0.5 p-3 rounded-[10px] bg-surface-tint flex flex-col gap-1">
+            <span className="text-[10.5px] font-semibold tracking-[0.8px] uppercase text-accent-on-tint">
               {t("lookup.inContext")}
             </span>
             {context.streaming && !context.content ? (
-              <div className="flex items-center gap-1.5 py-0.5">
-                <Loader2 size={12} className="animate-spin text-text-muted" />
-                <span className="text-[12px] text-text-muted">{t("lookup.analyzing")}</span>
+              <div className="flex items-center gap-1.5 py-0.5 text-text-tertiary">
+                <Loader2 size={12} className="animate-spin text-accent" />
+                <span className="text-[12px]">{t("lookup.analyzing")}</span>
               </div>
+            ) : contextError ? (
+              <p role="alert" className="text-[12.5px] text-danger">
+                {contextError}
+              </p>
             ) : (
-              <div className={`${LOOKUP_PROSE} text-[13px] text-text-secondary`}>
+              <div className={`${LOOKUP_PROSE} text-[12.5px] leading-[1.5] text-text-secondary`}>
                 <Markdown remarkPlugins={[remarkGfm]}>{context.content}</Markdown>
                 {context.streaming && (
-                  <Loader2 size={12} className="inline-block ml-0.5 animate-spin text-text-muted" />
+                  <Loader2 size={12} className="inline-block ml-1 animate-spin text-text-tertiary" />
                 )}
               </div>
             )}
           </div>
         )}
       </div>
-
-      {/* Footer — Save & Copy */}
-      {allDone && hasContent && !hasConfigurationError && (
-        <div className="flex items-center justify-between px-4 py-2.5 border-t border-border/40">
-          <button
-            onClick={handleSave}
-            disabled={saved}
-            className="flex items-center gap-1.5 text-[13px] font-medium cursor-pointer text-accent-text hover:opacity-70 disabled:opacity-50 disabled:cursor-default"
-          >
-            {saved ? <Check size={14} /> : <BookmarkPlus size={14} />}
-            {saved ? t("lookup.saved") : t("lookup.saveToDict")}
-          </button>
-          <button
-            onClick={handleCopy}
-            className="flex items-center gap-1.5 text-[13px] font-medium cursor-pointer text-text-muted hover:opacity-70"
-          >
-            {copied ? <Check size={14} /> : <Copy size={14} />}
-            {copied ? t("lookup.copied") : t("lookup.copy")}
-          </button>
-        </div>
-      )}
-    </div>
-    </>
+    </ReaderPopover>
   );
 }

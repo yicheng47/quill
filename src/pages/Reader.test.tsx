@@ -381,7 +381,7 @@ describe("Reader shell themes, cascade, and startup navigation", () => {
     ).not.toContain("hidden");
 
     // User closes Words panel, then resizes window across dual-island threshold (1440 -> 700 -> 1440)
-    const vocabBtn = container.querySelector<HTMLButtonElement>('button[aria-label="Vocab"]')!;
+    const vocabBtn = container.querySelector<HTMLButtonElement>('button[aria-label="Words in Book"]')!;
     await act(async () => {
       vocabBtn.click();
     });

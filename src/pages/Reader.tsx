@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 import Button from "../components/ui/Button";
 import IconButton from "../components/ui/IconButton";
-import AiPanel from "../components/AiPanel";
+import AiPanel, { type AiQuoteContext } from "../components/AiPanel";
 import BookmarksPanel from "../components/BookmarksPanel";
 import ReaderBottomPills from "../components/ReaderBottomPills";
 import ReaderCloudState from "../components/ReaderCloudState";
@@ -53,6 +53,8 @@ import {
   READER_NAVIGATE_EVENT,
   type ReaderWindowOptions,
 } from "../utils/openReaderWindow";
+import { extractRangeSelectionContext } from "../utils/aiStream";
+import { extractPdfPageIndex } from "../utils/highlightSort";
 import {
   handleAppZoomShortcut,
   refreshAppZoom,
@@ -299,14 +301,16 @@ export default function Reader() {
   const [foliateRetryTick, setFoliateRetryTick] = useState(0);
   const [initError, setInitError] = useState<"icloud" | "generic" | null>(null);
   const [highlightVersion, setHighlightVersion] = useState(0);
+  const [vocabVersion, setVocabVersion] = useState(0);
   const [contextMenu, setContextMenu] = useState<{
     x: number;
     y: number;
     text: string;
     sentence: string;
+    sentenceOffset?: number;
     cfiRange?: string;
   } | null>(null);
-  const [aiContext, setAiContext] = useState<{ text: string; cfi?: string } | undefined>();
+  const [aiContext, setAiContext] = useState<AiQuoteContext | undefined>();
   const [initialChatNav, setInitialChatNav] = useState<{ chatId?: string; seq: number }>({ seq: 0 });
   const chatNavSeqRef = useRef(0);
   const [lookup, setLookup] = useState<{
@@ -332,6 +336,7 @@ export default function Reader() {
     y: number;
     text: string;
     context?: string;
+    contextOffset?: number;
     cfi?: string;
   } | null>(null);
   const [highlightToolbar, setHighlightToolbar] = useState<{
@@ -589,6 +594,23 @@ export default function Reader() {
     }
   }, [navigate]);
 
+  const handleOpenInWords = useCallback(
+    (wordId?: string) => {
+      if (isStandaloneWindow) {
+        void emitTo("main", "navigate-main-route", {
+          route: "words",
+          wordId: wordId ?? null,
+        });
+        void focusWindow("main");
+      } else {
+        const params = new URLSearchParams({ route: "words" });
+        if (wordId) params.set("wordId", wordId);
+        navigate(`/?${params.toString()}`);
+      }
+    },
+    [navigate],
+  );
+
   // Initialize foliate-js when book data is loaded
   useEffect(() => {
     if (!book || !viewerRef.current || book.available === false) return;
@@ -835,8 +857,9 @@ export default function Reader() {
               offsetX = rect.left;
               offsetY = rect.top;
             }
-            // Extract surrounding context from the containing block element
+            // Extract surrounding context centered on the exact DOM Range selection
             let sentence = text;
+            let sentenceOffset = 0;
             if (sel.rangeCount > 0) {
               const range = sel.getRangeAt(0);
               let node: Node | null = range.startContainer;
@@ -847,9 +870,10 @@ export default function Reader() {
               }
               // Fall back to body if no block element found
               const contextNode = node && node !== doc.body ? node : range.startContainer.parentElement;
-              if (contextNode) {
-                const blockText = (contextNode as Element).textContent?.trim() || "";
-                sentence = blockText.length > 500 ? blockText.slice(0, 500) : blockText;
+              if (contextNode && contextNode.nodeType === 1) {
+                const extracted = extractRangeSelectionContext(contextNode as Element, range, text);
+                sentence = extracted.sentence;
+                sentenceOffset = extracted.matchStart;
               }
             }
             setContextMenu({
@@ -857,6 +881,7 @@ export default function Reader() {
               y: ev.clientY + offsetY,
               text,
               sentence,
+              sentenceOffset,
               cfiRange: selectedTextRef.current?.cfi,
             });
           }
@@ -1216,6 +1241,7 @@ export default function Reader() {
     if (text) {
       e.preventDefault();
       let sentence = text;
+      let sentenceOffset = 0;
       if (selection && selection.rangeCount > 0) {
         const range = selection.getRangeAt(0);
         let node: Node | null = range.startContainer;
@@ -1223,9 +1249,10 @@ export default function Reader() {
         while (node && !(node.nodeType === 1 && blockTags.has((node as Element).tagName))) {
           node = node.parentNode;
         }
-        if (node) {
-          const blockText = (node as Element).textContent?.trim() || "";
-          sentence = blockText.length > 500 ? blockText.slice(0, 500) : blockText;
+        if (node && node.nodeType === 1) {
+          const extracted = extractRangeSelectionContext(node as Element, range, text);
+          sentence = extracted.sentence;
+          sentenceOffset = extracted.matchStart;
         }
       }
       setContextMenu({
@@ -1233,6 +1260,7 @@ export default function Reader() {
         y: e.clientY,
         text,
         sentence,
+        sentenceOffset,
         cfiRange: selectedTextRef.current?.cfi || undefined,
       });
     }
@@ -1774,7 +1802,7 @@ export default function Reader() {
               <div
                 className={
                   sidePanel === "ai"
-                    ? "h-full rounded-[24px] overflow-hidden border border-surface-glass-border shadow-glass bg-bg-muted"
+                    ? "h-full rounded-[24px] overflow-hidden reader-island"
                     : "hidden"
                 }
               >
@@ -1796,6 +1824,7 @@ export default function Reader() {
                       }, 3000);
                     });
                   }}
+                  onClose={() => setSidePanel(null)}
                 />
               </div>
               {sidePanel === "bookmarks" && bookId && (
@@ -1818,10 +1847,11 @@ export default function Reader() {
                 />
               )}
               {sidePanel === "vocab" && bookId && (
-                <div className="h-full rounded-[24px] overflow-hidden border border-surface-glass-border shadow-glass bg-bg-muted">
+                <div className="h-full rounded-[24px] overflow-hidden reader-island">
                   <DictionaryPanel
                     bookId={bookId}
                     bookTitle={book.title}
+                    vocabVersion={vocabVersion}
                     onNavigate={(cfi) => {
                       pendingJumpFromPageRef.current = currentPageNumRef.current;
                       viewRef.current?.goTo(cfi).then(() => {
@@ -1831,7 +1861,13 @@ export default function Reader() {
                         }, 3000);
                       });
                     }}
-                    getPageFromCfi={() => pageInfo?.current ?? null}
+                    getPageFromCfi={(cfi) => {
+                      if (book?.format !== "pdf") return null;
+                      const idx = extractPdfPageIndex(cfi);
+                      return idx !== null ? idx + 1 : null;
+                    }}
+                    onClose={() => setSidePanel(null)}
+                    onOpenInWords={handleOpenInWords}
                   />
                 </div>
               )}
@@ -1870,6 +1906,7 @@ export default function Reader() {
             setAiContext({
               text: contextMenu.text,
               cfi: contextMenu.cfiRange,
+              page: pageInfo?.current ?? null,
             });
             openSidePanel("ai");
             setContextMenu(null);
@@ -1895,6 +1932,7 @@ export default function Reader() {
               y: contextMenu.y,
               text: contextMenu.text,
               context: contextMenu.sentence,
+              contextOffset: contextMenu.sentenceOffset,
               cfi: contextMenu.cfiRange,
             });
             setContextMenu(null);
@@ -1927,6 +1965,7 @@ export default function Reader() {
           chapter={lookup.chapter}
           bookId={bookId!}
           cfi={lookup.cfi}
+          onSaved={() => setVocabVersion((v) => v + 1)}
           onClose={() => setLookup(null)}
         />
       )}
@@ -1941,6 +1980,15 @@ export default function Reader() {
           chapter={explain.chapter}
           bookId={bookId!}
           cfi={explain.cfi}
+          onQuote={() => {
+            setAiContext({
+              text: explain.text,
+              cfi: explain.cfi,
+              page: pageInfo?.current ?? null,
+            });
+            openSidePanel("ai");
+            setExplain(null);
+          }}
           onClose={() => setExplain(null)}
         />
       )}
@@ -1951,6 +1999,7 @@ export default function Reader() {
           y={translation.y}
           text={translation.text}
           context={translation.context}
+          contextOffset={translation.contextOffset}
           bookId={bookId!}
           cfi={translation.cfi}
           onClose={() => setTranslation(null)}
@@ -1979,6 +2028,7 @@ export default function Reader() {
                   setAiContext({
                     text: highlightToolbar.text!,
                     cfi: highlightToolbar.cfiRange,
+                    page: pageInfo?.current ?? null,
                   });
                   openSidePanel("ai");
                   setHighlightToolbar(null);

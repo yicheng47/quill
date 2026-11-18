@@ -373,6 +373,36 @@ export default function Home() {
     };
   }, [openSettings]);
 
+  const appliedUrlRouteRef = useRef(false);
+  useEffect(() => {
+    if (!appliedUrlRouteRef.current) {
+      appliedUrlRouteRef.current = true;
+      const params = new URLSearchParams(window.location.search);
+      const routeParam = params.get("route");
+      const wordIdParam = params.get("wordId");
+      if (routeParam === "words") {
+        handleNavigate("words", wordIdParam ? { wordId: wordIdParam } : {});
+        window.history.replaceState(null, "", `${window.location.pathname}${window.location.hash}`);
+      }
+    }
+
+    const disposeIpc = subscribeAsync((isActive) =>
+      listenCurrentWindow<{ route?: MainRoute; wordId?: string | null }>(
+        "navigate-main-route",
+        (e) => {
+          if (!isActive()) return;
+          const route = e.payload?.route ?? "words";
+          const wordId = e.payload?.wordId ?? null;
+          handleNavigate(route, wordId ? { wordId } : {});
+        },
+      ),
+    );
+
+    return () => {
+      disposeIpc();
+    };
+  }, [handleNavigate]);
+
   const settingsBlockingRef = useRef(settingsBlocking);
   settingsBlockingRef.current = settingsBlocking;
 

@@ -101,7 +101,7 @@ export default function BookmarksPanel({
   });
 
   return (
-    <div className="@container/panel flex flex-col h-full min-w-0 dawn-glass rounded-[24px] p-4 @[340px]/panel:p-5 gap-3.5">
+    <div className="@container/panel flex flex-col h-full min-w-0 reader-island rounded-[24px] p-4 @[340px]/panel:p-5 gap-3.5">
       {/* Header: segmented tabs + Bookmark action pill */}
       <div className="flex flex-wrap items-center justify-between gap-2 shrink-0">
         <div

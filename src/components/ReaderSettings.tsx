@@ -208,7 +208,7 @@ export default function ReaderSettings({
       aria-label={t("readerSettings.typography")}
       className={`fixed z-50 ${
         isPdf ? "w-[296px] p-4" : "w-[316px] p-[18px]"
-      } max-h-[calc(100vh-88px)] overflow-y-auto bg-surface-solid border border-border-subtle rounded-[24px] shadow-menu flex flex-col gap-3.5`}
+      } max-h-[calc(100vh-88px)] overflow-y-auto reader-popover rounded-[24px] flex flex-col gap-3.5`}
       style={{ top: position.top, right: position.right }}
     >
       {/* Font size bar — EPUB only */}

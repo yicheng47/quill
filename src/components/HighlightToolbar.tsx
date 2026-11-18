@@ -63,7 +63,7 @@ export default function HighlightToolbar({
   return (
     <div
       ref={ref}
-      className="fixed z-50 flex items-center gap-2.5 px-3 h-[38px] bg-surface-solid border border-border-subtle rounded-full shadow-menu"
+      className="fixed z-50 flex items-center gap-2.5 px-3 h-[38px] reader-popover rounded-full"
       style={{ left: x, top: Math.max(8, y - 46) }}
     >
       <div className="flex items-center gap-2">

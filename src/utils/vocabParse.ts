@@ -6,6 +6,10 @@ export interface ParsedDefinition {
   definition: string;
 }
 
+export interface ParsedSavedVocabDefinition extends ParsedDefinition {
+  gloss: string | null;
+}
+
 // Pulls the leading /.../ phonetic + optional "noun."/"verb."/etc. off the
 // first paragraph so they can render in the subtitle. Everything else — the
 // rest of the first paragraph plus all following paragraphs — stays in the
@@ -14,7 +18,9 @@ export function parseDefinition(raw: string): ParsedDefinition {
   const breakIdx = raw.search(/\n\n+/);
   const head = breakIdx === -1 ? raw : raw.slice(0, breakIdx);
   const tail = breakIdx === -1 ? "" : raw.slice(breakIdx).replace(/^\n+/, "");
-  const match = head.match(/^\s*(\/[^/]+\/)\s*(?:(\w+)\.)?\s*([\s\S]*)$/);
+  const match = head.match(
+    /^\s*(?:\*{1,2})?(\/[^/\n]+\/)(?:\*{1,2})?\s*(?:(?:\*{1,2})?\(?(\w+)\.\)?(?:\*{1,2})?)?\s*([\s\S]*)$/,
+  );
   const headRemainder = (match ? match[3] ?? "" : head).trim();
   const definition =
     headRemainder && tail
@@ -25,6 +31,22 @@ export function parseDefinition(raw: string): ParsedDefinition {
     partOfSpeech: match?.[2] ?? null,
     definition,
   };
+}
+
+/**
+ * Splits a saved LookupPopover definition that may have a leading short
+ * translation gloss line above the IPA/POS/definition entry.
+ */
+export function parseSavedVocabDefinition(raw: string): ParsedSavedVocabDefinition {
+  const newline = raw.indexOf("\n");
+  if (newline > 0) {
+    const firstLine = raw.slice(0, newline).trim();
+    const rest = raw.slice(newline + 1).trimStart();
+    if (firstLine && !firstLine.startsWith("/") && /^(?:\*{1,2})?\/[^/\n]+\//.test(rest)) {
+      return { gloss: firstLine, ...parseDefinition(rest) };
+    }
+  }
+  return { gloss: null, ...parseDefinition(raw) };
 }
 
 function checkSpeechVoices(): boolean {

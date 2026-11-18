@@ -1,67 +1,108 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { BookOpen, Search, Trash2, Clock, FileText } from "lucide-react";
-import { useDictionary, type DictionaryWord } from "../hooks/useDictionary";
+import { BookOpen, Search, Trash2, X } from "lucide-react";
+import { useDictionary } from "../hooks/useDictionary";
 import { timeAgo } from "../utils/timeAgo";
-import VocabDetailModal from "./VocabDetailModal";
+import { parseSavedVocabDefinition } from "../utils/vocabParse";
 
 interface DictionaryPanelProps {
   bookId: string;
   bookTitle?: string;
+  vocabVersion?: number;
   onNavigate?: (cfi: string) => void;
   getPageFromCfi?: (cfi: string) => number | null;
+  onClose?: () => void;
+  onOpenInWords?: (wordId?: string) => void;
 }
 
-export default function DictionaryPanel({ bookId, bookTitle, onNavigate, getPageFromCfi }: DictionaryPanelProps) {
+export default function DictionaryPanel({
+  bookId,
+  vocabVersion,
+  onNavigate,
+  getPageFromCfi,
+  onClose,
+  onOpenInWords,
+}: DictionaryPanelProps) {
   const { t } = useTranslation();
   const [dictSearch, setDictSearch] = useState("");
-  const [activeWord, setActiveWord] = useState<DictionaryWord | null>(null);
-  const { words, remove: removeWord } = useDictionary(bookId);
+  const [selectedWordId, setSelectedWordId] = useState<string | null>(null);
+  const { words, refresh, remove: removeWord } = useDictionary(bookId);
+
+  useEffect(() => {
+    if (vocabVersion !== undefined && vocabVersion > 0) {
+      void refresh();
+    }
+  }, [vocabVersion, refresh]);
 
   const filteredWords = words.filter((w) => {
-    if (!dictSearch) return true;
-    return w.word.toLowerCase().startsWith(dictSearch.toLowerCase());
+    const q = dictSearch.trim().toLowerCase();
+    if (!q) return true;
+    return w.word.toLowerCase().startsWith(q);
   });
 
   return (
-    <div className="flex flex-col h-full bg-bg-muted">
-      <div className="border-b border-border shrink-0 px-4 h-[45px] flex items-center">
-        <h2 className="text-[14px] font-medium text-text-primary tracking-[-0.15px]">
-          {t("vocab.title")}
-        </h2>
+    <div className="flex flex-col h-full min-w-0 p-5 gap-3.5">
+      {/* Header */}
+      <div className="flex items-center justify-between gap-2 shrink-0">
+        <div className="flex items-center gap-2 min-w-0">
+          <h2 className="text-[15px] font-semibold text-text-primary truncate">
+            {t("vocab.title")}
+          </h2>
+          <span className="px-2 py-0.5 rounded-full bg-accent-tint text-accent-on-tint font-mono text-[11px] font-semibold leading-none shrink-0">
+            {words.length}
+          </span>
+        </div>
+        {onClose && (
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label={t("common.dismiss")}
+            className="size-7 rounded-control flex items-center justify-center text-text-secondary hover:bg-border-subtle cursor-pointer transition-colors shrink-0"
+          >
+            <X size={14} />
+          </button>
+        )}
       </div>
 
       {/* Search */}
-      <div className="px-4 pt-2 pb-2 shrink-0">
-        <div className="flex items-center gap-1.5 h-[28px] px-2 rounded-lg bg-bg-input border border-border">
-          <Search size={12} className="text-text-muted shrink-0" />
-          <input
-            type="search"
-            placeholder={t("vocab.searchPanel")}
-            defaultValue=""
-            onInput={(e) => setDictSearch((e.target as HTMLInputElement).value)}
-            onKeyDown={(e) => e.stopPropagation()}
-            autoComplete="off"
-            autoCorrect="off"
-            autoCapitalize="off"
-            spellCheck={false}
-            className="flex-1 text-[12px] text-text-primary bg-transparent outline-none placeholder:text-text-placeholder [&::-webkit-search-cancel-button]:hidden"
-          />
-        </div>
+      <div className="h-[34px] px-3 rounded-full bg-surface-inset border border-border-subtle flex items-center gap-2 focus-within:border-accent shrink-0">
+        <Search size={13.5} className="text-text-tertiary shrink-0" />
+        <input
+          type="text"
+          placeholder={t("vocab.searchPanel")}
+          value={dictSearch}
+          onChange={(e) => setDictSearch(e.target.value)}
+          onKeyDown={(e) => e.stopPropagation()}
+          autoComplete="off"
+          autoCorrect="off"
+          autoCapitalize="off"
+          spellCheck={false}
+          className="flex-1 min-w-0 text-[12.5px] text-text-primary bg-transparent outline-none placeholder:text-text-disabled"
+        />
+        {dictSearch && (
+          <button
+            type="button"
+            onClick={() => setDictSearch("")}
+            aria-label={t("common.clear")}
+            className="size-5 rounded-full flex items-center justify-center text-text-tertiary hover:text-text-primary hover:bg-border-subtle cursor-pointer transition-colors shrink-0"
+          >
+            <X size={12} />
+          </button>
+        )}
       </div>
 
       {/* Word list */}
-      <div className="flex-1 overflow-auto">
+      <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-2.5 pr-0.5">
         {filteredWords.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full px-4">
-            <div className="size-12 rounded-full bg-bg-input flex items-center justify-center mb-3">
-              <BookOpen size={20} className="text-text-muted" />
+          <div className="flex flex-col items-center justify-center h-full px-4 text-center">
+            <div className="size-12 rounded-full bg-surface-inset border border-border-subtle flex items-center justify-center mb-3">
+              <BookOpen size={20} className="text-text-tertiary" />
             </div>
-            <p className="text-[14px] text-text-muted text-center">
+            <p className="text-[14px] font-medium text-text-secondary">
               {words.length === 0 ? t("vocab.panelEmpty") : t("vocab.noMatches")}
             </p>
             {words.length === 0 && (
-              <p className="text-[12px] text-text-muted text-center mt-1">
+              <p className="text-[12px] text-text-tertiary mt-1 max-w-[240px]">
                 {t("vocab.panelEmptySub")}
               </p>
             )}
@@ -69,74 +110,103 @@ export default function DictionaryPanel({ bookId, bookTitle, onNavigate, getPage
         ) : (
           filteredWords.map((word) => {
             const page = getPageFromCfi && word.cfi ? getPageFromCfi(word.cfi) : null;
-            const parts = word.definition.split("\n\n");
-            const defText = parts[0] || "";
-            const ctxText = parts.length > 1 ? parts.slice(1).join(" ") : null;
+            const parsed = parseSavedVocabDefinition(word.definition);
+            const selected = selectedWordId === word.id;
+            const metaParts = [
+              page != null ? t("bookmarks.shortPage", { page }) : null,
+              timeAgo(word.created_at),
+            ].filter(Boolean);
+
             return (
-              <button
+              <div
                 key={word.id}
-                type="button"
-                onClick={() => setActiveWord(word)}
-                className="group relative border-l-[3px] border-accent bg-bg-surface mx-3 mb-2 rounded-r-lg px-4 pt-3 pb-3 w-[calc(100%-1.5rem)] text-left cursor-pointer hover:bg-bg-input transition-colors"
+                role="button"
+                tabIndex={0}
+                onClick={() => {
+                  setSelectedWordId(word.id);
+                  if (word.cfi) onNavigate?.(word.cfi);
+                }}
+                onKeyDown={(e) => {
+                  if (e.target !== e.currentTarget) return;
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    setSelectedWordId(word.id);
+                    if (word.cfi) onNavigate?.(word.cfi);
+                  }
+                }}
+                className={`group relative w-full text-left p-3.5 rounded-[14px] border transition-colors cursor-pointer flex flex-col gap-1.5 ${
+                  selected
+                    ? "bg-surface-solid border-accent/40"
+                    : "bg-surface-inset border-border-subtle hover:bg-surface-solid hover:border-accent/35"
+                }`}
               >
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    removeWord(word.id);
-                  }}
-                  className="absolute top-3 right-3 p-1 rounded hover:bg-bg-input cursor-pointer"
-                >
-                  <Trash2 size={15} className="text-text-muted" />
-                </button>
-                <div className="flex items-center gap-2 pr-8">
-                  <span className="text-[16px] font-bold text-text-primary leading-5">
-                    {word.word}
-                  </span>
+                <div className="flex items-baseline justify-between gap-2">
+                  <div className="flex items-baseline gap-2 min-w-0 flex-1">
+                    <span className="font-reading text-[16px] font-semibold text-text-primary truncate">
+                      {word.word}
+                    </span>
+                    {(parsed.gloss || parsed.partOfSpeech) && (
+                      <span className="text-[12px] font-medium text-accent-on-tint truncate">
+                        {parsed.gloss || parsed.partOfSpeech}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <span className="font-mono text-[11px] text-text-tertiary">
+                      {metaParts.join(" · ")}
+                    </span>
+                    <button
+                      type="button"
+                      aria-label={t("common.delete")}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (selectedWordId === word.id) setSelectedWordId(null);
+                        void removeWord(word.id);
+                      }}
+                      className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 size-6 rounded-control flex items-center justify-center text-text-tertiary hover:text-danger hover:bg-danger-tint transition-all cursor-pointer"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
                 </div>
-                <p className="text-[14px] text-text-primary leading-[1.5] mt-2 pr-6 line-clamp-3">
-                  {defText}
-                </p>
-                {ctxText && (
-                  <p className="text-[13px] italic text-text-muted leading-[1.45] mt-1 line-clamp-2">
-                    {ctxText}
+
+                {parsed.definition && (
+                  <p className="text-[12.5px] leading-[1.45] text-text-secondary line-clamp-2">
+                    {parsed.definition}
                   </p>
                 )}
-                <div className="flex items-center gap-3 mt-2.5">
-                  {page != null && (
-                    <span className="flex items-center gap-1 text-[11px] text-text-muted tracking-[0.06px]">
-                      <FileText size={12} />
-                      p. {page}
-                    </span>
-                  )}
-                  <span className="flex items-center gap-1 text-[11px] text-text-muted tracking-[0.06px]">
-                    <Clock size={12} />
-                    {timeAgo(word.created_at)}
-                  </span>
-                </div>
-              </button>
+
+                {word.context_sentence && (
+                  <p className="font-reading italic text-[12px] leading-[1.4] text-text-tertiary line-clamp-2">
+                    “{word.context_sentence}”
+                  </p>
+                )}
+              </div>
             );
           })
         )}
       </div>
 
       {/* Footer */}
-      <div className="border-t border-border px-4 pt-[11px] pb-3 shrink-0">
-        <p className="text-[11px] text-text-muted tracking-[0.06px] text-center">
-          {t("vocab.wordCount", { count: filteredWords.length })}
-        </p>
+      <div className="border-t border-border-subtle pt-2.5 flex items-center justify-between gap-2 shrink-0">
+        <span className="text-[12px] text-text-tertiary truncate">
+          {dictSearch.trim()
+            ? t("vocab.matchCountInBook", {
+                count: filteredWords.length,
+                total: words.length,
+              })
+            : t("vocab.wordCountInBook", { count: words.length })}
+        </span>
+        {onOpenInWords && (
+          <button
+            type="button"
+            onClick={() => onOpenInWords(selectedWordId ?? undefined)}
+            className="text-[12px] font-medium text-accent-on-tint hover:underline cursor-pointer shrink-0"
+          >
+            {t("vocab.openInWords")} →
+          </button>
+        )}
       </div>
-
-      <VocabDetailModal
-        word={activeWord}
-        bookTitle={bookTitle}
-        onClose={() => setActiveWord(null)}
-        onDelete={async (id) => {
-          await removeWord(id);
-          setActiveWord(null);
-        }}
-        navigateMode="inline"
-        onNavigateInline={(cfi) => onNavigate?.(cfi)}
-      />
     </div>
   );
 }
