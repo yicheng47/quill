@@ -12,7 +12,7 @@ The spec says *what*; this directory says *how, in what order, and what has land
 
 ## Status (2026-11-18)
 
-Design is signed off and pushed to `YeelinksCo/yeelinks_design` `main` at `fd7c334` (`quill/desktop/specs/331-rebrand.pen`, 60 frames/boards + 29 reusable components). **M1** merged on 2026-11-18 ([#332](https://github.com/yicheng47/quill/pull/332)). **M2** merged on 2026-11-18 ([#334](https://github.com/yicheng47/quill/pull/334)). **M6** merged ([#335](https://github.com/yicheng47/quill/pull/335)). **M3** merged ([#337](https://github.com/yicheng47/quill/pull/337)), closing #322. **M4** merged ([#336](https://github.com/yicheng47/quill/pull/336)). **M5** is in flight, driven by the operator chat under Jason's standing approval (see [`impl_log.md`](impl_log.md)).
+Design is signed off and pushed to `YeelinksCo/yeelinks_design` `main` at `fd7c334` (`quill/desktop/specs/331-rebrand.pen`, 60 frames/boards + 29 reusable components). **M1** merged on 2026-11-18 ([#332](https://github.com/yicheng47/quill/pull/332)). **M2** merged on 2026-11-18 ([#334](https://github.com/yicheng47/quill/pull/334)). **M6** merged ([#335](https://github.com/yicheng47/quill/pull/335)). **M3** merged ([#337](https://github.com/yicheng47/quill/pull/337)), closing #322. **M4** merged ([#336](https://github.com/yicheng47/quill/pull/336)). **M5** merged ([#338](https://github.com/yicheng47/quill/pull/338)), closing #325. **M7** is in flight, driven by the operator chat under Jason's standing approval (see [`impl_log.md`](impl_log.md)).
 
 | Mission | Phase | Branch | Waits on | Pull request | State |
 |---|---|---|---|---|---|
