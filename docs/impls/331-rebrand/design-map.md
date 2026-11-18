@@ -1,8 +1,8 @@
 # 331 — Design Map & Token Reference (`331-rebrand.pen`)
 
-Design source: `quill/desktop/specs/331-rebrand.pen` at revision `f7cb448` in `YeelinksCo/yeelinks_design`. Read frames through the Pencil MCP by the node IDs below, after pulling the design repo; when a reference image helps, export or screenshot the node into your own scratch directory. No local exports are kept.
+Design source: `quill/desktop/specs/331-rebrand.pen` at revision `323c398` in `YeelinksCo/yeelinks_design`. Read frames through the Pencil MCP by the node IDs below, after pulling the design repo; when a reference image helps, export or screenshot the node into your own scratch directory. No local exports are kept.
 
-## 1. Complete Frame & Board Inventory (58 Nodes)
+## 1. Complete Frame & Board Inventory (60 Nodes)
 
 | Section | Node ID | Frame / Board Name | Size | Owning Mission | Key States & Details |
 |---|---|---|---|---|---|
@@ -27,8 +27,8 @@ Design source: `quill/desktop/specs/331-rebrand.pen` at revision `f7cb448` in `Y
 | Reader | `xqqVr` | `331 / Reader — Word Lookup & Book Words` | `1440×960` | **M7** | Floating `LookupPopover` (`tS7gX`) + right `Words in Book` glass island (`N0gxbh` with `Open in Words →`) |
 | Reader | `ZpzpR` | `331 / Reader — Explain & Quote in Chat` | `1440×960` | **M7** | Floating `ExplainPopover` (`Z9ULVg`) + `Ask Quill` starter-prompts empty state + `Pending Quote Chip` (`hPfVt`) |
 | Reader | `GWA41` | `331 / Reader — Translate & Bookmarks Tab` | `1440×960` | **M6** (Bookmarks) / **M7** (Translate) | Floating `TranslationPopover` (`t0TRJ` with language chip & context toggle) + right `Bookmarks` tab (`Y8okGe`) |
-| Reader | `Zd3OK` | `331 / Reader — Typography & Sepia Theme` | `1440×960` | **M6** | Sepia page (`#F4ECD8` / `#EFE6D5`) + `Typography Popover` (`j9ODh`: font size slider, 4 theme swatches, font select, layout mode, spacing steppers, margins) |
-| Reader | `N4bEY` | `331 / Reader — Dark Page & Thread Switcher` | `1440×960` | **M6** (Dark page) / **M7** (Switcher) | Dark page (`#1E1D24` / `#1B1B1F`) + dark progress pill on Dawn shell + `Ask Quill` `Thread Switcher Dropdown` (`pp2Tt`) |
+| Reader | `Zd3OK` | `331 / Reader — Typography & Sepia Theme (Sepia shell)` | `1440×960` | **M6** | Sepia page (`#F4ECD8` / `#EFE6D5`) on the parchment shell + `Typography Popover` (`j9ODh`: font size slider, 4 theme swatches, font select, layout mode, spacing steppers, margins) |
+| Reader | `N4bEY` | `331 / Reader — Dark Page & Thread Switcher (Nocturne shell)` | `1440×960` | **M6** (Dark page) / **M7** (Switcher) | Dark page (`#1E1D24` / `#1B1B1F`) in the Nocturne shell + `Ask Quill` `Thread Switcher Dropdown` (`pp2Tt`) |
 | Reader | `ZKLDp` | `331 / Reader — PDF Spread & Zoom` | `1440×960` | **M6** | Two-page PDF spread on Dawn + `PDF Progress & Zoom Pill` (`EoKCM`: `Page X–Y of N`, `− 100% · Fit +`) + compact PDF `Aa` popover (`aCUa5`) |
 | Reader | `IjTTv` | `331 / Reader — Book in iCloud` | `1440×960` | **M6** | Evicted iCloud book view: cover card, `In iCloud` metadata pill, `Download Book` primary CTA + `Back to Library` |
 | Highlights | `eKFrn` | `331 / Highlights` | `1440×960` | **M3** | Book-scoped view: left `Books` rail (`t8712W`) + right book header (`Open book`) and passage list (`FIjT2`) |
@@ -64,6 +64,8 @@ Design source: `quill/desktop/specs/331-rebrand.pen` at revision `f7cb448` in `Y
 | Dark Mode | `Y803E5` | `331 / Dark Mode — Library` | `1440×960` | **M8** | `theme: {mode: "dark"}` Nocturne validation on `Library` grid |
 | Dark Mode | `T1qAJe` | `331 / Dark Mode — Reader (Chat open)` | `1440×960` | **M8** | `theme: {mode: "dark"}` Nocturne validation on `Reader` + `#1B1A23` dark paper + `Ask Quill` |
 | Dark Mode | `CPGY5` | `331 / Dark Mode — Settings (Appearance)` | `1440×960` | **M8** | `theme: {mode: "dark"}` Nocturne validation on `Settings` with `Dark` card active (`$accent` border + check badge) |
+| Decisions | `EiiRQ` | `331 / Dawn Background — Violet Mist` | `1600×2332` | **M2** | Chosen Dawn background (one violet glow); Home and Library on the new tokens |
+| Decisions | `luJ5A` | `331 / Reader Shell by Page Theme` | `6112×1356` | **M6** | Reader shell per page theme: Original → Dawn, Sepia → parchment, Gray → gray, Dark → Nocturne |
 
 ## 2. Reusable Component Map (29 `cmp/*` Nodes)
 
@@ -89,16 +91,18 @@ Design source: `quill/desktop/specs/331-rebrand.pen` at revision `f7cb448` in `Y
 
 | Token | Dawn (`light`) | Nocturne (`dark`) | Usage |
 |---|---|---|---|
-| `bg-start` / `bg-end` | `#ECE8FA` / `#F7F1EE` | `#12111A` / `#17151F` | `135deg` base window gradient |
-| `bg-glow-violet` | `#CFC6FFE6` | `#42358A4D` | Radial glow at `10% 5%` (`110% × 110%`) |
-| `bg-glow-peach` | `#FFD3BDD9` | `#59352E33` | Radial glow at `95% 15%` (`90% × 90%`) |
-| `bg-glow-mint` | `#C6EADFD9` | `#1D474233` | Radial glow at `55% 105%` (`120% × 80%`) |
+| `bg-start` / `bg-end` | `#EEEBF8` / `#F7F5F3` | `#12111A` / `#17151F` | `135deg` base window gradient |
+| `bg-glow-violet` | `#D4CCFF73` | `#42358A4D` | Radial glow at `10% 5%` (`110% × 110%`) |
+| `bg-glow-peach` | — (removed) | `#59352E33` | Radial glow at `95% 15%` (`90% × 90%`) |
+| `bg-glow-mint` | — (removed) | `#1D474233` | Radial glow at `55% 105%` (`120% × 80%`) |
 | `surface-glass` | `#FFFFFFB8` | `#1E1D29CC` | Primary islands/panes (`backdrop-filter: blur(30px)`) |
 | `surface-glass-border` | `#FFFFFFE6` | `#FFFFFF17` | 1px outer glass border |
 | `surface-inset` | `#FFFFFF99` | `#15141DB3` | Recessed settings/specimen cards (`1px border-subtle`) |
 | `surface-chip` | `#FFFFFFCC` | `#282636E6` | Pills, icon buttons, subtle tags |
 | `surface-solid` | `#FFFFFF` | `#232130` | Elevated popovers, modals, active hover cards |
 | `paper` / `paper-edge` | `#FDFCFA` / `#15151A0F` | `#1B1A23` / `#FFFFFF12` | Reader page & `In context` quote cards |
+| `reader-shell-sepia-start` / `end` / `glow` | `#F0E7D4` / `#F6F0E5` / `#E8CFA659` | — | Reader shell around the `Sepia` page (`135deg` base, glow at `12% 0%`) |
+| `reader-shell-gray-start` / `end` | `#D2D2D8` / `#D8D8DE` | — | Reader shell around the `Gray` page (`135deg`, no glow) |
 | `text-primary` | `#15151A` | `#F3F1F8` | Headings, body copy |
 | `text-secondary` | `#3B3B45` | `#B5B2C4` | Supporting labels, definitions |
 | `text-tertiary` | `#6E6E7A` | `#7E7B8F` | Metadata, hints, section eyebrows |

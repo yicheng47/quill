@@ -2,7 +2,7 @@
 
 GitHub issue: https://github.com/yicheng47/quill/issues/331
 
-Program record: [`docs/impls/331-rebrand/README.md`](../impls/331-rebrand/README.md). Plan: [`docs/impls/331-rebrand/plan.md`](../impls/331-rebrand/plan.md). Design map: [`docs/impls/331-rebrand/design-map.md`](../impls/331-rebrand/design-map.md). Design source: `quill/desktop/specs/331-rebrand.pen` (`f7cb448` in `YeelinksCo/yeelinks_design`). Regression suite: [`docs/tests/regression/`](../tests/regression/README.md).
+Program record: [`docs/impls/331-rebrand/README.md`](../impls/331-rebrand/README.md). Plan: [`docs/impls/331-rebrand/plan.md`](../impls/331-rebrand/plan.md). Design map: [`docs/impls/331-rebrand/design-map.md`](../impls/331-rebrand/design-map.md). Design source: `quill/desktop/specs/331-rebrand.pen` (`323c398` in `YeelinksCo/yeelinks_design`). Regression suite: [`docs/tests/regression/`](../tests/regression/README.md).
 
 ## Motivation
 
@@ -14,7 +14,7 @@ The `#331` rebrand introduces the **Dawn** (light) and **Nocturne** (dark) visua
 
 In scope across the signed-off frames and components in `quill/desktop/specs/331-rebrand.pen` (full node inventory in [`design-map.md`](../impls/331-rebrand/design-map.md)):
 
-- **Brand & Dawn/Nocturne foundations (`t405CC`, `Owck6`, `YJzBT`, `Qn3yN`):** Lens Q mark on a violet gradient tile across `build/icons/*`, `assets/icon.png`, and `src/components/QuillLogo.tsx`; Dawn lavender-to-peach atmosphere (`#ECE8FA` → `#F7F1EE` plus violet, peach, and mint radial glows) paired with Nocturne dark tokens (`#12111A` → `#17151F`, `#8477EE` accent, `#1E1D29CC` dark glass); frosted glass surfaces (`surface-glass`, `surface-inset`, `surface-chip`, `surface-solid`); 5 reader highlight colors; bundled offline `Geist`, `Geist Mono`, and `Literata` fonts; and the 29 `cmp/*` reusable UI primitives.
+- **Brand & Dawn/Nocturne foundations (`t405CC`, `Owck6`, `YJzBT`, `Qn3yN`):** Lens Q mark on a violet gradient tile across `build/icons/*`, `assets/icon.png`, and `src/components/QuillLogo.tsx`; Dawn "Violet Mist" atmosphere (`#EEEBF8` → `#F7F5F3` plus one soft violet radial glow) paired with Nocturne dark tokens (`#12111A` → `#17151F`, `#8477EE` accent, `#1E1D29CC` dark glass); frosted glass surfaces (`surface-glass`, `surface-inset`, `surface-chip`, `surface-solid`); 5 reader highlight colors; bundled offline `Geist`, `Geist Mono`, and `Literata` fonts; and the 29 `cmp/*` reusable UI primitives.
 - **TopBar shell, Global Search (`⌘K`), Import states & quiet background updates (`pL47g`, `CjQ94`, `BC0DA`, `BUxUo`, `J6aW1P`, `Rh6Ai`):** 71px top bar replacing `Sidebar.tsx` and `UpdateToast.tsx`, housing macOS traffic lights + Quill lockup + sync `%` chip + quiet 24px background-update indicator (`Available` click downloads immediately, `Downloading`/`Verifying` stay non-interrupting, only `Ready` opens a 264px popover, `Failed` opens `Settings → Updates`), centered 5-tab pill navigation (`Home`, `Library`, `Highlights`, `Words`, `Chats`), right-side `Search` (`⌘K` Command Search Palette across `All · Books · Highlights · Words · Chats`), `Import` (native drag-and-drop overlay `BC0DA`, centered `>5s` slow-file progress `BUxUo`, and top non-blocking error toast `J6aW1P`), and `Settings` (`⌘,`) icon button.
 - **Main-window views:**
   - **Home (`m2srt`, `XkjMq` / `OqN9H`):** Bento dashboard (`Now reading` with progress %, `~1.5 min/page` time-left estimate when `pages > 0`, latest highlight, `Continue reading`, and `Ask about this part`; `Saved words`; `Last conversation`; `Library` shelf; `Also reading` + `Collections` chips), plus the first-launch empty Home (`XkjMq`) with tactile miniature UI specimens (`OqN9H`).
@@ -30,6 +30,7 @@ In scope across the signed-off frames and components in `quill/desktop/specs/331
   - Complete `AI Assistant` & `AI Auth` lifecycle (`k9Vj9`, `XIfpn`, `lXiaG`, `o04NH`), including `#325` `AI_REAUTH_REQUIRED` session-expiry recovery (closes #325).
 - **Reader surface (`ECLAp`, `yvlbP`, `U3KZf8`, `pB71W`, `rdcDH`, `xqqVr`, `ZpzpR`, `GWA41`, `Zd3OK`, `N4bEY`, `ZKLDp`, `IjTTv`, `T1qAJe`):**
   - Floating Paper page island (`Original`, `Sepia`, `Gray`, `Dark` `#1B1B1F`), 64px toolbar, floating `Progress pill` + `← Back to p. N` jump-back pill, two-page PDF spread + zoom/fit pill (`ZKLDp`), and `Book in iCloud` download view (`IjTTv`).
+  - Reader shell follows the page theme (`luJ5A`): `Original` → Dawn, `Sepia` → parchment, `Gray` → gray, `Dark` → Nocturne, independent of the app theme. New reader windows open cascaded diagonally from the main window.
   - Left `Contents` island (`U3KZf8`), right `Highlights / Bookmarks` island + inline highlight toolbar (`pB71W`, `GWA41`), right `Words in Book` island (`xqqVr`), and `Typography` (`Aa`) popover (`Zd3OK`, `ZKLDp`).
   - Inline `Selection Menu` (`rdcDH`), floating `Look Up`, `Explain`, and `Translate` popovers (`xqqVr`, `ZpzpR`, `GWA41`), and the `Ask Quill` chat island + thread switcher (`ECLAp`, `ZpzpR`, `N4bEY`).
 - **Nocturne Dark Mode (`q62MgQ`, `Y803E5`, `T1qAJe`, `CPGY5`):** Semantic dark token mode across main and reader shells, shipped as the final rebrand slice once Dawn Light surfaces are complete.
