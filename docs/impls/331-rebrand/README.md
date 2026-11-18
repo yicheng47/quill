@@ -12,15 +12,15 @@ The spec says *what*; this directory says *how, in what order, and what has land
 
 ## Status (2026-11-18)
 
-Design is signed off and pushed to `YeelinksCo/yeelinks_design` `main` at `323c398` (`quill/desktop/specs/331-rebrand.pen`, 60 frames/boards + 29 reusable components). **M1** merged on 2026-11-18 ([#332](https://github.com/yicheng47/quill/pull/332)). **M2** merged on 2026-11-18 ([#334](https://github.com/yicheng47/quill/pull/334)). **M6** merged ([#335](https://github.com/yicheng47/quill/pull/335)). **M3** merged ([#337](https://github.com/yicheng47/quill/pull/337)), closing #322. **M4** is in flight, driven by the operator chat under Jason's standing approval (see [`impl_log.md`](impl_log.md)).
+Design is signed off and pushed to `YeelinksCo/yeelinks_design` `main` at `323c398` (`quill/desktop/specs/331-rebrand.pen`, 60 frames/boards + 29 reusable components). **M1** merged on 2026-11-18 ([#332](https://github.com/yicheng47/quill/pull/332)). **M2** merged on 2026-11-18 ([#334](https://github.com/yicheng47/quill/pull/334)). **M6** merged ([#335](https://github.com/yicheng47/quill/pull/335)). **M3** merged ([#337](https://github.com/yicheng47/quill/pull/337)), closing #322. **M4** merged ([#336](https://github.com/yicheng47/quill/pull/336)). **M5** is in flight, driven by the operator chat under Jason's standing approval (see [`impl_log.md`](impl_log.md)).
 
 | Mission | Phase | Branch | Waits on | Pull request | State |
 |---|---|---|---|---|---|
 | **M1** — Foundations, Icons, `cmp/*` & Queries | 1 | `feat/331-rebrand` | — | [#332](https://github.com/yicheng47/quill/pull/332) | Merged |
 | **M2** — `TopBar`, Quiet Updates, `⌘K` (Books), `Library` & Collections | 1 | `feat/331-m2-topbar-and-library` | M1 | [#334](https://github.com/yicheng47/quill/pull/334) | Merged |
 | **M3** — `Home` Bento, Full `⌘K`, `Highlights`, `Words` (#322) & `Chats` | 2 | `feat/331-m3-main-views` | M2 | [#337](https://github.com/yicheng47/quill/pull/337) | Merged |
-| **M4** — 9-Tab In-Window `Settings`, `iCloud Sync` States, `Updates` & `About` | 2 | `feat/331-m4-settings-and-updates` | M2 | — | In progress |
-| **M5** — `AI Assistant`, Auth Lifecycle & `#325` Session Expiry | 2 | `feat/331-m5-ai-assistant-and-auth` | M4 | — | Planned |
+| **M4** — 9-Tab In-Window `Settings`, `iCloud Sync` States, `Updates` & `About` | 2 | `feat/331-m4-settings-and-updates` | M2 | [#336](https://github.com/yicheng47/quill/pull/336) | Merged |
+| **M5** — `AI Assistant`, Auth Lifecycle & `#325` Session Expiry | 2 | `feat/331-m5-ai-assistant-and-auth` | M4 | — | In progress |
 | **M6** — `Reader` Dawn Shell, Themes, PDF Spread, Navigation Islands & iCloud | 3 | `feat/331-m6-reader-shell` | M1 | [#335](https://github.com/yicheng47/quill/pull/335) | Merged |
 | **M7** — `Reader` Selection Menu, Reading Popovers, `Words in Book` & `Ask Quill` | 3 | `feat/331-m7-reader-ai-and-popovers` | M5, M6 | — | Planned |
 | **M8** — Nocturne Dark Mode (`.dawn.dark`, `Appearance` & Window Sync) | 4 | `feat/331-m8-nocturne-dark-mode` | M3, M5, M7 | — | Planned |
