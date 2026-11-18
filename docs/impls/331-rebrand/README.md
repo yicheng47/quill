@@ -10,9 +10,9 @@ The spec says *what*; this directory says *how, in what order, and what has land
 - [`impl_log.md`](impl_log.md) — chronological log of design sign-offs, mission handoffs, QA findings, and operator rulings.
 - Mission briefs live in [`docs/impls/briefs/`](../briefs/README.md) as `331-m<N>-<slug>.md` on each mission's branch.
 
-## Status (2026-11-18)
+## Status (2026-11-19)
 
-Design is signed off and pushed to `YeelinksCo/yeelinks_design` `main` at `fd7c334` (`quill/desktop/specs/331-rebrand.pen`, 60 frames/boards + 29 reusable components). **M1** merged on 2026-11-18 ([#332](https://github.com/yicheng47/quill/pull/332)). **M2** merged on 2026-11-18 ([#334](https://github.com/yicheng47/quill/pull/334)). **M6** merged ([#335](https://github.com/yicheng47/quill/pull/335)). **M3** merged ([#337](https://github.com/yicheng47/quill/pull/337)), closing #322. **M4** merged ([#336](https://github.com/yicheng47/quill/pull/336)). **M5** merged ([#338](https://github.com/yicheng47/quill/pull/338)), closing #325. **M7** merged ([#339](https://github.com/yicheng47/quill/pull/339)). **M8** is in flight, driven by the operator chat under Jason's standing approval (see [`impl_log.md`](impl_log.md)).
+Design is signed off and pushed to `YeelinksCo/yeelinks_design` `main` at `fd7c334` (`quill/desktop/specs/331-rebrand.pen`, 60 frames/boards + 29 reusable components). **M1** merged on 2026-11-18 ([#332](https://github.com/yicheng47/quill/pull/332)). **M2** merged on 2026-11-18 ([#334](https://github.com/yicheng47/quill/pull/334)). **M6** merged ([#335](https://github.com/yicheng47/quill/pull/335)). **M3** merged ([#337](https://github.com/yicheng47/quill/pull/337)), closing #322. **M4** merged ([#336](https://github.com/yicheng47/quill/pull/336)). **M5** merged ([#338](https://github.com/yicheng47/quill/pull/338)), closing #325. **M7** merged ([#339](https://github.com/yicheng47/quill/pull/339)). **M8** merged ([#340](https://github.com/yicheng47/quill/pull/340)), closing #331. All eight missions have landed on `main`; the checks below remain for Jason before the production release (history in [`impl_log.md`](impl_log.md)).
 
 | Mission | Phase | Branch | Waits on | Pull request | State |
 |---|---|---|---|---|---|
@@ -20,10 +20,21 @@ Design is signed off and pushed to `YeelinksCo/yeelinks_design` `main` at `fd7c3
 | **M2** — `TopBar`, Quiet Updates, `⌘K` (Books), `Library` & Collections | 1 | `feat/331-m2-topbar-and-library` | M1 | [#334](https://github.com/yicheng47/quill/pull/334) | Merged |
 | **M3** — `Home` Bento, Full `⌘K`, `Highlights`, `Words` (#322) & `Chats` | 2 | `feat/331-m3-main-views` | M2 | [#337](https://github.com/yicheng47/quill/pull/337) | Merged |
 | **M4** — 9-Tab In-Window `Settings`, `iCloud Sync` States, `Updates` & `About` | 2 | `feat/331-m4-settings-and-updates` | M2 | [#336](https://github.com/yicheng47/quill/pull/336) | Merged |
-| **M5** — `AI Assistant`, Auth Lifecycle & `#325` Session Expiry | 2 | `feat/331-m5-ai-assistant-and-auth` | M4 | — | In progress |
+| **M5** — `AI Assistant`, Auth Lifecycle & `#325` Session Expiry | 2 | `feat/331-m5-ai-assistant-and-auth` | M4 | [#338](https://github.com/yicheng47/quill/pull/338) | Merged |
 | **M6** — `Reader` Dawn Shell, Themes, PDF Spread, Navigation Islands & iCloud | 3 | `feat/331-m6-reader-shell` | M1 | [#335](https://github.com/yicheng47/quill/pull/335) | Merged |
-| **M7** — `Reader` Selection Menu, Reading Popovers, `Words in Book` & `Ask Quill` | 3 | `feat/331-m7-reader-ai-and-popovers` | M5, M6 | — | Planned |
-| **M8** — Nocturne Dark Mode (`.dawn.dark`, `Appearance` & Window Sync) | 4 | `feat/331-m8-nocturne-dark-mode` | M3, M5, M7 | — | Planned |
+| **M7** — `Reader` Selection Menu, Reading Popovers, `Words in Book` & `Ask Quill` | 3 | `feat/331-m7-reader-ai-and-popovers` | M5, M6 | [#339](https://github.com/yicheng47/quill/pull/339) | Merged |
+| **M8** — Nocturne Dark Mode (`.dawn.dark`, `Appearance` & Window Sync) | 4 | `feat/331-m8-nocturne-dark-mode` | M3, M5, M7 | [#340](https://github.com/yicheng47/quill/pull/340) | Merged |
+
+## Before The Production Release
+
+Live checks the missions could not run, kept under `needs-live-test` on their PRs:
+
+- **Windows smoke** of every mission (#334, #335, #336, #337, #338, #339, #340): `TopBar` and reader toolbar below the native frame, Settings, AI Assistant, the reader AI surfaces and Nocturne.
+- **Updates (#336):** published updater states on a nightly, including `Cancel` and `Skip`; the packaged Dock/Finder icon refresh after installing over the previous nightly.
+- **iCloud (#335, #336):** real sync with hydration, the signed-out and active-sync states, and the Book in iCloud flow.
+- **Physical input (#334, #335, #337):** Dock click, Finder drop and IME composition; TopBar and reader-toolbar dragging and the exact 700px clamp; `RDR-09` with the physical `=` key and PDF `⌘0`.
+- **Flashes (#334, #340):** theme switch and the very first frame at launch in Light and Dark (QA sampled from ~250 ms).
+- **AI (#337, #338):** a real `Sign in with ChatGPT`, a real API-key request, session expiry while `AI Assistant` is already open and connected, pronunciation on a voiceless Mac, and the filtered Chats no-match state.
 
 ## Decisions That Bind
 
