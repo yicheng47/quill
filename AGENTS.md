@@ -6,6 +6,8 @@ This file is the repo-wide guide for any coding assistant working on Quill. Keep
 
 Quill is an AI-powered desktop ebook reader. It focuses on reading EPUB/PDF books, preserving a local library, and augmenting reading with AI lookup, explanations, translation, vocabulary, bookmarks, highlights, collections, and cross-device sync.
 
+For owner-specific product context, see `~/repos/yicheng47/memory/projects/quill/MEMORY.md` when the memory checkout is available.
+
 Core vocabulary:
 
 - **Book**: a library item backed by an EPUB or PDF file.
