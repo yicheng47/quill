@@ -11,13 +11,19 @@ import type { UpdateStatus } from "../hooks/useUpdateChecker";
 const mocks = vi.hoisted(() => ({
   updateState: {
     status: "idle" as UpdateStatus,
-    update: null as { version: string; currentVersion: string } | null,
+    update: null as { version: string; currentVersion: string; sizeBytes?: number } | null,
     progress: 0,
+    downloadedBytes: 0,
+    totalBytes: 0,
+    lastCheckedAt: null as number | null,
+    skippedVersion: null as string | null,
     error: null as string | null,
     manualCheck: false,
     upToDateSeq: 0,
-    checkForUpdates: vi.fn(),
+    checkForUpdate: vi.fn(),
     downloadAndInstall: vi.fn(),
+    cancelDownload: vi.fn(),
+    skipVersion: vi.fn(),
     restart: vi.fn(),
   },
   getOpenReaderCount: vi.fn<() => Promise<number>>(),
@@ -53,7 +59,7 @@ vi.mock("../platform", () => ({
 }));
 
 import TopBar, { type MainRoute } from "./TopBar";
-import type { SettingsSection } from "./SettingsModal";
+import type { SettingsSection } from "./settings/types";
 
 describe("TopBar and UpdateIndicator states", () => {
   let container: HTMLDivElement;
@@ -67,12 +73,13 @@ describe("TopBar and UpdateIndicator states", () => {
   };
 
   const renderTopBar = async (overrides?: {
-    onOpenSettings?: (section?: SettingsSection | "updates") => void;
+    settingsOpen?: boolean;
+    onOpenSettings?: (section?: SettingsSection) => void;
     onRouteChange?: (route: MainRoute) => void;
     onOpenSearch?: () => void;
     onImport?: () => void;
   }) => {
-    const onOpenSettings = overrides?.onOpenSettings ?? vi.fn<(section?: SettingsSection | "updates") => void>();
+    const onOpenSettings = overrides?.onOpenSettings ?? vi.fn<(section?: SettingsSection) => void>();
     const onRouteChange = overrides?.onRouteChange ?? vi.fn<(route: MainRoute) => void>();
     const onOpenSearch = overrides?.onOpenSearch ?? vi.fn<() => void>();
     const onImport = overrides?.onImport ?? vi.fn<() => void>();
@@ -85,7 +92,7 @@ describe("TopBar and UpdateIndicator states", () => {
           onOpenSearch={onOpenSearch}
           importing={false}
           onImport={onImport}
-          settingsOpen={false}
+          settingsOpen={overrides?.settingsOpen ?? false}
           onOpenSettings={onOpenSettings}
         />,
       );
@@ -107,11 +114,17 @@ describe("TopBar and UpdateIndicator states", () => {
       status: "idle",
       update: null,
       progress: 0,
+      downloadedBytes: 0,
+      totalBytes: 0,
+      lastCheckedAt: null,
+      skippedVersion: null,
       error: null,
       manualCheck: false,
       upToDateSeq: 0,
-      checkForUpdates: vi.fn().mockResolvedValue(null),
+      checkForUpdate: vi.fn().mockResolvedValue(null),
       downloadAndInstall: vi.fn().mockResolvedValue(undefined),
+      cancelDownload: vi.fn().mockResolvedValue(undefined),
+      skipVersion: vi.fn().mockResolvedValue(undefined),
       restart: vi.fn().mockResolvedValue(undefined),
     };
     container = document.createElement("div");
@@ -323,5 +336,64 @@ describe("TopBar and UpdateIndicator states", () => {
         configurable: true,
       });
     }
+  });
+
+  it("clears nav route active pill when settingsOpen is true and highlights gear", async () => {
+    const onOpenSettings = vi.fn();
+    await renderTopBar({ settingsOpen: true, onOpenSettings });
+
+    const nav = container.querySelector("nav");
+    const activeRoute = Array.from(nav?.querySelectorAll("button") ?? []).find((b) =>
+      b.className.includes("bg-accent-tint"),
+    );
+    expect(activeRoute).toBeUndefined();
+
+    const gearBtn = container.querySelector<HTMLButtonElement>('button[aria-label="Settings"]');
+    expect(gearBtn?.className).toContain("bg-accent-tint");
+
+    await act(async () => {
+      gearBtn?.click();
+    });
+    expect(onOpenSettings).toHaveBeenCalledWith();
+  });
+
+  it("keeps TopBar bounded below lg during manual update feedback so actions stay onscreen", async () => {
+    mocks.updateState.status = "checking";
+    mocks.updateState.manualCheck = true;
+    await renderTopBar();
+
+    const header = container.querySelector("header")!;
+    const leftCluster = header.firstElementChild as HTMLElement;
+    const rightCluster = header.lastElementChild as HTMLElement;
+    expect(leftCluster.className).toContain("min-w-0");
+    expect(leftCluster.className).toContain("lg:min-w-fit");
+    expect(rightCluster.className).toContain("shrink-0");
+    expect(rightCluster.className).toContain("lg:flex-1");
+
+    const wordmark = leftCluster.querySelector("span");
+    expect(wordmark?.textContent).toBe("Quill");
+    expect(wordmark?.className).toContain("hidden lg:inline");
+
+    const checkingChip = container.querySelector('[data-testid="update-manual-checking"]');
+    expect(checkingChip?.className).toContain("min-w-0");
+    expect(checkingChip?.className).not.toContain("shrink-0");
+    expect(checkingChip?.textContent).toContain("Checking…");
+    expect(checkingChip?.textContent).toContain("Checking for updates");
+
+    mocks.updateState.status = "idle";
+    mocks.updateState.manualCheck = false;
+    mocks.updateState.upToDateSeq = 1;
+    await renderTopBar();
+
+    const upToDateChip = container.querySelector('[data-testid="update-manual-uptodate"]');
+    expect(upToDateChip?.className).toContain("min-w-0");
+    expect(upToDateChip?.className).not.toContain("shrink-0");
+    expect(wordmark?.className).toContain("hidden lg:inline");
+
+    await act(async () => {
+      vi.advanceTimersByTime(4000);
+    });
+    expect(container.querySelector('[data-testid="update-manual-uptodate"]')).toBeNull();
+    expect(wordmark?.className).toContain("hidden sm:inline");
   });
 });

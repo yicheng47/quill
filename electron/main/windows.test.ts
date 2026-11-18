@@ -1,4 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 type Listener = (...args: unknown[]) => void;
 
@@ -6,12 +9,17 @@ interface MockWindowRecord {
   id: number;
   options: Record<string, unknown>;
   bounds: { x: number; y: number; width: number; height: number };
+  normalBounds: { x: number; y: number; width: number; height: number };
+  maximized: boolean;
   fullscreen: boolean;
   minimized: boolean;
   visible: boolean;
   destroyed: boolean;
   setWindowButtonPosition: ReturnType<typeof vi.fn<(pos: { x: number; y: number }) => void>>;
   setBackgroundColor: ReturnType<typeof vi.fn<(color: string) => void>>;
+  maximize: ReturnType<typeof vi.fn<() => void>>;
+  unmaximize: ReturnType<typeof vi.fn<() => void>>;
+  setFullScreen: ReturnType<typeof vi.fn<(flag: boolean) => void>>;
   listeners: Map<string, Listener[]>;
   emit: (event: string, ...args: unknown[]) => void;
 }
@@ -20,6 +28,8 @@ const mockState = vi.hoisted(() => ({
   nextId: 1,
   instances: [] as MockWindowRecord[],
   cursorPoint: { x: 200, y: 200 },
+  userDataDir: "",
+  asyncFullScreen: false,
   displays: [
     {
       id: 1,
@@ -75,12 +85,27 @@ vi.mock("electron", () => {
         id,
         options,
         bounds: { x, y, width, height },
+        normalBounds: { x, y, width, height },
+        maximized: false,
         fullscreen: false,
         minimized: false,
         visible: true,
         destroyed: false,
         setWindowButtonPosition: vi.fn<(pos: { x: number; y: number }) => void>(),
         setBackgroundColor: vi.fn<(color: string) => void>(),
+        maximize: vi.fn(() => {
+          record.maximized = true;
+          record.bounds = { ...workArea };
+        }),
+        unmaximize: vi.fn(() => {
+          record.maximized = false;
+          record.bounds = { ...record.normalBounds };
+        }),
+        setFullScreen: vi.fn((flag: boolean) => {
+          if (!mockState.asyncFullScreen) {
+            record.fullscreen = flag;
+          }
+        }),
         listeners,
         emit: (event: string, ...args: unknown[]) => {
           for (const cb of listeners.get(event) ?? []) {
@@ -105,6 +130,7 @@ vi.mock("electron", () => {
     }
     loadURL = vi.fn().mockResolvedValue(undefined);
     isDestroyed = () => this.record.destroyed;
+    isMaximized = () => (this.record.minimized ? false : this.record.maximized);
     isFullScreen = () => this.record.fullscreen;
     isMinimized = () => this.record.minimized;
     isVisible = () => this.record.visible;
@@ -119,20 +145,29 @@ vi.mock("electron", () => {
     });
     hide = vi.fn(() => {
       this.record.visible = false;
+      this.record.emit("hide");
     });
     close = vi.fn();
+    maximize = () => this.record.maximize();
+    unmaximize = () => this.record.unmaximize();
+    setFullScreen = (flag: boolean) => this.record.setFullScreen(flag);
     getSize = () => [this.record.bounds.width, this.record.bounds.height];
     getBounds = () => ({ ...this.record.bounds });
+    getNormalBounds = () => ({ ...this.record.normalBounds });
     setBackgroundColor = (color: string) => this.record.setBackgroundColor(color);
     setWindowButtonPosition = (pos: { x: number; y: number }) =>
       this.record.setWindowButtonPosition(pos);
   }
 
   return {
+    app: {
+      getPath: () => mockState.userDataDir,
+    },
     BrowserWindow: MockBrowserWindow,
     nativeTheme: { shouldUseDarkColors: false },
     shell: { openExternal: vi.fn() },
     screen: {
+      getAllDisplays: () => mockState.displays,
       getDisplayMatching: (rect: { x: number; y: number; width: number; height: number }) =>
         findDisplayForRect(rect),
       getCursorScreenPoint: () => ({ ...mockState.cursorPoint }),
@@ -151,14 +186,18 @@ import {
   getTitlebarZoomForWindow,
   getWindow,
   labelForWebContents,
+  markQuitting,
   READER_SHELL_BG,
   scaledTitlebarHeight,
   setDefaultWindowIcon,
   setTitlebarZoomForWindow,
   setWindowBackgroundColor,
+  toggleWindowZoom,
   trafficLightPositionFor,
   whenWindowReady,
+  WINDOW_STATE_SAVE_DELAY_MS,
 } from "./windows";
+import { getWindowStatePath } from "./windowState";
 
 function closeIfOpen(label: string, rec: MockWindowRecord | undefined) {
   if (rec && !rec.destroyed) {
@@ -179,6 +218,8 @@ describe("electron windows titlebar & lifecycle", () => {
     mockState.instances = [];
     mockState.nextId = 1;
     mockState.cursorPoint = { x: 200, y: 200 };
+    mockState.asyncFullScreen = false;
+    mockState.userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "quill-win-test-"));
     mockState.displays = [
       {
         id: 1,
@@ -186,6 +227,14 @@ describe("electron windows titlebar & lifecycle", () => {
         workArea: { x: 0, y: 38, width: 1920, height: 1042 },
       },
     ];
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    if (mockState.userDataDir) {
+      fs.rmSync(mockState.userDataDir, { recursive: true, force: true });
+      mockState.userDataDir = "";
+    }
   });
 
   it("tracks titlebar geometry across app zoom levels for main and reader windows", () => {
@@ -513,5 +562,605 @@ describe("electron windows titlebar & lifecycle", () => {
 
     closeIfOpen("reader-b4", b4);
     closeIfOpen("main", mainRec);
+  });
+
+  it("persists normal main window bounds and maximized/fullscreen state across close, hide, and quit", () => {
+    vi.useFakeTimers();
+
+    createMainWindow(false);
+    const first = mockState.instances[0];
+    expect(first.options.width).toBe(1440);
+    expect(first.options.height).toBe(960);
+    expect(first.options.x).toBeUndefined();
+    expect(first.options.y).toBeUndefined();
+
+    // Move and resize -> debounced save writes window-state.json
+    first.bounds = { x: 210, y: 110, width: 1180, height: 760 };
+    first.normalBounds = { ...first.bounds };
+    first.emit("move");
+    first.emit("resize");
+    expect(fs.existsSync(getWindowStatePath(mockState.userDataDir))).toBe(false);
+    vi.advanceTimersByTime(WINDOW_STATE_SAVE_DELAY_MS);
+    expect(JSON.parse(fs.readFileSync(getWindowStatePath(mockState.userDataDir), "utf8"))).toEqual({
+      x: 210,
+      y: 110,
+      width: 1180,
+      height: 760,
+      isMaximized: false,
+      isFullScreen: false,
+    });
+
+    // Maximize keeps normal bounds instead of maximized bounds, and hide flushes synchronously
+    first.maximize();
+    first.emit("maximize");
+    first.emit("hide");
+    expect(JSON.parse(fs.readFileSync(getWindowStatePath(mockState.userDataDir), "utf8"))).toEqual({
+      x: 210,
+      y: 110,
+      width: 1180,
+      height: 760,
+      isMaximized: true,
+      isFullScreen: false,
+    });
+
+    // Simulate quit & relaunch -> restores saved normal bounds + re-applies maximize
+    markQuitting();
+    closeIfOpen("main", first);
+
+    createMainWindow(false);
+    const second = mockState.instances[1];
+    expect(second.options.x).toBe(210);
+    expect(second.options.y).toBe(110);
+    expect(second.options.width).toBe(1180);
+    expect(second.options.height).toBe(760);
+    expect(second.maximize).toHaveBeenCalledTimes(1);
+
+    closeIfOpen("main", second);
+  });
+
+  it("preserves maximized state through minimize -> quit before debounce and restores fullscreen", () => {
+    vi.useFakeTimers();
+
+    createMainWindow(false);
+    const first = mockState.instances[0];
+    first.bounds = { x: 180, y: 95, width: 1100, height: 720 };
+    first.normalBounds = { ...first.bounds };
+    first.emit("move");
+    first.emit("resize");
+    vi.advanceTimersByTime(WINDOW_STATE_SAVE_DELAY_MS);
+
+    // Maximize -> immediately minimize -> quit BEFORE the debounce fires.
+    // On macOS isMaximized() returns false while minimized, so non-minimized mode must be preserved.
+    first.maximize();
+    first.emit("maximize");
+    first.minimized = true;
+    first.emit("minimize");
+    markQuitting();
+    expect(JSON.parse(fs.readFileSync(getWindowStatePath(mockState.userDataDir), "utf8"))).toEqual({
+      x: 180,
+      y: 95,
+      width: 1100,
+      height: 720,
+      isMaximized: true,
+      isFullScreen: false,
+    });
+    closeIfOpen("main", first);
+
+    createMainWindow(false);
+    const second = mockState.instances[1];
+    expect(second.options.x).toBe(180);
+    expect(second.options.y).toBe(95);
+    expect(second.options.width).toBe(1100);
+    expect(second.options.height).toBe(720);
+    expect(second.maximize).toHaveBeenCalledTimes(1);
+
+    // Unmaximize back to normal, resize, then enter fullscreen and quit -> restores fullscreen with normal bounds
+    second.maximized = false;
+    second.emit("unmaximize");
+    second.bounds = { x: 240, y: 120, width: 1024, height: 680 };
+    second.normalBounds = { ...second.bounds };
+    second.emit("move");
+    second.emit("resize");
+
+    second.setFullScreen(true);
+    second.bounds = { x: 0, y: 0, width: 1920, height: 1080 };
+    second.emit("enter-full-screen");
+    markQuitting();
+    expect(JSON.parse(fs.readFileSync(getWindowStatePath(mockState.userDataDir), "utf8"))).toEqual({
+      x: 240,
+      y: 120,
+      width: 1024,
+      height: 680,
+      isMaximized: false,
+      isFullScreen: true,
+    });
+    closeIfOpen("main", second);
+
+    createMainWindow(false);
+    const third = mockState.instances[2];
+    expect(third.options.x).toBe(240);
+    expect(third.options.y).toBe(120);
+    expect(third.options.width).toBe(1024);
+    expect(third.options.height).toBe(680);
+    expect(third.setFullScreen).toHaveBeenCalledWith(true);
+
+    closeIfOpen("main", third);
+  });
+
+  it("preserves normal bounds when macOS Zoom emits resize at zoomed bounds before isMaximized and maximize", () => {
+    vi.useFakeTimers();
+    mockState.displays = [
+      {
+        id: 1,
+        bounds: { x: 0, y: 0, width: 2560, height: 1440 },
+        workArea: { x: 0, y: 30, width: 2540, height: 1309 },
+      },
+    ];
+
+    createMainWindow(false);
+    const first = mockState.instances[0];
+    first.bounds = { x: 0, y: 30, width: 1281, height: 660 };
+    first.normalBounds = { ...first.bounds };
+    first.emit("move");
+    first.emit("resize");
+    vi.advanceTimersByTime(WINDOW_STATE_SAVE_DELAY_MS);
+
+    // Simulate macOS Window -> Zoom: Cocoa animates/resizes to the zoomed frame and emits
+    // resize BEFORE [window isZoomed] returns true or handleZoomEnd emits maximize.
+    first.bounds = { x: 0, y: 30, width: 2540, height: 1309 };
+    first.maximized = false;
+    first.emit("resize");
+    first.maximized = true;
+    first.emit("maximize");
+    vi.advanceTimersByTime(WINDOW_STATE_SAVE_DELAY_MS);
+
+    expect(JSON.parse(fs.readFileSync(getWindowStatePath(mockState.userDataDir), "utf8"))).toEqual({
+      x: 0,
+      y: 30,
+      width: 1281,
+      height: 660,
+      isMaximized: true,
+      isFullScreen: false,
+    });
+
+    markQuitting();
+    closeIfOpen("main", first);
+
+    createMainWindow(false);
+    const second = mockState.instances[1];
+    expect(second.options.x).toBe(0);
+    expect(second.options.y).toBe(30);
+    expect(second.options.width).toBe(1281);
+    expect(second.options.height).toBe(660);
+    expect(second.maximize).toHaveBeenCalledTimes(1);
+
+    // Leaving maximized mode after relaunch persists the restored normal bounds.
+    second.maximized = false;
+    second.bounds = { x: 0, y: 30, width: 1281, height: 660 };
+    second.emit("resize");
+    second.emit("unmaximize");
+    vi.advanceTimersByTime(WINDOW_STATE_SAVE_DELAY_MS);
+    expect(JSON.parse(fs.readFileSync(getWindowStatePath(mockState.userDataDir), "utf8"))).toEqual({
+      x: 0,
+      y: 30,
+      width: 1281,
+      height: 660,
+      isMaximized: false,
+      isFullScreen: false,
+    });
+
+    closeIfOpen("main", second);
+  });
+
+  it("preserves normal bounds during fullscreen resize transitions and async startup restore", () => {
+    vi.useFakeTimers();
+
+    createMainWindow(false);
+    const first = mockState.instances[0];
+    first.bounds = { x: 40, y: 50, width: 1120, height: 700 };
+    first.emit("move");
+    first.emit("resize");
+
+    // Once fullscreen style mask flips, resize events during transition must not clobber pending normal bounds.
+    first.fullscreen = true;
+    first.bounds = { x: 0, y: 0, width: 1920, height: 1080 };
+    first.emit("resize");
+    first.emit("enter-full-screen");
+    vi.advanceTimersByTime(WINDOW_STATE_SAVE_DELAY_MS);
+
+    expect(JSON.parse(fs.readFileSync(getWindowStatePath(mockState.userDataDir), "utf8"))).toEqual({
+      x: 40,
+      y: 50,
+      width: 1120,
+      height: 700,
+      isMaximized: false,
+      isFullScreen: true,
+    });
+
+    markQuitting();
+    closeIfOpen("main", first);
+
+    // Simulate async startup fullscreen where setFullScreen(true) does not synchronously flip isFullScreen().
+    mockState.asyncFullScreen = true;
+    createMainWindow(false);
+    const second = mockState.instances[1];
+    // Simulate a late resize tick arriving before enter-full-screen settles on launch.
+    expect(second.fullscreen).toBe(false);
+    second.bounds = { x: 0, y: 0, width: 1920, height: 1080 };
+    second.emit("resize");
+    vi.advanceTimersByTime(WINDOW_STATE_SAVE_DELAY_MS);
+    expect(JSON.parse(fs.readFileSync(getWindowStatePath(mockState.userDataDir), "utf8"))).toEqual({
+      x: 40,
+      y: 50,
+      width: 1120,
+      height: 700,
+      isMaximized: false,
+      isFullScreen: true,
+    });
+
+    second.fullscreen = true;
+    second.emit("enter-full-screen");
+    vi.advanceTimersByTime(WINDOW_STATE_SAVE_DELAY_MS);
+
+    expect(JSON.parse(fs.readFileSync(getWindowStatePath(mockState.userDataDir), "utf8"))).toEqual({
+      x: 40,
+      y: 50,
+      width: 1120,
+      height: 700,
+      isMaximized: false,
+      isFullScreen: true,
+    });
+
+    closeIfOpen("main", second);
+  });
+
+  it("captures immediate normal resize via macOS Window -> Zoom menu action and resized completion even with stale getNormalBounds", () => {
+    vi.useFakeTimers();
+    mockState.displays = [
+      {
+        id: 1,
+        bounds: { x: 0, y: 0, width: 2560, height: 1440 },
+        workArea: { x: 0, y: 30, width: 2540, height: 1309 },
+      },
+    ];
+
+    const firstWin = createMainWindow(false);
+    const first = mockState.instances[0];
+    first.bounds = { x: 200, y: 100, width: 1440, height: 960 };
+    first.normalBounds = { ...first.bounds };
+    first.emit("move");
+    first.emit("resize");
+    vi.advanceTimersByTime(WINDOW_STATE_SAVE_DELAY_MS);
+
+    // Move/resize to new normal bounds BEFORE debounce, leaving native normalBounds STALE at 1440x960.
+    first.bounds = { x: 0, y: 30, width: 1281, height: 660 };
+    first.emit("move");
+    first.emit("resize");
+
+    // Simulate Window -> Zoom triggering multi-frame async resize animation while isMaximized is still false
+    // and normalBounds remains stale until maximize runs.
+    first.maximize.mockImplementationOnce(() => {
+      first.maximized = false;
+      first.bounds = { x: 0, y: 30, width: 1600, height: 820 };
+      first.emit("resize");
+      vi.advanceTimersByTime(16);
+      first.bounds = { x: 0, y: 30, width: 2100, height: 1080 };
+      first.emit("resize");
+      vi.advanceTimersByTime(16);
+      first.bounds = { x: 0, y: 30, width: 2540, height: 1309 };
+      first.emit("resize");
+      first.maximized = true;
+      first.emit("maximize");
+    });
+
+    toggleWindowZoom(firstWin);
+    markQuitting();
+
+    expect(JSON.parse(fs.readFileSync(getWindowStatePath(mockState.userDataDir), "utf8"))).toEqual({
+      x: 0,
+      y: 30,
+      width: 1281,
+      height: 660,
+      isMaximized: true,
+      isFullScreen: false,
+    });
+    closeIfOpen("main", first);
+
+    const secondWin = createMainWindow(false);
+    const second = mockState.instances[1];
+    expect(second.options.x).toBe(0);
+    expect(second.options.y).toBe(30);
+    expect(second.options.width).toBe(1281);
+    expect(second.options.height).toBe(660);
+    expect(second.maximize).toHaveBeenCalledTimes(1);
+
+    // Clicking Window -> Zoom again unmaximizes cleanly to restored normal bounds.
+    second.unmaximize.mockImplementationOnce(() => {
+      second.maximized = false;
+      second.bounds = { x: 0, y: 30, width: 1281, height: 660 };
+      second.emit("resize");
+      second.emit("unmaximize");
+    });
+    toggleWindowZoom(secondWin);
+    markQuitting();
+    expect(JSON.parse(fs.readFileSync(getWindowStatePath(mockState.userDataDir), "utf8"))).toEqual({
+      x: 0,
+      y: 30,
+      width: 1281,
+      height: 660,
+      isMaximized: false,
+      isFullScreen: false,
+    });
+
+    // Interactive user drag-resize completion ("resized" while !maximized) also commits normal bounds
+    // immediately before any non-menu zoom animation even when getNormalBounds stays stale.
+    second.bounds = { x: 40, y: 50, width: 1120, height: 700 };
+    second.emit("move");
+    second.emit("resize");
+    second.emit("resized");
+
+    second.maximized = false;
+    second.bounds = { x: 0, y: 30, width: 1600, height: 820 };
+    second.emit("resize");
+    vi.advanceTimersByTime(16);
+    second.bounds = { x: 0, y: 30, width: 2100, height: 1080 };
+    second.emit("resize");
+    vi.advanceTimersByTime(16);
+    second.bounds = { x: 0, y: 30, width: 2540, height: 1309 };
+    second.emit("resize");
+    second.maximized = true;
+    second.emit("maximize");
+    markQuitting();
+
+    expect(JSON.parse(fs.readFileSync(getWindowStatePath(mockState.userDataDir), "utf8"))).toEqual({
+      x: 40,
+      y: 50,
+      width: 1120,
+      height: 700,
+      isMaximized: true,
+      isFullScreen: false,
+    });
+
+    // toggleWindowZoom ignores fullscreen windows.
+    second.fullscreen = true;
+    second.unmaximize.mockClear();
+    second.maximize.mockClear();
+    toggleWindowZoom(secondWin);
+    expect(second.unmaximize).not.toHaveBeenCalled();
+    expect(second.maximize).not.toHaveBeenCalled();
+
+    closeIfOpen("main", second);
+  });
+
+  it("preserves immediate normal move/resize via restored bounds across multi-frame Zoom before debounce", () => {
+    vi.useFakeTimers();
+    mockState.displays = [
+      {
+        id: 1,
+        bounds: { x: 0, y: 0, width: 2560, height: 1440 },
+        workArea: { x: 0, y: 30, width: 2540, height: 1309 },
+      },
+    ];
+
+    createMainWindow(false);
+    const first = mockState.instances[0];
+    first.bounds = { x: 200, y: 100, width: 1440, height: 960 };
+    first.normalBounds = { ...first.bounds };
+    first.emit("move");
+    first.emit("resize");
+    vi.advanceTimersByTime(WINDOW_STATE_SAVE_DELAY_MS);
+
+    // Move/resize to new normal bounds (updating native getNormalBounds), then immediately
+    // emit multi-frame Zoom animation ticks while isMaximized() is still false before debounce.
+    first.bounds = { x: 0, y: 30, width: 1281, height: 660 };
+    first.normalBounds = { ...first.bounds };
+    first.emit("move");
+    first.emit("resize");
+    first.maximized = false;
+    first.bounds = { x: 0, y: 30, width: 1600, height: 820 };
+    first.emit("resize");
+    vi.advanceTimersByTime(16);
+    first.bounds = { x: 0, y: 30, width: 2100, height: 1080 };
+    first.emit("resize");
+    vi.advanceTimersByTime(16);
+    first.bounds = { x: 0, y: 30, width: 2540, height: 1309 };
+    first.emit("resize");
+    first.maximized = true;
+    first.emit("maximize");
+    markQuitting();
+
+    expect(JSON.parse(fs.readFileSync(getWindowStatePath(mockState.userDataDir), "utf8"))).toEqual({
+      x: 0,
+      y: 30,
+      width: 1281,
+      height: 660,
+      isMaximized: true,
+      isFullScreen: false,
+    });
+    closeIfOpen("main", first);
+
+    createMainWindow(false);
+    const second = mockState.instances[1];
+    expect(second.options.x).toBe(0);
+    expect(second.options.y).toBe(30);
+    expect(second.options.width).toBe(1281);
+    expect(second.options.height).toBe(660);
+    expect(second.maximize).toHaveBeenCalledTimes(1);
+
+    second.maximized = false;
+    second.bounds = { x: 0, y: 30, width: 1281, height: 660 };
+    second.normalBounds = { ...second.bounds };
+    second.emit("resize");
+    second.emit("unmaximize");
+    markQuitting();
+    expect(JSON.parse(fs.readFileSync(getWindowStatePath(mockState.userDataDir), "utf8"))).toEqual({
+      x: 0,
+      y: 30,
+      width: 1281,
+      height: 660,
+      isMaximized: false,
+      isFullScreen: false,
+    });
+
+    closeIfOpen("main", second);
+  });
+
+  it("preserves settled normal bounds across 2-frame and 3-frame Zoom animations even when getNormalBounds is stale", () => {
+    vi.useFakeTimers();
+    mockState.displays = [
+      {
+        id: 1,
+        bounds: { x: 0, y: 0, width: 2560, height: 1440 },
+        workArea: { x: 0, y: 30, width: 2540, height: 1309 },
+      },
+    ];
+
+    createMainWindow(false);
+    const first = mockState.instances[0];
+    // Simulate macOS NativeWindowMac leaving normalBounds stale at an earlier minimize/initial frame.
+    first.bounds = { x: 0, y: 30, width: 1281, height: 660 };
+    first.emit("move");
+    first.emit("resize");
+    vi.advanceTimersByTime(WINDOW_STATE_SAVE_DELAY_MS);
+
+    // 2-frame Zoom animation (intermediate 1600x820 -> zoomed 2540x1309 at 16ms gap) with stale normalBounds.
+    first.maximized = false;
+    first.bounds = { x: 0, y: 30, width: 1600, height: 820 };
+    first.emit("resize");
+    vi.advanceTimersByTime(16);
+    first.bounds = { x: 0, y: 30, width: 2540, height: 1309 };
+    first.emit("resize");
+    first.maximized = true;
+    first.emit("maximize");
+    markQuitting();
+
+    expect(JSON.parse(fs.readFileSync(getWindowStatePath(mockState.userDataDir), "utf8"))).toEqual({
+      x: 0,
+      y: 30,
+      width: 1281,
+      height: 660,
+      isMaximized: true,
+      isFullScreen: false,
+    });
+
+    // Also verify minimize updates stale native normal tracking without clobbering newer settled normal bounds.
+    first.maximized = false;
+    first.emit("unmaximize");
+    first.bounds = { x: 0, y: 30, width: 1281, height: 660 };
+    first.normalBounds = { ...first.bounds };
+    first.minimized = true;
+    first.emit("minimize");
+    first.minimized = false;
+    first.emit("restore");
+
+    // Settled resize to new normal bounds (while macOS original_frame_ stays stale at 1281x660).
+    first.bounds = { x: 20, y: 40, width: 1000, height: 700 };
+    first.emit("move");
+    first.emit("resize");
+    vi.advanceTimersByTime(WINDOW_STATE_SAVE_DELAY_MS);
+
+    // 3-frame Zoom animation with stale normalBounds still at 1281x660.
+    first.bounds = { x: 0, y: 30, width: 1600, height: 820 };
+    first.emit("resize");
+    vi.advanceTimersByTime(16);
+    first.bounds = { x: 0, y: 30, width: 2100, height: 1080 };
+    first.emit("resize");
+    vi.advanceTimersByTime(16);
+    first.bounds = { x: 0, y: 30, width: 2540, height: 1309 };
+    first.emit("resize");
+    first.maximized = true;
+    first.emit("maximize");
+    markQuitting();
+
+    expect(JSON.parse(fs.readFileSync(getWindowStatePath(mockState.userDataDir), "utf8"))).toEqual({
+      x: 20,
+      y: 40,
+      width: 1000,
+      height: 700,
+      isMaximized: true,
+      isFullScreen: false,
+    });
+
+    closeIfOpen("main", first);
+  });
+
+  it("preserves immediate normal move/resize before maximize and quit before debounce", () => {
+    vi.useFakeTimers();
+    mockState.displays = [
+      {
+        id: 1,
+        bounds: { x: 0, y: 0, width: 2560, height: 1440 },
+        workArea: { x: 0, y: 30, width: 2540, height: 1309 },
+      },
+    ];
+
+    createMainWindow(false);
+    const first = mockState.instances[0];
+
+    // Move and resize to new normal bounds, then maximize and quit BEFORE debounce elapses.
+    first.bounds = { x: 0, y: 30, width: 1281, height: 660 };
+    first.emit("move");
+    first.emit("resize");
+    first.maximize();
+    first.emit("maximize");
+    markQuitting();
+
+    expect(JSON.parse(fs.readFileSync(getWindowStatePath(mockState.userDataDir), "utf8"))).toEqual({
+      x: 0,
+      y: 30,
+      width: 1281,
+      height: 660,
+      isMaximized: true,
+      isFullScreen: false,
+    });
+    closeIfOpen("main", first);
+
+    createMainWindow(false);
+    const second = mockState.instances[1];
+    expect(second.options.x).toBe(0);
+    expect(second.options.y).toBe(30);
+    expect(second.options.width).toBe(1281);
+    expect(second.options.height).toBe(660);
+    expect(second.maximize).toHaveBeenCalledTimes(1);
+
+    second.maximized = false;
+    second.bounds = { x: 0, y: 30, width: 1281, height: 660 };
+    second.emit("resize");
+    second.emit("unmaximize");
+    markQuitting();
+    expect(JSON.parse(fs.readFileSync(getWindowStatePath(mockState.userDataDir), "utf8"))).toEqual({
+      x: 0,
+      y: 30,
+      width: 1281,
+      height: 660,
+      isMaximized: false,
+      isFullScreen: false,
+    });
+
+    closeIfOpen("main", second);
+  });
+
+  it("preserves immediate normal move/resize through minimize and quit before debounce", () => {
+    vi.useFakeTimers();
+
+    createMainWindow(false);
+    const first = mockState.instances[0];
+    first.bounds = { x: 120, y: 90, width: 1080, height: 700 };
+    first.emit("move");
+    first.emit("resize");
+    first.minimized = true;
+    first.emit("minimize");
+    markQuitting();
+
+    expect(JSON.parse(fs.readFileSync(getWindowStatePath(mockState.userDataDir), "utf8"))).toEqual({
+      x: 120,
+      y: 90,
+      width: 1080,
+      height: 700,
+      isMaximized: false,
+      isFullScreen: false,
+    });
+
+    closeIfOpen("main", first);
   });
 });

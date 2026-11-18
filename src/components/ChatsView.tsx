@@ -21,7 +21,7 @@ import { useAllChats, useChatCounts, type ChatSummary } from "../hooks/useChats"
 import { invoke } from "../platform";
 import { openReaderWindow } from "../utils/openReaderWindow";
 import { formatMonthHeading, formatShortDate } from "../utils/vocabParse";
-import type { SettingsSection } from "./SettingsModal";
+import type { SettingsSection } from "./settings/types";
 import BookCover from "./ui/BookCover";
 import { Menu, MenuDivider, MenuItem } from "./ui/Menu";
 

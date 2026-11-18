@@ -19,7 +19,7 @@ import type { Highlight } from "../hooks/useBookmarks";
 import type { DictionaryWord } from "../hooks/useDictionary";
 import type { ChatSummary } from "../hooks/useChats";
 import type { MainNavigateOptions, MainRoute } from "./TopBar";
-import type { SettingsSection } from "./SettingsModal";
+import type { SettingsSection } from "./settings/types";
 import { invoke } from "../platform";
 import { openReaderWindow } from "../utils/openReaderWindow";
 import { getHighlightColorMeta } from "../utils/highlightColors";

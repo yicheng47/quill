@@ -19,7 +19,7 @@ class FakeAutoUpdater extends EventEmitter implements UpdaterLike {
   allowPrerelease = false;
   feedCalls: unknown[] = [];
   checkImpl = vi.fn<() => Promise<UpdateCheckResult | null>>();
-  downloadImpl = vi.fn<() => Promise<string[]>>();
+  downloadImpl = vi.fn<(cancellationToken?: unknown) => Promise<string[]>>();
   quitImpl = vi.fn<() => void>();
 
   setFeedURL(options: Parameters<UpdaterLike["setFeedURL"]>[0]): void {
@@ -30,8 +30,8 @@ class FakeAutoUpdater extends EventEmitter implements UpdaterLike {
     return this.checkImpl();
   }
 
-  downloadUpdate(): Promise<string[]> {
-    return this.downloadImpl();
+  downloadUpdate(cancellationToken?: unknown): Promise<string[]> {
+    return this.downloadImpl(cancellationToken);
   }
 
   quitAndInstall(): void {
@@ -412,5 +412,117 @@ describe("QuillUpdaterService", () => {
     await service.downloadAndInstall(vi.fn());
     await expect(service.relaunchAndInstall()).resolves.toBeUndefined();
     expect(markQuitting).toHaveBeenCalledTimes(1);
+  });
+
+  it("selects only the matching update artifact size from merged macOS/Windows feeds (including Rosetta)", async () => {
+    const mergedMacFiles = [
+      { url: "Quill-2.1.0-mac.zip", sha512: "x", size: 41_000_000 },
+      { url: "Quill-2.1.0-arm64-mac.zip", sha512: "a", size: 48_200_000 },
+      { url: "Quill-2.1.0-x64.dmg", sha512: "xd", size: 45_000_000 },
+      { url: "Quill-2.1.0-arm64.dmg", sha512: "ad", size: 52_000_000 },
+      { url: "Quill-2.1.0-arm64-mac.zip.blockmap", sha512: "ab", size: 120_000 },
+    ];
+    const makeService = (platform: NodeJS.Platform, arch: string, isRosetta = false) => {
+      const fake = new FakeAutoUpdater();
+      fake.checkImpl.mockResolvedValue({
+        isUpdateAvailable: true,
+        updateInfo: {
+          version: "2.1.0",
+          files: platform === "win32"
+            ? [
+                { url: "Quill-2.1.0-x64-win.exe", sha512: "w", size: 61_500_000 },
+                { url: "Quill-2.1.0-x64-win.exe.blockmap", sha512: "wb", size: 200_000 },
+              ]
+            : mergedMacFiles,
+          path: "",
+          sha512: "",
+          releaseDate: "2026-11-18T00:00:00.000Z",
+        },
+        versionInfo: {
+          version: "2.1.0",
+          files: [],
+          path: "",
+          sha512: "",
+          releaseDate: "2026-11-18T00:00:00.000Z",
+        },
+      });
+      return new QuillUpdaterService({
+        isPackaged: () => true,
+        getVersion: () => "2.0.0",
+        loadAutoUpdater: () => fake,
+        markQuitting: vi.fn(),
+        registerNativeQuitForUpdate: vi.fn(),
+        platform: () => platform,
+        arch: () => arch,
+        isRosetta: () => isRosetta,
+      });
+    };
+
+    await expect(makeService("darwin", "arm64").checkForUpdate()).resolves.toEqual({
+      version: "2.1.0",
+      body: undefined,
+      sizeBytes: 48_200_000,
+    });
+    await expect(makeService("darwin", "x64", false).checkForUpdate()).resolves.toEqual({
+      version: "2.1.0",
+      body: undefined,
+      sizeBytes: 41_000_000,
+    });
+    // Rosetta runs with process.arch === "x64" on Apple Silicon; MacUpdater selects arm64 ZIP.
+    await expect(makeService("darwin", "x64", true).checkForUpdate()).resolves.toEqual({
+      version: "2.1.0",
+      body: undefined,
+      sizeBytes: 48_200_000,
+    });
+    await expect(makeService("win32", "x64").checkForUpdate()).resolves.toEqual({
+      version: "2.1.0",
+      body: undefined,
+      sizeBytes: 61_500_000,
+    });
+  });
+
+  it("cancels an active download via CancellationToken, skips error events, and stays reusable", async () => {
+    const fake = new FakeAutoUpdater();
+    let rejectDownload!: (err: unknown) => void;
+    let passedToken: { cancelled: boolean; cancel(): void } | undefined;
+
+    fake.downloadImpl.mockImplementationOnce((token) => {
+      passedToken = token as { cancelled: boolean; cancel(): void };
+      return new Promise<string[]>((_resolve, reject) => {
+        rejectDownload = reject;
+      });
+    });
+
+    const service = new QuillUpdaterService({
+      isPackaged: () => true,
+      getVersion: () => "2.0.0",
+      loadAutoUpdater: () => fake,
+      markQuitting: vi.fn(),
+      registerNativeQuitForUpdate: vi.fn(),
+    });
+
+    expect(service.cancelDownload()).toBe(false);
+
+    const events: UpdateProgressEvent[] = [];
+    const downloadPromise = service.downloadAndInstall((ev) => events.push(ev));
+
+    expect(service.cancelDownload()).toBe(true);
+    expect(passedToken?.cancelled).toBe(true);
+
+    // Emit late progress after cancel (should be ignored) and resolve rejection as CancellationError
+    fake.emit("download-progress", { total: 1000, transferred: 500, delta: 500, percent: 50, bytesPerSecond: 100 });
+    const cancelErr = Object.assign(new Error("Download cancelled"), { name: "CancellationError" });
+    rejectDownload(cancelErr);
+
+    await expect(downloadPromise).resolves.toEqual({ cancelled: true });
+    expect(events).toEqual([]);
+    expect(service.cancelDownload()).toBe(false);
+
+    // Service recovers cleanly and completes a subsequent download.
+    fake.downloadImpl.mockResolvedValueOnce(["/tmp/Quill.zip"]);
+    await expect(service.downloadAndInstall((ev) => events.push(ev))).resolves.toEqual({
+      cancelled: false,
+    });
+    expect(events).toEqual([{ event: "Finished", data: { chunkLength: 0 } }]);
   });
 });

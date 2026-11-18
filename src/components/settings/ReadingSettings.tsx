@@ -1,174 +1,308 @@
 import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
-import { Check } from "lucide-react";
+import { Type } from "lucide-react";
 import Select from "../ui/Select";
-import { fonts, FONT_SIZE_MIN, FONT_SIZE_MAX, getDefaultReaderTheme, type ReaderTheme } from "../ReaderSettings";
+import Stepper from "../ui/Stepper";
+import Switch from "../ui/Switch";
+import { SegmentedControl } from "../ui/Segment";
+import { SettingsGroup, SettingsOverline, SettingsRow } from "../ui/SettingsRow";
+import {
+  fonts,
+  FONT_SIZE_MIN,
+  FONT_SIZE_MAX,
+  LINE_SPACING_MIN,
+  LINE_SPACING_MAX,
+  LINE_SPACING_STEP,
+  CHAR_SPACING_MIN,
+  CHAR_SPACING_MAX,
+  WORD_SPACING_MIN,
+  WORD_SPACING_MAX,
+  MARGIN_PRESETS,
+  nearestMarginPreset,
+  getDefaultReaderTheme,
+  type MarginPresetId,
+  type ReaderTheme,
+} from "../ReaderSettings";
 import type { SettingsProps } from "./types";
 
 const READER_THEME_OPTIONS: {
   value: ReaderTheme;
   labelKey: string;
-  swatchClass: string;
-  checkClass: string;
+  bg: string;
+  text: string;
 }[] = [
   {
     value: "original",
     labelKey: "readerSettings.themeOriginal",
-    swatchClass: "bg-reader-original-bg border border-reader-original-border",
-    checkClass: "text-accent",
+    bg: "#FDFCFA",
+    text: "#15151A",
   },
   {
     value: "paper",
     labelKey: "readerSettings.themeSepia",
-    swatchClass: "bg-reader-paper-bg",
-    checkClass: "text-accent",
+    bg: "#F4ECD8",
+    text: "#15151A",
   },
   {
     value: "quiet",
     labelKey: "readerSettings.themeGray",
-    swatchClass: "bg-reader-quiet-bg",
-    checkClass: "text-white",
+    bg: "#E4E4E8",
+    text: "#15151A",
   },
   {
     value: "dark",
     labelKey: "readerSettings.themeDark",
-    swatchClass: "bg-reader-dark-bg border border-reader-dark-border",
-    checkClass: "text-white",
+    bg: "#1E1D24",
+    text: "#E8E6F0",
   },
 ];
 
-function NumberInput({ value, onChange, onBlur, suffix, min, max }: {
-  value: number;
-  onChange: (v: number) => void;
-  onBlur: (v: number) => void;
-  suffix?: string;
-  min?: number;
-  max?: number;
-}) {
-  // Free typing needs out-of-range intermediate states ("1" on the way
-  // to "18" when min is 12), so the field holds a transient string and
-  // clamping happens on blur.
-  const [text, setText] = useState(String(value));
-  useEffect(() => { setText(String(value)); }, [value]);
-  return (
-    <div className="flex items-center gap-1 shrink-0 w-[90px] justify-end">
-      <input
-        type="number"
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        onBlur={() => {
-          let v = Number(text);
-          if (text.trim() === "" || Number.isNaN(v)) v = value;
-          if (min !== undefined) v = Math.max(min, v);
-          if (max !== undefined) v = Math.min(max, v);
-          setText(String(v));
-          onChange(v);
-          onBlur(v);
-        }}
-        onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-        className="w-[64px] h-8 bg-white dark:bg-bg-surface rounded-[10px] px-2 text-[13px] font-medium text-text-secondary text-center outline-none border border-border focus:border-accent transition-colors [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-      />
-      <span className="text-[12px] text-text-muted w-[16px] text-left">{suffix}</span>
-    </div>
-  );
+function formatLineSpacing(val: number): string {
+  const rounded = Math.round(val * 100) / 100;
+  return Number.isInteger(rounded) ? rounded.toFixed(1) : String(rounded);
 }
 
-export default function ReadingSettings({ settings, loading, save, showSavedToast }: SettingsProps) {
+export default function ReadingSettings({ settings, loading, save }: SettingsProps) {
   const { t } = useTranslation();
   const [readerTheme, setReaderTheme] = useState<ReaderTheme>(getDefaultReaderTheme());
   const [fontFamily, setFontFamily] = useState("georgia");
   const [fontSize, setFontSize] = useState(26);
   const [lineSpacing, setLineSpacing] = useState(1.8);
+  const [charSpacing, setCharSpacing] = useState(0);
   const [wordSpacing, setWordSpacing] = useState(0);
   const [margins, setMargins] = useState(0);
+  const [autoSave, setAutoSave] = useState(true);
 
   useEffect(() => {
     if (loading) return;
     setReaderTheme((settings.reader_theme as ReaderTheme) || getDefaultReaderTheme());
     if (settings.font_family) setFontFamily(settings.font_family);
-    if (settings.font_size) setFontSize(parseInt(settings.font_size));
-    if (settings.line_spacing) setLineSpacing(parseFloat(settings.line_spacing));
-    if (settings.word_spacing) setWordSpacing(parseInt(settings.word_spacing));
-    if (settings.margins) setMargins(parseInt(settings.margins));
+    if (settings.font_size) {
+      const parsed = Number.parseInt(settings.font_size, 10);
+      if (Number.isFinite(parsed)) {
+        setFontSize(Math.min(FONT_SIZE_MAX, Math.max(FONT_SIZE_MIN, parsed)));
+      }
+    }
+    if (settings.line_spacing) {
+      const parsed = Number.parseFloat(settings.line_spacing);
+      if (Number.isFinite(parsed)) {
+        setLineSpacing(Math.min(LINE_SPACING_MAX, Math.max(LINE_SPACING_MIN, parsed)));
+      }
+    }
+    if (settings.char_spacing) {
+      const parsed = Number.parseInt(settings.char_spacing, 10);
+      if (Number.isFinite(parsed)) {
+        setCharSpacing(Math.min(CHAR_SPACING_MAX, Math.max(CHAR_SPACING_MIN, parsed)));
+      }
+    }
+    if (settings.word_spacing) {
+      const parsed = Number.parseInt(settings.word_spacing, 10);
+      if (Number.isFinite(parsed)) {
+        setWordSpacing(Math.min(WORD_SPACING_MAX, Math.max(WORD_SPACING_MIN, parsed)));
+      }
+    }
+    if (settings.margins !== undefined) {
+      const parsed = Number.parseInt(settings.margins, 10);
+      if (Number.isFinite(parsed)) {
+        setMargins(parsed);
+      }
+    }
+    setAutoSave(settings.auto_save !== "false");
   }, [settings, loading]);
 
+  const marginPreset = nearestMarginPreset(margins);
+
   return (
-    <div>
-      {/* Theme */}
-      <div className="flex items-center justify-between min-h-[88px] py-2">
-        <div>
-          <p className="text-[14px] font-medium text-text-primary tracking-[-0.15px]">{t("settings.layout.theme")}</p>
-          <p className="text-[12px] text-text-muted mt-0.5">{t("settings.layout.themeHint")}</p>
-        </div>
-        <div className="grid grid-cols-4 gap-2 shrink-0">
-          {READER_THEME_OPTIONS.map((theme) => (
-            <button
-              key={theme.value}
-              type="button"
-              onClick={() => {
-                setReaderTheme(theme.value);
-                save("reader_theme", theme.value);
-                showSavedToast();
+    <div className="flex flex-col gap-7">
+      <section className="flex flex-col gap-2.5">
+        <SettingsOverline>{t("settings.reading.defaultLayoutGroup")}</SettingsOverline>
+        <SettingsGroup>
+          {/* Page theme */}
+          <SettingsRow title={t("settings.reading.pageTheme")}>
+            <div className="flex items-center gap-2 shrink-0">
+              {READER_THEME_OPTIONS.map((theme) => {
+                const selected = readerTheme === theme.value;
+                return (
+                  <button
+                    key={theme.value}
+                    type="button"
+                    aria-pressed={selected}
+                    onClick={() => {
+                      setReaderTheme(theme.value);
+                      void save("reader_theme", theme.value);
+                    }}
+                    className="w-14 flex flex-col items-center gap-1 cursor-pointer group focus-visible:outline-none"
+                  >
+                    <span
+                      style={{ backgroundColor: theme.bg, color: theme.text }}
+                      className={`size-[30px] rounded-full flex items-center justify-center font-reading text-[11px] transition-shadow group-focus-visible:ring-[3px] group-focus-visible:ring-focus-ring ${
+                        selected
+                          ? "border-2 border-accent"
+                          : "border border-border-default"
+                      }`}
+                    >
+                      Aa
+                    </span>
+                    <span
+                      className={`text-[11px] leading-none ${
+                        selected
+                          ? "font-semibold text-accent-on-tint"
+                          : "font-normal text-text-tertiary"
+                      }`}
+                    >
+                      {t(theme.labelKey)}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </SettingsRow>
+
+          {/* Font */}
+          <SettingsRow title={t("readerSettings.font")}>
+            <Select
+              className="w-[180px] shrink-0"
+              icon={<Type size={14} />}
+              value={fontFamily}
+              onChange={(v) => {
+                setFontFamily(v);
+                void save("font_family", v);
               }}
-              className="w-[48px] flex flex-col items-center gap-1.5 cursor-pointer"
-            >
-              <span
-                className={`size-8 rounded-full ${theme.swatchClass} flex items-center justify-center ${
-                  readerTheme === theme.value ? "ring-2 ring-accent ring-offset-2 ring-offset-bg-surface" : ""
-                }`}
-              >
-                {readerTheme === theme.value && <Check size={14} className={theme.checkClass} />}
-              </span>
-              <span className="text-[10px] font-medium text-text-muted leading-none">{t(theme.labelKey)}</span>
-            </button>
-          ))}
-        </div>
-      </div>
-      {/* Font Family */}
-      <div className="flex items-center justify-between h-[73px]">
-        <div>
-          <p className="text-[14px] font-medium text-text-primary tracking-[-0.15px]">{t("settings.layout.fontFamily")}</p>
-          <p className="text-[12px] text-text-muted mt-0.5">{t("settings.layout.fontFamilyHint")}</p>
-        </div>
-        <Select
-          className="w-[160px] shrink-0"
-          value={fontFamily}
-          onChange={(v) => { setFontFamily(v); save("font_family", v); showSavedToast(); }}
-          options={fonts.map((f) => ({ value: f.id, label: f.label }))}
-        />
-      </div>
-      {/* Font Size */}
-      <div className="flex items-center justify-between h-[73px]">
-        <div>
-          <p className="text-[14px] font-medium text-text-primary tracking-[-0.15px]">{t("settings.layout.fontSize")}</p>
-          <p className="text-[12px] text-text-muted mt-0.5">{t("settings.layout.fontSizeHint")}</p>
-        </div>
-        <NumberInput value={fontSize} onChange={setFontSize} onBlur={(v) => save("font_size", String(v))} suffix="px" min={FONT_SIZE_MIN} max={FONT_SIZE_MAX} />
-      </div>
-      {/* Line Spacing */}
-      <div className="flex items-center justify-between h-[73px]">
-        <div>
-          <p className="text-[14px] font-medium text-text-primary tracking-[-0.15px]">{t("settings.layout.lineSpacing")}</p>
-          <p className="text-[12px] text-text-muted mt-0.5">{t("settings.layout.lineSpacingHint")}</p>
-        </div>
-        <NumberInput value={lineSpacing} onChange={setLineSpacing} onBlur={(v) => save("line_spacing", String(v))} suffix="x" min={1} max={3} />
-      </div>
-      {/* Word Spacing */}
-      <div className="flex items-center justify-between h-[73px]">
-        <div>
-          <p className="text-[14px] font-medium text-text-primary tracking-[-0.15px]">{t("settings.layout.wordSpacing")}</p>
-          <p className="text-[12px] text-text-muted mt-0.5">{t("settings.layout.wordSpacingHint")}</p>
-        </div>
-        <NumberInput value={wordSpacing} onChange={setWordSpacing} onBlur={(v) => save("word_spacing", String(v))} suffix="px" min={-4} max={16} />
-      </div>
-      {/* Margins */}
-      <div className="flex items-center justify-between h-[73px]">
-        <div>
-          <p className="text-[14px] font-medium text-text-primary tracking-[-0.15px]">{t("settings.layout.margins")}</p>
-          <p className="text-[12px] text-text-muted mt-0.5">{t("settings.layout.marginsHint")}</p>
-        </div>
-        <NumberInput value={margins} onChange={setMargins} onBlur={(v) => save("margins", String(v))} suffix="%" min={0} max={30} />
-      </div>
+              options={fonts.map((f) => ({ value: f.id, label: f.label }))}
+            />
+          </SettingsRow>
+
+          {/* Font size */}
+          <SettingsRow
+            title={t("settings.layout.fontSize")}
+            hint={t("settings.reading.fontSizeRange", { min: FONT_SIZE_MIN, max: FONT_SIZE_MAX })}
+          >
+            <Stepper
+              valueLabel={`${fontSize} px`}
+              decrementLabel={t("settings.reading.decreaseFontSize")}
+              incrementLabel={t("settings.reading.increaseFontSize")}
+              disableDecrement={fontSize <= FONT_SIZE_MIN}
+              disableIncrement={fontSize >= FONT_SIZE_MAX}
+              onDecrement={() => {
+                const next = Math.max(FONT_SIZE_MIN, fontSize - 1);
+                setFontSize(next);
+                void save("font_size", String(next));
+              }}
+              onIncrement={() => {
+                const next = Math.min(FONT_SIZE_MAX, fontSize + 1);
+                setFontSize(next);
+                void save("font_size", String(next));
+              }}
+            />
+          </SettingsRow>
+
+          {/* Line spacing */}
+          <SettingsRow title={t("settings.layout.lineSpacing")}>
+            <Stepper
+              valueLabel={formatLineSpacing(lineSpacing)}
+              decrementLabel={t("settings.reading.decreaseLineSpacing")}
+              incrementLabel={t("settings.reading.increaseLineSpacing")}
+              disableDecrement={lineSpacing <= LINE_SPACING_MIN}
+              disableIncrement={lineSpacing >= LINE_SPACING_MAX}
+              onDecrement={() => {
+                const next = Math.max(
+                  LINE_SPACING_MIN,
+                  Math.round((lineSpacing - LINE_SPACING_STEP) * 100) / 100,
+                );
+                setLineSpacing(next);
+                void save("line_spacing", String(next));
+              }}
+              onIncrement={() => {
+                const next = Math.min(
+                  LINE_SPACING_MAX,
+                  Math.round((lineSpacing + LINE_SPACING_STEP) * 100) / 100,
+                );
+                setLineSpacing(next);
+                void save("line_spacing", String(next));
+              }}
+            />
+          </SettingsRow>
+
+          {/* Character spacing */}
+          <SettingsRow title={t("settings.layout.charSpacing")}>
+            <Stepper
+              valueLabel={charSpacing === 0 ? "0" : `${charSpacing}%`}
+              decrementLabel={t("settings.reading.decreaseCharSpacing")}
+              incrementLabel={t("settings.reading.increaseCharSpacing")}
+              disableDecrement={charSpacing <= CHAR_SPACING_MIN}
+              disableIncrement={charSpacing >= CHAR_SPACING_MAX}
+              onDecrement={() => {
+                const next = Math.max(CHAR_SPACING_MIN, charSpacing - 1);
+                setCharSpacing(next);
+                void save("char_spacing", String(next));
+              }}
+              onIncrement={() => {
+                const next = Math.min(CHAR_SPACING_MAX, charSpacing + 1);
+                setCharSpacing(next);
+                void save("char_spacing", String(next));
+              }}
+            />
+          </SettingsRow>
+
+          {/* Word spacing */}
+          <SettingsRow title={t("settings.layout.wordSpacing")}>
+            <Stepper
+              valueLabel={wordSpacing === 0 ? "0" : `${wordSpacing}%`}
+              decrementLabel={t("settings.reading.decreaseWordSpacing")}
+              incrementLabel={t("settings.reading.increaseWordSpacing")}
+              disableDecrement={wordSpacing <= WORD_SPACING_MIN}
+              disableIncrement={wordSpacing >= WORD_SPACING_MAX}
+              onDecrement={() => {
+                const next = Math.max(WORD_SPACING_MIN, wordSpacing - 1);
+                setWordSpacing(next);
+                void save("word_spacing", String(next));
+              }}
+              onIncrement={() => {
+                const next = Math.min(WORD_SPACING_MAX, wordSpacing + 1);
+                setWordSpacing(next);
+                void save("word_spacing", String(next));
+              }}
+            />
+          </SettingsRow>
+
+          {/* Margins */}
+          <SettingsRow title={t("settings.layout.margins")}>
+            <SegmentedControl<MarginPresetId>
+              value={marginPreset}
+              onChange={(presetId) => {
+                const preset = MARGIN_PRESETS.find((item) => item.id === presetId);
+                if (!preset) return;
+                setMargins(preset.value);
+                void save("margins", String(preset.value));
+              }}
+              options={[
+                { value: "narrow", label: t("settings.reading.marginsNarrow") },
+                { value: "normal", label: t("settings.reading.marginsNormal") },
+                { value: "wide", label: t("settings.reading.marginsWide") },
+              ]}
+            />
+          </SettingsRow>
+        </SettingsGroup>
+      </section>
+
+      <section className="flex flex-col gap-2.5">
+        <SettingsOverline>{t("settings.reading.progressGroup")}</SettingsOverline>
+        <SettingsGroup>
+          <SettingsRow
+            title={t("settings.reading.autoSave")}
+            hint={t("settings.reading.autoSaveHint")}
+          >
+            <Switch
+              aria-label={t("settings.reading.autoSave")}
+              checked={autoSave}
+              onChange={(v) => {
+                setAutoSave(v);
+                void save("auto_save", String(v));
+              }}
+            />
+          </SettingsRow>
+        </SettingsGroup>
+      </section>
     </div>
   );
 }

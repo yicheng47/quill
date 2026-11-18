@@ -62,11 +62,17 @@ vi.mock("../contexts/UpdateContext", () => ({
     status: "idle",
     update: null,
     progress: 0,
+    downloadedBytes: 0,
+    totalBytes: 0,
+    lastCheckedAt: null,
+    skippedVersion: null,
     error: null,
     manualCheck: false,
     upToDateSeq: 0,
     checkForUpdate: vi.fn(),
     downloadAndInstall: vi.fn(),
+    cancelDownload: vi.fn(),
+    skipVersion: vi.fn(),
     restart: vi.fn(),
   }),
 }));
@@ -84,8 +90,33 @@ vi.mock("../components/WordsView", () => ({
 vi.mock("../components/ChatsView", () => ({
   default: () => <div data-testid="chats-view" />,
 }));
-vi.mock("../components/SettingsModal", () => ({
-  default: () => null,
+vi.mock("../components/settings/SettingsView", () => ({
+  default: ({
+    section,
+    onSelectSection,
+    onClose,
+    onBlockingChange,
+  }: {
+    section: string;
+    onSelectSection: (s: string) => void;
+    onClose: () => void;
+    onBlockingChange?: (b: boolean) => void;
+  }) => (
+    <div data-testid="settings-view" data-section={section}>
+      <button type="button" onClick={() => onSelectSection("updates")}>
+        mock-tab-updates
+      </button>
+      <button type="button" onClick={() => onBlockingChange?.(true)}>
+        mock-block
+      </button>
+      <button type="button" onClick={() => onBlockingChange?.(false)}>
+        mock-unblock
+      </button>
+      <button type="button" onClick={onClose}>
+        mock-close-settings
+      </button>
+    </div>
+  ),
 }));
 
 import Home from "./Home";
@@ -595,5 +626,138 @@ describe("Home integration flows (R1, R2, R3, R6)", () => {
     );
     expect(nowReadingCard?.textContent).toContain("Newly Read Book");
     expect(nowReadingCard?.textContent).toContain("80%");
+  });
+
+  it("toggles in-window Settings via gear and Cmd+,, exits on route click, and routes open-settings sections", async () => {
+    mocks.invoke.mockImplementation(async (cmd) => {
+      if (cmd === "list_books") return { books: [], next_cursor: null, total: 0 };
+      if (cmd === "list_collections") return [];
+      if (cmd === "get_book_counts") return { all: 0, reading: 0, finished: 0, unread: 0 };
+      if (cmd === "get_collection_book_counts") return {};
+      if (cmd === "get_book_collections_map") return {};
+      return [];
+    });
+
+    await act(async () => {
+      root.render(<Home />);
+    });
+    await flushMicrotasks();
+
+    expect(container.querySelector('[data-testid="settings-view"]')).toBeNull();
+    expect(container.querySelector("h1")?.textContent).toBe("Your quiet reading room");
+
+    // Gear toggles Settings open and closed from Home
+    const gearBtn = container.querySelector<HTMLButtonElement>('button[aria-label="Settings"]');
+    await act(async () => {
+      gearBtn?.click();
+    });
+    expect(container.querySelector('[data-testid="settings-view"]')?.getAttribute("data-section")).toBe("general");
+    await act(async () => {
+      gearBtn?.click();
+    });
+    expect(container.querySelector('[data-testid="settings-view"]')).toBeNull();
+    expect(container.querySelector("h1")?.textContent).toBe("Your quiet reading room");
+
+    // Cmd+, toggles Settings open from Home, clicking Home route exits back to Home
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: ",", metaKey: true, bubbles: true }));
+    });
+    expect(container.querySelector('[data-testid="settings-view"]')).not.toBeNull();
+    const homeBtn = Array.from(container.querySelectorAll<HTMLButtonElement>("nav button")).find((b) =>
+      b.textContent === "Home",
+    );
+    await act(async () => {
+      homeBtn?.click();
+    });
+    await flushMicrotasks();
+    expect(container.querySelector('[data-testid="settings-view"]')).toBeNull();
+    expect(container.querySelector("h1")?.textContent).toBe("Your quiet reading room");
+
+    // Enter Library, open Settings via Cmd+,, and exit via Library route click
+    const libraryBtn = Array.from(container.querySelectorAll<HTMLButtonElement>("nav button")).find((b) =>
+      b.textContent?.includes("Library"),
+    );
+    await act(async () => {
+      libraryBtn?.click();
+    });
+    await flushMicrotasks();
+    expect(container.querySelector("h1")?.textContent).toBe("Library");
+
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: ",", metaKey: true, bubbles: true }));
+    });
+    expect(container.querySelector('[data-testid="settings-view"]')).not.toBeNull();
+
+    // Clicking TopBar route exits Settings even back to Library
+    await act(async () => {
+      libraryBtn?.click();
+    });
+    expect(container.querySelector('[data-testid="settings-view"]')).toBeNull();
+    expect(container.querySelector("h1")?.textContent).toBe("Library");
+
+    // Cmd+, again opens, then Cmd+, toggles closed
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: ",", metaKey: true, bubbles: true }));
+    });
+    expect(container.querySelector('[data-testid="settings-view"]')).not.toBeNull();
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: ",", metaKey: true, bubbles: true }));
+    });
+    expect(container.querySelector('[data-testid="settings-view"]')).toBeNull();
+
+    // Cross-window open-settings routes updates / lookup -> tools
+    await act(async () => {
+      for (const cb of mocks.genericListeners.get("open-settings") ?? []) {
+        cb({ payload: "updates" });
+      }
+    });
+    expect(container.querySelector('[data-testid="settings-view"]')?.getAttribute("data-section")).toBe("updates");
+
+    await act(async () => {
+      window.dispatchEvent(new CustomEvent("open-settings", { detail: { section: "lookup" } }));
+    });
+    expect(container.querySelector('[data-testid="settings-view"]')?.getAttribute("data-section")).toBe("tools");
+
+    // Blocking sync marks the background shell inert and blocks TopBar actions + shortcuts
+    const blockBtn = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+      (b) => b.textContent === "mock-block",
+    );
+    await act(async () => {
+      blockBtn?.click();
+    });
+    expect(container.firstElementChild?.hasAttribute("inert")).toBe(true);
+
+    const searchBtn = container.querySelector<HTMLButtonElement>('button[aria-label="Search Quill"]');
+    const importBtn = container.querySelector<HTMLButtonElement>('button[aria-label="Import book"]');
+    await act(async () => {
+      searchBtn?.click();
+      importBtn?.click();
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: ",", metaKey: true, bubbles: true }));
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true, bubbles: true }));
+      gearBtn?.click();
+    });
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
+    expect(mocks.openFileDialog).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-testid="settings-view"]')).not.toBeNull();
+
+    const wordsBtn = Array.from(container.querySelectorAll<HTMLButtonElement>("nav button")).find((b) =>
+      b.textContent?.includes("Words"),
+    );
+    await act(async () => {
+      wordsBtn?.click();
+    });
+    expect(container.querySelector('[data-testid="settings-view"]')).not.toBeNull();
+
+    const unblockBtn = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+      (b) => b.textContent === "mock-unblock",
+    );
+    await act(async () => {
+      unblockBtn?.click();
+    });
+    expect(container.firstElementChild?.hasAttribute("inert")).toBe(false);
+    await act(async () => {
+      wordsBtn?.click();
+    });
+    expect(container.querySelector('[data-testid="settings-view"]')).toBeNull();
   });
 });

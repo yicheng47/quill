@@ -1,6 +1,14 @@
 import path from "node:path";
-import { BrowserWindow, nativeTheme, screen, shell } from "electron";
+import { app, BrowserWindow, nativeTheme, screen, shell, type BaseWindow } from "electron";
 import { isAllowedNavigation, isSafeHttpUrl, resolveWindowUrl } from "./urlSecurity";
+import {
+  loadWindowState,
+  MAIN_MIN_HEIGHT,
+  MAIN_MIN_WIDTH,
+  resolveMainWindowState,
+  saveWindowState,
+  type SavedWindowState,
+} from "./windowState";
 
 export type ReaderPageTheme = "original" | "paper" | "quiet" | "dark";
 
@@ -25,6 +33,11 @@ export const READER_SHELL_BG: Record<ReaderPageTheme, string> = {
 };
 
 export const READER_CASCADE_OFFSET = 32;
+export const WINDOW_STATE_SAVE_DELAY_MS = 250;
+
+function boundsKey(rect: WindowRect): string {
+  return `${rect.x},${rect.y},${rect.width},${rect.height}`;
+}
 
 export interface WindowRect {
   x: number;
@@ -50,6 +63,8 @@ const readyLabels = new Set<string>();
 const pendingReadyCallbacks = new Map<string, Array<() => void>>();
 let defaultWindowIconPath: string | undefined;
 let quitting = false;
+let mainStateFlush: (() => void) | null = null;
+const zoomPrepareHooks = new WeakMap<BaseWindow, () => void>();
 
 function recordReaderFocus(label: string): void {
   if (label === "main") return;
@@ -152,6 +167,17 @@ export function setDefaultWindowIcon(iconPath: string | undefined): void {
 
 export function markQuitting(): void {
   quitting = true;
+  mainStateFlush?.();
+}
+
+export function toggleWindowZoom(win: BaseWindow | undefined): void {
+  if (!win || win.isDestroyed() || win.isFullScreen()) return;
+  if (win.isMaximized()) {
+    win.unmaximize();
+    return;
+  }
+  zoomPrepareHooks.get(win)?.();
+  win.maximize();
 }
 
 export function isQuitting(): boolean {
@@ -410,16 +436,303 @@ export function createMainWindow(initialDark: boolean): BrowserWindow {
     focusManagedWindow("main");
     return existing;
   }
-  return createWindow({
+
+  const userDataDir = app.getPath("userData");
+  const workAreas = screen.getAllDisplays().map((d) => d.workArea);
+  const resolved = resolveMainWindowState(loadWindowState(userDataDir), workAreas, {
+    width: MAIN_MIN_WIDTH,
+    height: MAIN_MIN_HEIGHT,
+  });
+
+  const win = createWindow({
     label: "main",
     routePath: "/",
     title: "Quill",
-    width: 1440,
-    height: 960,
-    minWidth: 700,
-    minHeight: 500,
+    width: resolved.width,
+    height: resolved.height,
+    ...(resolved.x !== undefined && resolved.y !== undefined
+      ? { x: resolved.x, y: resolved.y }
+      : {}),
+    minWidth: MAIN_MIN_WIDTH,
+    minHeight: MAIN_MIN_HEIGHT,
     initialDark,
   });
+
+  let restoring = true;
+  let lastNormalBounds: WindowRect = win.getBounds();
+  let pendingNormalBounds: WindowRect | null = null;
+  let preZoomNormalCommitted = false;
+  const knownNormalHistory = new Set<string>([boundsKey(lastNormalBounds)]);
+  if (typeof win.getNormalBounds === "function") {
+    const initialNative = win.getNormalBounds();
+    if (initialNative.width > 0 && initialNative.height > 0) {
+      knownNormalHistory.add(boundsKey(initialNative));
+    }
+  }
+  let lastMaximized = resolved.isMaximized;
+  let lastFullScreen = resolved.isFullScreen;
+  let awaitingInitialMaximize = false;
+  let awaitingInitialFullScreen = false;
+  let saveTimer: ReturnType<typeof setTimeout> | null = null;
+  let initialRestoreTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const commitNormalBounds = (bounds: WindowRect) => {
+    lastNormalBounds = bounds;
+    knownNormalHistory.add(boundsKey(bounds));
+  };
+
+  const readUpdatedNativeNormalBounds = (excludeBounds?: WindowRect): WindowRect | null => {
+    if (typeof win.getNormalBounds !== "function") return null;
+    const candidate = win.getNormalBounds();
+    const key = boundsKey(candidate);
+    if (
+      candidate.width <= 0 ||
+      candidate.height <= 0 ||
+      (excludeBounds && key === boundsKey(excludeBounds)) ||
+      knownNormalHistory.has(key)
+    ) {
+      return null;
+    }
+    return candidate;
+  };
+
+  const recordNonNormalNativeBounds = () => {
+    if (typeof win.getNormalBounds !== "function") return;
+    const candidate = win.getNormalBounds();
+    if (candidate.width > 0 && candidate.height > 0) {
+      knownNormalHistory.add(boundsKey(candidate));
+    }
+  };
+
+  const promotePendingNormalBounds = (excludeBounds?: WindowRect) => {
+    if (preZoomNormalCommitted) {
+      pendingNormalBounds = null;
+      preZoomNormalCommitted = false;
+      return;
+    }
+    if (
+      !lastFullScreen &&
+      !lastMaximized &&
+      !awaitingInitialMaximize &&
+      !awaitingInitialFullScreen
+    ) {
+      const candidate =
+        pendingNormalBounds && (!excludeBounds || boundsKey(pendingNormalBounds) !== boundsKey(excludeBounds))
+          ? pendingNormalBounds
+          : readUpdatedNativeNormalBounds(excludeBounds);
+      if (candidate) {
+        commitNormalBounds(candidate);
+      }
+    }
+    pendingNormalBounds = null;
+  };
+
+  const captureState = (): SavedWindowState => {
+    if (!win.isMinimized()) {
+      // macOS NativeWindowMac::IsMaximized returns false while minimized; keep prior non-minimized mode/bounds.
+      const wasFullScreen = lastFullScreen;
+      const wasMaximized = lastMaximized;
+      const currentBounds = win.getBounds();
+      const fullScreen = win.isFullScreen();
+      const maximized = win.isMaximized();
+      if (fullScreen) {
+        awaitingInitialFullScreen = false;
+      }
+      if (maximized) {
+        awaitingInitialMaximize = false;
+      }
+      const nextFullScreen = awaitingInitialFullScreen ? lastFullScreen : fullScreen;
+      const nextMaximized = awaitingInitialMaximize ? lastMaximized : maximized;
+
+      if ((!wasFullScreen && nextFullScreen) || (!wasMaximized && nextMaximized)) {
+        promotePendingNormalBounds(currentBounds);
+        recordNonNormalNativeBounds();
+      }
+
+      lastFullScreen = nextFullScreen;
+      lastMaximized = nextMaximized;
+
+      if (
+        lastFullScreen ||
+        lastMaximized ||
+        awaitingInitialMaximize ||
+        awaitingInitialFullScreen
+      ) {
+        pendingNormalBounds = null;
+      } else {
+        // Commit normal bounds only once move/resize settles or during an explicit flush;
+        // macOS Window -> Zoom emits resize events at zoomed dimensions before isMaximized() flips true.
+        commitNormalBounds(pendingNormalBounds ?? currentBounds);
+        pendingNormalBounds = null;
+        preZoomNormalCommitted = false;
+      }
+    }
+    return {
+      x: lastNormalBounds.x,
+      y: lastNormalBounds.y,
+      width: lastNormalBounds.width,
+      height: lastNormalBounds.height,
+      isMaximized: lastMaximized,
+      isFullScreen: lastFullScreen,
+    };
+  };
+
+  const flushState = () => {
+    if (saveTimer) {
+      clearTimeout(saveTimer);
+      saveTimer = null;
+    }
+    if (win.isDestroyed()) return;
+    saveWindowState(userDataDir, captureState());
+  };
+
+  const scheduleSave = () => {
+    if (restoring || win.isDestroyed()) return;
+    if (saveTimer) {
+      clearTimeout(saveTimer);
+    }
+    saveTimer = setTimeout(() => {
+      saveTimer = null;
+      if (!win.isDestroyed()) {
+        saveWindowState(userDataDir, captureState());
+      }
+    }, WINDOW_STATE_SAVE_DELAY_MS);
+  };
+
+  const handleGeometryChange = () => {
+    if (restoring || win.isDestroyed() || win.isMinimized()) return;
+    if (
+      !win.isMaximized() &&
+      !win.isFullScreen() &&
+      !awaitingInitialMaximize &&
+      !awaitingInitialFullScreen
+    ) {
+      pendingNormalBounds = win.getBounds();
+    }
+    scheduleSave();
+  };
+
+  mainStateFlush = flushState;
+  zoomPrepareHooks.set(win, () => {
+    if (
+      !win.isMinimized() &&
+      !win.isMaximized() &&
+      !win.isFullScreen() &&
+      !awaitingInitialMaximize &&
+      !awaitingInitialFullScreen
+    ) {
+      commitNormalBounds(pendingNormalBounds ?? win.getBounds());
+      pendingNormalBounds = null;
+      preZoomNormalCommitted = true;
+    }
+  });
+
+  win.on("move", handleGeometryChange);
+  win.on("resize", handleGeometryChange);
+  win.on("resized", () => {
+    if (
+      restoring ||
+      win.isDestroyed() ||
+      win.isMinimized() ||
+      win.isMaximized() ||
+      win.isFullScreen() ||
+      awaitingInitialMaximize ||
+      awaitingInitialFullScreen
+    ) {
+      return;
+    }
+    commitNormalBounds(pendingNormalBounds ?? win.getBounds());
+    pendingNormalBounds = null;
+    scheduleSave();
+  });
+  win.on("maximize", () => {
+    if (restoring || win.isDestroyed()) return;
+    awaitingInitialMaximize = false;
+    promotePendingNormalBounds(win.getBounds());
+    lastMaximized = true;
+    recordNonNormalNativeBounds();
+    scheduleSave();
+  });
+  win.on("unmaximize", () => {
+    if (restoring || win.isDestroyed()) return;
+    awaitingInitialMaximize = false;
+    preZoomNormalCommitted = false;
+    if (!win.isMinimized()) {
+      lastMaximized = false;
+      pendingNormalBounds = win.isFullScreen() ? null : win.getBounds();
+    }
+    scheduleSave();
+  });
+  win.on("enter-full-screen", () => {
+    if (restoring || win.isDestroyed()) return;
+    awaitingInitialFullScreen = false;
+    promotePendingNormalBounds(win.getBounds());
+    lastFullScreen = true;
+    lastMaximized = false;
+    recordNonNormalNativeBounds();
+    scheduleSave();
+  });
+  win.on("leave-full-screen", () => {
+    if (restoring || win.isDestroyed()) return;
+    awaitingInitialFullScreen = false;
+    preZoomNormalCommitted = false;
+    if (!win.isMinimized()) {
+      lastFullScreen = false;
+      pendingNormalBounds = win.isMaximized() ? null : win.getBounds();
+    }
+    scheduleSave();
+  });
+  win.on("minimize", () => {
+    if (restoring || win.isDestroyed()) return;
+    if (!win.isMaximized()) {
+      promotePendingNormalBounds();
+    } else {
+      pendingNormalBounds = null;
+    }
+    recordNonNormalNativeBounds();
+    scheduleSave();
+  });
+  win.on("hide", flushState);
+  win.on("close", flushState);
+  win.on("closed", () => {
+    if (saveTimer) {
+      clearTimeout(saveTimer);
+      saveTimer = null;
+    }
+    if (initialRestoreTimer) {
+      clearTimeout(initialRestoreTimer);
+      initialRestoreTimer = null;
+    }
+    if (mainStateFlush === flushState) {
+      mainStateFlush = null;
+    }
+    zoomPrepareHooks.delete(win);
+  });
+
+  if (resolved.isMaximized) {
+    awaitingInitialMaximize = true;
+    win.maximize();
+    if (win.isMaximized()) {
+      awaitingInitialMaximize = false;
+    }
+  }
+  if (resolved.isFullScreen) {
+    awaitingInitialFullScreen = true;
+    win.setFullScreen(true);
+    if (win.isFullScreen()) {
+      awaitingInitialFullScreen = false;
+    }
+  }
+  if (awaitingInitialMaximize || awaitingInitialFullScreen) {
+    initialRestoreTimer = setTimeout(() => {
+      initialRestoreTimer = null;
+      awaitingInitialMaximize = false;
+      awaitingInitialFullScreen = false;
+    }, 2000);
+  }
+  restoring = false;
+
+  return win;
 }
 
 export function createReaderWindow(

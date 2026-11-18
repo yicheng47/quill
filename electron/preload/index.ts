@@ -134,9 +134,13 @@ const bridge = {
     return ipcRenderer.invoke("quill:get-app-version");
   },
 
-  async checkForUpdate(): Promise<{ version: string; body?: string } | null> {
+  getPlatformInfo(): Promise<{ platform: string; arch: string }> {
+    return ipcRenderer.invoke("quill:get-platform-info");
+  },
+
+  async checkForUpdate(): Promise<{ version: string; body?: string; sizeBytes?: number } | null> {
     const res = (await ipcRenderer.invoke("quill:check-for-update")) as
-      | { ok: true; data: { version: string; body?: string } | null }
+      | { ok: true; data: { version: string; body?: string; sizeBytes?: number } | null }
       | { ok: false; error: string };
     if (!res.ok) {
       throw new Error(res.error);
@@ -144,13 +148,18 @@ const bridge = {
     return res.data;
   },
 
-  async downloadUpdate(): Promise<void> {
+  async downloadUpdate(): Promise<{ cancelled: boolean }> {
     const res = (await ipcRenderer.invoke("quill:download-update")) as
-      | { ok: true; data: null }
+      | { ok: true; data: { cancelled: boolean } | null }
       | { ok: false; error: string };
     if (!res.ok) {
       throw new Error(res.error);
     }
+    return res.data ?? { cancelled: false };
+  },
+
+  cancelUpdateDownload(): Promise<boolean> {
+    return ipcRenderer.invoke("quill:cancel-update-download");
   },
 
   onUpdateProgress(

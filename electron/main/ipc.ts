@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import { findRepoRoot, type QuillCoreInstance } from "./core";
-import type { AvailableUpdateInfo, QuillUpdaterService } from "./updater";
+import type { AvailableUpdateInfo, DownloadResult, QuillUpdaterService } from "./updater";
 import { isSafeHttpUrl } from "./urlSecurity";
 import {
   appReadyForWindow,
@@ -92,7 +92,10 @@ export async function readStoredReaderTheme(
 export function registerIpcHandlers(
   core: QuillCoreInstance,
   onFirstReady?: () => void,
-  updater?: Pick<QuillUpdaterService, "checkForUpdate" | "downloadAndInstall" | "relaunchAndInstall">,
+  updater?: Pick<
+    QuillUpdaterService,
+    "checkForUpdate" | "downloadAndInstall" | "cancelDownload" | "relaunchAndInstall"
+  >,
 ): void {
   let firstReadyFired = false;
 
@@ -216,6 +219,10 @@ export function registerIpcHandlers(
     }
   });
 
+  ipcMain.handle("quill:get-platform-info", () => {
+    return { platform: process.platform, arch: process.arch };
+  });
+
   ipcMain.handle(
     "quill:check-for-update",
     async (): Promise<{ ok: true; data: AvailableUpdateInfo | null } | { ok: false; error: string }> => {
@@ -234,23 +241,29 @@ export function registerIpcHandlers(
 
   ipcMain.handle(
     "quill:download-update",
-    async (event): Promise<{ ok: true; data: null } | { ok: false; error: string }> => {
+    async (
+      event,
+    ): Promise<{ ok: true; data: DownloadResult } | { ok: false; error: string }> => {
       if (!updater) {
         return { ok: false, error: "Updater is not configured" };
       }
       try {
-        await updater.downloadAndInstall((progressEvent) => {
+        const result = await updater.downloadAndInstall((progressEvent) => {
           if (!event.sender.isDestroyed()) {
             event.sender.send("quill:update-progress", progressEvent);
           }
         });
-        return { ok: true, data: null };
+        return { ok: true, data: result };
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         return { ok: false, error: msg };
       }
     },
   );
+
+  ipcMain.handle("quill:cancel-update-download", (): boolean => {
+    return updater?.cancelDownload() ?? false;
+  });
 
   ipcMain.handle(
     "quill:relaunch",

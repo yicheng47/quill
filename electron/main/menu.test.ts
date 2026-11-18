@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
     menuState.hasMainWindow = true;
   }),
   focusManagedWindow: vi.fn(() => menuState.hasMainWindow),
+  toggleWindowZoom: vi.fn(),
   whenWindowReady: vi.fn((_label: string, cb: () => void) => {
     if (menuState.readyWindow) {
       cb();
@@ -39,6 +40,7 @@ vi.mock("./windows", () => ({
   broadcastEvent: mocks.broadcastEvent,
   createMainWindow: mocks.createMainWindow,
   focusManagedWindow: mocks.focusManagedWindow,
+  toggleWindowZoom: mocks.toggleWindowZoom,
   whenWindowReady: mocks.whenWindowReady,
 }));
 
@@ -54,6 +56,15 @@ function findCheckForUpdatesItem(): MenuItemConstructorOptions {
   throw new Error("Check for Updates menu item not found");
 }
 
+function findWindowZoomItem(): MenuItemConstructorOptions | undefined {
+  for (const top of menuState.builtTemplate) {
+    if (top.role === "windowMenu" && Array.isArray(top.submenu)) {
+      return top.submenu.find((item) => item.label === "Zoom");
+    }
+  }
+  return undefined;
+}
+
 describe("installAppMenu Check for Updates", () => {
   const core = { dispatch: vi.fn() } as unknown as QuillCoreInstance;
 
@@ -65,6 +76,7 @@ describe("installAppMenu Check for Updates", () => {
     mocks.broadcastEvent.mockReset();
     mocks.createMainWindow.mockClear();
     mocks.focusManagedWindow.mockClear();
+    mocks.toggleWindowZoom.mockClear();
     mocks.whenWindowReady.mockClear();
   });
 
@@ -93,5 +105,20 @@ describe("installAppMenu Check for Updates", () => {
       cb();
     }
     expect(mocks.broadcastEvent).toHaveBeenCalledWith("menu:check-for-updates", null);
+  });
+
+  it("routes macOS Window -> Zoom through toggleWindowZoom while preserving windowMenu role", () => {
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, "platform", { value: "darwin", configurable: true });
+    try {
+      installAppMenu(core, async () => false);
+      const zoomItem = findWindowZoomItem();
+      expect(zoomItem).toBeDefined();
+      const focusedWindow = { id: 1 } as never;
+      zoomItem?.click?.({} as never, focusedWindow, {} as never);
+      expect(mocks.toggleWindowZoom).toHaveBeenCalledWith(focusedWindow);
+    } finally {
+      Object.defineProperty(process, "platform", { value: originalPlatform, configurable: true });
+    }
   });
 });

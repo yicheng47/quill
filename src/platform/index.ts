@@ -7,6 +7,7 @@ export type {
   OpenDialogFilter,
   OpenFileDialogOptions,
   Platform,
+  PlatformInfo,
   ReaderWindowParams,
   UnlistenFn,
   UpdateHandle,
@@ -48,5 +49,8 @@ export const openFileDialog: Platform["openFileDialog"] = (options) =>
   platform.openFileDialog(options);
 export const openUrl: Platform["openUrl"] = (url) => platform.openUrl(url);
 export const getAppVersion: Platform["getAppVersion"] = () => platform.getAppVersion();
+export const getPlatformInfo: Platform["getPlatformInfo"] = () => platform.getPlatformInfo();
 export const checkForUpdate: Platform["checkForUpdate"] = () => platform.checkForUpdate();
+export const cancelUpdateDownload: Platform["cancelUpdateDownload"] = () =>
+  platform.cancelUpdateDownload();
 export const relaunch: Platform["relaunch"] = () => platform.relaunch();
