@@ -212,6 +212,20 @@ struct CollectionIdArgs {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct OptionalCollectionIdArgs {
+    #[serde(default)]
+    collection_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AddBooksToCollectionArgs {
+    collection_id: String,
+    book_ids: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct AiChatArgs {
     messages: Vec<ChatMessage>,
     #[serde(default)]
@@ -432,8 +446,9 @@ command_table! {
             let a: IdArgs = parse_args(args)?;
             run_blocking(core, move |c| commands::books::get_book(c, a.id))
         },
-        "get_book_counts" => |core, _args| {
-            run_blocking(core, commands::books::get_book_counts)
+        "get_book_counts" => |core, args| {
+            let a: OptionalCollectionIdArgs = parse_args(args)?;
+            run_blocking(core, move |c| commands::books::get_book_counts(c, a.collection_id))
         },
         "delete_book" => |core, args| {
             let a: IdArgs = parse_args(args)?;
@@ -621,6 +636,18 @@ command_table! {
             let a: CollectionIdArgs = parse_args(args)?;
             run_blocking(core, move |c| {
                 commands::collections::list_books_in_collection(c, a.collection_id)
+            })
+        },
+        "list_book_collections" => |core, args| {
+            let a: BookIdArgs = parse_args(args)?;
+            run_blocking(core, move |c| {
+                commands::collections::list_book_collections(c, a.book_id)
+            })
+        },
+        "add_books_to_collection" => |core, args| {
+            let a: AddBooksToCollectionArgs = parse_args(args)?;
+            run_blocking(core, move |c| {
+                commands::collections::add_books_to_collection(c, a.collection_id, a.book_ids)
             })
         },
 
@@ -1045,6 +1072,44 @@ mod tests {
         .await
         .expect("reorder_collections");
 
+        {
+            let conn = core.db.conn.lock().unwrap();
+            let now = chrono::Utc::now().timestamp_millis();
+            for bid in ["b1", "b2"] {
+                conn.execute(
+                    "INSERT INTO books (id, title, author, file_path, format, status, progress, created_at, updated_at)
+                     VALUES (?1, ?2, 'Author', 'books/test.epub', 'epub', 'reading', 10, ?3, ?3)",
+                    rusqlite::params![bid, format!("Book {bid}"), now],
+                ).unwrap();
+            }
+        }
+
+        dispatch(
+            Arc::clone(&core),
+            "add_books_to_collection",
+            &json!({"collectionId": coll_id, "bookIds": ["b1", "b2"]}).to_string(),
+        )
+        .await
+        .expect("add_books_to_collection");
+
+        let book_colls = dispatch(
+            Arc::clone(&core),
+            "list_book_collections",
+            &json!({"bookId": "b1"}).to_string(),
+        )
+        .await
+        .expect("list_book_collections");
+        assert_eq!(book_colls, json!([coll_id]));
+
+        let coll_counts = dispatch(
+            Arc::clone(&core),
+            "get_book_counts",
+            &json!({"collectionId": coll_id}).to_string(),
+        )
+        .await
+        .expect("get_book_counts scoped");
+        assert_eq!(coll_counts, json!({"all": 2, "reading": 2, "finished": 0, "unread": 0}));
+
         let snippet = dispatch(Arc::clone(&core), "mcp_config_snippet", "")
             .await
             .expect("mcp_config_snippet");
@@ -1158,7 +1223,7 @@ mod tests {
             CORE_COMMAND_NAMES.len(),
             "duplicate entries in CORE_COMMAND_NAMES"
         );
-        assert_eq!(CORE_COMMAND_NAMES.len(), 76);
+        assert_eq!(CORE_COMMAND_NAMES.len(), 78);
 
         let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()

@@ -63,6 +63,7 @@ export interface Platform {
   appReady(): Promise<void>;
   focusWindow(label: string): Promise<boolean>;
   openReaderWindow(params: ReaderWindowParams): Promise<void>;
+  getOpenReaderCount(): Promise<number>;
   onWindowResized(handler: (size: WindowSize) => void): Promise<UnlistenFn>;
 
   setZoom(zoom: number): Promise<void>;

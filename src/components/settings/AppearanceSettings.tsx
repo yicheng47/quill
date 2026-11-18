@@ -30,6 +30,7 @@ export default function AppearanceSettings({ settings, loading, save, showSavedT
 
   const applyTheme = (value: string) => {
     const root = document.documentElement;
+    if (root.classList.contains("dawn")) return;
     if (value === "dark") root.classList.add("dark");
     else if (value === "light") root.classList.remove("dark");
     else {

@@ -14,6 +14,7 @@ export interface ReaderWindowParams {
 
 const LIGHT_BG = "#f4f4f5";
 const DARK_BG = "#151518";
+const MAIN_DAWN_BG = "#EEEBF8";
 
 const windowsByLabel = new Map<string, BrowserWindow>();
 const labelByWebContentsId = new Map<number, string>();
@@ -54,6 +55,16 @@ export function getAllManagedWindows(): BrowserWindow[] {
   return Array.from(windowsByLabel.values()).filter((w) => !w.isDestroyed());
 }
 
+export function getOpenReaderWindowCount(): number {
+  let count = 0;
+  for (const [label, win] of windowsByLabel) {
+    if (label.startsWith("reader-") && !win.isDestroyed()) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
 export function broadcastEvent(event: string, payload: unknown): void {
   for (const win of getAllManagedWindows()) {
     win.webContents.send("quill:event", event, payload);
@@ -73,7 +84,7 @@ export function scaledTitlebarHeight(
   fullscreen: boolean,
 ): number | null {
   if (fullscreen) return null;
-  const baseHeight = label === "main" ? 44 : 32;
+  const baseHeight = label === "main" ? 71 : 32;
   return baseHeight * zoom;
 }
 
@@ -86,7 +97,7 @@ export function trafficLightPositionFor(
   if (height === null) return null;
   const buttonHeight = 14;
   return {
-    x: 16,
+    x: label === "main" ? Math.round(28 * zoom) : 16,
     y: Math.max(4, Math.round((height - buttonHeight) / 2)),
   };
 }
@@ -169,7 +180,7 @@ function createWindow(options: {
     minWidth: options.minWidth,
     minHeight: options.minHeight,
     show: false,
-    backgroundColor: options.initialDark ? DARK_BG : LIGHT_BG,
+    backgroundColor: isMain ? MAIN_DAWN_BG : options.initialDark ? DARK_BG : LIGHT_BG,
     ...(defaultWindowIconPath ? { icon: defaultWindowIconPath } : {}),
     ...(isMac && trafficLightPosition
       ? {
@@ -189,6 +200,9 @@ function createWindow(options: {
   windowsByLabel.set(options.label, win);
   const wcId = win.webContents.id;
   labelByWebContentsId.set(wcId, options.label);
+  if (options.label.startsWith("reader-")) {
+    sendEventToWindow("main", "reader-windows-changed", getOpenReaderWindowCount());
+  }
 
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (isSafeHttpUrl(url)) {
@@ -236,6 +250,9 @@ function createWindow(options: {
     titlebarZoomByLabel.delete(options.label);
     readyLabels.delete(options.label);
     pendingReadyCallbacks.delete(options.label);
+    if (options.label.startsWith("reader-")) {
+      sendEventToWindow("main", "reader-windows-changed", getOpenReaderWindowCount());
+    }
     if (!isMac && isMain) {
       for (const other of getAllManagedWindows()) {
         other.close();

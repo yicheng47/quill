@@ -1,14 +1,14 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   BookOpen,
-  CheckCircle2,
+  BookOpenCheck,
+  CircleCheck,
   CircleDashed,
   FolderPlus,
   FolderMinus,
   Pencil,
   Trash2,
   ChevronRight,
-  Plus,
   Check,
 } from "lucide-react";
 import { useCollections } from "../hooks/useCollections";
@@ -19,8 +19,10 @@ interface BookContextMenuProps {
   y: number;
   bookId: string;
   bookStatus: string;
+  bookProgress: number;
   activeCollectionId?: string;
   onClose: () => void;
+  onOpenBook: () => void;
   onMarkFinished: () => void;
   onMarkReading: () => void;
   onMarkUnread: () => void;
@@ -34,8 +36,10 @@ export default function BookContextMenu({
   y,
   bookId,
   bookStatus,
+  bookProgress,
   activeCollectionId,
   onClose,
+  onOpenBook,
   onMarkFinished,
   onMarkReading,
   onMarkUnread,
@@ -44,13 +48,34 @@ export default function BookContextMenu({
   onBooksChanged,
 }: BookContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
+  const submenuRef = useRef<HTMLDivElement>(null);
+  const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+
   const [showCollections, setShowCollections] = useState(false);
   const [newName, setNewName] = useState("");
-  const [creatingNew, setCreatingNew] = useState(false);
-  const { collections, create, addBook, removeBook } = useCollections();
+  const [creatingBusy, setCreatingBusy] = useState(false);
+  const [memberIds, setMemberIds] = useState<Set<string>>(new Set());
+
+  const {
+    collections,
+    create,
+    addBook,
+    removeBook,
+    getBookCollections,
+  } = useCollections();
   const { t } = useTranslation();
-  const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout>>(undefined);
-  const submenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void getBookCollections(bookId)
+      .then((ids) => {
+        if (!cancelled) setMemberIds(new Set(ids));
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [bookId, getBookCollections]);
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -60,7 +85,10 @@ export default function BookContextMenu({
       onClose();
     };
     const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        onClose();
+      }
     };
     document.addEventListener("mousedown", handleClickOutside);
     document.addEventListener("keydown", handleEscape);
@@ -70,19 +98,35 @@ export default function BookContextMenu({
     };
   }, [onClose]);
 
-  // Clamp main menu position to viewport
-  useEffect(() => {
+  const [menuPos, setMenuPos] = useState<{ left: number; top: number }>({ left: x, top: y });
+  useLayoutEffect(() => {
     if (!menuRef.current) return;
     const rect = menuRef.current.getBoundingClientRect();
     const vw = window.innerWidth;
     const vh = window.innerHeight;
-    if (rect.right > vw) {
-      menuRef.current.style.left = `${x - rect.width}px`;
-    }
-    if (rect.bottom > vh) {
-      menuRef.current.style.top = `${y - rect.height}px`;
-    }
+    const left = x + rect.width > vw - 8 ? Math.max(8, x - rect.width) : x;
+    const top = y + rect.height > vh - 8 ? Math.max(8, y - rect.height) : y;
+    setMenuPos({ left, top });
   }, [x, y]);
+
+  const [submenuStyle, setSubmenuStyle] = useState<React.CSSProperties>({ left: x + 236, top: y });
+  useLayoutEffect(() => {
+    if (!showCollections || !menuRef.current) return;
+    const rect = menuRef.current.getBoundingClientRect();
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const subWidth = 254;
+    const subHeight = submenuRef.current?.getBoundingClientRect().height ?? 240;
+    const collectionBtn = menuRef.current.querySelector("[data-collection-trigger]");
+    const btnRect = collectionBtn?.getBoundingClientRect();
+    const rawTop = btnRect ? btnRect.top - 6 : rect.top;
+    const top = Math.max(8, Math.min(rawTop, vh - subHeight - 8));
+    const left =
+      rect.right + 6 + subWidth > vw - 8
+        ? Math.max(8, rect.left - subWidth - 6)
+        : rect.right + 6;
+    setSubmenuStyle({ left, top });
+  }, [showCollections, menuPos, collections.length]);
 
   useEffect(() => {
     return () => {
@@ -90,121 +134,152 @@ export default function BookContextMenu({
     };
   }, []);
 
-  const statusLabel =
-    bookStatus === "reading"
-      ? t("bookMenu.currentlyReading")
-      : bookStatus === "finished"
-        ? t("bookMenu.finished")
-        : t("bookMenu.notStarted");
-
-  const handleAddToCollection = async (collectionId: string) => {
-    await addBook(collectionId, bookId);
-    onBooksChanged?.();
-    onClose();
-  };
-
-  const handleRemoveFromCollection = async () => {
-    if (!activeCollectionId) return;
-    await removeBook(activeCollectionId, bookId);
-    onBooksChanged?.();
-    onClose();
+  const handleToggleCollection = async (collectionId: string) => {
+    const isMember = memberIds.has(collectionId);
+    setMemberIds((prev) => {
+      const next = new Set(prev);
+      if (isMember) next.delete(collectionId);
+      else next.add(collectionId);
+      return next;
+    });
+    try {
+      if (isMember) {
+        await removeBook(collectionId, bookId);
+      } else {
+        await addBook(collectionId, bookId);
+      }
+      onBooksChanged?.();
+    } catch (err) {
+      console.error("Failed to toggle book collection:", err);
+      setMemberIds((prev) => {
+        const reverted = new Set(prev);
+        if (isMember) reverted.add(collectionId);
+        else reverted.delete(collectionId);
+        return reverted;
+      });
+    }
   };
 
   const handleCreateAndAdd = async () => {
     const trimmed = newName.trim();
-    if (!trimmed) return;
-    const collection = await create(trimmed);
-    await addBook(collection.id, bookId);
-    onBooksChanged?.();
-    onClose();
+    if (!trimmed || creatingBusy) return;
+    setCreatingBusy(true);
+    try {
+      const collection = await create(trimmed);
+      await addBook(collection.id, bookId);
+      setMemberIds((prev) => new Set([...prev, collection.id]));
+      setNewName("");
+      onBooksChanged?.();
+    } catch (err) {
+      console.error("Failed to create collection and add book:", err);
+    } finally {
+      setCreatingBusy(false);
+    }
   };
 
-  // Compute submenu position
-  const [submenuStyle, setSubmenuStyle] = useState<React.CSSProperties>({ left: x + 200, top: y });
-  useEffect(() => {
-    if (!showCollections || !menuRef.current) return;
-    const rect = menuRef.current.getBoundingClientRect();
-    const vw = window.innerWidth;
-    const collectionBtn = menuRef.current.querySelector("[data-collection-trigger]");
-    const btnRect = collectionBtn?.getBoundingClientRect();
-    const top = btnRect ? btnRect.top : rect.top;
-    if (rect.right + 200 > vw) {
-      setSubmenuStyle({ left: rect.left - 200, top });
-    } else {
-      setSubmenuStyle({ left: rect.right, top });
-    }
-  }, [showCollections, x, y]);
+  const currentReadingLabel =
+    bookProgress > 0
+      ? t("bookMenu.currentlyReadingProgress", { progress: bookProgress })
+      : t("bookMenu.currentlyReading");
 
   return (
     <>
       <div
         ref={menuRef}
-        className="fixed z-50 bg-bg-surface/95 border border-border/80 rounded-[10px] py-1 w-[220px] backdrop-blur-sm shadow-[0px_20px_25px_0px_rgba(0,0,0,0.15),0px_8px_10px_0px_rgba(0,0,0,0.15)]"
-        style={{ left: x, top: y }}
+        role="menu"
+        className="fixed z-50 w-[236px] p-1.5 rounded-[14px] bg-white/[0.96] border border-surface-glass-border backdrop-blur-[34px] shadow-[0_18px_44px_rgba(34,24,66,0.2)] flex flex-col gap-0.5"
+        style={{ left: menuPos.left, top: menuPos.top }}
       >
-        {/* Status indicator */}
         <button
-          className="flex items-center gap-3 w-[calc(100%-8px)] mx-1 px-3 h-[31.5px] rounded-sm text-left cursor-default"
+          type="button"
+          onClick={onOpenBook}
+          className="flex items-center gap-2.5 w-full h-8 px-2.5 rounded-[8px] text-left cursor-pointer hover:bg-black/[0.04] transition-colors"
         >
-          <BookOpen size={16} className="text-text-muted" />
-          <span className="flex-1 text-[13px] font-medium text-text-muted tracking-[-0.08px]">
-            {statusLabel}
+          <BookOpen size={15} className="text-text-tertiary shrink-0" />
+          <span className="flex-1 text-[13px] font-medium text-text-primary truncate">
+            {t("bookMenu.openBook")}
           </span>
         </button>
 
-        {/* Status actions — show all transitions except the current status */}
-        {bookStatus !== "reading" && (
+        <div className="my-0.5 h-px bg-border-subtle" />
+
+        {bookStatus === "reading" ? (
+          <div className="flex items-center gap-2.5 w-full h-8 px-2.5 rounded-[8px] text-left cursor-default">
+            <BookOpenCheck size={15} className="text-text-tertiary shrink-0" />
+            <span className="flex-1 text-[13px] font-medium text-text-tertiary truncate">
+              {currentReadingLabel}
+            </span>
+          </div>
+        ) : (
           <button
+            type="button"
             onClick={onMarkReading}
-            className="flex items-center gap-3 w-[calc(100%-8px)] mx-1 px-3 h-[31.5px] rounded-sm text-left cursor-pointer hover:bg-accent-bg transition-colors"
+            className="flex items-center gap-2.5 w-full h-8 px-2.5 rounded-[8px] text-left cursor-pointer hover:bg-black/[0.04] transition-colors"
           >
-            <BookOpen size={16} className="text-text-muted" />
-            <span className="flex-1 text-[13px] font-medium text-text-primary tracking-[-0.08px]">
+            <BookOpenCheck size={15} className="text-text-tertiary shrink-0" />
+            <span className="flex-1 text-[13px] font-medium text-text-primary truncate">
               {t("bookMenu.currentlyReading")}
             </span>
           </button>
         )}
-        {bookStatus !== "finished" && (
+
+        {bookStatus === "finished" ? (
+          <div className="flex items-center gap-2.5 w-full h-8 px-2.5 rounded-[8px] text-left cursor-default">
+            <CircleCheck size={15} className="text-text-tertiary shrink-0" />
+            <span className="flex-1 text-[13px] font-medium text-text-tertiary truncate">
+              {t("bookMenu.finished")}
+            </span>
+          </div>
+        ) : (
           <button
+            type="button"
             onClick={onMarkFinished}
-            className="flex items-center gap-3 w-[calc(100%-8px)] mx-1 px-3 h-[31.5px] rounded-sm text-left cursor-pointer hover:bg-accent-bg transition-colors"
+            className="flex items-center gap-2.5 w-full h-8 px-2.5 rounded-[8px] text-left cursor-pointer hover:bg-black/[0.04] transition-colors"
           >
-            <CheckCircle2 size={16} className="text-text-muted" />
-            <span className="flex-1 text-[13px] font-medium text-text-primary tracking-[-0.08px]">
+            <CircleCheck size={15} className="text-text-tertiary shrink-0" />
+            <span className="flex-1 text-[13px] font-medium text-text-primary truncate">
               {t("bookMenu.markFinished")}
             </span>
           </button>
         )}
-        {bookStatus !== "unread" && (
+
+        {bookStatus === "unread" ? (
+          <div className="flex items-center gap-2.5 w-full h-8 px-2.5 rounded-[8px] text-left cursor-default">
+            <CircleDashed size={15} className="text-text-tertiary shrink-0" />
+            <span className="flex-1 text-[13px] font-medium text-text-tertiary truncate">
+              {t("bookMenu.notStarted")}
+            </span>
+          </div>
+        ) : (
           <button
+            type="button"
             onClick={onMarkUnread}
-            className="flex items-center gap-3 w-[calc(100%-8px)] mx-1 px-3 h-[31.5px] rounded-sm text-left cursor-pointer hover:bg-accent-bg transition-colors"
+            className="flex items-center gap-2.5 w-full h-8 px-2.5 rounded-[8px] text-left cursor-pointer hover:bg-black/[0.04] transition-colors"
           >
-            <CircleDashed size={16} className="text-text-muted" />
-            <span className="flex-1 text-[13px] font-medium text-text-primary tracking-[-0.08px]">
+            <CircleDashed size={15} className="text-text-tertiary shrink-0" />
+            <span className="flex-1 text-[13px] font-medium text-text-primary truncate">
               {t("bookMenu.markUnread")}
             </span>
           </button>
         )}
 
-        <div className="mx-3 my-1 h-px bg-border/80" />
+        <div className="my-0.5 h-px bg-border-subtle" />
 
-        {/* Edit Info */}
         <button
+          type="button"
           onClick={onEditInfo}
-          className="flex items-center gap-3 w-[calc(100%-8px)] mx-1 px-3 h-[31.5px] rounded-sm text-left cursor-pointer hover:bg-accent-bg transition-colors"
+          className="flex items-center gap-2.5 w-full h-8 px-2.5 rounded-[8px] text-left cursor-pointer hover:bg-black/[0.04] transition-colors"
         >
-          <Pencil size={16} className="text-text-muted" />
-          <span className="flex-1 text-[13px] font-medium text-text-primary tracking-[-0.08px]">
+          <Pencil size={15} className="text-text-tertiary shrink-0" />
+          <span className="flex-1 text-[13px] font-medium text-text-primary truncate">
             {t("bookMenu.editInfo")}
           </span>
         </button>
 
-        <div className="mx-3 my-1 h-px bg-border/80" />
-
-        {/* Add to Collection - hover trigger */}
         <button
+          type="button"
           data-collection-trigger
+          onClick={() => setShowCollections((v) => !v)}
           onMouseEnter={() => {
             if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
             setShowCollections(true);
@@ -212,47 +287,60 @@ export default function BookContextMenu({
           onMouseLeave={() => {
             hoverTimeoutRef.current = setTimeout(() => setShowCollections(false), 150);
           }}
-          className={`flex items-center gap-3 w-[calc(100%-8px)] mx-1 px-3 h-[31.5px] rounded-sm text-left cursor-pointer transition-colors ${showCollections ? "bg-accent-bg" : "hover:bg-accent-bg"}`}
+          className={`flex items-center justify-between w-full h-8 px-2.5 rounded-[8px] text-left cursor-pointer transition-colors ${
+            showCollections
+              ? "bg-accent-tint text-accent-on-tint font-semibold"
+              : "text-text-primary hover:bg-black/[0.04] font-medium"
+          }`}
         >
-          <FolderPlus size={16} className="text-text-muted" />
-          <span className="flex-1 text-[13px] font-medium text-text-primary tracking-[-0.08px]">
-            {t("bookMenu.addToCollection")}
+          <span className="flex items-center gap-2.5 min-w-0">
+            <FolderPlus
+              size={15}
+              className={showCollections ? "text-accent-on-tint" : "text-text-tertiary"}
+            />
+            <span className="text-[13px] truncate">{t("bookMenu.addToCollection")}</span>
           </span>
-          <ChevronRight size={12} className="text-text-muted" />
+          <ChevronRight
+            size={13}
+            className={showCollections ? "text-accent-on-tint" : "text-text-tertiary"}
+          />
         </button>
 
-        {/* Remove from Collection (only when viewing a collection) */}
         {activeCollectionId && (
           <button
-            onClick={handleRemoveFromCollection}
-            className="flex items-center gap-3 w-[calc(100%-8px)] mx-1 px-3 h-[31.5px] rounded-sm text-left cursor-pointer hover:bg-accent-bg transition-colors"
+            type="button"
+            onClick={async () => {
+              await removeBook(activeCollectionId, bookId);
+              onBooksChanged?.();
+              onClose();
+            }}
+            className="flex items-center gap-2.5 w-full h-8 px-2.5 rounded-[8px] text-left cursor-pointer hover:bg-black/[0.04] transition-colors"
           >
-            <FolderMinus size={16} className="text-text-muted" />
-            <span className="flex-1 text-[13px] font-medium text-text-primary tracking-[-0.08px] whitespace-nowrap">
+            <FolderMinus size={15} className="text-text-tertiary shrink-0" />
+            <span className="flex-1 text-[13px] font-medium text-text-primary truncate">
               {t("bookMenu.removeFromCollection")}
             </span>
           </button>
         )}
 
-        <div className="mx-3 my-1 h-px bg-border/80" />
+        <div className="my-0.5 h-px bg-border-subtle" />
 
-        {/* Delete Book */}
         <button
+          type="button"
           onClick={onDelete}
-          className="flex items-center gap-3 w-[calc(100%-8px)] mx-1 px-3 h-[31.5px] rounded-sm text-left cursor-pointer hover:bg-accent-bg transition-colors"
+          className="flex items-center gap-2.5 w-full h-8 px-2.5 rounded-[8px] text-left cursor-pointer hover:bg-danger-tint transition-colors"
         >
-          <Trash2 size={16} className="text-red-400" />
-          <span className="flex-1 text-[13px] font-medium text-red-400 tracking-[-0.08px]">
+          <Trash2 size={15} className="text-danger shrink-0" />
+          <span className="flex-1 text-[13px] font-medium text-danger truncate">
             {t("bookMenu.deleteBook")}
           </span>
         </button>
       </div>
 
-      {/* Collection submenu */}
       {showCollections && (
         <div
           ref={submenuRef}
-          className="fixed z-[51] bg-bg-surface/95 border border-border/80 rounded-[10px] py-1 w-[200px] backdrop-blur-sm shadow-[0px_20px_25px_0px_rgba(0,0,0,0.15),0px_8px_10px_0px_rgba(0,0,0,0.15)]"
+          className="fixed z-[51] w-[254px] p-1.5 rounded-[14px] bg-white/[0.96] border border-surface-glass-border backdrop-blur-[34px] shadow-[0_18px_44px_rgba(34,24,66,0.2)] flex flex-col gap-0.5"
           style={submenuStyle}
           onMouseEnter={() => {
             if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
@@ -261,57 +349,80 @@ export default function BookContextMenu({
             hoverTimeoutRef.current = setTimeout(() => setShowCollections(false), 150);
           }}
         >
-          {collections.length === 0 && !creatingNew && (
-            <div className="px-4 py-2 text-[12px] text-text-muted">
+          {collections.length === 0 ? (
+            <div className="px-2.5 py-2 text-[12px] text-text-tertiary">
               {t("bookMenu.noCollections")}
             </div>
+          ) : (
+            <div className="max-h-[220px] overflow-y-auto flex flex-col gap-0.5">
+              {collections.map((c) => {
+                const checked = memberIds.has(c.id);
+                return (
+                  <button
+                    key={c.id}
+                    type="button"
+                    role="menuitemcheckbox"
+                    aria-checked={checked}
+                    onClick={() => void handleToggleCollection(c.id)}
+                    className="flex items-center gap-[9px] w-full h-[31px] px-2.5 rounded-[8px] text-left cursor-pointer hover:bg-black/[0.04] transition-colors"
+                  >
+                    <span
+                      className={`size-4 rounded-[5px] shrink-0 flex items-center justify-center transition-colors ${
+                        checked
+                          ? "bg-accent text-white"
+                          : "bg-surface-inset border border-border-default"
+                      }`}
+                    >
+                      {checked && <Check size={10.5} strokeWidth={2.5} />}
+                    </span>
+                    <span
+                      className={`flex-1 text-[13px] truncate ${
+                        checked ? "font-semibold text-text-primary" : "font-medium text-text-primary"
+                      }`}
+                    >
+                      {c.name}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
           )}
-          {collections.map((c) => (
-            <button
-              key={c.id}
-              onClick={() => handleAddToCollection(c.id)}
-              className="flex items-center gap-3 w-[calc(100%-8px)] mx-1 px-3 h-[31.5px] rounded-sm text-left cursor-pointer hover:bg-accent-bg transition-colors"
-            >
-              <span className="flex-1 text-[13px] font-medium text-text-primary tracking-[-0.08px] truncate">
-                {c.name}
-              </span>
-            </button>
-          ))}
 
-          <div className="mx-3 my-1 h-px bg-border/80" />
+          <div className="my-0.5 h-px bg-border-subtle" />
 
-          {/* Create new collection */}
-          {creatingNew ? (
-            <div className="flex items-center gap-1 mx-1 px-2 h-[31.5px]">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              void handleCreateAndAdd();
+            }}
+            className="p-1.5 pt-1 flex flex-col gap-1.5"
+          >
+            <span className="font-mono text-[10px] font-semibold tracking-[0.6px] uppercase text-accent-on-tint">
+              {t("bookMenu.newCollectionAndAdd")}
+            </span>
+            <div className="flex items-center gap-1.5">
               <input
-                autoFocus
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter") handleCreateAndAdd();
-                  if (e.key === "Escape") setCreatingNew(false);
+                  if (e.key === "Escape") {
+                    e.stopPropagation();
+                    onClose();
+                  }
                 }}
                 placeholder={t("bookMenu.collectionPlaceholder")}
-                className="flex-1 min-w-0 text-[13px] bg-transparent outline-none placeholder:text-text-muted"
+                className="flex-1 min-w-0 h-[30px] px-[9px] rounded-[8px] bg-surface-solid border border-border-default focus:border-accent text-[12.5px] font-medium text-text-primary placeholder:text-text-tertiary outline-none"
               />
               <button
-                onClick={handleCreateAndAdd}
-                className="p-1 rounded hover:bg-accent-bg transition-colors"
+                type="submit"
+                disabled={!newName.trim() || creatingBusy}
+                aria-label={t("bookMenu.createAndAdd")}
+                className="size-[30px] rounded-[8px] bg-accent hover:bg-accent-hover text-white flex items-center justify-center shrink-0 cursor-pointer transition-colors disabled:opacity-50"
               >
-                <Check size={14} className="text-text-muted" />
+                <Check size={14} />
               </button>
             </div>
-          ) : (
-            <button
-              onClick={() => setCreatingNew(true)}
-              className="flex items-center gap-3 w-[calc(100%-8px)] mx-1 px-3 h-[31.5px] rounded-sm text-left cursor-pointer hover:bg-accent-bg transition-colors"
-            >
-              <Plus size={16} className="text-text-muted" />
-              <span className="flex-1 text-[13px] font-medium text-text-primary tracking-[-0.08px]">
-                {t("bookMenu.newCollection")}
-              </span>
-            </button>
-          )}
+          </form>
         </div>
       )}
     </>

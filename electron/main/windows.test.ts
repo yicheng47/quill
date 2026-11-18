@@ -84,6 +84,7 @@ import {
   appReadyForWindow,
   createMainWindow,
   createReaderWindow,
+  getOpenReaderWindowCount,
   getTitlebarZoomForWindow,
   getWindow,
   labelForWebContents,
@@ -115,21 +116,22 @@ describe("electron windows titlebar & lifecycle", () => {
   });
 
   it("tracks titlebar geometry across app zoom levels for main and reader windows", () => {
-    expect(scaledTitlebarHeight("main", 0.8, false)).toBe(35.2);
-    expect(scaledTitlebarHeight("main", 1.0, false)).toBe(44);
-    expect(scaledTitlebarHeight("main", 1.5, false)).toBe(66);
+    expect(scaledTitlebarHeight("main", 0.8, false)).toBeCloseTo(56.8);
+    expect(scaledTitlebarHeight("main", 1.0, false)).toBe(71);
+    expect(scaledTitlebarHeight("main", 1.5, false)).toBe(106.5);
     expect(scaledTitlebarHeight("reader-book1", 1.0, false)).toBe(32);
     expect(scaledTitlebarHeight("reader-book1", 1.5, false)).toBe(48);
 
-    expect(trafficLightPositionFor("main", 1.0, false)).toEqual({ x: 16, y: 15 });
-    expect(trafficLightPositionFor("main", 1.5, false)).toEqual({ x: 16, y: 26 });
+    expect(trafficLightPositionFor("main", 1.0, false)).toEqual({ x: 28, y: 29 });
+    expect(trafficLightPositionFor("main", 1.5, false)).toEqual({ x: 42, y: 46 });
     expect(trafficLightPositionFor("reader-book1", 1.0, false)).toEqual({ x: 16, y: 9 });
     expect(trafficLightPositionFor("reader-book1", 1.5, false)).toEqual({ x: 16, y: 17 });
 
-    createMainWindow(false);
+    createMainWindow(true);
     const mainRec = mockState.instances[0];
+    expect(mainRec.options.backgroundColor).toBe("#EEEBF8");
     setTitlebarZoomForWindow("main", 1.5, "darwin");
-    expect(mainRec.setWindowButtonPosition).toHaveBeenCalledWith({ x: 16, y: 26 });
+    expect(mainRec.setWindowButtonPosition).toHaveBeenCalledWith({ x: 42, y: 46 });
 
     // Non-macOS does not invoke macOS traffic-light placement.
     mainRec.setWindowButtonPosition.mockClear();
@@ -173,14 +175,16 @@ describe("electron windows titlebar & lifecycle", () => {
 
     expect(getTitlebarZoomForWindow("main")).toBe(0.8);
     expect(getTitlebarZoomForWindow("reader-book1")).toBe(1.5);
-    expect(mainRec.setWindowButtonPosition).toHaveBeenCalledWith({ x: 16, y: 11 });
+    expect(mainRec.setWindowButtonPosition).toHaveBeenCalledWith({ x: 22, y: 21 });
     expect(readerRec.setWindowButtonPosition).toHaveBeenCalledWith({ x: 16, y: 17 });
     expect(labelForWebContents(mainRec.id)).toBe("main");
     expect(labelForWebContents(readerRec.id)).toBe("reader-book1");
+    expect(getOpenReaderWindowCount()).toBe(1);
 
     readerRec.emit("closed");
     readerRec.destroyed = true;
 
+    expect(getOpenReaderWindowCount()).toBe(0);
     expect(getWindow("reader-book1")).toBeUndefined();
     expect(labelForWebContents(readerRec.id)).toBeUndefined();
     expect(getTitlebarZoomForWindow("reader-book1")).toBeUndefined();

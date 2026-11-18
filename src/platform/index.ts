@@ -30,6 +30,8 @@ export const appReady: Platform["appReady"] = () => platform.appReady();
 export const focusWindow: Platform["focusWindow"] = (label) => platform.focusWindow(label);
 export const openReaderWindow: Platform["openReaderWindow"] = (params) =>
   platform.openReaderWindow(params);
+export const getOpenReaderCount: Platform["getOpenReaderCount"] = () =>
+  platform.getOpenReaderCount();
 export const onWindowResized: Platform["onWindowResized"] = (handler) =>
   platform.onWindowResized(handler);
 export const setZoom: Platform["setZoom"] = (zoom) => platform.setZoom(zoom);

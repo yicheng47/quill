@@ -9,12 +9,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn<(command: string, args?: Record<string, unknown>) => Promise<unknown>>(),
   appReady: vi.fn<() => Promise<void>>(),
+  windowLabel: "main",
 }));
 
 vi.mock("./platform", () => ({
   invoke: mocks.invoke,
   appReady: mocks.appReady,
-  getCurrentWindowLabel: () => "main",
+  getCurrentWindowLabel: () => mocks.windowLabel,
   onWindowResized: () => Promise.resolve(() => {}),
   setZoom: () => Promise.resolve(),
   setTitlebarZoom: () => Promise.resolve(),
@@ -22,7 +23,6 @@ vi.mock("./platform", () => ({
 
 vi.mock("./pages/Home", () => ({ default: () => null }));
 vi.mock("./pages/Reader", () => ({ default: () => null }));
-vi.mock("./components/UpdateToast", () => ({ default: () => null }));
 vi.mock("./contexts/UpdateContext", () => ({
   UpdateProvider: ({ children }: { children: unknown }) => children,
 }));
@@ -48,7 +48,8 @@ describe("App startup theme and reveal", () => {
     vi.useFakeTimers();
     vi.stubGlobal("localStorage", localStorageMock);
     localStorage.clear();
-    document.documentElement.classList.remove("dark");
+    mocks.windowLabel = "main";
+    document.documentElement.classList.remove("dark", "dawn");
     mocks.invoke.mockReset();
     mocks.appReady.mockReset();
     mocks.appReady.mockResolvedValue();
@@ -70,15 +71,20 @@ describe("App startup theme and reveal", () => {
       root.unmount();
     });
     container.remove();
+    document.documentElement.classList.remove("dark", "dawn");
     vi.useRealTimers();
   });
 
-  it("applies stored dark theme before calling appReady when settings resolve normally", async () => {
+  it("activates .dawn on the main window and stays light even when theme is dark", async () => {
     const events: string[] = [];
+    mocks.windowLabel = "main";
+    document.documentElement.classList.add("dark");
     mocks.invoke.mockResolvedValue({ theme: "dark" });
     mocks.appReady.mockImplementation(async () => {
       events.push(
-        `ready:${document.documentElement.classList.contains("dark") ? "dark" : "light"}`,
+        `ready:${document.documentElement.classList.contains("dawn") ? "dawn" : "legacy"}:${
+          document.documentElement.classList.contains("dark") ? "dark" : "light"
+        }`,
       );
     });
 
@@ -88,11 +94,34 @@ describe("App startup theme and reveal", () => {
       await Promise.resolve();
     });
 
-    expect(events).toEqual(["ready:dark"]);
+    expect(events).toEqual(["ready:dawn:light"]);
     expect(localStorage.getItem("quill-theme")).toBe("dark");
   });
 
-  it("reveals within bounded timeout when get_all_settings hangs and reconciles late response", async () => {
+  it("applies stored dark theme before calling appReady on reader windows", async () => {
+    const events: string[] = [];
+    mocks.windowLabel = "reader-book1";
+    mocks.invoke.mockResolvedValue({ theme: "dark" });
+    mocks.appReady.mockImplementation(async () => {
+      events.push(
+        `ready:${document.documentElement.classList.contains("dawn") ? "dawn" : "legacy"}:${
+          document.documentElement.classList.contains("dark") ? "dark" : "light"
+        }`,
+      );
+    });
+
+    await act(async () => {
+      root.render(<App />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(events).toEqual(["ready:legacy:dark"]);
+    expect(localStorage.getItem("quill-theme")).toBe("dark");
+  });
+
+  it("reveals within bounded timeout when get_all_settings hangs and reconciles late response on reader windows", async () => {
+    mocks.windowLabel = "reader-book1";
     let resolveSettings!: (v: Record<string, string>) => void;
     mocks.invoke.mockImplementation(
       () =>

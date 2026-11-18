@@ -9,7 +9,6 @@ import {
 import Home from "./pages/Home";
 import Reader from "./pages/Reader";
 import { UpdateProvider } from "./contexts/UpdateContext";
-import UpdateToast from "./components/UpdateToast";
 import { reconcileLanguage } from "./i18n";
 import {
   handleAppZoomShortcut,
@@ -41,14 +40,22 @@ const SETTINGS_REVEAL_TIMEOUT_MS = 250;
 
 export default function App() {
   useEffect(() => {
+    const isMain = getCurrentWindowLabel() === "main";
     const cachedZoom = readAppZoom();
     const cachedZoomReady = restoreAppZoom(cachedZoom);
-    applyTheme(localStorage.getItem("quill-theme") ?? "system");
+    if (isMain) {
+      document.documentElement.classList.add("dawn");
+      document.documentElement.classList.remove("dark");
+    } else {
+      applyTheme(localStorage.getItem("quill-theme") ?? "system");
+    }
 
     const settingsReady = invoke<Record<string, string>>("get_all_settings")
       .then((settings) => {
         const theme = settings.theme ?? "system";
-        applyTheme(theme);
+        if (!isMain) {
+          applyTheme(theme);
+        }
         localStorage.setItem("quill-theme", theme);
         const persistedZoom = snapAppZoom(settings.app_zoom);
         writeAppZoom(persistedZoom);
@@ -56,7 +63,9 @@ export default function App() {
           return restoreAppZoom(persistedZoom);
         }
       })
-      .catch(() => applyTheme("system"));
+      .catch(() => {
+        if (!isMain) applyTheme("system");
+      });
 
     // Reconcile the language we picked synchronously from localStorage with
     // the persisted DB value (and persist to the DB on first launch).
@@ -81,7 +90,7 @@ export default function App() {
 
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
     const handler = () => {
-      if (!document.documentElement.dataset.themeOverride) {
+      if (!isMain && !document.documentElement.dataset.themeOverride) {
         applyTheme("system");
       }
     };
@@ -121,13 +130,10 @@ export default function App() {
   }, []);
 
   const content = (
-    <>
-      {isMainWindow && <UpdateToast />}
-      <Routes>
-        <Route path="/" element={<Home />} />
-        <Route path="/reader/:bookId" element={<Reader />} />
-      </Routes>
-    </>
+    <Routes>
+      <Route path="/" element={<Home />} />
+      <Route path="/reader/:bookId" element={<Reader />} />
+    </Routes>
   );
 
   return (

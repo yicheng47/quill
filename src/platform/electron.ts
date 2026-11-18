@@ -28,6 +28,7 @@ interface QuillShellBridge {
   setWindowTitle(title: string): Promise<void>;
   focusWindow(label: string): Promise<boolean>;
   openReaderWindow(params: ReaderWindowParams): Promise<void>;
+  getOpenReaderCount(): Promise<number>;
   onWindowResized(handler: (size: WindowSize) => void): UnlistenFn;
   setZoom(zoom: number): Promise<void>;
   setTitlebarZoom(zoom: number): Promise<void>;
@@ -100,6 +101,10 @@ export const electronPlatform: Platform = {
 
   openReaderWindow(params: ReaderWindowParams): Promise<void> {
     return bridge().openReaderWindow(params);
+  },
+
+  getOpenReaderCount(): Promise<number> {
+    return bridge().getOpenReaderCount();
   },
 
   async onWindowResized(handler: (size: WindowSize) => void): Promise<UnlistenFn> {

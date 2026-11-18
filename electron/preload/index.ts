@@ -82,6 +82,10 @@ const bridge = {
     return ipcRenderer.invoke("quill:open-reader-window", params);
   },
 
+  getOpenReaderCount(): Promise<number> {
+    return ipcRenderer.invoke("quill:get-open-reader-count");
+  },
+
   onWindowResized(handler: (size: { width: number; height: number }) => void): () => void {
     const listener = (_e: unknown, size: { width: number; height: number }) => {
       handler(size);
