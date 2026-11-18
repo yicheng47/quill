@@ -16,10 +16,23 @@ import QuillLogo from "./QuillLogo";
 import IconButton from "./ui/IconButton";
 import { useUpdate } from "../contexts/UpdateContext";
 import { getOpenReaderCount, listen, listenCurrentWindow, openUrl } from "../platform";
-import { isMacOS, shortcutModSymbol } from "../lib/platformEnv";
+import {
+  isMacOS,
+  MAC_TRAFFIC_LIGHT_SPACER_CLASS,
+  shortcutModSymbol,
+} from "../lib/platformEnv";
 import type { SettingsSection } from "./SettingsModal";
 
-export type MainRoute = "library" | "words" | "chats";
+export type MainRoute = "home" | "library" | "highlights" | "words" | "chats";
+
+export interface MainNavigateOptions {
+  collectionId?: string;
+  statusFilter?: "all" | "reading" | "finished" | "unread";
+  bookId?: string | null;
+  highlightId?: string;
+  wordId?: string;
+  chatId?: string;
+}
 
 function releaseNotesUrl(version: string | undefined): string {
   if (!version) return "https://github.com/yicheng47/quill/releases";
@@ -113,7 +126,7 @@ export function UpdateIndicator({ onOpenSettings }: UpdateIndicatorProps) {
     return (
       <span
         data-testid="update-manual-checking"
-        className="no-drag inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full dawn-chip text-[11px] font-medium text-text-secondary shrink-0"
+        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full dawn-chip text-[11px] font-medium text-text-secondary shrink-0"
       >
         <Loader2 size={11} className="animate-spin text-accent shrink-0" />
         <span>{t("update.checking")}</span>
@@ -126,7 +139,7 @@ export function UpdateIndicator({ onOpenSettings }: UpdateIndicatorProps) {
     return (
       <span
         data-testid="update-manual-uptodate"
-        className="no-drag inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-success-tint text-success text-[11px] font-medium shrink-0"
+        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-success-tint text-success text-[11px] font-medium shrink-0"
       >
         <Check size={11} className="shrink-0" />
         <span>{t("update.upToDate")}</span>
@@ -172,7 +185,10 @@ export function UpdateIndicator({ onOpenSettings }: UpdateIndicatorProps) {
   const interactive = status === "available" || status === "ready" || status === "error";
 
   return (
-    <div ref={containerRef} className="relative flex items-center no-drag">
+    <div
+      ref={containerRef}
+      className={`relative flex items-center ${interactive || readyPopoverOpen ? "no-drag" : ""}`}
+    >
       <button
         type="button"
         data-testid="update-indicator"
@@ -365,7 +381,9 @@ export default function TopBar({
   }, []);
 
   const routes: Array<{ id: MainRoute; label: string }> = [
+    { id: "home", label: t("nav.home") },
     { id: "library", label: t("nav.library") },
+    { id: "highlights", label: t("nav.highlights") },
     { id: "words", label: t("nav.words") },
     { id: "chats", label: t("nav.chats") },
   ];
@@ -373,14 +391,14 @@ export default function TopBar({
   return (
     <header
       data-drag-region
-      className="h-[71px] shrink-0 w-full px-7 py-4 flex items-center justify-between select-none relative z-30"
+      className="h-[71px] shrink-0 w-full pl-7 pr-4 sm:px-7 py-4 flex items-center justify-between gap-2 sm:gap-3 select-none relative z-30"
     >
-      <div className="flex items-center gap-[18px] flex-1 basis-0 min-w-0">
-        {isMac && <div className="w-[52px] shrink-0" aria-hidden="true" />}
+      <div className="flex items-center gap-[18px] flex-1 basis-0 min-w-fit">
+        {isMac && <div className={`${MAC_TRAFFIC_LIGHT_SPACER_CLASS} shrink-0`} aria-hidden="true" />}
 
         <div className="flex items-center gap-[9px] shrink-0">
           <QuillLogo size={28} />
-          <span className="text-[16px] font-semibold text-text-primary leading-none">
+          <span className="hidden sm:inline text-[16px] font-semibold text-text-primary leading-none">
             Quill
           </span>
           <UpdateIndicator onOpenSettings={onOpenSettings} />
@@ -414,7 +432,7 @@ export default function TopBar({
               type="button"
               aria-current={isActive ? "page" : undefined}
               onClick={() => onRouteChange(route.id)}
-              className={`px-4 py-[7px] rounded-full text-[13px] cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-focus-ring ${
+              className={`px-2 sm:px-3 md:px-4 py-[7px] rounded-full text-[12.5px] sm:text-[13px] whitespace-nowrap cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-focus-ring ${
                 isActive
                   ? "bg-accent-tint text-accent-on-tint font-semibold"
                   : "text-text-secondary font-medium hover:bg-black/[0.04]"
@@ -426,12 +444,13 @@ export default function TopBar({
         })}
       </nav>
 
-      <div className="no-drag flex items-center justify-end gap-2.5 flex-1 basis-0 min-w-0">
+      <div className="flex items-center justify-end gap-1.5 sm:gap-2.5 flex-1 basis-0 min-w-fit">
         <IconButton
           active={searchOpen}
           onClick={onOpenSearch}
           aria-label={t("topBar.search")}
           title={`${t("topBar.search")} (${mod}K)`}
+          className="max-sm:size-8"
         >
           <Search size={16} />
         </IconButton>
@@ -440,6 +459,7 @@ export default function TopBar({
           onClick={onImport}
           aria-label={t("topBar.import")}
           title={t("topBar.import")}
+          className="max-sm:size-8"
         >
           <Plus size={16} />
         </IconButton>
@@ -448,6 +468,7 @@ export default function TopBar({
           onClick={() => onOpenSettings()}
           aria-label={t("topBar.settings")}
           title={`${t("topBar.settings")} (${mod},)`}
+          className="max-sm:size-8"
         >
           <Settings size={16} />
         </IconButton>

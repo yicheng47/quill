@@ -1,10 +1,67 @@
-import { focusWindow, openReaderWindow as openPlatformReaderWindow } from "../platform";
+import { emitTo, focusWindow, openReaderWindow as openPlatformReaderWindow } from "../platform";
 
-interface ReaderWindowOptions {
+export const READER_NAVIGATE_EVENT = "reader-navigate";
+
+export interface ReaderWindowOptions {
   openVocab?: boolean;
   openChat?: boolean;
   chatId?: string;
   cfi?: string | null;
+  quote?: string | null;
+}
+
+export function hasReaderNavigationOptions(
+  options: ReaderWindowOptions | null | undefined,
+): options is ReaderWindowOptions {
+  return Boolean(
+    options &&
+      (options.openVocab || options.openChat || options.chatId || options.cfi || options.quote),
+  );
+}
+
+export function buildReaderUrl(bookId: string, options?: ReaderWindowOptions): string {
+  let url = `/reader/${bookId}`;
+  if (!options) return url;
+  const params = new URLSearchParams();
+  if (options.openVocab) params.set("openVocab", "true");
+  if (options.openChat) params.set("openChat", "true");
+  if (options.chatId) params.set("chatId", options.chatId);
+  if (options.cfi) params.set("cfi", options.cfi);
+  if (options.quote) params.set("quote", options.quote);
+  const qs = params.toString();
+  if (qs) url += `?${qs}`;
+  return url;
+}
+
+export function parseReaderNavigation(
+  state: ReaderWindowOptions | null | undefined,
+  search: string,
+): { source: "state" | "query"; options: ReaderWindowOptions } | null {
+  if (hasReaderNavigationOptions(state)) {
+    return {
+      source: "state",
+      options: {
+        openVocab: Boolean(state.openVocab),
+        openChat: Boolean(state.openChat),
+        chatId: state.chatId || undefined,
+        cfi: state.cfi || undefined,
+        quote: state.quote || undefined,
+      },
+    };
+  }
+
+  const params = new URLSearchParams(search);
+  const parsed: ReaderWindowOptions = {
+    openVocab: params.get("openVocab") === "true",
+    openChat: params.get("openChat") === "true",
+    chatId: params.get("chatId") || undefined,
+    cfi: params.get("cfi") || undefined,
+    quote: params.get("quote") || undefined,
+  };
+  if (hasReaderNavigationOptions(parsed)) {
+    return { source: "query", options: parsed };
+  }
+  return null;
 }
 
 const DEFAULT_WIDTH = 1440;
@@ -55,6 +112,9 @@ export async function openReaderWindow(
 
   try {
     if (await focusWindow(label)) {
+      if (hasReaderNavigationOptions(options)) {
+        await emitTo(label, READER_NAVIGATE_EVENT, options);
+      }
       return;
     }
   } catch (err) {
@@ -62,17 +122,7 @@ export async function openReaderWindow(
     return;
   }
 
-  // Build URL with optional query params
-  let url = `/reader/${bookId}`;
-  if (options) {
-    const params = new URLSearchParams();
-    if (options.openVocab) params.set("openVocab", "true");
-    if (options.openChat) params.set("openChat", "true");
-    if (options.chatId) params.set("chatId", options.chatId);
-    if (options.cfi) params.set("cfi", options.cfi);
-    const qs = params.toString();
-    if (qs) url += `?${qs}`;
-  }
+  const url = buildReaderUrl(bookId, options);
 
   const { width, height } = loadSavedSize(bookId);
   const pageTheme = loadSavedPageTheme(bookId);

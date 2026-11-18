@@ -27,7 +27,7 @@ export function Segment({
       type="button"
       onClick={onClick}
       aria-pressed={selected}
-      className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-[13px] cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-focus-ring ${
+      className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-[13px] whitespace-nowrap cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-focus-ring ${
         selected
           ? selectedClass
           : "text-text-secondary font-medium hover:bg-black/[0.04]"

@@ -20,6 +20,7 @@ const testState = vi.hoisted(() => ({
   viewInit: vi.fn(() => Promise.resolve()),
   viewOpen: vi.fn(() => Promise.resolve()),
   resizeObservers: [] as Array<{ el: Element; cb: ResizeObserverCallback }>,
+  navigateListeners: new Set<(e: { payload: unknown }) => void>(),
 }));
 
 vi.mock("../platform", () => ({
@@ -29,6 +30,15 @@ vi.mock("../platform", () => ({
   getCurrentWindowLabel: () => testState.windowLabel,
   getInitialReaderTheme: () => testState.initialReaderTheme,
   invoke: () => Promise.resolve([]),
+  listenCurrentWindow: (event: string, cb: (e: { payload: unknown }) => void) => {
+    if (event === "reader-navigate") {
+      testState.navigateListeners.add(cb);
+      return Promise.resolve(() => {
+        testState.navigateListeners.delete(cb);
+      });
+    }
+    return Promise.resolve(() => {});
+  },
   onWindowResized: () => Promise.resolve(() => {}),
   setWindowBackgroundColor: testState.setWindowBackgroundColor,
   setWindowTitle: () => Promise.resolve(),
@@ -48,7 +58,21 @@ vi.mock("../hooks/useSettings", () => ({
 }));
 
 vi.mock("../components/AiPanel", () => ({
-  default: () => <div data-testid="ai-panel-stub">AI Panel</div>,
+  default: (props: {
+    context?: { text: string; cfi?: string };
+    initialChatId?: string;
+    initialChatSeq?: number;
+  }) => (
+    <div
+      data-testid="ai-panel-stub"
+      data-quote={props.context?.text ?? ""}
+      data-quote-cfi={props.context?.cfi ?? ""}
+      data-chat-id={props.initialChatId ?? ""}
+      data-chat-seq={String(props.initialChatSeq ?? 0)}
+    >
+      AI Panel
+    </div>
+  ),
 }));
 
 vi.mock("../components/DictionaryPanel", () => ({
@@ -204,6 +228,7 @@ describe("Reader shell themes, cascade, and startup navigation", () => {
     testState.viewInit.mockClear();
     testState.viewOpen.mockClear();
     testState.resizeObservers = [];
+    testState.navigateListeners.clear();
 
     vi.stubGlobal(
       "fetch",
@@ -401,5 +426,80 @@ describe("Reader shell themes, cascade, and startup navigation", () => {
     });
     await flushAsync();
     expect(aiContainer?.className.split(/\s+/)).toContain("hidden");
+  });
+
+  it("handles standalone ?cfi=, ?quote= Ask Quill deep links, and reader-navigate events on an open window", async () => {
+    testState.getBook.mockResolvedValue({
+      id: "book-1",
+      title: "Invisible Cities",
+      author: "Italo Calvino",
+      format: "epub",
+      file_path: "/tmp/ic.epub",
+      progress: 0,
+      available: true,
+    });
+    testState.getAllSettings.mockResolvedValue({});
+
+    // Standalone ?cfi= jumps to location without opening side panels (AiPanel stays mounted but hidden)
+    await renderReader("/reader/book-1?cfi=epubcfi%28%2F6%2F6%21%2F4%2F2%29");
+    await flushAsync();
+    expect(testState.viewGoTo).toHaveBeenCalledWith("epubcfi(/6/6!/4/2)");
+    const hiddenAi = container.querySelector('[data-testid="ai-panel-stub"]')?.parentElement;
+    expect(hiddenAi?.className.split(/\s+/)).toContain("hidden");
+    expect(container.querySelector('[data-testid="vocab-panel-stub"]')).toBeNull();
+
+    // Deliver reader-navigate event carrying quote + cfi to already-open reader window
+    testState.viewGoTo.mockClear();
+    await act(async () => {
+      for (const cb of testState.navigateListeners) {
+        cb({
+          payload: {
+            openChat: true,
+            cfi: "epubcfi(/6/8!/4/2)",
+            quote: "Cities, like dreams, are made of desires.",
+          },
+        });
+      }
+    });
+    await flushAsync();
+    expect(testState.viewGoTo).toHaveBeenCalledWith("epubcfi(/6/8!/4/2)");
+    const aiStub = container.querySelector('[data-testid="ai-panel-stub"]')!;
+    expect(aiStub.parentElement?.className.split(/\s+/)).not.toContain("hidden");
+    expect(aiStub.getAttribute("data-quote")).toBe("Cities, like dreams, are made of desires.");
+    expect(aiStub.getAttribute("data-quote-cfi")).toBe("epubcfi(/6/8!/4/2)");
+
+    // Opening directly with ?quote=...&cfi=...&openChat=true quotes into AI panel and jumps to CFI
+    await act(async () => {
+      root.unmount();
+    });
+    testState.viewGoTo.mockClear();
+    root = createRoot(container);
+    await renderReader(
+      "/reader/book-1?openChat=true&cfi=epubcfi%28%2F6%2F10%21%2F4%2F2%29&quote=Memory%20vs%20blueprint",
+    );
+    await flushAsync();
+    expect(testState.viewGoTo).toHaveBeenCalledWith("epubcfi(/6/10!/4/2)");
+    const directAiStub = container.querySelector('[data-testid="ai-panel-stub"]')!;
+    expect(directAiStub.getAttribute("data-quote")).toBe("Memory vs blueprint");
+    expect(directAiStub.getAttribute("data-quote-cfi")).toBe("epubcfi(/6/10!/4/2)");
+
+    // Repeated reader-navigate for the same chatId bumps initialChatSeq so AiPanel reloads it (R8)
+    await act(async () => {
+      for (const cb of testState.navigateListeners) {
+        cb({ payload: { openChat: true, chatId: "chat-A" } });
+      }
+    });
+    await flushAsync();
+    const seq1 = Number(directAiStub.getAttribute("data-chat-seq"));
+    expect(directAiStub.getAttribute("data-chat-id")).toBe("chat-A");
+
+    await act(async () => {
+      for (const cb of testState.navigateListeners) {
+        cb({ payload: { openChat: true, chatId: "chat-A" } });
+      }
+    });
+    await flushAsync();
+    expect(directAiStub.getAttribute("data-chat-id")).toBe("chat-A");
+    expect(Number(directAiStub.getAttribute("data-chat-seq"))).toBeGreaterThan(seq1);
   });
 });

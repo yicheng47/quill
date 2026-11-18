@@ -75,10 +75,13 @@ vi.mock("../utils/openReaderWindow", () => ({
   openReaderWindow: (id: string) => mocks.openReaderWindow(id),
 }));
 
-vi.mock("../components/DictionaryContent", () => ({
-  default: () => <div data-testid="dictionary-view" />,
+vi.mock("../components/HighlightsView", () => ({
+  default: () => <div data-testid="highlights-view" />,
 }));
-vi.mock("../components/ChatsContent", () => ({
+vi.mock("../components/WordsView", () => ({
+  default: () => <div data-testid="words-view" />,
+}));
+vi.mock("../components/ChatsView", () => ({
   default: () => <div data-testid="chats-view" />,
 }));
 vi.mock("../components/SettingsModal", () => ({
@@ -210,6 +213,16 @@ describe("Home integration flows (R1, R2, R3, R6)", () => {
 
     await act(async () => {
       root.render(<Home />);
+    });
+    await flushMicrotasks();
+
+    // Home is default route; navigate to Library for collection flows
+    const libraryTab = Array.from(
+      container.querySelectorAll<HTMLButtonElement>("nav button"),
+    ).find((b) => b.textContent === "Library");
+    expect(libraryTab).toBeTruthy();
+    await act(async () => {
+      libraryTab?.click();
     });
     await flushMicrotasks();
 
@@ -425,6 +438,14 @@ describe("Home integration flows (R1, R2, R3, R6)", () => {
       });
       await flushMicrotasks();
 
+      const libraryTab = Array.from(
+        container.querySelectorAll<HTMLButtonElement>("nav button"),
+      ).find((b) => b.textContent === "Library");
+      await act(async () => {
+        libraryTab?.click();
+      });
+      await flushMicrotasks();
+
       expect(container.textContent).toContain("Book #40");
 
       // Right-click Book #1 and open Add to Collection submenu
@@ -455,7 +476,9 @@ describe("Home integration flows (R1, R2, R3, R6)", () => {
       });
       await flushMicrotasks();
 
-      const listCallsAfterToggle = mocks.invoke.mock.calls.filter(([cmd]) => cmd === "list_books");
+      const listCallsAfterToggle = mocks.invoke.mock.calls.filter(
+        ([cmd, args]) => cmd === "list_books" && (args?.limit as number | undefined) !== 500,
+      );
       const latestLimit = listCallsAfterToggle[listCallsAfterToggle.length - 1]?.[1]?.limit;
       expect(latestLimit).toBe(40);
       expect(container.textContent).toContain("Book #40");
@@ -463,5 +486,114 @@ describe("Home integration flows (R1, R2, R3, R6)", () => {
     } finally {
       vi.stubGlobal("IntersectionObserver", origIO);
     }
+  });
+
+  it("opens on Home by default and switches across all 5 TopBar routes", async () => {
+    mocks.invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "list_collections") return [];
+      if (cmd === "get_book_counts") return { all: 0, reading: 0, finished: 0, unread: 0 };
+      if (cmd === "list_books") return { books: [], next_cursor: null, total: 0 };
+      return [];
+    });
+
+    await act(async () => {
+      root.render(<Home />);
+    });
+    await flushMicrotasks();
+
+    expect(container.querySelector("h1")?.textContent).toBe("Your quiet reading room");
+    expect(Array.from(container.querySelectorAll("nav button")).map((b) => b.textContent)).toEqual([
+      "Home",
+      "Library",
+      "Highlights",
+      "Words",
+      "Chats",
+    ]);
+
+    for (const [label, selector] of [
+      ["Highlights", '[data-testid="highlights-view"]'],
+      ["Words", '[data-testid="words-view"]'],
+      ["Chats", '[data-testid="chats-view"]'],
+    ] as const) {
+      const btn = Array.from(
+        container.querySelectorAll<HTMLButtonElement>("nav button"),
+      ).find((b) => b.textContent === label);
+      await act(async () => {
+        btn?.click();
+      });
+      await flushMicrotasks();
+      expect(container.querySelector(selector)).toBeTruthy();
+    }
+
+    // Navigate to Library: no inline filter field; Cmd+F opens Cmd+K scoped to Books
+    const libraryBtn = Array.from(
+      container.querySelectorAll<HTMLButtonElement>("nav button"),
+    ).find((b) => b.textContent === "Library");
+    await act(async () => {
+      libraryBtn?.click();
+    });
+    await flushMicrotasks();
+    expect(container.querySelector('input[placeholder="Filter library…"]')).toBeNull();
+
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "f", metaKey: true, bubbles: true }));
+    });
+    await flushMicrotasks();
+
+    const dialog = container.querySelector('[role="dialog"]');
+    expect(dialog).toBeTruthy();
+    const booksTab = Array.from(dialog?.querySelectorAll('[role="tab"]') ?? []).find((t) =>
+      t.textContent?.includes("Books"),
+    );
+    expect(booksTab?.getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("refreshes Home bento book progress and ordering when returning window focus after reading (R6)", async () => {
+    let book1 = makeBook("b1", {
+      title: "Older Book",
+      status: "reading",
+      progress: 15,
+      pages: 200,
+      updated_at: 1000,
+    });
+    let book2 = makeBook("b2", {
+      title: "Newly Read Book",
+      status: "unread",
+      progress: 0,
+      pages: 100,
+      updated_at: 500,
+    });
+
+    mocks.invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "list_collections") return [];
+      if (cmd === "get_book_counts") return { all: 2, reading: 1, finished: 0, unread: 1 };
+      if (cmd === "list_books") return { books: [book1, book2], next_cursor: null, total: 2 };
+      if (cmd === "list_all_highlights") return [];
+      if (cmd === "list_all_vocab_words") return [];
+      if (cmd === "list_all_chats") return { chats: [], next_cursor: null, total: 0 };
+      return [];
+    });
+
+    await act(async () => {
+      root.render(<Home />);
+    });
+    await flushMicrotasks();
+    expect(container.textContent).toContain("Older Book");
+    expect(container.textContent).toContain("15%");
+
+    // Simulate reading Book 2 in reader window and returning focus to main window
+    book2 = { ...book2, status: "reading", progress: 80, updated_at: 9999 };
+    book1 = { ...book1, progress: 15, updated_at: 1000 };
+
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    await flushMicrotasks();
+
+    const nowReadingCard = Array.from(container.querySelectorAll("section")).find((el) =>
+      el.textContent?.includes("Now reading"),
+    );
+    expect(nowReadingCard?.textContent).toContain("Newly Read Book");
+    expect(nowReadingCard?.textContent).toContain("80%");
   });
 });

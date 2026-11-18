@@ -1,6 +1,16 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { invoke, listen, type UnlistenFn } from "../platform";
 
+export function parseChatMessageContextCfi(metadata: string | null | undefined): string | undefined {
+  if (!metadata) return undefined;
+  try {
+    const parsed = JSON.parse(metadata) as { cfi?: unknown };
+    return typeof parsed.cfi === "string" && parsed.cfi ? parsed.cfi : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant";
@@ -190,20 +200,14 @@ export function useAiChat(bookId?: string, bookContext?: BookContext) {
       // Stale check: if user switched to another chat while we were loading, bail
       if (chatIdRef.current !== id) return;
 
-      const mapped: ChatMessage[] = msgs.map((m) => {
-        let contextCfi: string | undefined;
-        if (m.metadata) {
-          try { contextCfi = JSON.parse(m.metadata).cfi; } catch { /* ignore */ }
-        }
-        return {
-          id: m.id,
-          role: m.role as "user" | "assistant",
-          content: m.content,
-          context: m.context ?? undefined,
-          contextCfi,
-          dbId: m.id,
-        };
-      });
+      const mapped: ChatMessage[] = msgs.map((m) => ({
+        id: m.id,
+        role: m.role as "user" | "assistant",
+        content: m.content,
+        context: m.context ?? undefined,
+        contextCfi: parseChatMessageContextCfi(m.metadata),
+        dbId: m.id,
+      }));
       updateMessages(mapped);
     } catch (err) {
       console.error("Failed to load chat messages:", err);
@@ -226,17 +230,20 @@ export function useAiChat(bookId?: string, bookContext?: BookContext) {
     }
   }, [refreshChats]);
 
-  const initialize = useCallback(async (bid?: string) => {
+  const initialize = useCallback(async (bid?: string, preferredChatId?: string) => {
     const targetBook = bid || bookId;
     if (!targetBook) { setInitializingSynced(false); return; }
-    if (initializedBookRef.current === targetBook) { setInitializingSynced(false); return; }
+    if (initializedBookRef.current === targetBook && !preferredChatId) { setInitializingSynced(false); return; }
     initializedBookRef.current = targetBook;
     setInitializingSynced(true);
 
     try {
       const chatList = await refreshChats(targetBook);
       if (chatList.length > 0) {
-        await loadChat(chatList[0].id);
+        const targetId = preferredChatId && chatList.some((c) => c.id === preferredChatId)
+          ? preferredChatId
+          : chatList[0].id;
+        await loadChat(targetId);
       } else {
         // No chats yet — show empty state without creating a DB record.
         // A chat will be created lazily on first send.
