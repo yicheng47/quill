@@ -1,469 +1,797 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { Search, LayoutGrid, List, Plus, Upload, BookOpen, Loader, AlertCircle, X } from "lucide-react";
-import { invoke, listen, listenCurrentWindow, onDragDrop } from "../platform";
-import Sidebar from "../components/Sidebar";
+import {
+  Plus,
+  FolderClosed,
+  FolderOpen,
+  ChevronDown,
+  LayoutGrid,
+  List,
+  BookOpen,
+  BookUp,
+  SearchX,
+} from "lucide-react";
+import TopBar, { type MainRoute } from "../components/TopBar";
+import CommandSearchModal from "../components/CommandSearchModal";
+import ImportOverlays from "../components/ImportOverlays";
+import CollectionsPopover from "../components/CollectionsPopover";
+import DeleteCollectionModal from "../components/DeleteCollectionModal";
+import AddBooksModal from "../components/AddBooksModal";
 import BookGrid from "../components/BookGrid";
 import BookList from "../components/BookList";
 import DictionaryContent from "../components/DictionaryContent";
 import ChatsContent from "../components/ChatsContent";
 import SettingsModal, { type SettingsSection } from "../components/SettingsModal";
-import Button from "../components/ui/Button";
-import Input from "../components/ui/Input";
-import TitlebarDragRegion from "../components/ui/TitlebarDragRegion";
+import SearchField from "../components/ui/SearchField";
+import { SegmentedControl } from "../components/ui/Segment";
 import { useBooks, importBookDialog } from "../hooks/useBooks";
-import { useCollections } from "../hooks/useCollections";
+import { useCollections, type Collection } from "../hooks/useCollections";
+import { invoke, listen, listenCurrentWindow, onDragDrop } from "../platform";
+import { shortcutModSymbol } from "../lib/platformEnv";
 
-function formatError(err: unknown): string {
-  if (typeof err === "string") return err;
-  if (err instanceof Error) return err.message;
-  try {
-    return JSON.stringify(err);
-  } catch {
-    return String(err);
+interface BookCounts {
+  all: number;
+  reading: number;
+  finished: number;
+  unread: number;
+}
+
+type StatusFilter = "all" | "reading" | "finished" | "unread";
+type ViewMode = "grid" | "list";
+
+const SUPPORTED_BOOK_EXT = /\.(epub|pdf)$/i;
+
+function basenameFromPath(filePath: string): string {
+  const parts = filePath.split(/[\\/]/);
+  return parts[parts.length - 1] || filePath;
+}
+
+function normalizeSettingsSection(section?: string): SettingsSection {
+  if (section === "lookup" || section === "translation" || section === "tools") {
+    return "tools";
   }
+  if (
+    section === "general" ||
+    section === "appearance" ||
+    section === "reading" ||
+    section === "ai" ||
+    section === "librarySync" ||
+    section === "mcp" ||
+    section === "about"
+  ) {
+    return section;
+  }
+  return "general";
+}
+
+function subscribeAsync(register: (isActive: () => boolean) => Promise<() => void>): () => void {
+  let active = true;
+  let unlisten: (() => void) | undefined;
+  void register(() => active)
+    .then((fn) => {
+      if (active) unlisten = fn;
+      else fn();
+    })
+    .catch(() => {});
+  return () => {
+    active = false;
+    unlisten?.();
+    unlisten = undefined;
+  };
 }
 
 export default function Home() {
   const { t } = useTranslation();
-  const [activeFilter, setActiveFilter] = useState("all");
-  const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
+  const mod = shortcutModSymbol();
+
+  const [activeRoute, setActiveRoute] = useState<MainRoute>("library");
+  const [searchOpen, setSearchOpen] = useState(false);
+
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [collectionFilter, setCollectionFilter] = useState<string>("all");
+  const [viewMode, setViewMode] = useState<ViewMode>(() =>
+    localStorage.getItem("quill-library-view") === "list" ? "list" : "grid",
+  );
   const [searchQuery, setSearchQuery] = useState("");
-  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
-  const [isDragging, setIsDragging] = useState(false);
-  const [importing, setImporting] = useState(false);
-  const [importSlow, setImportSlow] = useState(false);
-  const [importError, setImportError] = useState<string | null>(null);
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("general");
-  const [userName, setUserName] = useState("");
+
+  const [collectionsOpen, setCollectionsOpen] = useState(false);
+  const [deleteCollectionTarget, setDeleteCollectionTarget] = useState<Collection | null>(null);
+  const [addBooksOpen, setAddBooksOpen] = useState(false);
+
+  const [isDragging, setIsDragging] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [importingCount, setImportingCount] = useState(1);
+  const [importingFileName, setImportingFileName] = useState<string | null>(null);
+  const [importSlow, setImportSlow] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
+
+  const [bookCounts, setBookCounts] = useState<BookCounts>({
+    all: 0,
+    reading: 0,
+    finished: 0,
+    unread: 0,
+  });
+  const [totalBooksCount, setTotalBooksCount] = useState(0);
+  const [bookCollectionsMap, setBookCollectionsMap] = useState<Map<string, Collection[]>>(
+    () => new Map(),
+  );
+
+  const collectionsAnchorRef = useRef<HTMLButtonElement>(null);
+  const filterInputRef = useRef<HTMLInputElement>(null);
+
   const collections = useCollections();
-  const refreshCollections = collections.refresh;
-
-  // Load user name
-  useEffect(() => {
-    invoke<Record<string, string>>("get_all_settings")
-      .then((s) => setUserName(s.user_name ?? ""))
-      .catch(() => {});
-  }, []);
-
-  const normalizeSettingsSection = useCallback((section: unknown): SettingsSection => {
-    if (section === "lookup" || section === "translation" || section === "tools") return "tools";
-    if (
-      section === "general" ||
-      section === "appearance" ||
-      section === "reading" ||
-      section === "ai" ||
-      section === "librarySync" ||
-      section === "mcp" ||
-      section === "about"
-    ) {
-      return section;
-    }
-    return "general";
-  }, []);
-
-  // Listen for open-settings events (DOM from same window, storage from reader windows)
-  useEffect(() => {
-    const handler = (e: Event) => {
-      setSettingsSection(normalizeSettingsSection((e as CustomEvent).detail));
-      setSettingsOpen(true);
-    };
-    window.addEventListener("open-settings", handler);
-
-    // Cross-window: reader uses emitTo("main", ...) — must use webview-specific listener
-    const unlisten = listenCurrentWindow<string>("open-settings", (event) => {
-      setSettingsSection(normalizeSettingsSection(event.payload));
-      setSettingsOpen(true);
-    });
-
-    return () => {
-      window.removeEventListener("open-settings", handler);
-      unlisten.then((fn) => fn());
-    };
-  }, [normalizeSettingsSection]);
-
-  // Cmd+, to open settings
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === ",") {
-        e.preventDefault();
-        setSettingsOpen(true);
-      }
-    };
-    document.addEventListener("keydown", handler);
-    return () => document.removeEventListener("keydown", handler);
-  }, []);
-
-  const isCollectionFilter = activeFilter.startsWith("collection:");
-  const statusFilter = !isCollectionFilter && activeFilter !== "all" ? activeFilter : undefined;
-  const collectionId = isCollectionFilter ? activeFilter.replace("collection:", "") : undefined;
+  const {
+    collections: collectionList,
+    refresh: refreshCollections,
+    getBooksInCollection,
+  } = collections;
 
   useEffect(() => {
-    const timer = window.setTimeout(() => setDebouncedSearchQuery(searchQuery.trim()), 250);
+    const timer = window.setTimeout(() => setDebouncedSearch(searchQuery.trim()), 250);
     return () => window.clearTimeout(timer);
   }, [searchQuery]);
 
-  const searchParam = debouncedSearchQuery || undefined;
+  const activeCollection = useMemo(() => {
+    if (collectionFilter === "all") return null;
+    return collectionList.find((c) => c.id === collectionFilter) ?? null;
+  }, [collectionFilter, collectionList]);
 
-  const { books, loading, hasMore, loadMore, loadingMore, refreshSilently, patchBook } = useBooks(statusFilter, searchParam, collectionId);
+  const statusArg = statusFilter === "all" ? undefined : statusFilter;
+  const activeCollectionId = collectionFilter === "all" ? undefined : collectionFilter;
 
-  useEffect(() => {
-    const unlisten = listenCurrentWindow<string>("book-availability-changed", (event) => {
-      patchBook(event.payload, { available: true });
-    });
-    return () => {
-      unlisten.then((fn) => fn());
-    };
-  }, [patchBook]);
+  const { books, loading, loadingMore, hasMore, loadMore, refreshSilently, patchBook } =
+    useBooks(statusArg, debouncedSearch || undefined, activeCollectionId);
 
-  // Book counts for sidebar badges — lightweight, no book data loaded.
-  const [bookCounts, setBookCounts] = useState({ all: 0, reading: 0, finished: 0 });
-  const refreshCounts = useCallback(async () => {
+  const fetchCounts = useCallback(async (colId?: string) => {
     try {
-      const counts = await invoke<{ all: number; reading: number; finished: number }>("get_book_counts");
-      setBookCounts(counts);
-    } catch (err) {
-      console.error("Failed to load book counts:", err);
+      const [scoped, overall] = await Promise.all([
+        invoke<BookCounts>("get_book_counts", { collectionId: colId ?? null }),
+        colId ? invoke<BookCounts>("get_book_counts", { collectionId: null }) : Promise.resolve(null),
+      ]);
+      setBookCounts(scoped);
+      setTotalBooksCount(overall ? overall.all : scoped.all);
+    } catch {
+      // ignore initial count race
     }
   }, []);
-  useEffect(() => { refreshCounts(); }, [refreshCounts]);
 
-  // Keep stable refs for refresh functions so the drag-drop effect doesn't re-register
-  const silentRefreshRef = useRef(refreshSilently);
-  const countsRefreshRef = useRef(refreshCounts);
-  const collectionsRefreshRef = useRef(refreshCollections);
-  useEffect(() => { silentRefreshRef.current = refreshSilently; }, [refreshSilently]);
-  useEffect(() => { countsRefreshRef.current = refreshCounts; }, [refreshCounts]);
-  useEffect(() => { collectionsRefreshRef.current = refreshCollections; }, [refreshCollections]);
+  const refreshBookCollectionsMap = useCallback(async (cols: Collection[]) => {
+    if (cols.length === 0) {
+      setBookCollectionsMap(new Map());
+      return;
+    }
+    try {
+      const entries = await Promise.all(
+        cols.map(async (c) => {
+          const ids = await getBooksInCollection(c.id);
+          return [c, ids] as const;
+        }),
+      );
+      const map = new Map<string, Collection[]>();
+      for (const [col, ids] of entries) {
+        for (const id of ids) {
+          const existing = map.get(id);
+          if (existing) {
+            existing.push(col);
+          } else {
+            map.set(id, [col]);
+          }
+        }
+      }
+      setBookCollectionsMap(map);
+    } catch {
+      // keep previous map on transient error
+    }
+  }, [getBooksInCollection]);
 
-  // Auto-dismiss import error after 10s
   useEffect(() => {
-    if (!importError) return;
-    const timer = setTimeout(() => setImportError(null), 10000);
-    return () => clearTimeout(timer);
-  }, [importError]);
+    void fetchCounts(activeCollectionId);
+  }, [fetchCounts, activeCollectionId]);
 
-  // After 5s of any import, hint that things are slower than usual so the
-  // user knows the app hasn't frozen. Healthy imports finish in 1–5s; past
-  // that, either pdf.js is stalled (PDF_METADATA_TIMEOUT_MS) or the Rust
-  // EPUB path is grinding on a large file.
+  useEffect(() => {
+    void refreshBookCollectionsMap(collectionList);
+  }, [refreshBookCollectionsMap, collectionList]);
+
+  const refreshAllSilently = useCallback(async () => {
+    await Promise.all([
+      refreshSilently(),
+      refreshCollections(),
+      fetchCounts(activeCollectionId),
+    ]);
+  }, [refreshSilently, refreshCollections, fetchCounts, activeCollectionId]);
+
+  const refreshAllSilentlyRef = useRef(refreshAllSilently);
+  refreshAllSilentlyRef.current = refreshAllSilently;
+
+  const silentRefreshRef = useRef(refreshSilently);
+  silentRefreshRef.current = refreshSilently;
+
+  const activeCollectionIdRef = useRef(activeCollectionId);
+  activeCollectionIdRef.current = activeCollectionId;
+
+  const fetchCountsRef = useRef(fetchCounts);
+  fetchCountsRef.current = fetchCounts;
+
+  const collectionsRefreshRef = useRef(refreshCollections);
+  collectionsRefreshRef.current = refreshCollections;
+
+  const openSettings = useCallback((section?: SettingsSection | "updates") => {
+    setSettingsSection(normalizeSettingsSection(section));
+    setSettingsOpen(true);
+  }, []);
+
+  // Settings modal listeners
+  useEffect(() => {
+    const domHandler = (e: Event) => {
+      const section = (e as CustomEvent<{ section?: string }>).detail?.section;
+      openSettings(section as SettingsSection | "updates" | undefined);
+    };
+    window.addEventListener("open-settings", domHandler);
+
+    const disposeIpc = subscribeAsync((isActive) =>
+      listenCurrentWindow<string>("open-settings", (e) => {
+        if (!isActive()) return;
+        openSettings(e.payload as SettingsSection | "updates");
+      }),
+    );
+
+    return () => {
+      window.removeEventListener("open-settings", domHandler);
+      disposeIpc();
+    };
+  }, [openSettings]);
+
+  // Global keyboard shortcuts: Cmd+, Settings, Cmd+K Command Search, Cmd+F Inline Library Filter
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
+      if (e.key === ",") {
+        e.preventDefault();
+        openSettings("general");
+        return;
+      }
+      const lower = e.key.toLowerCase();
+      if (lower === "k" && !e.shiftKey) {
+        if (settingsOpen || addBooksOpen || Boolean(deleteCollectionTarget)) return;
+        e.preventDefault();
+        setCollectionsOpen(false);
+        setSearchOpen((prev) => !prev);
+        return;
+      }
+      if (lower === "f" && !e.shiftKey) {
+        if (
+          activeRoute === "library" &&
+          !searchOpen &&
+          !addBooksOpen &&
+          !settingsOpen &&
+          !deleteCollectionTarget
+        ) {
+          e.preventDefault();
+          filterInputRef.current?.focus();
+          filterInputRef.current?.select();
+        }
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [
+    activeRoute,
+    searchOpen,
+    addBooksOpen,
+    settingsOpen,
+    deleteCollectionTarget,
+    openSettings,
+  ]);
+
+  // Mark synced iCloud books available as soon as hydration finishes
+  useEffect(() => {
+    return subscribeAsync((isActive) =>
+      listenCurrentWindow<string>("book-availability-changed", (e) => {
+        if (!isActive()) return;
+        patchBook(e.payload, { available: true });
+      }),
+    );
+  }, [patchBook]);
+
+  // Refresh after initial sync / MCP changes / ingested covers
+  useEffect(() => {
+    let mcpDebounce: ReturnType<typeof setTimeout> | undefined;
+    let coversDebounce: ReturnType<typeof setTimeout> | undefined;
+
+    const disposeSync = subscribeAsync((isActive) =>
+      listen("sync-initial-tick-done", () => {
+        if (!isActive()) return;
+        void refreshAllSilentlyRef.current();
+      }),
+    );
+
+    const disposeMcpBooks = subscribeAsync((isActive) =>
+      listen("mcp:books-changed", () => {
+        if (!isActive()) return;
+        if (mcpDebounce) clearTimeout(mcpDebounce);
+        mcpDebounce = setTimeout(() => {
+          if (isActive()) void refreshAllSilentlyRef.current();
+        }, 500);
+      }),
+    );
+
+    const disposeMcpCols = subscribeAsync((isActive) =>
+      listen("mcp:collections-changed", () => {
+        if (!isActive()) return;
+        void collectionsRefreshRef.current();
+        void fetchCountsRef.current(activeCollectionIdRef.current);
+      }),
+    );
+
+    const disposeCovers = subscribeAsync((isActive) =>
+      listen("sync-covers-ingested", () => {
+        if (!isActive()) return;
+        if (coversDebounce) clearTimeout(coversDebounce);
+        coversDebounce = setTimeout(() => {
+          if (isActive()) void silentRefreshRef.current();
+        }, 500);
+      }),
+    );
+
+    return () => {
+      disposeSync();
+      disposeMcpBooks();
+      disposeMcpCols();
+      disposeCovers();
+      if (mcpDebounce) clearTimeout(mcpDebounce);
+      if (coversDebounce) clearTimeout(coversDebounce);
+    };
+  }, []);
+
+  // Import slow & error timers
   useEffect(() => {
     if (!importing) {
       setImportSlow(false);
       return;
     }
-    const timer = setTimeout(() => setImportSlow(true), 5000);
-    return () => clearTimeout(timer);
+    const timer = window.setTimeout(() => setImportSlow(true), 5000);
+    return () => window.clearTimeout(timer);
   }, [importing]);
 
   useEffect(() => {
-    const unlistenTick = listen("sync-initial-tick-done", () => {
-      silentRefreshRef.current();
-      countsRefreshRef.current();
-      collectionsRefreshRef.current();
-    });
-    return () => {
-      unlistenTick.then((fn) => fn());
-    };
-  }, []);
+    if (!importError) return;
+    const timer = window.setTimeout(() => setImportError(null), 10000);
+    return () => window.clearTimeout(timer);
+  }, [importError]);
 
-  // Refresh when MCP subprocess writes to the library.
-  // Debounced: bulk MCP imports fire hundreds of events in quick
-  // succession; without the delay each one triggers a full book list
-  // reload, which can OOM/freeze the webview.
-  useEffect(() => {
-    let mcpDebounce: ReturnType<typeof setTimeout> | null = null;
-    const unlistenBooks = listen("mcp:books-changed", () => {
-      if (mcpDebounce) clearTimeout(mcpDebounce);
-      mcpDebounce = setTimeout(() => {
-        silentRefreshRef.current();
-        countsRefreshRef.current();
-        collectionsRefreshRef.current();
-      }, 500);
-    });
-    const unlistenCollections = listen("mcp:collections-changed", () => {
-      collectionsRefreshRef.current();
-      silentRefreshRef.current();
-      countsRefreshRef.current();
-    });
-    return () => {
-      if (mcpDebounce) clearTimeout(mcpDebounce);
-      unlistenBooks.then((fn) => fn());
-      unlistenCollections.then((fn) => fn());
-    };
-  }, []);
+  const importFiles = useCallback(async (paths: string[], targetCollectionId?: string) => {
+    const valid = paths.filter((p) => SUPPORTED_BOOK_EXT.test(p));
+    if (valid.length === 0) return;
 
-  // Covers arrive a tick or two after the books they belong to (the sync
-  // engine triggers their iCloud download, then ingests the bytes into the
-  // cover_data BLOB on a later watcher tick). Refresh so blank cover cards
-  // fill in on their own. Debounced: covers land in bursts.
-  useEffect(() => {
-    let coverDebounce: ReturnType<typeof setTimeout> | null = null;
-    const unlisten = listen("sync-covers-ingested", () => {
-      if (coverDebounce) clearTimeout(coverDebounce);
-      coverDebounce = setTimeout(() => silentRefreshRef.current(), 500);
-    });
-    return () => {
-      if (coverDebounce) clearTimeout(coverDebounce);
-      unlisten.then((fn) => fn());
-    };
-  }, []);
-
-  // Listen for native file drag-and-drop events
-  useEffect(() => {
-    let cancelled = false;
-    const unlisten = onDragDrop(async (event) => {
-      if (cancelled) return;
-      if (event.type === "over" || event.type === "enter") {
-        setIsDragging(true);
-      } else if (event.type === "drop") {
-        setIsDragging(false);
-        const books = event.paths.filter((p) =>
-          p.toLowerCase().endsWith(".epub") || p.toLowerCase().endsWith(".pdf")
-        );
-        if (books.length > 0) {
-          setImporting(true);
-          try {
-            for (const filePath of books) {
-              try {
-                await importBookDialog.importFile(filePath);
-              } catch (err) {
-                console.error("Failed to import dropped book:", err);
-                setImportError(`${filePath.split("/").pop()}: ${formatError(err)}`);
-              }
-            }
-            silentRefreshRef.current();
-            countsRefreshRef.current();
-          } finally {
-            setImporting(false);
-          }
-        }
-      } else {
-        setIsDragging(false);
-      }
-    });
-    return () => {
-      cancelled = true;
-      unlisten.then((fn) => fn());
-    };
-  }, []);
-
-  // Listen for files opened via dock icon drop or file association
-  useEffect(() => {
-    const unlisten = listen<string[]>("file-open", async (event) => {
-      const paths = event.payload;
-      if (paths.length === 0) return;
-      setImporting(true);
-      try {
-        for (const filePath of paths) {
-          try {
-            await importBookDialog.importFile(filePath);
-          } catch (err) {
-            console.error("Failed to import file-open book:", err);
-            setImportError(`${filePath.split("/").pop()}: ${formatError(err)}`);
-          }
-        }
-        silentRefreshRef.current();
-        countsRefreshRef.current();
-      } finally {
-        setImporting(false);
-      }
-    });
-    return () => { unlisten.then((fn) => fn()); };
-  }, []);
-
-  const displayBooks = books;
-
-  const handleImport = async () => {
-    let selected: string | null = null;
+    setImportError(null);
+    setImportingCount(valid.length);
+    setImportingFileName(basenameFromPath(valid[0]));
+    setImporting(true);
+    let anyImported = false;
+    const errors: string[] = [];
     try {
-      selected = await importBookDialog.pickFile();
-      if (!selected) return;
-      setImporting(true);
-      try {
-        const book = await importBookDialog.importFile(selected);
-        if (book) {
-          refreshSilently();
-          refreshCounts();
+      for (const filePath of valid) {
+        const name = basenameFromPath(filePath);
+        setImportingFileName(name);
+        try {
+          const book = await importBookDialog.importFile(filePath);
+          anyImported = true;
+          if (targetCollectionId) {
+            await invoke("add_book_to_collection", {
+              collectionId: targetCollectionId,
+              bookId: book.id,
+            });
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          errors.push(valid.length > 1 ? `${name}: ${msg}` : msg);
+          console.error(`Failed to import ${name}:`, err);
         }
-      } finally {
-        setImporting(false);
       }
+      if (errors.length > 0) {
+        setImportError(errors.join(" · "));
+      }
+    } finally {
+      setImporting(false);
+      setImportingFileName(null);
+      if (anyImported) {
+        await refreshAllSilentlyRef.current();
+      }
+    }
+  }, []);
+
+  const handleImport = useCallback(async (targetCollectionId?: string) => {
+    setImportError(null);
+    try {
+      const filePath = await importBookDialog.pickFile();
+      if (!filePath) return;
+      await importFiles([filePath], targetCollectionId);
     } catch (err) {
-      console.error("Failed to import book:", err);
-      const name = selected ? selected.split("/").pop() : null;
-      setImportError(name ? `${name}: ${formatError(err)}` : formatError(err));
+      const msg = err instanceof Error ? err.message : String(err);
+      setImportError(msg);
+      console.error("Failed to pick book to import:", err);
+    }
+  }, [importFiles]);
+
+  // Drag-and-drop file import
+  useEffect(() => {
+    return subscribeAsync((isActive) =>
+      onDragDrop((event) => {
+        if (!isActive()) return;
+        if (event.type === "enter" || event.type === "over") {
+          setIsDragging(true);
+        } else if (event.type === "drop") {
+          setIsDragging(false);
+          void importFiles(event.paths, activeCollectionIdRef.current);
+        } else {
+          setIsDragging(false);
+        }
+      }),
+    );
+  }, [importFiles]);
+
+  // OS file-open associations (.epub / .pdf double-click)
+  useEffect(() => {
+    return subscribeAsync((isActive) =>
+      listen<string[]>("file-open", (event) => {
+        if (!isActive()) return;
+        void importFiles(event.payload, undefined);
+      }),
+    );
+  }, [importFiles]);
+
+  const handleViewModeChange = (mode: ViewMode) => {
+    setViewMode(mode);
+    localStorage.setItem("quill-library-view", mode);
+  };
+
+  const handleDeleteCollection = async (id: string) => {
+    await collections.remove(id);
+    if (collectionFilter === id) {
+      setCollectionFilter("all");
+      await Promise.all([refreshCollections(), fetchCounts(undefined)]);
+    } else {
+      await refreshAllSilently();
     }
   };
 
-  const handleBooksChanged = useCallback(() => {
-    refreshSilently();
-    refreshCounts();
-    refreshCollections();
-  }, [refreshSilently, refreshCounts, refreshCollections]);
+  const handleAddBooksConfirm = async (collectionId: string, bookIds: string[]) => {
+    await collections.addBooks(collectionId, bookIds);
+    await refreshAllSilently();
+  };
 
-  const title =
-    activeFilter === "all"
-      ? t("home.title.all")
-      : activeFilter === "reading"
-        ? t("home.title.reading")
-        : activeFilter === "finished"
-          ? t("home.title.finished")
-          : isCollectionFilter
-            ? t("home.title.collection")
-            : activeFilter;
+  const statusOptions: Array<{ value: StatusFilter; label: string; count: number }> = [
+    { value: "all", label: t("library.filter.all"), count: bookCounts.all },
+    { value: "reading", label: t("library.filter.reading"), count: bookCounts.reading },
+    { value: "finished", label: t("library.filter.finished"), count: bookCounts.finished },
+    { value: "unread", label: t("library.filter.unread"), count: bookCounts.unread },
+  ];
+
+  const isCollectionEmpty =
+    !loading &&
+    books.length === 0 &&
+    Boolean(activeCollection) &&
+    statusFilter === "all" &&
+    !debouncedSearch;
+
+  const isLibraryEmpty =
+    !loading &&
+    books.length === 0 &&
+    !activeCollection &&
+    statusFilter === "all" &&
+    !debouncedSearch &&
+    totalBooksCount === 0;
+
+  const isNoSearchMatch = !loading && books.length === 0 && debouncedSearch.length > 0;
+  const isFilteredEmpty = !loading && books.length === 0 && !isCollectionEmpty && !isLibraryEmpty && !isNoSearchMatch;
 
   return (
-    <div className="relative flex h-screen bg-bg-surface">
-      <Sidebar
-        activeFilter={activeFilter}
-        onFilterChange={setActiveFilter}
-        bookCounts={bookCounts}
-        collections={collections}
-        userName={userName}
-        onOpenSettings={() => setSettingsOpen(true)}
+    <div className="h-screen dawn-atmosphere flex flex-col overflow-hidden text-text-primary">
+      <TopBar
+        activeRoute={activeRoute}
+        onRouteChange={setActiveRoute}
+        searchOpen={searchOpen}
+        onOpenSearch={() => {
+          setCollectionsOpen(false);
+          setSearchOpen(true);
+        }}
+        importing={importing}
+        onImport={() => void handleImport(activeRoute === "library" ? activeCollectionId : undefined)}
+        settingsOpen={settingsOpen}
+        onOpenSettings={openSettings}
       />
 
-      {activeFilter === "vocab" ? (
-        <DictionaryContent />
-      ) : activeFilter === "chats" ? (
-        <ChatsContent />
-      ) : (
-        <main className="flex-1 flex flex-col min-w-0">
-          <div className="border-b border-border px-page pb-section relative select-none">
-            <TitlebarDragRegion />
-            <div className="pt-11 flex items-center justify-between mb-4">
-              <h1 className="text-[24px] font-semibold text-text-primary tracking-[0.07px]">
-                {title}
+      {activeRoute === "library" && (
+        <main className="flex-1 min-h-0 overflow-y-auto px-10 pt-1 pb-10">
+          {/* Library Header */}
+          <div className="flex flex-wrap items-center justify-between gap-4 pb-6">
+            <div className="flex items-baseline gap-3 min-w-0">
+              <h1 className="text-[28px] font-semibold tracking-[-0.5px] leading-[1.15] text-text-primary truncate max-w-[360px]">
+                {activeCollection ? activeCollection.name : t("library.title")}
               </h1>
-              <div data-drag-region className="flex items-center gap-0">
-                <Button
-                  variant="icon"
-                  size="md"
-                  active={viewMode === "grid"}
-                  onClick={() => setViewMode("grid")}
-                >
-                  <LayoutGrid size={16} />
-                </Button>
-                <Button
-                  variant="icon"
-                  size="md"
-                  active={viewMode === "list"}
-                  onClick={() => setViewMode("list")}
-                >
-                  <List size={16} />
-                </Button>
-              </div>
+              <span className="font-mono text-[12.5px] text-text-tertiary shrink-0">
+                {activeCollection
+                  ? t("library.collectionCount", { count: bookCounts.all })
+                  : t("library.bookCount", { count: totalBooksCount })}
+              </span>
             </div>
 
-            <Input
-              icon={<Search size={16} />}
-              placeholder={t("home.search")}
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-[448px]"
-            />
-          </div>
+            <div className="flex flex-wrap items-center justify-end gap-2.5">
+              {activeCollection && (
+                <button
+                  type="button"
+                  onClick={() => setAddBooksOpen(true)}
+                  className="h-10 px-4 rounded-full bg-accent-tint hover:bg-violet-200/80 text-accent-on-tint text-[13px] font-semibold inline-flex items-center gap-1.5 cursor-pointer transition-colors"
+                >
+                  <Plus size={14} strokeWidth={2.2} />
+                  <span>{t("collections.addBooksButton")}</span>
+                </button>
+              )}
 
-          <div className="flex-1 overflow-auto p-page pb-20">
-            {loading ? (
-              <p className="text-text-muted text-[14px]">{t("home.loading")}</p>
-            ) : displayBooks.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-full gap-4">
-                <p className="text-text-muted text-[14px]">
-                  {searchQuery
-                    ? t("home.noResults")
-                    : isCollectionFilter
-                      ? t("home.noCollectionBooks")
-                      : activeFilter !== "all"
-                        ? t("home.noFilteredBooks", { filter: activeFilter })
-                        : t("home.empty")}
-                </p>
-                {activeFilter === "all" && !searchQuery && (
-                  <Button variant="primary" size="md" onClick={handleImport}>
-                    <Plus size={16} />
-                    {t("home.importBook")}
-                  </Button>
-                )}
+              <SearchField
+                ref={filterInputRef}
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onClear={() => setSearchQuery("")}
+                placeholder={t("library.searchPlaceholder")}
+                aria-label={t("library.searchPlaceholder")}
+                shortcutHint={`${mod}F`}
+                className="w-[210px] sm:w-[235px]"
+              />
+
+              <SegmentedControl
+                value={statusFilter}
+                onChange={setStatusFilter}
+                options={statusOptions}
+              />
+
+              <div className="relative">
+                <button
+                  ref={collectionsAnchorRef}
+                  type="button"
+                  onClick={() => setCollectionsOpen((prev) => !prev)}
+                  aria-expanded={collectionsOpen}
+                  aria-haspopup="dialog"
+                  className={`h-10 px-3.5 rounded-full inline-flex items-center gap-2 text-[13px] cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-focus-ring ${
+                    activeCollection
+                      ? "bg-accent-tint border border-violet-300/60 text-accent-on-tint font-semibold"
+                      : "dawn-glass text-text-primary font-medium hover:bg-surface-solid"
+                  }`}
+                >
+                  {activeCollection ? (
+                    <FolderOpen size={14} className="shrink-0" />
+                  ) : (
+                    <FolderClosed size={14} className="text-text-secondary shrink-0" />
+                  )}
+                  <span className="max-w-[160px] truncate">
+                    {activeCollection ? activeCollection.name : t("collections.allCollections")}
+                  </span>
+                  <ChevronDown
+                    size={13}
+                    className={`shrink-0 transition-transform ${collectionsOpen ? "rotate-180" : ""} ${
+                      activeCollection ? "text-accent-on-tint" : "text-text-tertiary"
+                    }`}
+                  />
+                </button>
+
+                <CollectionsPopover
+                  open={collectionsOpen}
+                  onClose={() => setCollectionsOpen(false)}
+                  anchorRef={collectionsAnchorRef}
+                  activeFilter={collectionFilter}
+                  onSelectFilter={setCollectionFilter}
+                  totalBooksCount={totalBooksCount}
+                  collections={collections.collections}
+                  onCreate={collections.create}
+                  onRename={collections.rename}
+                  onRequestDelete={(col) => setDeleteCollectionTarget(col)}
+                  onReorder={collections.reorder}
+                />
               </div>
-            ) : viewMode === "grid" ? (
-              <BookGrid books={displayBooks} hasMore={hasMore} loadMore={loadMore} loadingMore={loadingMore} activeCollectionId={collectionId} onBooksChanged={handleBooksChanged} />
-            ) : (
-              <BookList books={displayBooks} hasMore={hasMore} loadMore={loadMore} loadingMore={loadingMore} activeCollectionId={collectionId} onBooksChanged={handleBooksChanged} />
-            )}
+
+              <div
+                role="group"
+                aria-label={t("library.viewMode")}
+                className="dawn-glass h-10 p-1 rounded-full inline-flex items-center gap-0.5"
+              >
+                <button
+                  type="button"
+                  onClick={() => handleViewModeChange("grid")}
+                  aria-label={t("library.gridView")}
+                  aria-pressed={viewMode === "grid"}
+                  className={`size-8 rounded-full flex items-center justify-center cursor-pointer transition-colors ${
+                    viewMode === "grid"
+                      ? "bg-accent-tint text-accent-on-tint"
+                      : "text-text-tertiary hover:text-text-primary"
+                  }`}
+                >
+                  <LayoutGrid size={15} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleViewModeChange("list")}
+                  aria-label={t("library.listView")}
+                  aria-pressed={viewMode === "list"}
+                  className={`size-8 rounded-full flex items-center justify-center cursor-pointer transition-colors ${
+                    viewMode === "list"
+                      ? "bg-accent-tint text-accent-on-tint"
+                      : "text-text-tertiary hover:text-text-primary"
+                  }`}
+                >
+                  <List size={15} />
+                </button>
+              </div>
+            </div>
           </div>
 
-          <button
-            onClick={handleImport}
-            className="shrink-0 mx-page mb-page rounded-lg border border-dashed border-text-muted/40 py-4 flex items-center justify-center gap-2 text-[14px] text-text-secondary hover:border-accent hover:text-accent transition-colors cursor-pointer"
-          >
-            <Upload size={16} />
-            {t("home.dropHint")}
-          </button>
+          {/* Content / Empty States */}
+          {loading ? (
+            <div className="flex items-center justify-center py-24 text-text-tertiary text-[14px]">
+              {t("library.loading")}
+            </div>
+          ) : isCollectionEmpty && activeCollection ? (
+            <div className="flex items-center justify-center py-20">
+              <div className="dawn-glass rounded-[24px] p-8 max-w-[440px] w-full flex flex-col items-center text-center gap-3.5">
+                <div className="size-14 rounded-[18px] bg-accent-tint flex items-center justify-center text-accent-on-tint">
+                  <FolderOpen size={24} />
+                </div>
+                <h2 className="text-[18px] font-semibold text-text-primary tracking-[-0.2px]">
+                  {t("collections.emptyStateTitle", { name: activeCollection.name })}
+                </h2>
+                <p className="text-[13px] text-text-secondary leading-[1.5]">
+                  {t("collections.emptyStateSub")}
+                </p>
+                <div className="pt-2 flex flex-wrap items-center justify-center gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => setAddBooksOpen(true)}
+                    className="px-4 py-2 rounded-full bg-accent hover:bg-accent-hover text-white text-[13px] font-semibold cursor-pointer transition-colors"
+                  >
+                    {t("collections.addFromLibrary")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleImport(activeCollection.id)}
+                    className="px-4 py-2 rounded-full bg-surface-chip border border-border-default hover:bg-surface-solid text-[13px] font-medium text-text-primary cursor-pointer transition-colors inline-flex items-center gap-1.5"
+                  >
+                    <BookUp size={14} className="text-text-secondary" />
+                    <span>{t("collections.importFile")}</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : isLibraryEmpty ? (
+            <div className="flex items-center justify-center py-20">
+              <div className="dawn-glass rounded-[24px] p-8 max-w-[440px] w-full flex flex-col items-center text-center gap-3.5">
+                <div className="size-14 rounded-[18px] bg-accent-tint flex items-center justify-center text-accent-on-tint">
+                  <BookOpen size={24} />
+                </div>
+                <h2 className="text-[18px] font-semibold text-text-primary tracking-[-0.2px]">
+                  {t("library.emptyTitle")}
+                </h2>
+                <p className="text-[13px] text-text-secondary leading-[1.5]">
+                  {t("library.emptySub")}
+                </p>
+                <div className="pt-2">
+                  <button
+                    type="button"
+                    onClick={() => void handleImport()}
+                    className="px-4 py-2 rounded-full bg-accent hover:bg-accent-hover text-white text-[13px] font-semibold cursor-pointer transition-colors inline-flex items-center gap-1.5"
+                  >
+                    <Plus size={15} />
+                    <span>{t("library.importBook")}</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : isNoSearchMatch ? (
+            <div className="flex items-center justify-center py-20">
+              <div className="dawn-glass rounded-[24px] p-8 max-w-[440px] w-full flex flex-col items-center text-center gap-3">
+                <div className="size-12 rounded-[16px] bg-surface-inset flex items-center justify-center text-text-tertiary">
+                  <SearchX size={22} />
+                </div>
+                <h2 className="text-[16px] font-semibold text-text-primary">
+                  {t("library.noMatchTitle", { query: debouncedSearch })}
+                </h2>
+                <p className="text-[13px] text-text-secondary leading-[1.5]">
+                  {t("library.noMatchSub")}
+                </p>
+                <div className="pt-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setSearchQuery("")}
+                    className="px-4 py-1.5 rounded-full bg-surface-chip border border-border-default hover:bg-surface-solid text-[12.5px] font-medium text-text-primary cursor-pointer transition-colors"
+                  >
+                    {t("library.clearSearch")}
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : isFilteredEmpty ? (
+            <div className="flex items-center justify-center py-20">
+              <div className="dawn-glass rounded-[24px] p-8 max-w-[420px] w-full flex flex-col items-center text-center gap-3">
+                <h2 className="text-[16px] font-semibold text-text-primary">
+                  {t("library.noFilteredBooks", {
+                    filter: t(`library.filter.${statusFilter}`),
+                  })}
+                </h2>
+                <button
+                  type="button"
+                  onClick={() => setStatusFilter("all")}
+                  className="px-4 py-1.5 rounded-full bg-surface-chip border border-border-default hover:bg-surface-solid text-[12.5px] font-medium text-text-primary cursor-pointer transition-colors"
+                >
+                  {t("library.showAllBooks")}
+                </button>
+              </div>
+            </div>
+          ) : viewMode === "grid" ? (
+            <BookGrid
+              books={books}
+              hasMore={hasMore}
+              loadMore={loadMore}
+              loadingMore={loadingMore}
+              activeCollectionId={activeCollectionId}
+              onBooksChanged={() => void refreshAllSilently()}
+            />
+          ) : (
+            <BookList
+              books={books}
+              bookCollectionsMap={bookCollectionsMap}
+              hasMore={hasMore}
+              loadMore={loadMore}
+              loadingMore={loadingMore}
+              activeCollectionId={activeCollectionId}
+              onBooksChanged={() => void refreshAllSilently()}
+              onBookAvailable={(bookId) => patchBook(bookId, { available: true })}
+            />
+          )}
         </main>
       )}
 
-      {isDragging && (
-        <div className="absolute inset-0 z-50 flex items-center justify-center bg-overlay backdrop-blur-sm">
-          <div className="flex flex-col items-center gap-4 rounded-xl border-2 border-dashed border-accent bg-bg-surface px-16 py-12 shadow-popover">
-            <div className="flex h-14 w-14 items-center justify-center rounded-full bg-accent-bg">
-              <BookOpen size={28} className="text-accent" />
-            </div>
-            <p className="text-[18px] font-semibold text-text-primary">
-              {t("home.dropOverlay")}
-            </p>
-            <p className="text-[14px] text-text-muted">{t("home.dropFormats")}</p>
-          </div>
+      {activeRoute === "words" && (
+        <div className="flex-1 min-h-0 flex overflow-hidden">
+          <DictionaryContent />
         </div>
       )}
 
-      {importing && (
-        <div className="absolute inset-0 z-50 flex items-center justify-center bg-overlay backdrop-blur-sm">
-          <div className="flex flex-col items-center gap-4 rounded-xl border border-border bg-bg-surface px-16 py-12 shadow-popover">
-            <Loader size={28} className="text-accent animate-spin" />
-            <p className="text-[18px] font-semibold text-text-primary">
-              {t("home.importing")}
-            </p>
-            {importSlow && (
-              <p className="max-w-[320px] text-center text-[13px] text-text-muted">
-                {t("home.importingSlow")}
-              </p>
-            )}
-          </div>
+      {activeRoute === "chats" && (
+        <div className="flex-1 min-h-0 flex overflow-hidden">
+          <ChatsContent />
         </div>
       )}
 
-      {importError && (
-        <div className="fixed top-5 left-1/2 -translate-x-1/2 z-[60] max-w-[600px] bg-white dark:bg-bg-surface border border-border rounded-[14px] shadow-popover flex items-start gap-3 pl-4 pr-3 py-3">
-          <AlertCircle size={16} className="shrink-0 mt-0.5 text-red-500" />
-          <div className="flex-1 min-w-0">
-            <p className="text-[13px] font-medium text-text-primary tracking-[-0.08px]">
-              {t("home.importError")}
-            </p>
-            <p className="text-[12px] text-text-secondary mt-0.5 break-words">
-              {importError}
-            </p>
-          </div>
-          <button
-            onClick={() => setImportError(null)}
-            className="shrink-0 size-6 flex items-center justify-center rounded-lg hover:bg-bg-input cursor-pointer transition-colors"
-          >
-            <X size={14} className="text-text-muted" />
-          </button>
-        </div>
-      )}
+      <CommandSearchModal open={searchOpen} onClose={() => setSearchOpen(false)} />
+
+      <ImportOverlays
+        isDragging={isDragging}
+        importing={importing}
+        importingCount={importingCount}
+        importingFileName={importingFileName}
+        importSlow={importSlow}
+        importError={importError}
+        onDismissError={() => setImportError(null)}
+      />
+
+      <DeleteCollectionModal
+        collection={deleteCollectionTarget}
+        onClose={() => setDeleteCollectionTarget(null)}
+        onConfirm={handleDeleteCollection}
+      />
+
+      <AddBooksModal
+        open={addBooksOpen}
+        collection={activeCollection}
+        onClose={() => setAddBooksOpen(false)}
+        onConfirm={handleAddBooksConfirm}
+      />
 
       <SettingsModal
         open={settingsOpen}
-        onClose={() => {
-          setSettingsOpen(false);
-          setSettingsSection("general");
-          // Reload user name in case it changed
-          invoke<Record<string, string>>("get_all_settings")
-            .then((s) => setUserName(s.user_name ?? ""))
-            .catch(() => {});
-        }}
+        onClose={() => setSettingsOpen(false)}
         initialSection={settingsSection}
       />
     </div>

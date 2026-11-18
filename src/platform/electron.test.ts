@@ -29,6 +29,7 @@ describe("electronPlatform", () => {
       setWindowTitle: async () => {},
       focusWindow: async () => true,
       openReaderWindow: async () => {},
+      getOpenReaderCount: async () => 0,
       onWindowResized: () => () => {},
       setZoom: async () => {},
       setTitlebarZoom: async () => {},

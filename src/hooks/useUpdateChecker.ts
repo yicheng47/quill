@@ -6,6 +6,7 @@ export type UpdateStatus =
   | "checking"
   | "available"
   | "downloading"
+  | "verifying"
   | "ready"
   | "error";
 
@@ -103,12 +104,10 @@ export function useUpdateChecker(): UpdateState {
           }
         } else if (event.event === "Finished") {
           setProgress(100);
+          setStatus("verifying");
         }
       });
       setStatus("ready");
-      // Download + install finished — relaunch straight into the new
-      // version (no manual "Restart" step).
-      await relaunch();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setStatus("error");
@@ -116,7 +115,12 @@ export function useUpdateChecker(): UpdateState {
   }, [update]);
 
   const restart = useCallback(async () => {
-    await relaunch();
+    try {
+      await relaunch();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setStatus("error");
+    }
   }, []);
 
   return {

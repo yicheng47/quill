@@ -77,11 +77,9 @@
     Menlo, monospace;
   --font-reading: "Literata Variable", "Literata", Georgia, "Songti SC", serif;
 
-  --color-bg-start: #ece8fa;
-  --color-bg-end: #f7f1ee;
-  --color-bg-glow-violet: rgba(207, 198, 255, 0.9);
-  --color-bg-glow-peach: rgba(255, 211, 189, 0.85);
-  --color-bg-glow-mint: rgba(198, 234, 223, 0.85);
+  --color-bg-start: #eeebf8;
+  --color-bg-end: #f7f5f3;
+  --color-bg-glow-violet: rgba(212, 204, 255, 0.45);
 
   --color-surface-glass: rgba(255, 255, 255, 0.72);
   --color-surface-glass-border: rgba(255, 255, 255, 0.9);
@@ -207,16 +205,6 @@ body {
       radial-gradient(
         55% 55% at 10% 5%,
         var(--color-bg-glow-violet) 0%,
-        transparent 100%
-      ),
-      radial-gradient(
-        45% 45% at 95% 15%,
-        var(--color-bg-glow-peach) 0%,
-        transparent 100%
-      ),
-      radial-gradient(
-        60% 40% at 55% 105%,
-        var(--color-bg-glow-mint) 0%,
         transparent 100%
       ),
       linear-gradient(135deg, var(--color-bg-start) 0%, var(--color-bg-end) 100%);

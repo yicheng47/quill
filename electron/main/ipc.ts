@@ -8,6 +8,7 @@ import {
   appReadyForWindow,
   createReaderWindow,
   focusManagedWindow,
+  getOpenReaderWindowCount,
   getWindow,
   labelForWebContents,
   markQuitting,
@@ -105,6 +106,10 @@ export function registerIpcHandlers(
       createReaderWindow(params, dark);
     },
   );
+
+  ipcMain.handle("quill:get-open-reader-count", () => {
+    return getOpenReaderWindowCount();
+  });
 
   ipcMain.handle(
     "quill:emit-to",

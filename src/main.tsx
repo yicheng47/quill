@@ -7,6 +7,7 @@ import "@fontsource-variable/literata/wght-italic.css";
 import App from "./App";
 import "./index.css";
 import "./i18n";
+import { getCurrentWindowLabel } from "./platform";
 
 // Polyfill Map.getOrInsertComputed for PDF.js v5.5+ (Stage 3 proposal, not yet in WebKit)
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -20,14 +21,21 @@ if (!(Map.prototype as any).getOrInsertComputed) {
   };
 }
 
-// Apply cached theme synchronously before React mounts so the window doesn't
-// flash light-mode on cold start. Reconciled with the DB in App.tsx.
-const cachedTheme = localStorage.getItem("quill-theme") ?? "system";
-const prefersDark =
-  cachedTheme === "dark" ||
-  (cachedTheme === "system" &&
-    window.matchMedia("(prefers-color-scheme: dark)").matches);
-if (prefersDark) document.documentElement.classList.add("dark");
+// Main window uses Dawn light exclusively until M8; reader windows keep legacy
+// theme handling until M6.
+if (getCurrentWindowLabel() === "main") {
+  document.documentElement.classList.add("dawn");
+  document.documentElement.classList.remove("dark");
+} else {
+  // Apply cached theme synchronously before React mounts so the window doesn't
+  // flash light-mode on cold start. Reconciled with the DB in App.tsx.
+  const cachedTheme = localStorage.getItem("quill-theme") ?? "system";
+  const prefersDark =
+    cachedTheme === "dark" ||
+    (cachedTheme === "system" &&
+      window.matchMedia("(prefers-color-scheme: dark)").matches);
+  if (prefersDark) document.documentElement.classList.add("dark");
+}
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>

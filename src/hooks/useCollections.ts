@@ -44,13 +44,26 @@ export function useCollections() {
 
   const addBook = useCallback(async (collectionId: string, bookId: string) => {
     await invoke("add_book_to_collection", { collectionId, bookId });
-    refresh();
+    await refresh();
+  }, [refresh]);
+
+  const addBooks = useCallback(async (collectionId: string, bookIds: string[]) => {
+    await invoke("add_books_to_collection", { collectionId, bookIds });
+    await refresh();
   }, [refresh]);
 
   const removeBook = useCallback(async (collectionId: string, bookId: string) => {
     await invoke("remove_book_from_collection", { collectionId, bookId });
-    refresh();
+    await refresh();
   }, [refresh]);
+
+  const getBookCollections = useCallback(async (bookId: string) => {
+    return invoke<string[]>("list_book_collections", { bookId });
+  }, []);
+
+  const getBooksInCollection = useCallback(async (collectionId: string) => {
+    return invoke<string[]>("list_books_in_collection", { collectionId });
+  }, []);
 
   const reorder = useCallback(async (ids: string[]) => {
     await invoke("reorder_collections", { ids });
@@ -60,5 +73,17 @@ export function useCollections() {
     });
   }, []);
 
-  return { collections, refresh, create, rename, remove, reorder, addBook, removeBook };
+  return {
+    collections,
+    refresh,
+    create,
+    rename,
+    remove,
+    reorder,
+    addBook,
+    addBooks,
+    removeBook,
+    getBookCollections,
+    getBooksInCollection,
+  };
 }

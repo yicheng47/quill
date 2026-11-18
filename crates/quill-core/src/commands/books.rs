@@ -713,8 +713,31 @@ pub struct BookCounts {
     pub unread: usize,
 }
 
-pub(crate) fn query_book_counts(db: &Db) -> AppResult<BookCounts> {
+pub(crate) fn query_book_counts(db: &Db, collection_id: Option<&str>) -> AppResult<BookCounts> {
     let conn = db.reader();
+    if let Some(cid) = collection_id {
+        let all: usize = conn.query_row(
+            "SELECT COUNT(*) FROM books b INNER JOIN collection_books cb ON cb.book_id = b.id WHERE cb.collection_id = ?1",
+            params![cid],
+            |r| r.get(0),
+        )?;
+        let reading: usize = conn.query_row(
+            "SELECT COUNT(*) FROM books b INNER JOIN collection_books cb ON cb.book_id = b.id WHERE cb.collection_id = ?1 AND b.status = 'reading'",
+            params![cid],
+            |r| r.get(0),
+        )?;
+        let finished: usize = conn.query_row(
+            "SELECT COUNT(*) FROM books b INNER JOIN collection_books cb ON cb.book_id = b.id WHERE cb.collection_id = ?1 AND b.status = 'finished'",
+            params![cid],
+            |r| r.get(0),
+        )?;
+        let unread: usize = conn.query_row(
+            "SELECT COUNT(*) FROM books b INNER JOIN collection_books cb ON cb.book_id = b.id WHERE cb.collection_id = ?1 AND b.status = 'unread'",
+            params![cid],
+            |r| r.get(0),
+        )?;
+        return Ok(BookCounts { all, reading, finished, unread });
+    }
     let all: usize = conn.query_row("SELECT COUNT(*) FROM books", [], |r| r.get(0))?;
     let reading: usize = conn.query_row(
         "SELECT COUNT(*) FROM books WHERE status = 'reading'", [], |r| r.get(0),
@@ -728,8 +751,8 @@ pub(crate) fn query_book_counts(db: &Db) -> AppResult<BookCounts> {
     Ok(BookCounts { all, reading, finished, unread })
 }
 
-pub fn get_book_counts(core: &Core) -> AppResult<BookCounts> {
-    query_book_counts(&core.db)
+pub fn get_book_counts(core: &Core, collection_id: Option<String>) -> AppResult<BookCounts> {
+    query_book_counts(&core.db, collection_id.as_deref())
 }
 
 pub fn get_book(core: &Core, id: String) -> AppResult<Book> {
@@ -1549,7 +1572,7 @@ mod tests {
     #[test]
     fn query_book_counts_reports_all_statuses() {
         let (_dir, db) = setup();
-        let empty = query_book_counts(&db).unwrap();
+        let empty = query_book_counts(&db, None).unwrap();
         assert_eq!(empty.all, 0);
         assert_eq!(empty.reading, 0);
         assert_eq!(empty.finished, 0);
@@ -1560,10 +1583,32 @@ mod tests {
         insert_book_with_ts(&db, "b3", "unread", 1002);
         insert_book_with_ts(&db, "b4", "unread", 1003);
 
-        let counts = query_book_counts(&db).unwrap();
+        let counts = query_book_counts(&db, None).unwrap();
         assert_eq!(counts.all, 4);
         assert_eq!(counts.reading, 1);
         assert_eq!(counts.finished, 1);
         assert_eq!(counts.unread, 2);
+
+        let conn = db.conn.lock().unwrap();
+        let now = chrono::Utc::now().timestamp_millis();
+        conn.execute(
+            "INSERT INTO collections (id, name, sort_order, created_at, updated_at, updated_by_device)
+             VALUES ('c1', 'Sci-Fi', 0, ?1, ?1, 'dev')",
+            params![now],
+        ).unwrap();
+        for bid in ["b1", "b3"] {
+            conn.execute(
+                "INSERT INTO collection_books (collection_id, book_id, created_at, updated_at, updated_by_device)
+                 VALUES ('c1', ?1, ?2, ?2, 'dev')",
+                params![bid, now],
+            ).unwrap();
+        }
+        drop(conn);
+
+        let coll_counts = query_book_counts(&db, Some("c1")).unwrap();
+        assert_eq!(coll_counts.all, 2);
+        assert_eq!(coll_counts.reading, 1);
+        assert_eq!(coll_counts.finished, 0);
+        assert_eq!(coll_counts.unread, 1);
     }
 }

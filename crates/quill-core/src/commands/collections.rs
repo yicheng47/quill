@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
 
@@ -216,4 +218,154 @@ pub fn list_books_in_collection(core: &Core, collection_id: String) -> AppResult
         .query_map(params![collection_id], |row| row.get(0))?
         .collect::<Result<Vec<String>, _>>()?;
     Ok(book_ids)
+}
+
+pub(crate) fn query_book_collections(db: &Db, book_id: &str) -> AppResult<Vec<String>> {
+    let conn = db.reader();
+    let mut stmt = conn.prepare(
+        "SELECT cb.collection_id
+         FROM collection_books cb
+         INNER JOIN collections c ON c.id = cb.collection_id
+         WHERE cb.book_id = ?1
+         ORDER BY c.sort_order, c.created_at",
+    )?;
+    let collection_ids = stmt
+        .query_map(params![book_id], |row| row.get(0))?
+        .collect::<Result<Vec<String>, _>>()?;
+    Ok(collection_ids)
+}
+
+pub fn list_book_collections(core: &Core, book_id: String) -> AppResult<Vec<String>> {
+    query_book_collections(&core.db, &book_id)
+}
+
+pub(crate) fn do_add_books_to_collection(
+    collection_id: &str,
+    book_ids: &[String],
+    db: &Db,
+    sync: &SyncWriter,
+) -> AppResult<()> {
+    let mut seen = HashSet::with_capacity(book_ids.len());
+    for book_id in book_ids {
+        if !seen.insert(book_id.as_str()) {
+            continue;
+        }
+        do_add_book_to_collection(collection_id, book_id, db, sync)?;
+    }
+    Ok(())
+}
+
+pub fn add_books_to_collection(
+    core: &Core,
+    collection_id: String,
+    book_ids: Vec<String>,
+) -> AppResult<()> {
+    do_add_books_to_collection(&collection_id, &book_ids, &core.db, &core.sync_writer)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rusqlite::params;
+    use tempfile::TempDir;
+
+    fn setup() -> (TempDir, Db, SyncWriter) {
+        let dir = TempDir::new().unwrap();
+        let db = Db::init(dir.path()).unwrap();
+        let sync = SyncWriter::new("dev-1".to_string());
+        (dir, db, sync)
+    }
+
+    fn seed_book(db: &Db, id: &str) {
+        let conn = db.conn.lock().unwrap();
+        let now = chrono::Utc::now().timestamp_millis();
+        conn.execute(
+            "INSERT INTO books (id, title, author, file_path, format, status, progress, created_at, updated_at)
+             VALUES (?1, ?2, 'Author', 'books/test.epub', 'epub', 'unread', 0, ?3, ?3)",
+            params![id, format!("Book {id}"), now],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn list_book_collections_returns_sorted_membership() {
+        let (_dir, db, sync) = setup();
+        seed_book(&db, "b1");
+        seed_book(&db, "b2");
+
+        let c1 = do_create_collection("First", &db, &sync).unwrap();
+        let c2 = do_create_collection("Second", &db, &sync).unwrap();
+
+        assert!(query_book_collections(&db, "b1").unwrap().is_empty());
+
+        do_add_book_to_collection(&c2.id, "b1", &db, &sync).unwrap();
+        do_add_book_to_collection(&c1.id, "b1", &db, &sync).unwrap();
+        assert_eq!(
+            query_book_collections(&db, "b1").unwrap(),
+            vec![c1.id.clone(), c2.id.clone()]
+        );
+
+        do_remove_book_from_collection(&c1.id, "b1", &db, &sync).unwrap();
+        assert_eq!(query_book_collections(&db, "b1").unwrap(), vec![c2.id]);
+        assert!(query_book_collections(&db, "b2").unwrap().is_empty());
+    }
+
+    #[test]
+    fn add_books_to_collection_matches_per_book_sync_events() {
+        let (_dir1, db_batch, sync_batch) = setup();
+        seed_book(&db_batch, "b1");
+        seed_book(&db_batch, "b2");
+        let c_batch = do_create_collection("Batch", &db_batch, &sync_batch).unwrap();
+        sync_batch.set_should_queue(true);
+
+        do_add_books_to_collection(
+            &c_batch.id,
+            &["b1".into(), "b2".into(), "b1".into()],
+            &db_batch,
+            &sync_batch,
+        )
+        .unwrap();
+
+        let (_dir2, db_single, sync_single) = setup();
+        seed_book(&db_single, "b1");
+        seed_book(&db_single, "b2");
+        let c_single = do_create_collection("Single", &db_single, &sync_single).unwrap();
+        sync_single.set_should_queue(true);
+
+        do_add_book_to_collection(&c_single.id, "b1", &db_single, &sync_single).unwrap();
+        do_add_book_to_collection(&c_single.id, "b2", &db_single, &sync_single).unwrap();
+
+        assert_eq!(
+            query_book_collections(&db_batch, "b1").unwrap(),
+            vec![c_batch.id.clone()]
+        );
+        assert_eq!(
+            query_book_collections(&db_batch, "b2").unwrap(),
+            vec![c_batch.id.clone()]
+        );
+
+        let read_outbox = |db: &Db| -> Vec<serde_json::Value> {
+            let conn = db.conn.lock().unwrap();
+            let mut stmt = conn
+                .prepare("SELECT body_json FROM _pending_publish ORDER BY rowid")
+                .unwrap();
+            stmt.query_map([], |row| {
+                let s: String = row.get(0)?;
+                Ok(serde_json::from_str::<serde_json::Value>(&s).unwrap())
+            })
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+        };
+
+        let batch_events = read_outbox(&db_batch);
+        let single_events = read_outbox(&db_single);
+        assert_eq!(batch_events.len(), 2);
+        assert_eq!(single_events.len(), 2);
+        for (b, s) in batch_events.iter().zip(single_events.iter()) {
+            assert_eq!(b["type"], s["type"]);
+            assert_eq!(b["payload"]["book"], s["payload"]["book"]);
+            assert_eq!(b["payload"]["collection"], c_batch.id);
+        }
+    }
 }

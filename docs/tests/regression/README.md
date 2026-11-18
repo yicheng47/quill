@@ -45,11 +45,11 @@ The case descriptions name these files by what they cover: "the 1000-page PDF" i
 |---|---|---|---|---|
 | LIB-01 | smoke | mac, win | dev | Import an EPUB with the Import button and file dialog: the book appears with its cover, title and author. |
 | LIB-02 | smoke | mac, win | dev | Import a text PDF and a scanned PDF: covers and metadata appear, and the import never hangs (#216, #222). |
-| LIB-03 | full | mac, win | dev | Drag an EPUB and a PDF onto the library window: the drop overlay shows, and both import. |
+| LIB-03 | full | mac, win | dev | Drag an EPUB and a PDF onto the library window: the centered Dawn drop overlay shows, followed by the separate importing progress card, and both import. |
 | LIB-04 | full | mac, win | signed | Open an EPUB from Finder or Explorer with Quill (file association) and drop one on the macOS dock icon: it imports or opens. |
 | LIB-05 | full | mac | dev | With 300+ books, the library scrolls through every page, search filters, and grid and list views both render. |
-| LIB-06 | full | mac | dev | All books, Currently reading and Finished filter correctly. Mark finished, mark unread and continue reading from the book menu. |
-| LIB-07 | full | mac | dev | Create, rename and delete a collection; add a book to it and remove it. |
+| LIB-06 | full | mac | dev | All, Reading, Finished and Unread segments filter correctly. Open Book, Mark as Finished, Mark as Unread and Currently Reading work from the book menu. |
+| LIB-07 | full | mac | dev | Create, rename, reorder and delete a collection in the Collections popover; add books via Add Books or the book submenu, and remove a book from it. |
 | LIB-08 | full | mac | dev | Edit a book's title and author: the change persists after restart. |
 | LIB-09 | full | mac | dev | Delete a book: it disappears, and reopening the app does not bring it back. |
 
@@ -112,7 +112,7 @@ The integration toggles write the same `quill` entry into `~/.claude.json` and `
 |---|---|---|---|---|
 | APP-01 | smoke | mac, win | dev | Launch: the main window appears at its size with no white flash, and the library is populated. |
 | APP-02 | full | mac, win | dev | macOS: closing the main window hides it, the dock click brings it back, and ⌘Q quits with reader windows open. Windows: closing the main window closes every window. |
-| APP-03 | full | mac, win | dev | Menus: Check for Updates shows the update toast; Reveal Logs works; Edit-menu copy and paste work in text fields and the reader. |
+| APP-03 | full | mac, win | dev | Menus: Check for Updates shows inline feedback in the TopBar without a toast (and no indicator when idle); Reveal Logs works; Edit-menu copy and paste work in text fields and the reader. |
 | APP-04 | full | mac | dev | Traffic lights sit correctly in the main and reader windows, including at app zoom other than 100%. Windows drag by their titlebar regions, and the chat titlebar drags (#321). |
 | APP-05 | full | mac, win | dev | Launching Quill again focuses the running app instead of starting a second one. On Windows, a second launch with a book argument opens the book. |
 | APP-06 | full | mac, win | signed | Update in-app from the previous build to the candidate: the download, install and relaunch complete, and the app opens on the new version. |

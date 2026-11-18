@@ -25,7 +25,7 @@ function detectSystemLanguage(): string {
 // Resolve initial language synchronously from localStorage cache (or OS), so
 // React can mount immediately without waiting on a Tauri IPC roundtrip.
 function initialLanguage(): string {
-  const cached = localStorage.getItem(CACHE_KEY);
+  const cached = typeof localStorage?.getItem === "function" ? localStorage.getItem(CACHE_KEY) : null;
   if (cached && SUPPORTED_LANGUAGES.includes(cached)) return cached;
   return detectSystemLanguage();
 }
