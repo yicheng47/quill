@@ -52,6 +52,7 @@ pub struct Core {
     pub device: DeviceIdentity,
     pub sync_writer: SyncWriter,
     pub sync_state: SyncState,
+    pub oauth_pending: crate::ai::oauth::OAuthPendingLogin,
     pub host: Arc<dyn ShellHost>,
 }
 
@@ -145,6 +146,7 @@ pub fn boot(config: BootConfig, host: Arc<dyn ShellHost>) -> AppResult<Arc<Core>
         device,
         sync_writer,
         sync_state: SyncState::new(None, None),
+        oauth_pending: Default::default(),
         host,
     });
 

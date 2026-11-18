@@ -380,6 +380,13 @@ struct SyncRemovePeerArgs {
     device_uuid: String,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CheckOllamaStatusArgs {
+    #[serde(default)]
+    base_url: Option<String>,
+}
+
 macro_rules! command_table {
     (
         sync {
@@ -796,7 +803,7 @@ command_table! {
             let a: AiChatArgs = parse_args(args)?;
             async move {
                 commands::ai::ai_chat(
-                    &core,
+                    core,
                     a.messages,
                     a.book_title,
                     a.book_author,
@@ -810,7 +817,7 @@ command_table! {
             let a: AiLookupArgs = parse_args(args)?;
             async move {
                 commands::ai::ai_lookup(
-                    &core,
+                    core,
                     a.word,
                     a.sentence,
                     a.book_title,
@@ -826,7 +833,7 @@ command_table! {
             let a: AiExplainArgs = parse_args(args)?;
             async move {
                 commands::ai::ai_explain(
-                    &core,
+                    core,
                     a.passage,
                     a.surrounding,
                     a.book_title,
@@ -841,7 +848,7 @@ command_table! {
             let a: AiGenerateTitleArgs = parse_args(args)?;
             async move {
                 commands::ai::ai_generate_title(
-                    &core,
+                    core,
                     a.user_message,
                     a.assistant_message,
                     a.request_id,
@@ -853,6 +860,14 @@ command_table! {
         "list_codex_models" => |core, _args| {
             async move {
                 commands::ai::list_codex_models(&core)
+                    .await
+                    .and_then(to_json)
+            }
+        },
+        "check_ollama_status" => |core, args| {
+            let a: CheckOllamaStatusArgs = parse_args(args)?;
+            async move {
+                commands::ai::check_ollama_status(&core, a.base_url)
                     .await
                     .and_then(to_json)
             }
@@ -873,6 +888,13 @@ command_table! {
                     .and_then(to_json)
             }
         },
+        "openai_oauth_cancel" => |core, _args| {
+            async move {
+                commands::oauth::openai_oauth_cancel(&core)
+                    .await
+                    .and_then(to_json)
+            }
+        },
         "openai_oauth_logout" => |core, _args| {
             async move {
                 commands::oauth::openai_oauth_logout(&core)
@@ -886,7 +908,7 @@ command_table! {
             let a: AiTranslatePassageArgs = parse_args(args)?;
             async move {
                 commands::translation::ai_translate_passage(
-                    &core,
+                    core,
                     a.text,
                     a.context,
                     a.book_id,
@@ -1213,6 +1235,173 @@ mod tests {
                 .contains("TRANSLATION_LANGUAGE_NOT_CONFIGURED"),
             "expected TRANSLATION_LANGUAGE_NOT_CONFIGURED in: {tr_lang_err}"
         );
+
+        // OAuth empty refresh token surfaces AI_REAUTH_REQUIRED and clears stored tokens
+        dispatch(
+            Arc::clone(&core),
+            "set_settings_bulk",
+            r#"{"settings":{"ai_provider":"openai","ai_auth_mode":"oauth","language":"en"}}"#,
+        )
+        .await
+        .expect("set oauth provider");
+        crate::ai::oauth::save_tokens(
+            &core.secrets,
+            &crate::ai::oauth::OAuthTokens {
+                access_token: "stale".into(),
+                refresh_token: "".into(),
+                expires_at: 0,
+                account_id: Some("acct".into()),
+                email: Some("reader@example.com".into()),
+            },
+        )
+        .unwrap();
+
+        let reauth_err = dispatch(
+            Arc::clone(&core),
+            "ai_explain",
+            &json!({
+                "passage": "hello",
+                "surrounding": null,
+                "bookTitle": "Book",
+                "chapter": "1",
+                "requestId": "req-reauth"
+            })
+            .to_string(),
+        )
+        .await
+        .expect_err("ai_explain with empty refresh token should return AI_REAUTH_REQUIRED");
+        assert_eq!(reauth_err.to_string(), "AI_REAUTH_REQUIRED");
+
+        let status_after = dispatch(Arc::clone(&core), "openai_oauth_status", "{}")
+            .await
+            .expect("status after reauth");
+        assert_eq!(
+            status_after,
+            json!({"connected": false, "account_id": null, "email": null})
+        );
+
+        dispatch(Arc::clone(&core), "openai_oauth_cancel", "{}")
+            .await
+            .expect("cancel when idle is idempotent");
+    }
+
+    #[tokio::test]
+    async fn absent_and_blank_provider_return_ai_not_configured_while_explicit_ollama_resolves() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let (_dir, _host, core) = boot_test_core();
+
+        let chat_args = json!({
+            "messages": [{"role": "user", "content": "hi"}],
+            "bookTitle": null,
+            "bookAuthor": null,
+            "currentChapter": null
+        })
+        .to_string();
+        let lookup_args = json!({
+            "word": "wit",
+            "sentence": "Brevity is the soul of wit.",
+            "bookTitle": null,
+            "chapter": null,
+            "requestId": "req-absent-1",
+            "kind": null
+        })
+        .to_string();
+        let explain_args = json!({
+            "passage": "hello",
+            "surrounding": null,
+            "bookTitle": null,
+            "chapter": null,
+            "requestId": "req-absent-2"
+        })
+        .to_string();
+        let title_args = json!({
+            "userMessage": "hello",
+            "assistantMessage": "",
+            "requestId": "req-absent-3"
+        })
+        .to_string();
+        let translate_args = json!({
+            "text": "hello",
+            "context": null,
+            "bookId": "b1",
+            "targetLanguage": "zh",
+            "requestId": "req-absent-4"
+        })
+        .to_string();
+
+        // 1) Absent ai_provider returns AI_NOT_CONFIGURED on every AI command
+        for (cmd, args) in [
+            ("ai_chat", &chat_args),
+            ("ai_lookup", &lookup_args),
+            ("ai_explain", &explain_args),
+            ("ai_generate_title", &title_args),
+            ("ai_translate_passage", &translate_args),
+        ] {
+            let err = dispatch(Arc::clone(&core), cmd, args)
+                .await
+                .expect_err(&format!("{cmd} with absent ai_provider must error"));
+            assert_eq!(err.to_string(), "AI_NOT_CONFIGURED", "{cmd}");
+        }
+
+        // 2) Whitespace ai_provider also returns AI_NOT_CONFIGURED
+        dispatch(
+            Arc::clone(&core),
+            "set_setting",
+            r#"{"key":"ai_provider","value":"   "}"#,
+        )
+        .await
+        .expect("set blank provider");
+        let blank_err = dispatch(Arc::clone(&core), "ai_chat", &chat_args)
+            .await
+            .expect_err("ai_chat with blank ai_provider must error");
+        assert_eq!(blank_err.to_string(), "AI_NOT_CONFIGURED");
+
+        // 3) Explicitly configured ollama still resolves and uses default llama3.2 model
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind mock ollama");
+        let addr = listener.local_addr().unwrap();
+        let (tx, rx) = tokio::sync::oneshot::channel::<String>();
+        let server = tokio::spawn(async move {
+            if let Ok((mut stream, _)) = listener.accept().await {
+                let mut buf = [0u8; 4096];
+                let n = stream.read(&mut buf).await.unwrap_or(0);
+                let _ = tx.send(String::from_utf8_lossy(&buf[..n]).to_string());
+                let body = "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\ndata: [DONE]\n\n";
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(resp.as_bytes()).await;
+            }
+        });
+
+        dispatch(
+            Arc::clone(&core),
+            "set_settings_bulk",
+            &json!({
+                "settings": {
+                    "ai_provider": "ollama",
+                    "ai_base_url": format!("http://{addr}")
+                }
+            })
+            .to_string(),
+        )
+        .await
+        .expect("set explicit ollama");
+
+        dispatch(Arc::clone(&core), "ai_chat", &chat_args)
+            .await
+            .expect("explicit ollama resolves");
+
+        let captured = tokio::time::timeout(std::time::Duration::from_secs(3), rx)
+            .await
+            .expect("mock ollama received request")
+            .expect("request channel");
+        assert!(captured.contains("\"model\":\"llama3.2\""), "request was: {captured}");
+        let _ = server.await;
     }
 
     #[test]
@@ -1223,7 +1412,7 @@ mod tests {
             CORE_COMMAND_NAMES.len(),
             "duplicate entries in CORE_COMMAND_NAMES"
         );
-        assert_eq!(CORE_COMMAND_NAMES.len(), 78);
+        assert_eq!(CORE_COMMAND_NAMES.len(), 80);
 
         let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()

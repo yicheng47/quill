@@ -1,8 +1,11 @@
 use futures::StreamExt;
 
+use crate::ai::oauth::clear_tokens;
+use crate::ai::AI_REAUTH_REQUIRED;
 use crate::commands::ai::{AiStreamChunk, ChatMessage};
 use crate::error::{AppError, AppResult};
 use crate::host::ShellHost;
+use crate::secrets::Secrets;
 
 /// Stream chat using OpenAI's Responses API (`/responses`).
 /// When using OAuth tokens, requests go to `chatgpt.com/backend-api/codex`
@@ -14,6 +17,7 @@ use crate::host::ShellHost;
 #[allow(clippy::too_many_arguments)]
 pub async fn stream_chat(
     host: &dyn ShellHost,
+    secrets: &Secrets,
     base_url: &str,
     api_key: &str,
     model: &str,
@@ -39,6 +43,13 @@ pub async fn stream_chat(
 
     if !response.status().is_success() {
         let status = response.status();
+        if status == reqwest::StatusCode::UNAUTHORIZED {
+            log::warn!("openai_responses: received 401 Unauthorized; clearing stored OAuth tokens");
+            if let Err(err) = clear_tokens(secrets) {
+                log::warn!("openai_responses: failed to clear OAuth tokens: {err}");
+            }
+            return Err(AppError::Other(AI_REAUTH_REQUIRED.to_string()));
+        }
         let body = response.text().await.unwrap_or_default();
         return Err(AppError::Ai(format!("API error {}: {}", status, body)));
     }
@@ -179,5 +190,135 @@ mod tests {
         let mut stripped = body;
         stripped.as_object_mut().unwrap().remove("reasoning");
         assert_eq!(stripped, build_request_body("gpt-5.3-codex", &messages(), None));
+    }
+
+    struct DummyHost;
+
+    impl ShellHost for DummyHost {
+        fn emit(&self, _event: &str, _payload: serde_json::Value) {}
+        fn emit_to(&self, _window: &str, _event: &str, _payload: serde_json::Value) {}
+        fn open_url(&self, _url: &str) -> AppResult<()> {
+            Ok(())
+        }
+        fn reveal_path(&self, _path: &std::path::Path) -> AppResult<()> {
+            Ok(())
+        }
+    }
+
+    fn seed_tokens(secrets: &Secrets) {
+        crate::ai::oauth::save_tokens(
+            secrets,
+            &crate::ai::oauth::OAuthTokens {
+                access_token: "at_live".to_string(),
+                refresh_token: "rt_live".to_string(),
+                expires_at: u64::MAX,
+                account_id: Some("acct_1".to_string()),
+                email: Some("reader@example.com".to_string()),
+            },
+        )
+        .unwrap();
+    }
+
+    async fn spawn_mock_codex_server(status_line: &str, body: &str) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let status_line = status_line.to_string();
+        let body = body.to_string();
+        tokio::spawn(async move {
+            if let Ok((mut stream, _)) = listener.accept().await {
+                let mut buf = [0u8; 4096];
+                let _ = stream.read(&mut buf).await;
+                let resp = format!(
+                    "HTTP/1.1 {status_line}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(resp.as_bytes()).await;
+            }
+        });
+        format!("http://{}", addr)
+    }
+
+    #[tokio::test]
+    async fn codex_401_clears_tokens_and_returns_reauth_sentinel() {
+        let secrets = Secrets::init_in_memory().unwrap();
+        seed_tokens(&secrets);
+        let base_url =
+            spawn_mock_codex_server("401 Unauthorized", r#"{"detail":"token revoked"}"#).await;
+
+        let err = stream_chat(
+            &DummyHost,
+            &secrets,
+            &base_url,
+            "at_live",
+            "gpt-5.6-sol",
+            &messages(),
+            Some("acct_1"),
+            None,
+            "ai-stream-chunk",
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(err.to_string(), AI_REAUTH_REQUIRED);
+        assert!(!err.to_string().contains("token revoked"));
+        assert!(crate::ai::oauth::load_tokens(&secrets).is_none());
+    }
+
+    #[tokio::test]
+    async fn codex_403_and_5xx_and_network_errors_stay_generic_and_keep_tokens() {
+        for (status_line, body) in [
+            ("403 Forbidden", r#"{"detail":"model entitlement"}"#),
+            ("502 Bad Gateway", "bad gateway"),
+        ] {
+            let secrets = Secrets::init_in_memory().unwrap();
+            seed_tokens(&secrets);
+            let base_url = spawn_mock_codex_server(status_line, body).await;
+
+            let err = stream_chat(
+                &DummyHost,
+                &secrets,
+                &base_url,
+                "at_live",
+                "gpt-5.6-sol",
+                &messages(),
+                Some("acct_1"),
+                None,
+                "ai-stream-chunk",
+            )
+            .await
+            .unwrap_err();
+
+            assert!(matches!(err, AppError::Ai(_)));
+            assert_ne!(err.to_string(), AI_REAUTH_REQUIRED);
+            assert!(
+                crate::ai::oauth::load_tokens(&secrets).is_some(),
+                "tokens must remain on {status_line}"
+            );
+        }
+
+        // Network failure keeps tokens intact
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+
+        let secrets = Secrets::init_in_memory().unwrap();
+        seed_tokens(&secrets);
+        let err = stream_chat(
+            &DummyHost,
+            &secrets,
+            &format!("http://127.0.0.1:{port}"),
+            "at_live",
+            "gpt-5.6-sol",
+            &messages(),
+            Some("acct_1"),
+            None,
+            "ai-stream-chunk",
+        )
+        .await
+        .unwrap_err();
+
+        assert!(matches!(err, AppError::Ai(_)));
+        assert!(crate::ai::oauth::load_tokens(&secrets).is_some());
     }
 }
