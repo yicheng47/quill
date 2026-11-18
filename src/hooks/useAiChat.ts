@@ -136,6 +136,7 @@ export function useAiChat(bookId?: string, bookContext?: BookContext) {
   const [initializing, setInitializing] = useState(true);
   const [chatId, setChatId] = useState<string | null>(null);
   const [chats, setChats] = useState<ChatRecord[]>([]);
+  const [savedMessageSeq, setSavedMessageSeq] = useState(0);
 
   const unlistenRef = useRef<UnlistenFn | null>(null);
   const initializedBookRef = useRef<string | null>(null);
@@ -309,6 +310,7 @@ export function useAiChat(bookId?: string, bookContext?: BookContext) {
           metadata: meta,
         });
         userMessage.dbId = saved.id;
+        setSavedMessageSeq((n) => n + 1);
       } catch (err) {
         console.error("Failed to save user message:", err);
       }
@@ -342,6 +344,7 @@ export function useAiChat(bookId?: string, bookContext?: BookContext) {
                   context: null,
                   metadata: null,
                 });
+                setSavedMessageSeq((n) => n + 1);
               } catch (err) {
                 console.error("Failed to save assistant message:", err);
               }
@@ -491,5 +494,6 @@ export function useAiChat(bookId?: string, bookContext?: BookContext) {
     createChat,
     deleteChat,
     renameChat,
+    savedMessageSeq,
   };
 }

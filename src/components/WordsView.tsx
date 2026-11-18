@@ -82,7 +82,7 @@ export default function WordsView({
   const mod = shortcutModSymbol();
   const speechAvailable = useSpeechAvailable();
 
-  const { words, loading, remove } = useAllDictionary();
+  const { words, loading, refresh, remove } = useAllDictionary();
   const [searchQuery, setSearchQuery] = useState("");
   const [bookFilter, setBookFilter] = useState<string | null>(null);
   const [sortMode, setSortMode] = useState<WordSortMode>("newest");
@@ -97,14 +97,43 @@ export default function WordsView({
   const sortPopoverRef = useRef<HTMLDivElement>(null);
   const deleteClusterRef = useRef<HTMLDivElement>(null);
   const disarmTimerRef = useRef<number | null>(null);
+  const [refreshingTarget, setRefreshingTarget] = useState(false);
+  const prevNavSeqRef = useRef(navigationSeq);
+  const pendingRefreshSeqRef = useRef(0);
+  const targetNavPendingRef = useRef(false);
 
   useEffect(() => {
-    if (initialWordId !== undefined && initialWordId !== null) {
+    const isNewNavigation = prevNavSeqRef.current !== navigationSeq;
+    prevNavSeqRef.current = navigationSeq;
+    if (isNewNavigation) {
+      if (initialWordId !== undefined && initialWordId !== null) {
+        setSearchQuery("");
+        setBookFilter(null);
+        setSelectedWordId(initialWordId);
+      }
+      targetNavPendingRef.current = true;
+      setRefreshingTarget(true);
+      const seq = ++pendingRefreshSeqRef.current;
+      void refresh().finally(() => {
+        if (pendingRefreshSeqRef.current === seq) {
+          targetNavPendingRef.current = false;
+          setRefreshingTarget(false);
+        }
+      });
+    } else if (initialWordId !== undefined && initialWordId !== null) {
       setSearchQuery("");
       setBookFilter(null);
       setSelectedWordId(initialWordId);
     }
-  }, [initialWordId, navigationSeq]);
+  }, [initialWordId, navigationSeq, refresh]);
+
+  useEffect(() => {
+    const onFocus = () => {
+      void refresh();
+    };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [refresh]);
 
   const disarmDelete = useCallback(() => {
     setArmedDeleteId(null);
@@ -203,9 +232,9 @@ export default function WordsView({
   }, [filteredWords, sortMode]);
 
   // Select the first visible word automatically once loaded, while preserving
-  // a pending initialWordId during load and keeping existing selection intact if search yields 0 matches.
+  // a pending initialWordId during load or navigation refresh and keeping existing selection intact if search yields 0 matches.
   useEffect(() => {
-    if (loading) return;
+    if (loading || refreshingTarget || targetNavPendingRef.current) return;
     if (selectedWordId === null && sortedWords.length > 0) {
       setSelectedWordId(sortedWords[0].id);
       return;
@@ -213,7 +242,7 @@ export default function WordsView({
     if (selectedWordId !== null && !words.some((w) => w.id === selectedWordId)) {
       setSelectedWordId(sortedWords[0]?.id ?? null);
     }
-  }, [loading, selectedWordId, sortedWords, words]);
+  }, [loading, refreshingTarget, selectedWordId, sortedWords, words]);
 
   const activeWord = useMemo<DictionaryWord | null>(() => {
     if (selectedWordId) {

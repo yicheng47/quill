@@ -60,11 +60,7 @@ export default function ReaderBottomPills({
               e.stopPropagation();
               onGoBack();
             }}
-            className={`pointer-events-auto max-w-full inline-flex items-center gap-1.5 h-8 px-3.5 rounded-full border shadow-glass text-[12.5px] font-semibold cursor-pointer transition-colors ${
-              isDarkPaper
-                ? "bg-[#8477EE]/20 border-[#8477EE]/35 text-[#C8C0FF] hover:bg-[#8477EE]/30"
-                : "bg-accent-tint border-violet-200 text-accent-on-tint hover:bg-accent-tint-hover"
-            }`}
+            className="pointer-events-auto max-w-full inline-flex items-center gap-1.5 h-8 px-3.5 rounded-full reader-pill reader-pill-accent text-[12.5px] font-semibold cursor-pointer transition-colors"
           >
             <ArrowLeft size={13} className="shrink-0" />
             <span className="truncate">
@@ -78,11 +74,7 @@ export default function ReaderBottomPills({
 
       <div
         onClick={(e) => e.stopPropagation()}
-        className={`pointer-events-auto max-w-full min-w-0 h-[42px] px-1 @[320px]/paper:px-1.5 @[480px]/paper:px-2 py-1.5 rounded-full border backdrop-blur-[30px] shadow-glass flex items-center gap-1 @[320px]/paper:gap-1.5 @[480px]/paper:gap-3 ${
-          isDarkPaper
-            ? "bg-[#2A2933]/86 border-white/12"
-            : "bg-surface-glass border-surface-glass-border"
-        }`}
+        className="pointer-events-auto max-w-full min-w-0 h-[42px] px-1 @[320px]/paper:px-1.5 @[480px]/paper:px-2 py-1.5 rounded-full reader-pill flex items-center gap-1 @[320px]/paper:gap-1.5 @[480px]/paper:gap-3"
       >
         <button
           type="button"
