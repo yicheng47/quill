@@ -6,9 +6,9 @@
 </h1>
 
 <p align="center">
-  Read a book. Bring your reading partner.
+  Remember what you read
   <br />
-  An eBook reader with a built-in AI assistant — works with your ChatGPT subscription, API keys, or local models.
+  A local-first ebook reader with native AI and agent integration — bring your own subscriptions, API keys, local models, or agents.
 </p>
 
 <p align="center">
