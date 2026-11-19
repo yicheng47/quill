@@ -411,7 +411,7 @@ export default function HighlightsView({
       {isGloballyEmpty ? (
         <div className="flex-1 min-h-0 dawn-glass rounded-surface flex items-center justify-center p-8">
           <div className="max-w-[420px] flex flex-col items-center text-center">
-            <div className="size-12 rounded-[14px] bg-accent-tint text-accent flex items-center justify-center mb-4">
+            <div className="size-12 rounded-[14px] bg-accent-tint text-accent-fg flex items-center justify-center mb-4">
               <Highlighter size={22} />
             </div>
             <h2 className="text-[20px] font-semibold tracking-[-0.3px] text-text-primary mb-2">
@@ -455,14 +455,14 @@ export default function HighlightsView({
             >
               <Highlighter
                 size={15}
-                className={selectedBookId === null ? "text-accent" : "text-text-tertiary"}
+                className={selectedBookId === null ? "text-accent-fg" : "text-text-tertiary"}
               />
               <span className="flex-1 min-w-0 truncate text-[13.5px]">
                 {t("highlights.allHighlights")}
               </span>
               <span
                 className={`font-mono text-[12px] shrink-0 ${
-                  selectedBookId === null ? "text-accent" : "text-text-tertiary"
+                  selectedBookId === null ? "text-accent-fg" : "text-text-tertiary"
                 }`}
               >
                 {totalCount}
@@ -500,7 +500,7 @@ export default function HighlightsView({
                   <span className="flex-1 min-w-0 truncate text-[13.5px]">{b.book_title}</span>
                   <span
                     className={`font-mono text-[12px] shrink-0 ${
-                      active ? "text-accent" : "text-text-tertiary"
+                      active ? "text-accent-fg" : "text-text-tertiary"
                     }`}
                   >
                     {b.count}
@@ -622,7 +622,7 @@ export default function HighlightsView({
                               <button
                                 type="button"
                                 onClick={() => setSelectedBookId(h.book_id)}
-                                className="text-[13px] font-semibold text-text-primary hover:text-accent truncate cursor-pointer text-left"
+                                className="text-[13px] font-semibold text-text-primary hover:text-accent-fg truncate cursor-pointer text-left"
                               >
                                 {hBookTitle}
                               </button>
@@ -795,7 +795,7 @@ export default function HighlightsView({
                             }}
                             className="mt-2.5 w-full text-left px-3 py-2 rounded-[8px] bg-surface-hover hover:bg-border-subtle border border-border-subtle flex items-start gap-2 cursor-pointer transition-colors"
                           >
-                            <StickyNote size={13} className="text-accent mt-0.5 shrink-0" />
+                            <StickyNote size={13} className="text-accent-fg mt-0.5 shrink-0" />
                             <span className="text-[13px] leading-[1.45] text-text-secondary whitespace-pre-wrap select-text">
                               {h.note}
                             </span>

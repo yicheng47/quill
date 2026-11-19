@@ -346,7 +346,7 @@ export default function ChatsView({
             >
               <BookOpen
                 size={14}
-                className={bookFilter ? "text-accent" : "text-text-secondary"}
+                className={bookFilter ? "text-accent-fg" : "text-text-secondary"}
               />
               <span className="truncate max-w-[180px]">{activeBookTitle}</span>
               <ChevronDown size={14} className="text-text-tertiary shrink-0" />
@@ -387,7 +387,7 @@ export default function ChatsView({
       {isGloballyEmpty ? (
         <div className="flex-1 min-h-0 dawn-glass rounded-surface flex items-center justify-center p-8">
           <div className="max-w-[430px] flex flex-col items-center text-center">
-            <div className="size-12 rounded-[14px] bg-accent-tint text-accent flex items-center justify-center mb-4">
+            <div className="size-12 rounded-[14px] bg-accent-tint text-accent-fg flex items-center justify-center mb-4">
               <Sparkles size={22} />
             </div>
             <h2 className="text-[20px] font-semibold tracking-[-0.3px] text-text-primary mb-2">
@@ -751,7 +751,7 @@ function ChatConversationPane({
               </div>
             ) : titling ? (
               <div className="flex items-center gap-2 text-[15px] font-semibold text-text-primary">
-                <Loader2 size={14} className="animate-spin text-accent shrink-0" />
+                <Loader2 size={14} className="animate-spin text-accent-fg shrink-0" />
                 <span className="truncate">{t("chats.generatingTitle")}</span>
               </div>
             ) : (
@@ -875,7 +875,7 @@ function ChatConversationPane({
                       key={msg.id}
                       className="flex items-center gap-2 text-[14px] text-text-tertiary"
                     >
-                      <Loader2 size={14} className="animate-spin text-accent" />
+                      <Loader2 size={14} className="animate-spin text-accent-fg" />
                       <span>{t("ai.thinking")}</span>
                     </div>
                   );

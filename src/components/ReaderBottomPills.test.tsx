@@ -152,4 +152,59 @@ describe("ReaderBottomPills", () => {
     expect(onZoom).toHaveBeenNthCalledWith(2, 10);
     expect(onResetPdfZoom).toHaveBeenCalledTimes(1);
   });
+
+  it("uses Ember muted neutral #A39A8E for dark EPUB progress label and preserves light branch", async () => {
+    await act(async () => {
+      root.render(
+        <ReaderBottomPills
+          bookFormat="epub"
+          isDarkPaper={true}
+          canGoBack={false}
+          jumpBackPage={null}
+          onGoBack={vi.fn()}
+          progress={64}
+          progressPillLabel="Chapter 8 of 12"
+          timeLeftLabel="~8 min left"
+          zoom="fit"
+          fitPercent={100}
+          onZoom={vi.fn()}
+          onResetPdfZoom={vi.fn()}
+          onPrev={vi.fn()}
+          onNext={vi.fn()}
+        />,
+      );
+    });
+
+    const darkProgressEl = Array.from(container.querySelectorAll("span")).find((el) =>
+      el.textContent?.startsWith("64%"),
+    );
+    expect(darkProgressEl?.className).toContain("text-[#A39A8E]");
+    expect(darkProgressEl?.className).not.toContain("#9B99AB");
+
+    await act(async () => {
+      root.render(
+        <ReaderBottomPills
+          bookFormat="epub"
+          isDarkPaper={false}
+          canGoBack={false}
+          jumpBackPage={null}
+          onGoBack={vi.fn()}
+          progress={64}
+          progressPillLabel="Chapter 8 of 12"
+          timeLeftLabel="~8 min left"
+          zoom="fit"
+          fitPercent={100}
+          onZoom={vi.fn()}
+          onResetPdfZoom={vi.fn()}
+          onPrev={vi.fn()}
+          onNext={vi.fn()}
+        />,
+      );
+    });
+
+    const lightProgressEl = Array.from(container.querySelectorAll("span")).find((el) =>
+      el.textContent?.startsWith("64%"),
+    );
+    expect(lightProgressEl?.className).toContain("text-text-tertiary");
+  });
 });

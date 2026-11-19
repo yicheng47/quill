@@ -94,7 +94,8 @@ vi.mock("../components/BookmarksPanel", () => ({
   default: () => <div data-testid="bookmarks-panel-stub">Bookmarks Panel</div>,
 }));
 
-import Reader from "./Reader";
+import Reader, { getPdfOverlays } from "./Reader";
+import { getThemeStyles } from "../components/ReaderSettings";
 
 class MockFoliateView extends HTMLElement {
   book = { toc: [], sections: [] };
@@ -335,9 +336,10 @@ describe("Reader shell themes, cascade, and startup navigation", () => {
     const titleEl = container.querySelector("h1")!;
     expect(titleEl.textContent).toBe("Notes from Underground");
     const vars = resolveInheritedCssVars(titleEl, styleEl.sheet!);
-    expect(vars["--color-text-primary"]).toBe("#f3f1f8");
-    expect(vars["--color-text-secondary"]).toBe("#b5b2c4");
-    expect(vars["--color-accent"]).toBe("#8477ee");
+    expect(vars["--color-text-primary"]).toBe("#f0eae1");
+    expect(vars["--color-text-secondary"]).toBe("#b6aea2");
+    expect(vars["--color-accent"]).toBe("#6f62da");
+    expect(vars["--color-accent-fg"]).toBe("#a193f5");
 
     // Verify nested .dawn on rootWrapper WOULD override inherited Nocturne colors if reintroduced
     rootWrapper.classList.add("dawn");
@@ -352,10 +354,10 @@ describe("Reader shell themes, cascade, and startup navigation", () => {
 
     await renderReader("/reader/book-2");
 
-    // First frame must already be Nocturne dark (#12111A), never flashing light #EEEBF8
+    // First frame must already be Nocturne dark (#0D0C0B), never flashing light #EEEBF8
     expect(document.documentElement.classList.contains("dawn")).toBe(true);
     expect(document.documentElement.classList.contains("dark")).toBe(true);
-    expect(testState.setWindowBackgroundColor).toHaveBeenCalledWith("#12111A");
+    expect(testState.setWindowBackgroundColor).toHaveBeenCalledWith("#0D0C0B");
     expect(testState.setWindowBackgroundColor).not.toHaveBeenCalledWith("#EEEBF8");
 
     await act(async () => {
@@ -757,5 +759,73 @@ describe("Reader shell themes, cascade, and startup navigation", () => {
         configurable: true,
       });
     }
+  });
+});
+
+function parseHexChannelTuple(hex: string): [number, number, number] {
+  const clean = hex.replace(/^#/, "");
+  return [
+    parseInt(clean.slice(0, 2), 16),
+    parseInt(clean.slice(2, 4), 16),
+    parseInt(clean.slice(4, 6), 16),
+  ];
+}
+
+function compositePdfLayers(
+  baseRgb: [number, number, number],
+  layers: React.CSSProperties[],
+): [number, number, number] {
+  let channels = baseRgb.map((c) => c / 255) as [number, number, number];
+  for (const layer of layers) {
+    const src = parseHexChannelTuple(String(layer.backgroundColor)).map((c) => c / 255);
+    channels = channels.map((b, i) => {
+      const s = src[i];
+      switch (layer.mixBlendMode) {
+        case "difference":
+          return Math.abs(b - s);
+        case "multiply":
+          return b * s;
+        case "screen":
+          return b + s - b * s;
+        default:
+          throw new Error(`Unexpected blend mode: ${String(layer.mixBlendMode)}`);
+      }
+    }) as [number, number, number];
+  }
+  return channels.map((c) => Math.round(c * 255)) as [number, number, number];
+}
+
+describe("getPdfOverlays", () => {
+  it("maps dark PDF white pages to dark.body, black glyphs to dark.text, and mid-tones linearly", () => {
+    const dark = getThemeStyles("dark");
+    const overlay = getPdfOverlays("dark");
+    expect(overlay).not.toBeNull();
+    expect(overlay!.layers).toHaveLength(3);
+    expect(overlay!.layers.map((l) => l.mixBlendMode)).toEqual(["difference", "multiply", "screen"]);
+
+    const expectedPage = parseHexChannelTuple(dark.body);
+    const expectedText = parseHexChannelTuple(dark.text);
+
+    const compositedWhite = compositePdfLayers([255, 255, 255], overlay!.layers);
+    const compositedBlack = compositePdfLayers([0, 0, 0], overlay!.layers);
+    const compositedMid = compositePdfLayers([128, 128, 128], overlay!.layers);
+
+    for (let i = 0; i < 3; i++) {
+      expect(Math.abs(compositedWhite[i] - expectedPage[i])).toBeLessThanOrEqual(1);
+      expect(Math.abs(compositedBlack[i] - expectedText[i])).toBeLessThanOrEqual(1);
+      const t = 128 / 255;
+      const expectedMid = Math.round(t * expectedPage[i] + (1 - t) * expectedText[i]);
+      expect(Math.abs(compositedMid[i] - expectedMid)).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it("preserves original, paper, and quiet PDF overlays unchanged", () => {
+    expect(getPdfOverlays("original")).toBeNull();
+    expect(getPdfOverlays("paper")).toEqual({
+      layers: [{ backgroundColor: getThemeStyles("paper").body, mixBlendMode: "multiply" }],
+    });
+    expect(getPdfOverlays("quiet")).toEqual({
+      layers: [{ backgroundColor: getThemeStyles("quiet").body, mixBlendMode: "multiply" }],
+    });
   });
 });

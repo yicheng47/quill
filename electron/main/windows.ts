@@ -31,7 +31,7 @@ export interface InitialAppearance {
 }
 
 export const MAIN_DAWN_BG = "#EEEBF8";
-export const MAIN_NOCTURNE_BG = "#12111A";
+export const MAIN_NOCTURNE_BG = "#0D0C0B";
 
 export function mainWindowBackgroundColor(isDark: boolean): string {
   return isDark ? MAIN_NOCTURNE_BG : MAIN_DAWN_BG;
@@ -41,7 +41,7 @@ export const READER_SHELL_BG: Record<ReaderPageTheme, string> = {
   original: "#EEEBF8",
   paper: "#F0E7D4",
   quiet: "#D2D2D8",
-  dark: "#12111A",
+  dark: "#0D0C0B",
 };
 
 export const READER_CASCADE_OFFSET = 32;

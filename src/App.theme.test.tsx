@@ -137,7 +137,7 @@ describe("App startup theme and reveal", () => {
 
     expect(mocks.appReady).not.toHaveBeenCalled();
     expect(document.documentElement.classList.contains("dark")).toBe(true);
-    expect(mocks.setWindowBackgroundColor).toHaveBeenCalledWith("#12111A");
+    expect(mocks.setWindowBackgroundColor).toHaveBeenCalledWith("#0D0C0B");
     expect(mocks.setWindowBackgroundColor).not.toHaveBeenCalledWith("#EEEBF8");
 
     await act(async () => {
@@ -184,7 +184,7 @@ describe("App startup theme and reveal", () => {
 
     expect(mocks.appReady).not.toHaveBeenCalled();
     expect(document.documentElement.classList.contains("dark")).toBe(true);
-    expect(mocks.setWindowBackgroundColor).toHaveBeenCalledWith("#12111A");
+    expect(mocks.setWindowBackgroundColor).toHaveBeenCalledWith("#0D0C0B");
     expect(mocks.setWindowBackgroundColor).not.toHaveBeenCalledWith("#EEEBF8");
 
     await act(async () => {
@@ -201,7 +201,7 @@ describe("App startup theme and reveal", () => {
     });
 
     expect(document.documentElement.classList.contains("dark")).toBe(true);
-    expect(mocks.setWindowBackgroundColor).toHaveBeenLastCalledWith("#12111A");
+    expect(mocks.setWindowBackgroundColor).toHaveBeenLastCalledWith("#0D0C0B");
     expect(localStorage.getItem("quill-theme")).toBe("dark");
   });
 
@@ -225,7 +225,7 @@ describe("App startup theme and reveal", () => {
 
     expect(events).toEqual(["ready:dawn:dark"]);
     expect(localStorage.getItem("quill-theme")).toBe("dark");
-    expect(mocks.setWindowBackgroundColor).toHaveBeenLastCalledWith("#12111A");
+    expect(mocks.setWindowBackgroundColor).toHaveBeenLastCalledWith("#0D0C0B");
   });
 
   it("keeps Dawn light when theme is light and removes stale .dark before reveal", async () => {
@@ -258,7 +258,7 @@ describe("App startup theme and reveal", () => {
 
     expect(document.documentElement.classList.contains("dawn")).toBe(true);
     expect(document.documentElement.classList.contains("dark")).toBe(true);
-    expect(mocks.setWindowBackgroundColor).toHaveBeenLastCalledWith("#12111A");
+    expect(mocks.setWindowBackgroundColor).toHaveBeenLastCalledWith("#0D0C0B");
     expect(localStorage.getItem("quill-theme")).toBe("system");
     expect(mocks.invoke).toHaveBeenCalledTimes(1);
     expect(mocks.invoke).toHaveBeenCalledWith("get_all_settings");
@@ -269,7 +269,7 @@ describe("App startup theme and reveal", () => {
 
     await setSystemDark(true);
     expect(document.documentElement.classList.contains("dark")).toBe(true);
-    expect(mocks.setWindowBackgroundColor).toHaveBeenLastCalledWith("#12111A");
+    expect(mocks.setWindowBackgroundColor).toHaveBeenLastCalledWith("#0D0C0B");
 
     // Switching via setAppTheme triggers exactly one native background update.
     mocks.setWindowBackgroundColor.mockClear();
@@ -293,7 +293,7 @@ describe("App startup theme and reveal", () => {
       await Promise.resolve();
     });
     expect(mocks.setWindowBackgroundColor).toHaveBeenCalledTimes(1);
-    expect(mocks.setWindowBackgroundColor).toHaveBeenCalledWith("#12111A");
+    expect(mocks.setWindowBackgroundColor).toHaveBeenCalledWith("#0D0C0B");
     await setSystemDark(false);
     expect(document.documentElement.classList.contains("dark")).toBe(false);
   });
@@ -327,7 +327,7 @@ describe("App startup theme and reveal", () => {
     expect(document.documentElement.classList.contains("dark")).toBe(true);
     expect(localStorage.getItem("quill-theme")).toBe("dark");
     expect(mocks.setWindowBackgroundColor).toHaveBeenCalledTimes(1);
-    expect(mocks.setWindowBackgroundColor).toHaveBeenCalledWith("#12111A");
+    expect(mocks.setWindowBackgroundColor).toHaveBeenCalledWith("#0D0C0B");
 
     mocks.setZoom.mockClear();
     await act(async () => {

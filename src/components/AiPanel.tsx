@@ -299,7 +299,7 @@ export default function AiPanel({
             >
               {titling ? (
                 <span className="flex items-center gap-1.5 text-[14px] font-semibold text-text-secondary truncate">
-                  <Loader2 size={14} className="animate-spin text-accent shrink-0" />
+                  <Loader2 size={14} className="animate-spin text-accent-fg shrink-0" />
                   <span className="truncate">{t("ai.generatingTitle")}</span>
                 </span>
               ) : (

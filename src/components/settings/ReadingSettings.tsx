@@ -52,8 +52,8 @@ const READER_THEME_OPTIONS: {
   {
     value: "dark",
     labelKey: "readerSettings.themeDark",
-    bg: "#1E1D24",
-    text: "#E8E6F0",
+    bg: "#161412",
+    text: "#DBD2C4",
   },
 ];
 

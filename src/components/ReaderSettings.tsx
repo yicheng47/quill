@@ -22,8 +22,8 @@ const themes = [
   },
   {
     id: "dark",
-    bg: "#1E1D24",
-    aaColor: "#E8E6F0",
+    bg: "#161412",
+    aaColor: "#DBD2C4",
   },
 ] as const;
 
@@ -124,7 +124,7 @@ export function getThemeStyles(themeId: ReaderTheme) {
     case "quiet":
       return { body: "#E4E4E8", text: "#15151A", border: "#D4D4DA", overline: "#6E6E7A" };
     case "dark":
-      return { body: "#1E1D24", text: "#ECEAF4", border: "rgba(255, 255, 255, 0.12)", overline: "#8E8C9E" };
+      return { body: "#161412", text: "#DBD2C4", border: "rgba(255, 243, 227, 0.1)", overline: "#8C8378" };
     default:
       return { body: "#FDFCFA", text: "#15151A", border: "rgba(255, 255, 255, 0.9)", overline: "#6E6E7A" };
   }

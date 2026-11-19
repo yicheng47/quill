@@ -94,9 +94,33 @@ interface FoliateView extends HTMLElement {
 }
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
-type PdfOverlay = { layers: React.CSSProperties[] } | null;
+export type PdfOverlay = { layers: React.CSSProperties[] } | null;
 
-function getPdfOverlays(theme: string): PdfOverlay {
+function parseHexRgb(hex: string): [number, number, number] {
+  const clean = hex.replace(/^#/, "");
+  return [
+    parseInt(clean.slice(0, 2), 16),
+    parseInt(clean.slice(2, 4), 16),
+    parseInt(clean.slice(4, 6), 16),
+  ];
+}
+
+// Pre-divide ink by (1 - page) per sRGB channel so screen(page) lands black glyphs on `text` and white pages on `page`.
+function darkPdfInkColor(pageHex: string, textHex: string): string {
+  const page = parseHexRgb(pageHex);
+  const text = parseHexRgb(textHex);
+  return `#${page
+    .map((p, i) => {
+      const denom = 255 - p;
+      const channel = denom <= 0 ? 0 : ((text[i] - p) / denom) * 255;
+      return Math.max(0, Math.min(255, Math.round(channel)))
+        .toString(16)
+        .padStart(2, "0");
+    })
+    .join("")}`;
+}
+
+export function getPdfOverlays(theme: string): PdfOverlay {
   switch (theme) {
     case "paper": return { layers: [{
       backgroundColor: getThemeStyles("paper").body,
@@ -106,10 +130,14 @@ function getPdfOverlays(theme: string): PdfOverlay {
       backgroundColor: getThemeStyles("quiet").body,
       mixBlendMode: "multiply",
     }] };
-    case "dark": return { layers: [
-      { backgroundColor: "#ffffff", mixBlendMode: "difference" },
-      { backgroundColor: getThemeStyles("dark").body, mixBlendMode: "screen" },
-    ] };
+    case "dark": {
+      const dark = getThemeStyles("dark");
+      return { layers: [
+        { backgroundColor: "#ffffff", mixBlendMode: "difference" },
+        { backgroundColor: darkPdfInkColor(dark.body, dark.text), mixBlendMode: "multiply" },
+        { backgroundColor: dark.body, mixBlendMode: "screen" },
+      ] };
+    }
     default: return null;
   }
 }

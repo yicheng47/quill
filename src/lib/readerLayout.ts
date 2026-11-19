@@ -10,7 +10,7 @@ export const READER_SHELL_BG_BY_THEME: Record<ReaderTheme, string> = {
   original: "#EEEBF8",
   paper: "#F0E7D4",
   quiet: "#D2D2D8",
-  dark: "#12111A",
+  dark: "#0D0C0B",
 };
 
 export function readerShellClassForTheme(theme: ReaderTheme): string {

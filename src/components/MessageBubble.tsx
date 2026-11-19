@@ -39,7 +39,7 @@ export default function MessageBubble({
     if (streaming && !msg.content && isLast) {
       return (
         <div className="flex items-center gap-2 text-[14px] text-text-tertiary">
-          <Loader2 size={14} className="animate-spin text-accent" />
+          <Loader2 size={14} className="animate-spin text-accent-fg" />
           <span>{t("ai.thinking")}</span>
         </div>
       );

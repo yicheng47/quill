@@ -425,7 +425,7 @@ export default function CollectionsPopover({
             </span>
           </div>
           <div className="h-9 px-[11px] rounded-[6px] bg-surface-solid border border-accent flex items-center gap-2">
-            <FolderPlus size={14.5} className="text-accent shrink-0" />
+            <FolderPlus size={14.5} className="text-accent-fg shrink-0" />
             <input
               ref={newInputRef}
               value={newName}

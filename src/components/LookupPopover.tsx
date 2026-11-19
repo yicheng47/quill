@@ -313,7 +313,7 @@ export default function LookupPopover({
         {!hasConfigurationError &&
           (definition.streaming && !definition.content ? (
             <div className="flex items-center gap-2 py-1 text-text-tertiary">
-              <Loader2 size={14} className="animate-spin text-accent" />
+              <Loader2 size={14} className="animate-spin text-accent-fg" />
               <span className="text-[13px]">{t("lookup.lookingUp")}</span>
             </div>
           ) : definitionError ? (
@@ -351,7 +351,7 @@ export default function LookupPopover({
             </span>
             {context.streaming && !context.content ? (
               <div className="flex items-center gap-1.5 py-0.5 text-text-tertiary">
-                <Loader2 size={12} className="animate-spin text-accent" />
+                <Loader2 size={12} className="animate-spin text-accent-fg" />
                 <span className="text-[12px]">{t("lookup.analyzing")}</span>
               </div>
             ) : contextError ? (
