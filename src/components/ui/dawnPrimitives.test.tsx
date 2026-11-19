@@ -197,4 +197,18 @@ describe("Dawn UI primitives scoping and accessibility", () => {
     expect(textField.className).toContain("rounded-[6px]");
     expect(settingsGroup.className).toContain("rounded-[6px]");
   });
+
+  it("disables text selection on interactive chrome in @layer base while keeping inputs and editable regions selectable", () => {
+    const css = fs.readFileSync(path.resolve(process.cwd(), "src/index.css"), "utf8");
+    const baseMatch = css.match(/@layer base\s*\{([\s\S]*?)\n\}/);
+    expect(baseMatch).not.toBeNull();
+    const baseBlock = baseMatch![1];
+
+    expect(baseBlock).toMatch(
+      /button[\s\S]*\[role="button"\][\s\S]*\[role="tab"\][\s\S]*\[role="menuitem"\][\s\S]*\[role="option"\][\s\S]*\.dawn-inset[\s\S]*\{[\s\S]*-webkit-user-select:\s*none;\s*user-select:\s*none;/,
+    );
+    expect(baseBlock).toMatch(
+      /input,\s*textarea,\s*\[contenteditable\]:not\(\[contenteditable="false"\]\)\s*\{[\s\S]*-webkit-user-select:\s*text;\s*user-select:\s*text;/,
+    );
+  });
 });

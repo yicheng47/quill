@@ -18,6 +18,10 @@
 
 **Outcome.** Every large surface uses `8px` (`--radius-surface: 8px` / `rounded-surface`, matching `$radius-xl: 8` on option D of `RNplP` and `l5t2M` in `quill/desktop/specs/331-rebrand.pen`): reader page and side panels, Home bento and Library empty/list cards, Highlights/Words/Chats/Settings panes, modals, reader popovers, menus/context menus/dropdowns, the `⌘K` palette, import overlays, and toasts. Nested cards, insets, rows, chips, composer, quotes, search hits, Dawn code blocks, and text inputs drop to `6px` (`$radius-lg` / `$radius-md` = `6`); buttons (`12px`), pills, book covers, small icon tiles, chat bubbles (`16px`), and window corners stay unchanged, and `--radius-xl: 14px` remains untouched.
 
+## #346 — stop control labels from being text-selectable
+
+**Outcome.** One `@layer base` rule in `src/index.css` disables text selection on interactive chrome (`button`, `[role="button"]`, `[role="tab"]`, `[role="tablist"]`, `[role="menu"]`, `[role="menuitem"]`, `[role="menuitemradio"]`, `[role="menuitemcheckbox"]`, `[role="listbox"]`, `[role="option"]`, `[role="switch"]`, `[role="checkbox"]`, `[role="radio"]`, `[role="slider"]`, `[role="spinbutton"]`, `label`, `summary`, `nav`, `[role="navigation"]`, `[data-drag-region]`, `.dawn-inset`) while explicitly keeping `input`, `textarea`, and `[contenteditable]:not([contenteditable="false"])` selectable. Copyable content inside clickable cards/buttons (such as highlight quotes, saved notes, and saved word definitions in `HighlightsView`, `BookmarksPanel`, and `DictionaryPanel`, alongside existing `select-text` regions in `WordsView`, `ChatsView`, and `MessageBubble`) keeps `select-text` and suppresses card-click activation when a selection is dragged inside that card.
+
 ## Validation
 
 - **Automated:** `make typecheck`, `make lint`, `npm test`, `npm run electron:build`; CI green.
@@ -25,8 +29,9 @@
   - `F-342-OPEN-READING`: import a small book (status `unread`), open it, return to Home: it is the `Now reading` hero and appears under Library's Reading filter. Then mark a book `finished`, reopen it, and confirm it stays finished.
   - `F-343-DEFAULT-FIT`: move `window-state.json` aside in `com.wycstudios.quill-chromium-dev`, launch with a populated library (at least 5 books, a highlight, a saved word and a chat so every bento card renders), and confirm Home shows every row with no scrolling; screenshot it next to `m2srt`. Then restore `window-state.json`.
   - `F-345-RADIUS`: visual pass in the dev app over Home, Library, Highlights, Settings, a reader on the Original and Sepia pages with Ask Quill open, the Aa popover, `⌘K`, one modal, a context menu, a filter popover, and a text input, with screenshots.
+  - `F-346-NO-SELECT`: drag across the Library status filter, the TopBar nav, and a settings row and confirm nothing highlights; then confirm you can still select reader text, a chat message, and a highlight quote, and edit/select inside a text input.
 - Record the run in `docs/tests/runs/342-343-reading-status-and-window-size-mac.md`. Windows is left to Jason.
 
 ## Authorization
 
-`hydrogen trio`, approved by Jason on 2026-11-19 (scope addition #345 approved by Jason on 2026-11-19). The crew may commit on `fix/342-343-reading-status-window-size` (one commit per issue: #342 with brief, #343, and #345 as `feat(ui): use an 8px radius for every large surface (#345)`), push, and open one PR against `main` that closes #342, #343, and #345, labeled with the risk label its diff warrants and `needs-live-test` until qa passes, then drive CI green and stop. Jason merges.
+`hydrogen trio`, approved by Jason on 2026-11-19 (scope additions #345 and #346 approved by Jason on 2026-11-19). The crew may commit on `fix/342-343-reading-status-window-size` (one commit per issue: #342 with brief, #343, #345 as `feat(ui): use an 8px radius for every large surface (#345)`, and #346 as `fix(ui): stop control labels from being text-selectable (#346)`), push, and open one PR against `main` that closes #342, #343, #345, and #346, labeled with the risk label its diff warrants and `needs-live-test` until qa passes, then drive CI green and stop. Jason merges.

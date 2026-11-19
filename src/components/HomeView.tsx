@@ -22,6 +22,7 @@ import type { SettingsSection } from "./settings/types";
 import { invoke } from "../platform";
 import { openReaderWindow } from "../utils/openReaderWindow";
 import { getHighlightColorMeta } from "../utils/highlightColors";
+import { shouldSuppressSelectionClick } from "../utils/selection";
 import { isMacOS, shortcutModSymbol } from "../lib/platformEnv";
 import QuillLogo from "./QuillLogo";
 import BookCover from "./ui/BookCover";
@@ -537,8 +538,9 @@ export default function HomeView({
             <section
               role={lastChat ? "button" : undefined}
               tabIndex={lastChat ? 0 : undefined}
-              onClick={() => {
-                if (lastChat) onNavigate("chats", { chatId: lastChat.id });
+              onClick={(e) => {
+                if (!lastChat || shouldSuppressSelectionClick(e)) return;
+                onNavigate("chats", { chatId: lastChat.id });
               }}
               onKeyDown={(e) => {
                 if (!lastChat) return;
@@ -580,7 +582,7 @@ export default function HomeView({
                     {lastChat.title}
                   </h2>
                   {lastChat.last_message && (
-                    <p className="text-[13.5px] leading-[1.5] text-text-tertiary line-clamp-3">
+                    <p className="text-[13.5px] leading-[1.5] text-text-tertiary line-clamp-3 select-text">
                       {lastChat.last_message}
                     </p>
                   )}

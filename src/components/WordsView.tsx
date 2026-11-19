@@ -23,6 +23,7 @@ import type { Book } from "../hooks/useBooks";
 import { useAllDictionary, type DictionaryWord } from "../hooks/useDictionary";
 import { shortcutModSymbol } from "../lib/platformEnv";
 import { openReaderWindow } from "../utils/openReaderWindow";
+import { shouldSuppressSelectionClick } from "../utils/selection";
 import {
   formatMonthHeading,
   formatShortDate,
@@ -576,7 +577,10 @@ export default function WordsView({
                           <button
                             key={w.id}
                             type="button"
-                            onClick={() => setSelectedWordId(w.id)}
+                            onClick={(e) => {
+                              if (shouldSuppressSelectionClick(e)) return;
+                              setSelectedWordId(w.id);
+                            }}
                             aria-current={selected ? "true" : undefined}
                             className={`w-full px-3 py-2.5 rounded-[6px] text-left cursor-pointer transition-colors ${
                               selected
@@ -599,7 +603,7 @@ export default function WordsView({
                                   </span>
                                 </div>
                                 {(parsed.partOfSpeech || briefGloss) && (
-                                  <p className="text-[12.5px] text-text-secondary truncate mt-0.5">
+                                  <p className="text-[12.5px] text-text-secondary truncate mt-0.5 select-text">
                                     {[parsed.partOfSpeech, briefGloss].filter(Boolean).join(" · ")}
                                   </p>
                                 )}
@@ -616,7 +620,7 @@ export default function WordsView({
                                   </span>
                                   {briefGloss && (
                                     <span
-                                      className={`text-[12.5px] truncate ${
+                                      className={`text-[12.5px] truncate select-text ${
                                         selected ? "text-accent-on-tint/80" : "text-text-tertiary"
                                       }`}
                                     >

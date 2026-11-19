@@ -318,6 +318,40 @@ body {
   color: var(--color-text-primary);
 }
 
+@layer base {
+  button,
+  label,
+  summary,
+  nav,
+  [role="navigation"],
+  [role="button"],
+  [role="tab"],
+  [role="tablist"],
+  [role="menu"],
+  [role="menuitem"],
+  [role="menuitemradio"],
+  [role="menuitemcheckbox"],
+  [role="listbox"],
+  [role="option"],
+  [role="switch"],
+  [role="checkbox"],
+  [role="radio"],
+  [role="slider"],
+  [role="spinbutton"],
+  [data-drag-region],
+  .dawn-inset {
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  input,
+  textarea,
+  [contenteditable]:not([contenteditable="false"]) {
+    -webkit-user-select: text;
+    user-select: text;
+  }
+}
+
 /* ── Dawn Atmosphere & Glass Utilities ── */
 @layer components {
   .dawn-atmosphere {

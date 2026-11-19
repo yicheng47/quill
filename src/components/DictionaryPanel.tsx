@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { BookOpen, Search, Trash2, X } from "lucide-react";
 import { useDictionary } from "../hooks/useDictionary";
+import { shouldSuppressSelectionClick } from "../utils/selection";
 import { timeAgo } from "../utils/timeAgo";
 import { parseSavedVocabDefinition } from "../utils/vocabParse";
 
@@ -122,7 +123,8 @@ export default function DictionaryPanel({
                 key={word.id}
                 role="button"
                 tabIndex={0}
-                onClick={() => {
+                onClick={(e) => {
+                  if (shouldSuppressSelectionClick(e)) return;
                   setSelectedWordId(word.id);
                   if (word.cfi) onNavigate?.(word.cfi);
                 }}
@@ -171,13 +173,13 @@ export default function DictionaryPanel({
                 </div>
 
                 {parsed.definition && (
-                  <p className="text-[12.5px] leading-[1.45] text-text-secondary line-clamp-2">
+                  <p className="text-[12.5px] leading-[1.45] text-text-secondary line-clamp-2 select-text">
                     {parsed.definition}
                   </p>
                 )}
 
                 {word.context_sentence && (
-                  <p className="font-reading italic text-[12px] leading-[1.4] text-text-tertiary line-clamp-2">
+                  <p className="font-reading italic text-[12px] leading-[1.4] text-text-tertiary line-clamp-2 select-text">
                     “{word.context_sentence}”
                   </p>
                 )}

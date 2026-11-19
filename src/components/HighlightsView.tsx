@@ -23,6 +23,7 @@ import {
 } from "../utils/highlightColors";
 import { sortHighlights, type HighlightSortMode } from "../utils/highlightSort";
 import { openReaderWindow } from "../utils/openReaderWindow";
+import { shouldSuppressSelectionClick } from "../utils/selection";
 import { formatShortDate } from "../utils/vocabParse";
 import BookCover from "./ui/BookCover";
 import { Menu, MenuItem } from "./ui/Menu";
@@ -788,11 +789,14 @@ export default function HighlightsView({
                         h.note && (
                           <button
                             type="button"
-                            onClick={() => startEdit(h)}
+                            onClick={(e) => {
+                              if (shouldSuppressSelectionClick(e)) return;
+                              startEdit(h);
+                            }}
                             className="mt-2.5 w-full text-left px-3 py-2 rounded-[8px] bg-surface-hover hover:bg-border-subtle border border-border-subtle flex items-start gap-2 cursor-pointer transition-colors"
                           >
                             <StickyNote size={13} className="text-accent mt-0.5 shrink-0" />
-                            <span className="text-[13px] leading-[1.45] text-text-secondary whitespace-pre-wrap">
+                            <span className="text-[13px] leading-[1.45] text-text-secondary whitespace-pre-wrap select-text">
                               {h.note}
                             </span>
                           </button>

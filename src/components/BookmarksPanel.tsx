@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { useBookmarks, useHighlights } from "../hooks/useBookmarks";
 import { HIGHLIGHT_SWATCHES } from "./HighlightToolbar";
+import { shouldSuppressSelectionClick } from "../utils/selection";
 import { timeAgo } from "../utils/timeAgo";
 
 interface BookmarksPanelProps {
@@ -246,7 +247,10 @@ export default function BookmarksPanel({
                     key={highlight.id}
                     role="button"
                     tabIndex={0}
-                    onClick={() => onNavigate?.(highlight.cfi_range)}
+                    onClick={(e) => {
+                      if (shouldSuppressSelectionClick(e)) return;
+                      onNavigate?.(highlight.cfi_range);
+                    }}
                     onKeyDown={(e) => {
                       if (e.target !== e.currentTarget) return;
                       if (e.key === "Enter" || e.key === " ") {
@@ -261,12 +265,12 @@ export default function BookmarksPanel({
                       style={{ borderLeftColor: swatchHexFor(highlight.color) }}
                     >
                       {highlight.text_content && (
-                        <p className="font-reading text-[13.5px] text-text-primary leading-[1.55] line-clamp-3">
+                        <p className="font-reading text-[13.5px] text-text-primary leading-[1.55] line-clamp-3 select-text">
                           {highlight.text_content}
                         </p>
                       )}
                       {highlight.note && (
-                        <p className="text-[12px] text-text-secondary leading-relaxed line-clamp-2">
+                        <p className="text-[12px] text-text-secondary leading-relaxed line-clamp-2 select-text">
                           {highlight.note}
                         </p>
                       )}
