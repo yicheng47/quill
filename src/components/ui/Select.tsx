@@ -11,6 +11,7 @@ export interface SelectOption {
 
 interface SelectProps {
   label?: string;
+  ariaLabel?: string;
   value: string;
   onChange: (value: string) => void;
   options: SelectOption[];
@@ -19,6 +20,7 @@ interface SelectProps {
   appearance?: "dawn" | "legacy";
   className?: string;
   placeholder?: string;
+  menuMinWidth?: number;
   menuHeader?: ReactNode;
   menuFooter?: ReactNode;
 }
@@ -32,6 +34,7 @@ function isDawnSurface(appearance?: "dawn" | "legacy"): boolean {
 
 export default function Select({
   label,
+  ariaLabel,
   value,
   onChange,
   options,
@@ -40,6 +43,7 @@ export default function Select({
   appearance,
   className = "",
   placeholder = "",
+  menuMinWidth = 200,
   menuHeader,
   menuFooter,
 }: SelectProps) {
@@ -101,7 +105,7 @@ export default function Select({
     const spaceAbove = rect.top - menuGap - VIEWPORT_MARGIN;
     const openUp = menuHeight > spaceBelow && spaceAbove > spaceBelow;
     if (dawn) {
-      const minWidth = Math.max(rect.width, 200);
+      const minWidth = Math.max(rect.width, menuMinWidth);
       const left = Math.min(rect.left, window.innerWidth - minWidth - VIEWPORT_MARGIN);
       setMenuStyle({
         left: Math.max(VIEWPORT_MARGIN, left),
@@ -122,7 +126,7 @@ export default function Select({
           : { top: rect.bottom + menuGap }),
       });
     }
-  }, [open, menuHeight, menuGap, dawn]);
+  }, [open, menuHeight, menuGap, dawn, menuMinWidth]);
 
   return (
     <div className={`relative ${className}`} ref={ref}>
@@ -134,6 +138,7 @@ export default function Select({
       <button
         ref={buttonRef}
         type="button"
+        aria-label={ariaLabel}
         aria-haspopup="listbox"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}

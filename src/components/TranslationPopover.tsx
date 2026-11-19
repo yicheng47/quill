@@ -15,6 +15,7 @@ import AiAuthPromptCard from "./AiAuthPromptCard";
 import ReaderPopover from "./ReaderPopover";
 import Button from "./ui/Button";
 import { LANGUAGE_OPTIONS } from "./settings/languageOptions";
+import { isExactAiSentinel, matchAiSentinel, type AiSentinel } from "../lib/aiConnections";
 import { parseAiErrorMessage } from "../utils/aiStream";
 
 interface TranslationPopoverProps {
@@ -77,19 +78,22 @@ function useStreamingTranslation(
   const contentRef = useRef("");
   const [content, setContent] = useState("");
   const [streaming, setStreaming] = useState(true);
-  const [notConfigured, setNotConfigured] = useState(false);
-  const [reauthRequired, setReauthRequired] = useState(false);
+  const [sentinel, setSentinel] = useState<AiSentinel | null>(null);
   const [languageNotConfigured, setLanguageNotConfigured] = useState(false);
   const [targetLang, setTargetLang] = useState("");
-  const unlistenRef = useRef<UnlistenFn | null>(null);
 
   useEffect(() => {
     let cancelled = false;
+    let activeChannel: string | null = null;
+    let unlisten: UnlistenFn | null = null;
+    const disposeListener = () => {
+      unlisten?.();
+      unlisten = null;
+    };
     contentRef.current = "";
     setContent("");
     setStreaming(true);
-    setNotConfigured(false);
-    setReauthRequired(false);
+    setSentinel(null);
     setLanguageNotConfigured(false);
 
     if (targetLanguageOverride) {
@@ -107,36 +111,57 @@ function useStreamingTranslation(
 
     const run = async () => {
       const requestId = crypto.randomUUID();
+      const channel = `ai-translate-chunk-${requestId}`;
 
-      unlistenRef.current = await listen<{ delta: string; done: boolean }>(
-        `ai-translate-chunk-${requestId}`,
+      const stop = await listen<{ delta: string; done: boolean; error?: string | null }>(
+        channel,
         (event) => {
           if (cancelled) return;
-          if (event.payload.done) {
-            const finalContent = contentRef.current.trim();
-            if (finalContent === "AI_REAUTH_REQUIRED") {
-              setReauthRequired(true);
+          if (event.payload.error) {
+            activeChannel = null;
+            const err = event.payload.error;
+            const matched = matchAiSentinel(err);
+            if (matched) {
+              setSentinel(matched);
               contentRef.current = "";
               setContent("");
-            } else if (finalContent === "AI_NOT_CONFIGURED") {
-              setNotConfigured(true);
+            } else if (err.includes("TRANSLATION_LANGUAGE_NOT_CONFIGURED")) {
+              setLanguageNotConfigured(true);
+              contentRef.current = "";
+              setContent("");
+            } else {
+              contentRef.current = err.startsWith("Error:") ? err : `Error: ${err}`;
+              setContent(contentRef.current);
+            }
+            setStreaming(false);
+            disposeListener();
+            return;
+          }
+          if (event.payload.done) {
+            activeChannel = null;
+            const finalContent = contentRef.current.trim();
+            if (isExactAiSentinel(finalContent)) {
+              setSentinel(finalContent);
               contentRef.current = "";
               setContent("");
             }
             setStreaming(false);
-            unlistenRef.current?.();
-            unlistenRef.current = null;
+            disposeListener();
             return;
           }
           contentRef.current += event.payload.delta;
-          if (
-            contentRef.current !== "AI_REAUTH_REQUIRED" &&
-            contentRef.current !== "AI_NOT_CONFIGURED"
-          ) {
+          if (!isExactAiSentinel(contentRef.current)) {
             setContent(contentRef.current);
           }
         },
       );
+
+      if (cancelled) {
+        stop();
+        return;
+      }
+      unlisten = stop;
+      activeChannel = channel;
 
       try {
         await invoke("ai_translate_passage", {
@@ -146,13 +171,19 @@ function useStreamingTranslation(
           targetLanguage: targetLanguageOverride,
           requestId,
         });
+        if (cancelled && activeChannel) {
+          const ch = activeChannel;
+          activeChannel = null;
+          void invoke("ai_cancel", { channel: ch }).catch(() => {});
+        }
       } catch (err) {
+        activeChannel = null;
+        disposeListener();
         if (!cancelled) {
           const msg = String(err);
-          if (msg.includes("AI_NOT_CONFIGURED")) {
-            setNotConfigured(true);
-          } else if (msg.includes("AI_REAUTH_REQUIRED")) {
-            setReauthRequired(true);
+          const matched = matchAiSentinel(msg);
+          if (matched) {
+            setSentinel(matched);
           } else if (msg.includes("TRANSLATION_LANGUAGE_NOT_CONFIGURED")) {
             setLanguageNotConfigured(true);
           } else {
@@ -164,12 +195,16 @@ function useStreamingTranslation(
       }
     };
 
-    run();
+    void run();
 
     return () => {
       cancelled = true;
-      unlistenRef.current?.();
-      unlistenRef.current = null;
+      if (activeChannel) {
+        const ch = activeChannel;
+        activeChannel = null;
+        void invoke("ai_cancel", { channel: ch }).catch(() => {});
+      }
+      disposeListener();
     };
   }, [text, context, bookId, cfi, targetLanguageOverride]);
 
@@ -177,8 +212,7 @@ function useStreamingTranslation(
     content,
     contentRef,
     streaming,
-    notConfigured,
-    reauthRequired,
+    sentinel,
     languageNotConfigured,
     targetLang,
   };
@@ -205,8 +239,7 @@ export default function TranslationPopover({
     content,
     contentRef,
     streaming,
-    notConfigured,
-    reauthRequired,
+    sentinel,
     languageNotConfigured,
     targetLang,
   } = useStreamingTranslation(text, context, bookId, cfi, targetLangOverride);
@@ -239,7 +272,7 @@ export default function TranslationPopover({
   const errorMessage = parseAiErrorMessage(content);
   const allDone = !streaming;
   const hasContent = Boolean(content);
-  const hasConfigurationError = reauthRequired || notConfigured || languageNotConfigured;
+  const hasConfigurationError = Boolean(sentinel) || languageNotConfigured;
   const trimmedText = text.trim();
   const trimmedContext = context?.trim() ?? "";
   const hasSurroundingContext = Boolean(
@@ -375,9 +408,9 @@ export default function TranslationPopover({
           )}
         </div>
 
-        {reauthRequired || notConfigured ? (
+        {sentinel ? (
           <AiAuthPromptCard
-            variant={reauthRequired ? "reauth" : "notConfigured"}
+            sentinel={sentinel}
             embedded
             onOpenSettings={async () => {
               onClose();

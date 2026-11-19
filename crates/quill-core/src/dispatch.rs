@@ -236,6 +236,8 @@ struct AiChatArgs {
     book_author: Option<String>,
     #[serde(default)]
     current_chapter: Option<String>,
+    #[serde(default)]
+    request_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -827,6 +829,7 @@ command_table! {
                     a.book_title,
                     a.book_author,
                     a.current_chapter,
+                    a.request_id,
                 )
                 .await
                 .and_then(to_json)
@@ -924,36 +927,6 @@ command_table! {
             let a: CheckOllamaStatusArgs = parse_args(args)?;
             async move {
                 commands::ai::check_ollama_status(&core, a.base_url)
-                    .await
-                    .and_then(to_json)
-            }
-        },
-
-        // OAuth
-        "openai_oauth_login" => |core, _args| {
-            async move {
-                commands::oauth::openai_oauth_login(&core)
-                    .await
-                    .and_then(to_json)
-            }
-        },
-        "openai_oauth_status" => |core, _args| {
-            async move {
-                commands::oauth::openai_oauth_status(&core)
-                    .await
-                    .and_then(to_json)
-            }
-        },
-        "openai_oauth_cancel" => |core, _args| {
-            async move {
-                commands::oauth::openai_oauth_cancel(&core)
-                    .await
-                    .and_then(to_json)
-            }
-        },
-        "openai_oauth_logout" => |core, _args| {
-            async move {
-                commands::oauth::openai_oauth_logout(&core)
                     .await
                     .and_then(to_json)
             }
@@ -1291,54 +1264,6 @@ mod tests {
                 .contains("TRANSLATION_LANGUAGE_NOT_CONFIGURED"),
             "expected TRANSLATION_LANGUAGE_NOT_CONFIGURED in: {tr_lang_err}"
         );
-
-        // OAuth empty refresh token surfaces AI_REAUTH_REQUIRED and clears stored tokens
-        dispatch(
-            Arc::clone(&core),
-            "set_settings_bulk",
-            r#"{"settings":{"ai_provider":"openai","ai_auth_mode":"oauth","language":"en"}}"#,
-        )
-        .await
-        .expect("set oauth provider");
-        crate::ai::oauth::save_tokens(
-            &core.secrets,
-            &crate::ai::oauth::OAuthTokens {
-                access_token: "stale".into(),
-                refresh_token: "".into(),
-                expires_at: 0,
-                account_id: Some("acct".into()),
-                email: Some("reader@example.com".into()),
-            },
-        )
-        .unwrap();
-
-        let reauth_err = dispatch(
-            Arc::clone(&core),
-            "ai_explain",
-            &json!({
-                "passage": "hello",
-                "surrounding": null,
-                "bookTitle": "Book",
-                "chapter": "1",
-                "requestId": "req-reauth"
-            })
-            .to_string(),
-        )
-        .await
-        .expect_err("ai_explain with empty refresh token should return AI_REAUTH_REQUIRED");
-        assert_eq!(reauth_err.to_string(), "AI_REAUTH_REQUIRED");
-
-        let status_after = dispatch(Arc::clone(&core), "openai_oauth_status", "{}")
-            .await
-            .expect("status after reauth");
-        assert_eq!(
-            status_after,
-            json!({"connected": false, "account_id": null, "email": null})
-        );
-
-        dispatch(Arc::clone(&core), "openai_oauth_cancel", "{}")
-            .await
-            .expect("cancel when idle is idempotent");
     }
 
     #[tokio::test]
@@ -1440,7 +1365,8 @@ mod tests {
             &json!({
                 "settings": {
                     "ai_provider": "ollama",
-                    "ai_base_url": format!("http://{addr}")
+                    "ai_base_url": format!("http://{addr}/v1"),
+                    "ai_api_key": "sk-must-not-be-sent-to-ollama"
                 }
             })
             .to_string(),
@@ -1456,7 +1382,503 @@ mod tests {
             .await
             .expect("mock ollama received request")
             .expect("request channel");
+        assert!(captured.starts_with("POST /v1/chat/completions HTTP/1.1"), "request was: {captured}");
         assert!(captured.contains("\"model\":\"llama3.2\""), "request was: {captured}");
+        assert!(!captured.to_lowercase().contains("authorization:"), "ollama must not send bearer auth: {captured}");
+        let _ = server.await;
+    }
+
+    #[tokio::test]
+    async fn list_api_models_respects_empty_draft_for_custom_provider() {
+        let (_dir, _host, core) = boot_test_core();
+        dispatch(
+            Arc::clone(&core),
+            "set_settings_bulk",
+            r#"{"settings":{"ai_provider":"openai","ai_base_url":"https://api.openai.com/v1"}}"#,
+        )
+        .await
+        .expect("seed openai url");
+
+        // Passing an empty baseUrl draft for custom must NOT fall back to the
+        // previously saved OpenAI base URL.
+        let err = dispatch(
+            Arc::clone(&core),
+            "list_api_models",
+            r#"{"provider":"custom","baseUrl":"","apiKey":""}"#,
+        )
+        .await
+        .expect_err("custom with empty draft URL must return AI_NOT_CONFIGURED");
+        assert_eq!(err.to_string(), "AI_NOT_CONFIGURED");
+    }
+
+    #[tokio::test]
+    async fn list_api_models_only_reuses_saved_key_for_saved_provider_and_origin() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let (_dir, _host, core) = boot_test_core();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+
+        let server = tokio::spawn(async move {
+            for _ in 0..4 {
+                let (mut stream, _) = listener.accept().await.expect("accept");
+                let mut buf = vec![0u8; 4096];
+                let n = stream.read(&mut buf).await.unwrap_or(0);
+                let _ = tx.send(String::from_utf8_lossy(&buf[..n]).to_string());
+                let body = r#"{"data":[{"id":"m1"}]}"#;
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(resp.as_bytes()).await;
+            }
+        });
+
+        // Seed OpenAI pointing at the local server with a saved API key.
+        dispatch(
+            Arc::clone(&core),
+            "set_settings_bulk",
+            &json!({
+                "settings": {
+                    "ai_provider": "openai",
+                    "ai_base_url": format!("http://{addr}/v1"),
+                    "ai_api_key": "sk-saved-secret"
+                }
+            })
+            .to_string(),
+        )
+        .await
+        .expect("seed saved openai");
+
+        // 1) Same saved provider + same origin with omitted draft apiKey -> reuses saved key.
+        dispatch(
+            Arc::clone(&core),
+            "list_api_models",
+            &json!({"provider": "openai", "baseUrl": format!("http://{addr}/v1")}).to_string(),
+        )
+        .await
+        .expect("same provider+origin");
+        let req1 = rx.recv().await.expect("req1").to_lowercase();
+        assert!(req1.contains("authorization: bearer sk-saved-secret"), "expected saved key: {req1}");
+
+        // 2) Different provider with omitted draft apiKey -> must NOT send saved key.
+        dispatch(
+            Arc::clone(&core),
+            "list_api_models",
+            &json!({"provider": "custom", "baseUrl": format!("http://{addr}/v1")}).to_string(),
+        )
+        .await
+        .expect("different provider");
+        let req2 = rx.recv().await.expect("req2").to_lowercase();
+        assert!(!req2.contains("sk-saved-secret"), "leaked saved key to another provider: {req2}");
+
+        // 3) Same provider, different saved origin (with a saved key for that origin),
+        // omitted draft apiKey -> must NOT send saved key to the local server.
+        dispatch(
+            Arc::clone(&core),
+            "set_settings_bulk",
+            r#"{"settings":{"ai_provider":"openai","ai_base_url":"https://api.openai.com/v1","ai_api_key":"sk-saved-secret"}}"#,
+        )
+        .await
+        .expect("repoint saved openai to another origin with its own key");
+        dispatch(
+            Arc::clone(&core),
+            "list_api_models",
+            &json!({"provider": "openai", "baseUrl": format!("http://{addr}/v1")}).to_string(),
+        )
+        .await
+        .expect("different origin");
+        let req3 = rx.recv().await.expect("req3").to_lowercase();
+        assert!(!req3.contains("sk-saved-secret"), "leaked saved key to another origin: {req3}");
+
+        // 4) Explicit draft apiKey authorizes the new destination.
+        dispatch(
+            Arc::clone(&core),
+            "list_api_models",
+            &json!({
+                "provider": "custom",
+                "baseUrl": format!("http://{addr}/v1"),
+                "apiKey": "sk-explicit-draft"
+            })
+            .to_string(),
+        )
+        .await
+        .expect("explicit draft key");
+        let req4 = rx.recv().await.expect("req4").to_lowercase();
+        assert!(req4.contains("authorization: bearer sk-explicit-draft"), "expected explicit draft key: {req4}");
+
+        let _ = server.await;
+    }
+
+    #[tokio::test]
+    async fn changing_api_origin_or_provider_clears_saved_key_while_same_origin_preserves_it() {
+        let (_dir, _host, core) = boot_test_core();
+
+        dispatch(
+            Arc::clone(&core),
+            "set_settings_bulk",
+            r#"{"settings":{"ai_provider":"openai","ai_base_url":"https://api.openai.com/v1","ai_api_key":"sk-origin-a"}}"#,
+        )
+        .await
+        .expect("seed openai key");
+        assert_eq!(core.secrets.get("ai_api_key").as_deref(), Some("sk-origin-a"));
+
+        // Same-origin path edit preserves the saved API key.
+        dispatch(
+            Arc::clone(&core),
+            "set_setting",
+            r#"{"key":"ai_base_url","value":"https://api.openai.com/v2"}"#,
+        )
+        .await
+        .expect("same-origin path edit");
+        assert_eq!(core.secrets.get("ai_api_key").as_deref(), Some("sk-origin-a"));
+
+        // Cross-origin URL edit without an explicit new key clears the saved secret on disk.
+        dispatch(
+            Arc::clone(&core),
+            "set_setting",
+            r#"{"key":"ai_base_url","value":"https://evil.example/v1"}"#,
+        )
+        .await
+        .expect("cross-origin edit");
+        assert_eq!(core.secrets.get("ai_api_key"), None);
+
+        // Setting a fresh key for the new origin persists cleanly.
+        dispatch(
+            Arc::clone(&core),
+            "set_setting",
+            r#"{"key":"ai_api_key","value":"sk-origin-b"}"#,
+        )
+        .await
+        .expect("set fresh key");
+        assert_eq!(core.secrets.get("ai_api_key").as_deref(), Some("sk-origin-b"));
+
+        // Switching provider without a new key also clears the old key on disk.
+        dispatch(
+            Arc::clone(&core),
+            "set_setting",
+            r#"{"key":"ai_provider","value":"deepseek"}"#,
+        )
+        .await
+        .expect("switch provider");
+        assert_eq!(core.secrets.get("ai_api_key"), None);
+    }
+
+    #[tokio::test]
+    async fn saving_nonempty_api_key_without_bindable_endpoint_errors_and_preserves_storage() {
+        let (_dir, _host, core) = boot_test_core();
+
+        // Seed a valid OpenAI key first.
+        dispatch(
+            Arc::clone(&core),
+            "set_settings_bulk",
+            r#"{"settings":{"ai_provider":"openai","ai_base_url":"https://api.openai.com/v1","ai_api_key":"sk-keep-me"}}"#,
+        )
+        .await
+        .expect("seed openai");
+
+        // Trying to bulk-save Custom with a blank URL and a non-empty key must fail
+        // validation and roll back without clobbering existing settings or secret.
+        let bulk_err = dispatch(
+            Arc::clone(&core),
+            "set_settings_bulk",
+            r#"{"settings":{"ai_provider":"custom","ai_base_url":"","ai_api_key":"sk-custom-early"}}"#,
+        )
+        .await
+        .expect_err("non-empty key without bindable URL must error");
+        assert!(bulk_err.to_string().contains("base URL"), "{bulk_err}");
+        assert_eq!(
+            core.secrets
+                .get_api_key_for_endpoint("openai", "https://api.openai.com/v1")
+                .as_deref(),
+            Some("sk-keep-me")
+        );
+        let saved_provider = dispatch(Arc::clone(&core), "get_setting", r#"{"key":"ai_provider"}"#)
+            .await
+            .expect("get provider");
+        assert_eq!(saved_provider, json!("openai"));
+
+        // Switch to Custom (blank URL -> clears old key cleanly), then try set_setting(ai_api_key).
+        dispatch(
+            Arc::clone(&core),
+            "set_settings_bulk",
+            r#"{"settings":{"ai_provider":"custom","ai_base_url":"","ai_api_key":""}}"#,
+        )
+        .await
+        .expect("switch to custom");
+        let single_err = dispatch(
+            Arc::clone(&core),
+            "set_setting",
+            r#"{"key":"ai_api_key","value":"sk-custom-before-url"}"#,
+        )
+        .await
+        .expect_err("single-key save without URL must error");
+        assert!(single_err.to_string().contains("base URL"), "{single_err}");
+        assert_eq!(core.secrets.get("ai_api_key"), None);
+    }
+
+    #[tokio::test]
+    async fn mismatched_persisted_endpoint_and_secret_cannot_be_read_listed_or_dispatched() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let (_dir, _host, core) = boot_test_core();
+
+        // Seed OpenAI + https://api.openai.com/v1 + sk-origin-a cleanly.
+        dispatch(
+            Arc::clone(&core),
+            "set_settings_bulk",
+            r#"{"settings":{"ai_auth_mode":"api_key","ai_provider":"openai","ai_base_url":"https://api.openai.com/v1","ai_api_key":"sk-origin-a","ai_model":"gpt-4o"}}"#,
+        )
+        .await
+        .expect("seed openai");
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+        let server = tokio::spawn(async move {
+            for _ in 0..2 {
+                let (mut stream, _) = listener.accept().await.expect("accept");
+                let mut buf = vec![0u8; 4096];
+                let n = stream.read(&mut buf).await.unwrap_or(0);
+                let req = String::from_utf8_lossy(&buf[..n]).to_string();
+                let _ = tx.send(req.clone());
+                let (content_type, body) = if req.starts_with("POST ") {
+                    ("text/event-stream", "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\ndata: [DONE]\n\n")
+                } else {
+                    ("application/json", r#"{"data":[{"id":"m1"}]}"#)
+                };
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(resp.as_bytes()).await;
+            }
+        });
+
+        // Simulate an interrupted write / failed secret clear / synced settings change:
+        // `quill.db` points at the local server while `secrets.db` still holds the old
+        // key bound to `https://api.openai.com`.
+        {
+            let conn = core.db.conn.lock().unwrap();
+            conn.execute(
+                "UPDATE settings SET value = ?1 WHERE key = 'ai_base_url'",
+                rusqlite::params![format!("http://{addr}/v1")],
+            )
+            .unwrap();
+        }
+
+        // 1) get_all_settings and get_setting must NOT return the mismatched key.
+        let all = dispatch(Arc::clone(&core), "get_all_settings", "{}")
+            .await
+            .expect("get_all_settings");
+        assert!(all.get("ai_api_key").is_none(), "mismatched key leaked via get_all_settings: {all}");
+        let single = dispatch(Arc::clone(&core), "get_setting", r#"{"key":"ai_api_key"}"#)
+            .await
+            .expect("get_setting");
+        assert!(single.is_null(), "mismatched key leaked via get_setting: {single}");
+
+        // 2) list_api_models with omitted draft key must NOT send sk-origin-a.
+        dispatch(
+            Arc::clone(&core),
+            "list_api_models",
+            &json!({"provider": "openai", "baseUrl": format!("http://{addr}/v1")}).to_string(),
+        )
+        .await
+        .expect("list_api_models");
+        let list_req = rx.recv().await.expect("list req").to_lowercase();
+        assert!(!list_req.contains("sk-origin-a"), "mismatched key leaked to /models: {list_req}");
+
+        // 3) Keyed provider dispatch must fail closed with AI_NOT_CONFIGURED before sending.
+        let err = dispatch(
+            Arc::clone(&core),
+            "ai_chat",
+            r#"{"messages":[{"role":"user","content":"Hi"}],"requestId":"mismatch-req"}"#,
+        )
+        .await
+        .expect_err("openai dispatch with mismatched binding must fail closed");
+        assert_eq!(err.to_string(), "AI_NOT_CONFIGURED");
+
+        // 4) Custom provider (optional key) with a mismatched binding must dispatch without
+        //    any Authorization header rather than sending the mismatched secret.
+        {
+            let conn = core.db.conn.lock().unwrap();
+            conn.execute(
+                "UPDATE settings SET value = 'custom' WHERE key = 'ai_provider'",
+                [],
+            )
+            .unwrap();
+        }
+        dispatch(
+            Arc::clone(&core),
+            "ai_chat",
+            r#"{"messages":[{"role":"user","content":"Hi"}],"requestId":"mismatch-custom"}"#,
+        )
+        .await
+        .expect("custom dispatch without key");
+        let chat_req = rx.recv().await.expect("chat req").to_lowercase();
+        assert!(!chat_req.contains("authorization:"), "custom dispatch leaked mismatched key: {chat_req}");
+        assert!(!chat_req.contains("sk-origin-a"), "custom dispatch leaked secret: {chat_req}");
+
+        let _ = server.await;
+    }
+
+    #[test]
+    fn concurrent_settings_updates_never_expose_mismatched_key_and_endpoint() {
+        use std::collections::HashMap;
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+        use std::sync::Barrier;
+
+        let (_dir, _host, core) = boot_test_core();
+
+        let seed = |provider: &str, url: &str, key: &str| {
+            let mut m = HashMap::new();
+            m.insert("ai_auth_mode".to_string(), "api_key".to_string());
+            m.insert("ai_provider".to_string(), provider.to_string());
+            m.insert("ai_base_url".to_string(), url.to_string());
+            m.insert("ai_api_key".to_string(), key.to_string());
+            m
+        };
+        crate::commands::settings::set_settings_bulk(
+            &core,
+            seed("openai", "https://origin-a.example/v1", "sk-key-a"),
+        )
+        .unwrap();
+
+        let start = Arc::new(Barrier::new(3));
+        let done = Arc::new(AtomicBool::new(false));
+        let observed_with_key = Arc::new(AtomicUsize::new(0));
+        let writer_core = Arc::clone(&core);
+        let writer_done = Arc::clone(&done);
+        let writer_start = Arc::clone(&start);
+        let writer = std::thread::spawn(move || {
+            writer_start.wait();
+            for i in 0..80 {
+                let batch = if i % 2 == 0 {
+                    seed("anthropic", "https://origin-b.example", "sk-key-b")
+                } else {
+                    seed("openai", "https://origin-a.example/v1", "sk-key-a")
+                };
+                crate::commands::settings::set_settings_bulk(&writer_core, batch).unwrap();
+            }
+            writer_done.store(true, Ordering::SeqCst);
+        });
+
+        let mut readers = Vec::new();
+        for _ in 0..2 {
+            let reader_core = Arc::clone(&core);
+            let reader_done = Arc::clone(&done);
+            let reader_start = Arc::clone(&start);
+            let reader_obs = Arc::clone(&observed_with_key);
+            readers.push(std::thread::spawn(move || {
+                reader_start.wait();
+                loop {
+                    let s = crate::commands::settings::get_all_settings(&reader_core).unwrap();
+                    if let Some(key) = s.get("ai_api_key") {
+                        reader_obs.fetch_add(1, Ordering::SeqCst);
+                        let provider = s.get("ai_provider").map(String::as_str).unwrap_or("");
+                        let url = s.get("ai_base_url").map(String::as_str).unwrap_or("");
+                        match key.as_str() {
+                            "sk-key-a" => {
+                                assert_eq!(provider, "openai", "sk-key-a paired with {provider} {url}");
+                                assert_eq!(url, "https://origin-a.example/v1");
+                            }
+                            "sk-key-b" => {
+                                assert_eq!(provider, "anthropic", "sk-key-b paired with {provider} {url}");
+                                assert_eq!(url, "https://origin-b.example");
+                            }
+                            other => panic!("unexpected key: {other}"),
+                        }
+                    }
+                    if reader_done.load(Ordering::SeqCst) {
+                        break;
+                    }
+                }
+            }));
+        }
+
+        writer.join().unwrap();
+        for r in readers {
+            r.join().unwrap();
+        }
+        assert!(
+            observed_with_key.load(Ordering::SeqCst) > 0,
+            "readers must observe at least one credential-bearing snapshot"
+        );
+    }
+
+    #[tokio::test]
+    async fn ai_chat_routes_chunks_to_per_request_channel() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let (_dir, host, core) = boot_test_core();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let server = tokio::spawn(async move {
+            if let Ok((mut stream, _)) = listener.accept().await {
+                let mut buf = vec![0u8; 4096];
+                let _ = stream.read(&mut buf).await;
+                let body = "data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n\ndata: [DONE]\n\n";
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(resp.as_bytes()).await;
+            }
+        });
+
+        dispatch(
+            Arc::clone(&core),
+            "set_settings_bulk",
+            &json!({
+                "settings": {
+                    "ai_provider": "ollama",
+                    "ai_base_url": format!("http://{addr}/v1"),
+                    "ai_model": "llama3.2"
+                }
+            })
+            .to_string(),
+        )
+        .await
+        .expect("seed ollama");
+
+        dispatch(
+            Arc::clone(&core),
+            "ai_chat",
+            &json!({
+                "chatId": "c1",
+                "requestId": "req-42",
+                "messages": [{"role": "user", "content": "hi"}]
+            })
+            .to_string(),
+        )
+        .await
+        .expect("ai_chat");
+
+        for _ in 0..100 {
+            let done = host
+                .events
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|(e, p)| e == "ai-stream-chunk-req-42" && p["done"] == true);
+            if done {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+
+        let events = host.events.lock().unwrap().clone();
+        assert!(
+            events.iter().any(|(e, p)| e == "ai-stream-chunk-req-42" && p["delta"] == "Hello"),
+            "expected delta on per-request channel: {events:?}"
+        );
+        assert!(
+            !events.iter().any(|(e, _)| e == "ai-stream-chunk"),
+            "must not emit on shared ai-stream-chunk channel when requestId is set: {events:?}"
+        );
         let _ = server.await;
     }
 
@@ -1502,7 +1924,7 @@ mod tests {
             CORE_COMMAND_NAMES.len(),
             "duplicate entries in CORE_COMMAND_NAMES"
         );
-        assert_eq!(CORE_COMMAND_NAMES.len(), 85);
+        assert_eq!(CORE_COMMAND_NAMES.len(), 81);
 
         let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()

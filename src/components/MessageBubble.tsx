@@ -5,6 +5,7 @@ import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { ChatMessage } from "../hooks/useAiChat";
 import AiAuthPromptCard from "./AiAuthPromptCard";
+import { matchAiSentinel } from "../lib/aiConnections";
 import { parseAiErrorMessage } from "../utils/aiStream";
 
 interface MessageBubbleProps {
@@ -24,10 +25,11 @@ export default function MessageBubble({
   const isLast = msg === messages[messages.length - 1];
 
   if (msg.role === "assistant") {
-    if (msg.content === "AI_NOT_CONFIGURED" || msg.content === "AI_REAUTH_REQUIRED") {
+    const sentinel = matchAiSentinel(msg.content);
+    if (sentinel && msg.content.trim() === sentinel) {
       return (
         <AiAuthPromptCard
-          variant={msg.content === "AI_REAUTH_REQUIRED" ? "reauth" : "notConfigured"}
+          sentinel={sentinel}
           onOpenSettings={async () => {
             await invoke("open_settings_on_main", { section: "ai" });
             await focusWindow("main");

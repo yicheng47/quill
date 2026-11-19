@@ -5,7 +5,7 @@ pub mod discovery;
 pub mod rpc;
 
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
@@ -39,6 +39,7 @@ const READER_INSTRUCTIONS: &str = "You are running inside Quill, an ebook reader
 /// a pure reader-text completion even under a read-only sandbox.
 const DISABLED_CODEX_FEATURES: &[&str] = &[
     "shell_tool",
+    "shell_snapshot",
     "unified_exec",
     "multi_agent",
     "multi_agent_v2",
@@ -56,16 +57,45 @@ const DISABLED_CODEX_FEATURES: &[&str] = &[
     "tool_suggest",
 ];
 
+/// Quill-owned runtime directories for Codex's SQLite state and logs, placed
+/// beside (never inside) the empty thread `cwd` so the child never mutates
+/// `~/.codex/*.sqlite*` and the thread workspace remains empty.
+pub(crate) fn runtime_dirs(cwd: &Path) -> (PathBuf, PathBuf) {
+    let base = cwd
+        .parent()
+        .map(|p| p.join("codex-runtime"))
+        .unwrap_or_else(|| cwd.with_extension("runtime"));
+    (base.join("state"), base.join("logs"))
+}
+
+fn toml_path_string(path: &Path) -> String {
+    serde_json::to_string(path.to_string_lossy().as_ref())
+        .expect("path string serialization cannot fail")
+}
+
 /// CLI arguments Quill passes to `codex` so the child always uses the OpenAI
-/// provider and disables built-in coding/agent capabilities regardless of
-/// `~/.codex/config.toml`.
-pub(crate) fn app_server_args() -> Vec<String> {
+/// provider, isolates its SQLite/log state into Quill-owned directories,
+/// skips bundled system-skills installs in `~/.codex/skills/.system`, and
+/// disables built-in coding/agent capabilities regardless of `~/.codex/config.toml`.
+pub(crate) fn app_server_args(state_dir: &Path, log_dir: &Path) -> Vec<String> {
     let mut args = vec![
         "app-server".to_string(),
         "-c".to_string(),
         format!("model_provider=\"{OPENAI_MODEL_PROVIDER}\""),
         "-c".to_string(),
         "web_search=\"disabled\"".to_string(),
+        "-c".to_string(),
+        "skills.bundled.enabled=false".to_string(),
+        "-c".to_string(),
+        format!("sqlite_home={}", toml_path_string(state_dir)),
+        "-c".to_string(),
+        format!("log_dir={}", toml_path_string(log_dir)),
+        "-c".to_string(),
+        "history.persistence=\"none\"".to_string(),
+        "-c".to_string(),
+        "analytics.enabled=false".to_string(),
+        "-c".to_string(),
+        "check_for_update_on_startup=false".to_string(),
     ];
     for feature in DISABLED_CODEX_FEATURES {
         args.push("-c".to_string());
@@ -173,10 +203,10 @@ struct Account {
 
 fn parse_account(result: &Value) -> Account {
     let account = &result["account"];
-    // Require a real OpenAI/ChatGPT account rather than accepting a null
-    // account with `requiresOpenaiAuth: false` (e.g. a custom provider).
-    let signed_in = matches!(account["type"].as_str(), Some("chatgpt" | "apiKey"));
-    if !signed_in {
+    // Quill's Codex connection uses the reader's ChatGPT subscription login,
+    // not metered API-key credentials, third-party providers, or null accounts
+    // with `requiresOpenaiAuth: false`.
+    if account["type"].as_str() != Some("chatgpt") {
         return Account {
             signed_in: false,
             email: None,
@@ -231,13 +261,17 @@ pub fn isolation_overrides(config_read: &Value) -> Value {
     for feature in DISABLED_CODEX_FEATURES {
         overrides.insert(format!("features.{feature}"), Value::Bool(false));
     }
+    overrides.insert("skills.bundled.enabled".to_string(), Value::Bool(false));
+    overrides.insert("history.persistence".to_string(), Value::String("none".to_string()));
+    overrides.insert("analytics.enabled".to_string(), Value::Bool(false));
     overrides.insert("web_search".to_string(), Value::String("disabled".to_string()));
     Value::Object(overrides)
 }
 
 /// The model and effort every turn sends, so a turn never inherits the
 /// user's Codex defaults. An empty model means the catalog's default model;
-/// an unset effort means that model's default effort.
+/// an unset or unsupported effort for a known catalog model falls back to
+/// that model's default effort (unknown/custom models pass the chosen tier through).
 pub fn resolve_model_and_effort(
     models: &[CodexModel],
     model_setting: Option<&str>,
@@ -250,14 +284,19 @@ pub fn resolve_model_and_effort(
         .map(str::to_string)
         .or_else(|| catalog_default.map(|m| m.slug.clone()))
         .unwrap_or_default();
+    let known_model = models.iter().find(|m| m.slug == model);
     let effort = effort_setting
         .map(str::trim)
         .filter(|e| !e.is_empty() && *e != "default")
+        .filter(|e| match known_model {
+            Some(m) if !m.supported_reasoning_levels.is_empty() => {
+                m.supported_reasoning_levels.iter().any(|lvl| lvl == e)
+            }
+            _ => true,
+        })
         .map(str::to_string)
         .or_else(|| {
-            models
-                .iter()
-                .find(|m| m.slug == model)
+            known_model
                 .or(catalog_default)
                 .map(|m| m.default_reasoning_level.clone())
         })
@@ -290,58 +329,97 @@ impl ManagedChild {
         self.pid = None;
     }
 
-    fn terminate(mut self) {
+    #[cfg(windows)]
+    fn kill_tree_sync(pid: u32) {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let _ = std::process::Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+
+    #[cfg(windows)]
+    async fn kill_tree_async(pid: u32) {
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let mut cmd = tokio::process::Command::new("taskkill");
+        cmd.args(["/PID", &pid.to_string(), "/T", "/F"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .kill_on_drop(true);
+        let _ = tokio::time::timeout(Duration::from_secs(2), cmd.status()).await;
+    }
+
+    fn terminate(mut self, synchronous: bool) {
         log::info!("codex: stopping app-server pid={:?}", self.pid);
         #[cfg(unix)]
-        if self.own_process_group {
-            if let Some(pid) = self.pid.filter(|&p| p > 1) {
-                let pgid = -(pid as libc::pid_t);
-                // SAFETY: `pgid` is strictly negative (`-pid` with `pid > 1`) and
-                // identifies only the process group created via `process_group(0)`
-                // for Quill's own spawned child.
-                unsafe {
-                    libc::kill(pgid, libc::SIGTERM);
-                }
-                if let Ok(handle) = tokio::runtime::Handle::try_current() {
-                    handle.spawn(async move {
-                        let exited =
-                            tokio::time::timeout(Duration::from_millis(500), self.child.wait()).await;
-                        if matches!(exited, Ok(Ok(_))) {
-                            self.disarm();
-                            return;
-                        }
-                        unsafe {
-                            libc::kill(pgid, libc::SIGKILL);
-                        }
-                        let _ = self.child.start_kill();
-                        if tokio::time::timeout(Duration::from_millis(500), self.child.wait())
-                            .await
-                            .is_ok()
-                        {
-                            self.disarm();
-                        }
-                    });
+        {
+            let _ = synchronous;
+            if self.own_process_group {
+                if let Some(pid) = self.pid.filter(|&p| p > 1) {
+                    let pgid = -(pid as libc::pid_t);
+                    // SAFETY: `pgid` is strictly negative (`-pid` with `pid > 1`) and
+                    // identifies only the process group created via `process_group(0)`
+                    // for Quill's own spawned child.
+                    unsafe {
+                        libc::kill(pgid, libc::SIGTERM);
+                    }
+                    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                        handle.spawn(async move {
+                            let exited =
+                                tokio::time::timeout(Duration::from_millis(500), self.child.wait())
+                                    .await;
+                            if matches!(exited, Ok(Ok(_))) {
+                                self.disarm();
+                                return;
+                            }
+                            unsafe {
+                                libc::kill(pgid, libc::SIGKILL);
+                            }
+                            let _ = self.child.start_kill();
+                            if tokio::time::timeout(Duration::from_millis(500), self.child.wait())
+                                .await
+                                .is_ok()
+                            {
+                                self.disarm();
+                            }
+                        });
+                        return;
+                    }
+                    unsafe {
+                        libc::kill(pgid, libc::SIGKILL);
+                    }
+                    let _ = self.child.start_kill();
+                    self.disarm();
                     return;
                 }
-                unsafe {
-                    libc::kill(pgid, libc::SIGKILL);
-                }
-                let _ = self.child.start_kill();
-                self.disarm();
-                return;
             }
         }
         #[cfg(windows)]
         if let Some(pid) = self.pid.filter(|&p| p > 0) {
-            use std::os::windows::process::CommandExt;
-            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-            let _ = std::process::Command::new("taskkill")
-                .args(["/PID", &pid.to_string(), "/T", "/F"])
-                .creation_flags(CREATE_NO_WINDOW)
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .spawn();
+            // Complete scoped tree termination BEFORE falling back to `start_kill`
+            // so `taskkill /T` can still enumerate children of the npm wrapper PID.
+            if !synchronous {
+                if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                    handle.spawn(async move {
+                        Self::kill_tree_async(pid).await;
+                        let _ = self.child.start_kill();
+                        let _ =
+                            tokio::time::timeout(Duration::from_secs(1), self.child.wait()).await;
+                        self.disarm();
+                    });
+                    return;
+                }
+            }
+            Self::kill_tree_sync(pid);
+            let _ = self.child.start_kill();
+            self.disarm();
+            return;
         }
         let _ = self.child.start_kill();
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
@@ -366,6 +444,10 @@ impl Drop for ManagedChild {
                     libc::kill(-(pid as libc::pid_t), libc::SIGKILL);
                 }
             }
+        }
+        #[cfg(windows)]
+        if let Some(pid) = self.pid.take().filter(|&p| p > 0) {
+            Self::kill_tree_sync(pid);
         }
         let _ = self.child.start_kill();
     }
@@ -396,8 +478,17 @@ fn spawn_app_server(override_path: Option<String>, cwd: PathBuf) -> BoxFuture<'s
         if version < MIN_VERSION {
             return Err(StartError::TooOld { version, path: found.path });
         }
+        let (state_dir, log_dir) = runtime_dirs(&cwd);
+        for dir in [&state_dir, &log_dir] {
+            std::fs::create_dir_all(dir).map_err(|e| StartError::Failed {
+                message: format!("could not create {}: {e}", dir.display()),
+                version: Some(version),
+                path: Some(found.path.clone()),
+            })?;
+        }
         let mut cmd = discovery::command(&found.path);
-        cmd.args(app_server_args())
+        cmd.args(app_server_args(&state_dir, &log_dir))
+            .env("CODEX_SQLITE_HOME", &state_dir)
             .current_dir(&cwd)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -689,7 +780,7 @@ impl Codex {
     fn kill_active_child(&self) {
         let child = self.child.lock().unwrap().active.take();
         if let Some(child) = child {
-            child.terminate();
+            child.terminate(false);
         }
     }
 
@@ -760,7 +851,7 @@ impl Codex {
             if child_slot.shutting_down {
                 drop(child_slot);
                 if let Some(child) = child {
-                    child.terminate();
+                    child.terminate(true);
                 }
                 return Err(StartError::Failed {
                     message: "Quill is shutting down".to_string(),
@@ -771,7 +862,7 @@ impl Codex {
             let prev = child.and_then(|c| child_slot.active.replace(c));
             drop(child_slot);
             if let Some(prev) = prev {
-                prev.terminate();
+                prev.terminate(false);
             }
         }
         let (global_tx, mut global_rx) = mpsc::unbounded_channel::<Notification>();
@@ -1101,7 +1192,7 @@ impl Codex {
             slot.active.take()
         };
         if let Some(child) = child {
-            child.terminate();
+            child.terminate(true);
         }
     }
 
@@ -1129,7 +1220,7 @@ impl Codex {
         };
         if self.is_turn_cancelled(&event_name, token) {
             self.clear_turn(&event_name, token);
-            host.emit_json(&event_name, &AiStreamChunk { delta: String::new(), done: true });
+            host.emit_json(&event_name, &AiStreamChunk::done());
             return Ok(());
         }
 
@@ -1146,7 +1237,7 @@ impl Codex {
         }
         if self.is_turn_cancelled(&event_name, token) {
             self.clear_turn(&event_name, token);
-            host.emit_json(&event_name, &AiStreamChunk { delta: String::new(), done: true });
+            host.emit_json(&event_name, &AiStreamChunk::done());
             return Ok(());
         }
 
@@ -1165,7 +1256,7 @@ impl Codex {
         }
         if self.is_turn_cancelled(&event_name, token) {
             self.clear_turn(&event_name, token);
-            host.emit_json(&event_name, &AiStreamChunk { delta: String::new(), done: true });
+            host.emit_json(&event_name, &AiStreamChunk::done());
             return Ok(());
         }
         log::info!("codex: turn model={model} effort={effort} chat={}", spec.chat_id.is_some());
@@ -1220,7 +1311,7 @@ impl Codex {
         let TurnSpec { system, messages, chat_id, event_name, .. } = spec;
         if self.is_turn_cancelled(&event_name, token) {
             self.clear_turn(&event_name, token);
-            host.emit_json(&event_name, &AiStreamChunk { delta: String::new(), done: true });
+            host.emit_json(&event_name, &AiStreamChunk::done());
             return TurnEnd::Interrupted;
         }
 
@@ -1263,7 +1354,7 @@ impl Codex {
             if self.is_turn_cancelled(&event_name, token) {
                 self.release_busy_thread(&mut claimed_busy);
                 self.clear_turn(&event_name, token);
-                host.emit_json(&event_name, &AiStreamChunk { delta: String::new(), done: true });
+                host.emit_json(&event_name, &AiStreamChunk::done());
                 return TurnEnd::Interrupted;
             }
             let (thread_id, input, is_fresh) = match &plan {
@@ -1288,7 +1379,7 @@ impl Codex {
                 if is_fresh && !session.rpc.is_closed() {
                     let _ = session.request("thread/unsubscribe", json!({ "threadId": thread_id })).await;
                 }
-                host.emit_json(&event_name, &AiStreamChunk { delta: String::new(), done: true });
+                host.emit_json(&event_name, &AiStreamChunk::done());
                 return TurnEnd::Interrupted;
             }
 
@@ -1363,7 +1454,7 @@ impl Codex {
             if let Some(chat_id) = chat_id.as_deref() {
                 self.forget_chat(chat_id);
             }
-            host.emit_json(&event_name, &AiStreamChunk { delta: String::new(), done: true });
+            host.emit_json(&event_name, &AiStreamChunk::done());
             return TurnEnd::Interrupted;
         }
 
@@ -1475,7 +1566,7 @@ async fn stream_turn(
                 }
                 if let Some(delta) = params["delta"].as_str() {
                     reply.push_str(delta);
-                    host.emit_json(event_name, &AiStreamChunk { delta: delta.to_string(), done: false });
+                    host.emit_json(event_name, &AiStreamChunk::delta(delta));
                 }
             }
             "error" if !params["willRetry"].as_bool().unwrap_or(false) => {
@@ -1491,7 +1582,7 @@ async fn stream_turn(
                         last_error.unwrap_or_else(|| turn_error(&turn["error"])),
                     ),
                     status => {
-                        host.emit_json(event_name, &AiStreamChunk { delta: String::new(), done: true });
+                        host.emit_json(event_name, &AiStreamChunk::done());
                         if status == Some("interrupted") {
                             TurnEnd::Interrupted
                         } else {

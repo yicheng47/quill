@@ -16,7 +16,7 @@ pub async fn stream_chat(
     event_name: &str,
     max_tokens_override: Option<u32>,
 ) -> AppResult<()> {
-    let client = reqwest::Client::new();
+    let client = crate::ai::api::http_client(None)?;
 
     // Anthropic uses a separate system parameter
     let system_msg = messages
@@ -86,17 +86,11 @@ pub async fn stream_chat(
                     match event_type {
                         "content_block_delta" => {
                             if let Some(text) = parsed["delta"]["text"].as_str() {
-                                host.emit_json(event_name, &AiStreamChunk {
-                                    delta: text.to_string(),
-                                    done: false,
-                                });
+                                host.emit_json(event_name, &AiStreamChunk::delta(text));
                             }
                         }
                         "message_stop" => {
-                            host.emit_json(event_name, &AiStreamChunk {
-                                delta: String::new(),
-                                done: true,
-                            });
+                            host.emit_json(event_name, &AiStreamChunk::done());
                             return Ok(());
                         }
                         _ => {}
@@ -106,10 +100,7 @@ pub async fn stream_chat(
         }
     }
 
-    host.emit_json(event_name, &AiStreamChunk {
-        delta: String::new(),
-        done: true,
-    });
+    host.emit_json(event_name, &AiStreamChunk::done());
 
     Ok(())
 }

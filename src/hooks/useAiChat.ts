@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { invoke, listen, type UnlistenFn } from "../platform";
+import { isExactAiSentinel, matchAiSentinel } from "../lib/aiConnections";
 
 export function parseChatMessageContextCfi(metadata: string | null | undefined): string | undefined {
   if (!metadata) return undefined;
@@ -83,7 +84,12 @@ async function generateAiTitle(
   }
 
   // Register listener BEFORE invoking the command
-  const unlisten = await listen<{ delta: string; done: boolean }>(eventName, (event) => {
+  const unlisten = await listen<{ delta: string; done: boolean; error?: string | null }>(eventName, (event) => {
+    if (event.payload.error) {
+      unlisten();
+      resolve(null);
+      return;
+    }
     if (event.payload.done) {
       unlisten();
       title = title.replace(/^["']|["']$/g, "").replace(/[.!]$/, "").trim();
@@ -95,8 +101,7 @@ async function generateAiTitle(
     }
     if (
       !event.payload.delta.startsWith("Error:") &&
-      event.payload.delta !== "AI_REAUTH_REQUIRED" &&
-      event.payload.delta !== "AI_NOT_CONFIGURED"
+      !isExactAiSentinel(event.payload.delta)
     ) {
       title += event.payload.delta;
     }
@@ -120,6 +125,14 @@ function nextMsgId() {
   return `local-${Date.now()}-${++msgIdCounter}`;
 }
 
+let chatRequestCounter = 0;
+function nextChatRequestId() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `chat-${Date.now()}-${++chatRequestCounter}`;
+}
+
 interface BookContext {
   title?: string;
   author?: string;
@@ -139,6 +152,7 @@ export function useAiChat(bookId?: string, bookContext?: BookContext) {
   const [savedMessageSeq, setSavedMessageSeq] = useState(0);
 
   const unlistenRef = useRef<UnlistenFn | null>(null);
+  const activeChannelRef = useRef<string | null>(null);
   const initializedBookRef = useRef<string | null>(null);
   const messagesRef = useRef<ChatMessage[]>([]);
   const chatIdRef = useRef<string | null>(null);
@@ -152,9 +166,30 @@ export function useAiChat(bookId?: string, bookContext?: BookContext) {
     setInitializing(v);
   };
 
+  const cancelActiveStream = useCallback(() => {
+    const channel = activeChannelRef.current;
+    activeChannelRef.current = null;
+    unlistenRef.current?.();
+    unlistenRef.current = null;
+    if (!streamingRef.current && !channel) return;
+    setStreaming(false);
+    streamingRef.current = false;
+    if (channel) {
+      void invoke("ai_cancel", { channel }).catch(() => {});
+    }
+  }, []);
+
   // Cleanup stream listener on unmount
   useEffect(() => {
     return () => {
+      const channel = activeChannelRef.current;
+      activeChannelRef.current = null;
+      if (streamingRef.current && channel) {
+        streamingRef.current = false;
+        void invoke("ai_cancel", { channel }).catch(() => {});
+      } else {
+        streamingRef.current = false;
+      }
       unlistenRef.current?.();
       unlistenRef.current = null;
     };
@@ -188,12 +223,7 @@ export function useAiChat(bookId?: string, bookContext?: BookContext) {
 
   const loadChat = useCallback(async (id: string) => {
     // Stop any active stream
-    if (streamingRef.current) {
-      unlistenRef.current?.();
-      unlistenRef.current = null;
-      setStreaming(false);
-      streamingRef.current = false;
-    }
+    cancelActiveStream();
 
     // Set target immediately so rapid clicks can be detected
     setChatId(id);
@@ -217,7 +247,7 @@ export function useAiChat(bookId?: string, bookContext?: BookContext) {
     } catch (err) {
       console.error("Failed to load chat messages:", err);
     }
-  }, []);
+  }, [cancelActiveStream]);
 
   const createChat = useCallback(async (bid: string) => {
     try {
@@ -280,6 +310,13 @@ export function useAiChat(bookId?: string, bookContext?: BookContext) {
       }
       if (!currentChatId) return;
 
+      if (streamingRef.current) {
+        cancelActiveStream();
+      }
+
+      const requestId = nextChatRequestId();
+      const channel = `ai-stream-chunk-${requestId}`;
+
       const userMessage: ChatMessage = {
         id: nextMsgId(),
         role: "user",
@@ -296,6 +333,7 @@ export function useAiChat(bookId?: string, bookContext?: BookContext) {
       };
 
       updateMessages((prev) => [...prev, userMessage, assistantMessage]);
+      activeChannelRef.current = channel;
       setStreaming(true);
       streamingRef.current = true;
 
@@ -315,15 +353,35 @@ export function useAiChat(bookId?: string, bookContext?: BookContext) {
         console.error("Failed to save user message:", err);
       }
 
-      if (chatIdRef.current !== currentChatId) return;
+      if (chatIdRef.current !== currentChatId || activeChannelRef.current !== channel) return;
 
       // Accumulate full assistant content for persistence
       let fullContent = "";
 
-      const unlisten = await listen<{ delta: string; done: boolean }>(
-        "ai-stream-chunk",
+      const unlisten = await listen<{ delta: string; done: boolean; error?: string | null }>(
+        channel,
         async (event) => {
+          if (activeChannelRef.current !== channel) return;
+          if (event.payload.error) {
+            activeChannelRef.current = null;
+            setStreaming(false);
+            streamingRef.current = false;
+            unlistenRef.current?.();
+            unlistenRef.current = null;
+
+            const rawErr = event.payload.error;
+            const errorContent =
+              matchAiSentinel(rawErr) ??
+              (rawErr.startsWith("Error:") ? rawErr : `Error: ${rawErr}`);
+            updateMessages((prev) =>
+              prev.map((m) =>
+                m.id === assistantId ? { ...m, content: errorContent } : m
+              )
+            );
+            return;
+          }
           if (event.payload.done) {
+            activeChannelRef.current = null;
             setStreaming(false);
             streamingRef.current = false;
             unlistenRef.current?.();
@@ -333,8 +391,7 @@ export function useAiChat(bookId?: string, bookContext?: BookContext) {
             if (
               fullContent &&
               !fullContent.startsWith("Error:") &&
-              fullContent !== "AI_REAUTH_REQUIRED" &&
-              fullContent !== "AI_NOT_CONFIGURED"
+              !isExactAiSentinel(fullContent)
             ) {
               try {
                 await invoke("save_chat_message", {
@@ -364,7 +421,7 @@ export function useAiChat(bookId?: string, bookContext?: BookContext) {
         }
       );
 
-      if (chatIdRef.current !== currentChatId) {
+      if (chatIdRef.current !== currentChatId || activeChannelRef.current !== channel) {
         unlisten();
         return;
       }
@@ -383,14 +440,15 @@ export function useAiChat(bookId?: string, bookContext?: BookContext) {
 
       try {
         await invoke("ai_chat", {
+          chatId: currentChatId,
+          requestId,
           messages: apiMessages,
           bookTitle: bookContext?.title ?? null,
           bookAuthor: bookContext?.author ?? null,
           currentChapter: bookContext?.chapter ?? null,
         });
 
-        // Start title generation only after ai_chat passes auth/token checks so a
-        // concurrent title request cannot clear an expired OAuth session first.
+        // Start title generation only after ai_chat passes auth/connection checks.
         // Streaming runs in the background so title generation still runs concurrently.
         if (isNewChat && currentBookId && chatIdRef.current === currentChatId) {
           const titleSource = context || content;
@@ -411,16 +469,15 @@ export function useAiChat(bookId?: string, bookContext?: BookContext) {
           });
         }
       } catch (err) {
-        setStreaming(false);
-        streamingRef.current = false;
-        unlistenRef.current?.();
-        unlistenRef.current = null;
+        if (activeChannelRef.current === channel) {
+          activeChannelRef.current = null;
+          setStreaming(false);
+          streamingRef.current = false;
+          unlistenRef.current?.();
+          unlistenRef.current = null;
+        }
         const msg = String(err);
-        const errorContent = msg.includes("AI_NOT_CONFIGURED")
-          ? "AI_NOT_CONFIGURED"
-          : msg.includes("AI_REAUTH_REQUIRED")
-            ? "AI_REAUTH_REQUIRED"
-            : `Error: ${err}`;
+        const errorContent = matchAiSentinel(msg) ?? `Error: ${err}`;
         updateMessages((prev) =>
           prev.map((m) =>
             m.id === assistantId
@@ -430,7 +487,7 @@ export function useAiChat(bookId?: string, bookContext?: BookContext) {
         );
       }
     },
-    [bookId, bookContext?.title, bookContext?.author, bookContext?.chapter, createChat, refreshChats]
+    [bookId, bookContext?.title, bookContext?.author, bookContext?.chapter, cancelActiveStream, createChat, refreshChats]
   );
 
   const deleteChat = useCallback(async (id: string) => {
@@ -438,11 +495,8 @@ export function useAiChat(bookId?: string, bookContext?: BookContext) {
     if (!currentBookId) return;
 
     // Cancel active stream if deleting the streaming chat
-    if (id === chatIdRef.current && streamingRef.current) {
-      unlistenRef.current?.();
-      unlistenRef.current = null;
-      setStreaming(false);
-      streamingRef.current = false;
+    if (id === chatIdRef.current) {
+      cancelActiveStream();
     }
 
     await invoke("delete_chat", { chatId: id });
@@ -458,7 +512,7 @@ export function useAiChat(bookId?: string, bookContext?: BookContext) {
         updateMessages([]);
       }
     }
-  }, [bookId, refreshChats, loadChat]);
+  }, [bookId, refreshChats, loadChat, cancelActiveStream]);
 
   const renameChat = useCallback(async (id: string, title: string) => {
     await invoke("rename_chat", { chatId: id, title });
@@ -468,17 +522,12 @@ export function useAiChat(bookId?: string, bookContext?: BookContext) {
   const reset = useCallback(async () => {
     if (!bookId) return;
     // Stop any active stream
-    if (streamingRef.current) {
-      unlistenRef.current?.();
-      unlistenRef.current = null;
-      setStreaming(false);
-      streamingRef.current = false;
-    }
+    cancelActiveStream();
     // Show empty state, lazy create on next send
     setChatId(null);
     chatIdRef.current = null;
     updateMessages([]);
-  }, [bookId]);
+  }, [bookId, cancelActiveStream]);
 
   return {
     messages,

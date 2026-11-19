@@ -8,6 +8,7 @@ import AiAuthPromptCard from "./AiAuthPromptCard";
 import ReaderPopover from "./ReaderPopover";
 import Button from "./ui/Button";
 import { LOOKUP_PROSE } from "./lookup-prose";
+import { isExactAiSentinel, matchAiSentinel, type AiSentinel } from "../lib/aiConnections";
 import { parseAiErrorMessage } from "../utils/aiStream";
 import { parseDefinition } from "../utils/vocabParse";
 
@@ -36,52 +37,76 @@ function useStreamingLookup(
   const contentRef = useRef("");
   const [content, setContent] = useState("");
   const [streaming, setStreaming] = useState(true);
-  const [notConfigured, setNotConfigured] = useState(false);
-  const [reauthRequired, setReauthRequired] = useState(false);
+  const [sentinel, setSentinel] = useState<AiSentinel | null>(null);
   const [translationLanguageNotConfigured, setTranslationLanguageNotConfigured] = useState(false);
-  const unlistenRef = useRef<UnlistenFn | null>(null);
 
   useEffect(() => {
     let cancelled = false;
+    let activeChannel: string | null = null;
+    let unlisten: UnlistenFn | null = null;
+    const disposeListener = () => {
+      unlisten?.();
+      unlisten = null;
+    };
     contentRef.current = "";
     setContent("");
     setStreaming(true);
-    setNotConfigured(false);
-    setReauthRequired(false);
+    setSentinel(null);
     setTranslationLanguageNotConfigured(false);
 
     const run = async () => {
       const requestId = crypto.randomUUID();
+      const channel = `ai-lookup-chunk-${requestId}`;
 
-      unlistenRef.current = await listen<{ delta: string; done: boolean }>(
-        `ai-lookup-chunk-${requestId}`,
+      const stop = await listen<{ delta: string; done: boolean; error?: string | null }>(
+        channel,
         (event) => {
           if (cancelled) return;
-          if (event.payload.done) {
-            const finalContent = contentRef.current.trim();
-            if (finalContent === "AI_REAUTH_REQUIRED") {
-              setReauthRequired(true);
+          if (event.payload.error) {
+            activeChannel = null;
+            const err = event.payload.error;
+            const matched = matchAiSentinel(err);
+            if (matched) {
+              setSentinel(matched);
               contentRef.current = "";
               setContent("");
-            } else if (finalContent === "AI_NOT_CONFIGURED") {
-              setNotConfigured(true);
+            } else if (err.includes("LOOKUP_TRANSLATION_LANGUAGE_NOT_CONFIGURED")) {
+              setTranslationLanguageNotConfigured(true);
+              contentRef.current = "";
+              setContent("");
+            } else {
+              contentRef.current = err.startsWith("Error:") ? err : `Error: ${err}`;
+              setContent(contentRef.current);
+            }
+            setStreaming(false);
+            disposeListener();
+            return;
+          }
+          if (event.payload.done) {
+            activeChannel = null;
+            const finalContent = contentRef.current.trim();
+            if (isExactAiSentinel(finalContent)) {
+              setSentinel(finalContent);
               contentRef.current = "";
               setContent("");
             }
             setStreaming(false);
-            unlistenRef.current?.();
-            unlistenRef.current = null;
+            disposeListener();
             return;
           }
           contentRef.current += event.payload.delta;
-          if (
-            contentRef.current !== "AI_REAUTH_REQUIRED" &&
-            contentRef.current !== "AI_NOT_CONFIGURED"
-          ) {
+          if (!isExactAiSentinel(contentRef.current)) {
             setContent(contentRef.current);
           }
         },
       );
+
+      if (cancelled) {
+        stop();
+        return;
+      }
+      unlisten = stop;
+      activeChannel = channel;
 
       try {
         await invoke("ai_lookup", {
@@ -92,13 +117,19 @@ function useStreamingLookup(
           requestId,
           kind,
         });
+        if (cancelled && activeChannel) {
+          const ch = activeChannel;
+          activeChannel = null;
+          void invoke("ai_cancel", { channel: ch }).catch(() => {});
+        }
       } catch (err) {
+        activeChannel = null;
+        disposeListener();
         if (!cancelled) {
           const msg = String(err);
-          if (msg.includes("AI_NOT_CONFIGURED")) {
-            setNotConfigured(true);
-          } else if (msg.includes("AI_REAUTH_REQUIRED")) {
-            setReauthRequired(true);
+          const matched = matchAiSentinel(msg);
+          if (matched) {
+            setSentinel(matched);
           } else if (msg.includes("LOOKUP_TRANSLATION_LANGUAGE_NOT_CONFIGURED")) {
             setTranslationLanguageNotConfigured(true);
           } else {
@@ -110,16 +141,20 @@ function useStreamingLookup(
       }
     };
 
-    run();
+    void run();
 
     return () => {
       cancelled = true;
-      unlistenRef.current?.();
-      unlistenRef.current = null;
+      if (activeChannel) {
+        const ch = activeChannel;
+        activeChannel = null;
+        void invoke("ai_cancel", { channel: ch }).catch(() => {});
+      }
+      disposeListener();
     };
   }, [word, sentence, bookTitle, chapter, kind]);
 
-  return { content, contentRef, streaming, notConfigured, reauthRequired, translationLanguageNotConfigured };
+  return { content, contentRef, streaming, sentinel, translationLanguageNotConfigured };
 }
 
 function splitDefinitionContent(content: string, streaming: boolean): {
@@ -181,12 +216,10 @@ export default function LookupPopover({
   const contextError = parseAiErrorMessage(context.content);
   const parsedEntry = definitionError ? null : parseDefinition(definitionText);
 
-  const reauthRequired = definition.reauthRequired || context.reauthRequired;
-  const aiNotConfigured = !reauthRequired && (definition.notConfigured || context.notConfigured);
+  const aiSentinel = definition.sentinel ?? context.sentinel;
   const translationLanguageNotConfigured =
     definition.translationLanguageNotConfigured || context.translationLanguageNotConfigured;
-  const hasConfigurationError =
-    reauthRequired || aiNotConfigured || translationLanguageNotConfigured;
+  const hasConfigurationError = Boolean(aiSentinel) || translationLanguageNotConfigured;
   const allDone = !definition.streaming && !context.streaming;
   const hasContent = Boolean(definition.content || context.content);
   const hasSavableContent = Boolean(!definitionError && (definitionText.trim() || translationLine));
@@ -278,9 +311,9 @@ export default function LookupPopover({
           )}
         </div>
 
-        {reauthRequired || aiNotConfigured ? (
+        {aiSentinel ? (
           <AiAuthPromptCard
-            variant={reauthRequired ? "reauth" : "notConfigured"}
+            sentinel={aiSentinel}
             embedded
             onOpenSettings={async () => {
               onClose();

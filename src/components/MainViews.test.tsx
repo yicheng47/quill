@@ -942,7 +942,7 @@ describe("Main Views (Home, Highlights, Words, Chats)", () => {
 
       const streamListeners = new Set<(e: { payload: { delta: string; done: boolean } }) => void>();
       mocks.listen.mockImplementation(async (event, cb) => {
-        if (event === "ai-stream-chunk") {
+        if (event === "ai-stream-chunk" || event.startsWith("ai-stream-chunk-")) {
           const typed = cb as (e: { payload: { delta: string; done: boolean } }) => void;
           streamListeners.add(typed);
           return () => streamListeners.delete(typed);

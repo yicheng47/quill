@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use crate::ai::codex::TurnSpec;
 use crate::commands::ai::{
     configured_ai_provider, effort_from_setting, effort_tier_key, emit_stream_error,
-    non_empty_setting, resolve_ai_auth, ChatMessage,
+    non_empty_setting, resolve_api_key, ChatMessage,
 };
 use crate::error::AppResult;
 use crate::host::Core;
@@ -33,9 +33,7 @@ struct ApiConnection {
     model: String,
     base_url: Option<String>,
     keep_alive: String,
-    auth_mode: String,
     temperature: f64,
-    effort: Option<String>,
 }
 
 struct AgentConnection {
@@ -50,15 +48,15 @@ enum Connection {
 }
 
 fn load_connection(core: &Core, call: &str) -> AppResult<Connection> {
-    let conn = core.db.reader();
-    let get = |key: &str| -> Option<String> {
-        conn.query_row(
-            "SELECT value FROM settings WHERE key = ?1",
-            rusqlite::params![key],
-            |row| row.get(0),
-        )
-        .ok()
+    let map: HashMap<String, String> = {
+        let conn = core.db.reader();
+        let mut stmt = conn.prepare("SELECT key, value FROM settings WHERE key LIKE 'ai_%'")?;
+        let rows = stmt
+            .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?
+            .collect::<Result<HashMap<_, _>, _>>()?;
+        rows
     };
+    let get = |key: &str| -> Option<String> { map.get(key).cloned() };
     let auth_mode = get("ai_auth_mode").unwrap_or_else(|| "api_key".to_string());
     if auth_mode == "codex" {
         return Ok(Connection::Agent(AgentConnection {
@@ -72,11 +70,9 @@ fn load_connection(core: &Core, call: &str) -> AppResult<Connection> {
         model: get("ai_model").unwrap_or_else(|| "llama3.2".to_string()),
         base_url: non_empty_setting(get("ai_base_url")),
         keep_alive: get("ai_keep_alive").unwrap_or_else(|| "30m".to_string()),
-        auth_mode,
         temperature: get("ai_temperature")
             .and_then(|v| v.parse::<f64>().ok())
             .unwrap_or(0.3),
-        effort: effort_from_setting(get(effort_tier_key(call))),
     }))
 }
 
@@ -125,9 +121,8 @@ async fn start_agent(core: &Arc<Core>, agent: AgentConnection, request: AiReques
 }
 
 async fn start_api(core: &Arc<Core>, connection: ApiConnection, request: AiRequest) -> AppResult<()> {
-    let (api_key, oauth_account_id) =
-        resolve_ai_auth(core, &connection.provider, &connection.auth_mode).await?;
     let url = crate::ai::api::base_url(&connection.provider, connection.base_url.clone())?;
+    let api_key = resolve_api_key(core, &connection.provider, &url)?;
 
     log::info!(
         "ai_{}: spawn provider={} model={}",
@@ -155,9 +150,7 @@ async fn start_api(core: &Arc<Core>, connection: ApiConnection, request: AiReque
             provider,
             model,
             keep_alive,
-            auth_mode,
             temperature: saved_temperature,
-            effort,
             ..
         } = connection;
         let temperature = temperature.unwrap_or(saved_temperature);
@@ -165,10 +158,6 @@ async fn start_api(core: &Arc<Core>, connection: ApiConnection, request: AiReque
         let result = match provider.as_str() {
             "anthropic" => {
                 crate::ai::anthropic::stream_chat(host, &url, &api_key, &model, temperature, &messages, false, &event_name, max_tokens).await
-            }
-            "openai" if auth_mode == "oauth" => {
-                let url = "https://chatgpt.com/backend-api/codex".to_string();
-                crate::ai::openai_responses::stream_chat(host, &core.secrets, &url, &api_key, &model, &messages, oauth_account_id.as_deref(), effort.as_deref(), &event_name).await
             }
             _ => {
                 let ka = if provider == "ollama" { Some(keep_alive.as_str()) } else { None };

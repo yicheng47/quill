@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const ipcListeners = new Map<string, Array<(event: { payload: unknown }) => void>>();
 
 let vocabListHandler: (() => Promise<unknown[]>) | null = null;
+let settingsOverride: Record<string, string> | null = null;
 
 const invokeMock = vi.fn<(cmd: string, args?: unknown) => Promise<unknown>>(async (cmd) => {
   switch (cmd) {
@@ -36,7 +37,26 @@ const invokeMock = vi.fn<(cmd: string, args?: unknown) => Promise<unknown>>(asyn
         },
       ];
     case "get_all_settings":
-      return { theme: "light", reader_settings_open: "false" };
+      return (
+        settingsOverride ?? {
+          theme: "light",
+          reader_settings_open: "false",
+          ai_setup_seen: "true",
+        }
+      );
+    case "codex_status":
+      return {
+        state: "ready",
+        version: "0.170.0",
+        min_version: "0.170.0",
+        path: "/opt/homebrew/bin/codex",
+        from_override: false,
+        email: "reader@example.com",
+        plan: "pro",
+        error: null,
+      };
+    case "list_codex_models":
+      return { models: [] };
     case "get_sync_status":
     case "get_sync_diagnostics":
       return null;
@@ -98,6 +118,7 @@ vi.mock("../platform", async (importOriginal) => {
     isTauri: () => false,
     isElectron: () => true,
     isWeb: () => false,
+    getAppVersion: vi.fn(async () => "2.0.0"),
   };
 });
 
@@ -144,6 +165,7 @@ describe("Home navigate-main-route integration", () => {
     });
     ipcListeners.clear();
     vocabListHandler = null;
+    settingsOverride = null;
     invokeMock.mockClear();
     window.history.replaceState(null, "", "/");
     container = document.createElement("div");
@@ -245,5 +267,51 @@ describe("Home navigate-main-route integration", () => {
 
     expect(container.textContent).toContain("Second saved definition.");
     expect(container.textContent).not.toContain("First saved definition.");
+  });
+
+  it("makes Home inert and suppresses global shortcuts while AiSetupDialog is open, then restores them on dismiss", async () => {
+    settingsOverride = { theme: "light", reader_settings_open: "false" };
+
+    await act(async () => {
+      root.render(<Home />);
+    });
+    await flushMicrotasks();
+
+    const dialog = document.querySelector<HTMLElement>('[data-testid="ai-setup-dialog"]');
+    expect(dialog).not.toBeNull();
+    const homeShell = container.firstElementChild as HTMLElement;
+    expect(homeShell.hasAttribute("inert")).toBe(true);
+
+    // Cmd/Ctrl+, and Cmd/Ctrl+O must not pierce the blocking first-launch dialog.
+    invokeMock.mockClear();
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: ",", metaKey: true, cancelable: true }));
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "o", metaKey: true, cancelable: true }));
+    });
+    await flushMicrotasks();
+
+    expect(invokeMock).not.toHaveBeenCalledWith("open_book_dialog", expect.anything());
+    expect(invokeMock).not.toHaveBeenCalledWith("open_book_dialog");
+    // Dialog remains visible (Settings did not open over it).
+    expect(document.querySelector('[data-testid="ai-setup-dialog"]')).not.toBeNull();
+
+    // Dismiss via Skip for now -> inert removed, Cmd/Ctrl+, now opens Settings.
+    const skipBtn = [...document.querySelectorAll("button")].find((b) =>
+      b.textContent?.includes("aiSetup.skipForNow"),
+    )!;
+    expect(skipBtn).toBeDefined();
+    await act(async () => {
+      skipBtn.click();
+    });
+    await flushMicrotasks();
+
+    expect(document.querySelector('[data-testid="ai-setup-dialog"]')).toBeNull();
+    expect(homeShell.hasAttribute("inert")).toBe(false);
+
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: ",", metaKey: true, cancelable: true }));
+    });
+    await flushMicrotasks();
+    expect(container.textContent).toContain("settings.title");
   });
 });

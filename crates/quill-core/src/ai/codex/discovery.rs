@@ -240,9 +240,35 @@ pub fn command(path: &Path) -> tokio::process::Command {
     cmd
 }
 
+struct TempProbeDir(PathBuf);
+
+impl TempProbeDir {
+    fn new() -> Result<Self, String> {
+        let path = std::env::temp_dir().join(format!("quill-codex-version-{}", ulid::Ulid::new()));
+        std::fs::create_dir_all(&path)
+            .map_err(|e| format!("could not create temporary probe directory {}: {e}", path.display()))?;
+        Ok(Self(path))
+    }
+
+    fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for TempProbeDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 pub async fn read_version(path: &Path) -> Result<Version, String> {
+    // Isolate `CODEX_HOME` for the `--version` probe: Codex's arg0 bootstrap
+    // creates `$CODEX_HOME/tmp/arg0-<os>/codex-arg0*` before CLI dispatch and
+    // `--version` exits before removing it.
+    let probe_home = TempProbeDir::new()?;
     let mut cmd = command(path);
     cmd.arg("--version")
+        .env("CODEX_HOME", probe_home.path())
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

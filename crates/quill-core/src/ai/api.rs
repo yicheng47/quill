@@ -11,6 +11,7 @@ use crate::db::Db;
 use crate::error::{AppError, AppResult};
 
 const MODELS_TIMEOUT: Duration = Duration::from_secs(10);
+const MAX_SAME_ORIGIN_REDIRECTS: usize = 5;
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 pub const BASE_URL_MIGRATED_KEY: &str = "ai_base_url_v2_migrated";
 
@@ -37,6 +38,52 @@ pub fn base_url(provider: &str, saved: Option<String>) -> AppResult<String> {
     saved
         .or_else(|| default_base_url(provider).map(str::to_string))
         .ok_or_else(|| AppError::Other(crate::ai::AI_NOT_CONFIGURED.to_string()))
+}
+
+/// Canonical origin string (`scheme://host[:port]`) for HTTP(S) URLs.
+pub fn normalized_origin(url: &str) -> Option<String> {
+    let parsed = reqwest::Url::parse(url.trim()).ok()?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return None;
+    }
+    let origin = parsed.origin();
+    if !origin.is_tuple() {
+        return None;
+    }
+    Some(origin.ascii_serialization())
+}
+
+/// Whether two HTTP(S) URLs share the same scheme, host, and effective port.
+pub fn same_origin(a: &str, b: &str) -> bool {
+    matches!(
+        (normalized_origin(a), normalized_origin(b)),
+        (Some(oa), Some(ob)) if oa == ob
+    )
+}
+
+/// Build an HTTP client for API traffic that only follows same-origin redirects
+/// (matching scheme, host, and effective port). This prevents credentials such
+/// as `x-api-key` or `Authorization` from being forwarded across origins or
+/// downgraded across schemes.
+pub fn http_client(timeout: Option<Duration>) -> AppResult<reqwest::Client> {
+    let policy = reqwest::redirect::Policy::custom(|attempt| {
+        if attempt.previous().len() >= MAX_SAME_ORIGIN_REDIRECTS {
+            return attempt.error("too many redirects");
+        }
+        let Some(initial) = attempt.previous().first() else {
+            return attempt.error("redirect missing origin");
+        };
+        if same_origin(initial.as_str(), attempt.url().as_str()) {
+            attempt.follow()
+        } else {
+            attempt.error("cross-origin redirect blocked for API request")
+        }
+    });
+    let mut builder = reqwest::Client::builder().redirect(policy);
+    if let Some(t) = timeout {
+        builder = builder.timeout(t);
+    }
+    builder.build().map_err(|e| AppError::Ai(e.to_string()))
 }
 
 /// OpenAI-compatible services take the versioned base URL and append only
@@ -87,7 +134,7 @@ pub fn versioned_base_url(provider: &str, saved: &str) -> Option<String> {
         return None;
     }
     let trimmed = saved.trim();
-    if trimmed.is_empty() || has_version_segment(trimmed) {
+    if trimmed.is_empty() || normalized_origin(trimmed).is_none() || has_version_segment(trimmed) {
         return None;
     }
     Some(format!("{}/v1", trimmed.trim_end_matches('/')))
@@ -155,10 +202,7 @@ pub fn parse_model_ids(body: &serde_json::Value) -> Vec<String> {
 
 /// List the service's models from `GET {base}/models`.
 pub async fn list_models(provider: &str, base_url: &str, api_key: &str) -> AppResult<ApiModelList> {
-    let client = reqwest::Client::builder()
-        .timeout(MODELS_TIMEOUT)
-        .build()
-        .map_err(|e| AppError::Ai(e.to_string()))?;
+    let client = http_client(Some(MODELS_TIMEOUT))?;
     let mut request = client.get(models_url(provider, base_url));
     if provider == "anthropic" {
         request = request.header("x-api-key", api_key).header("anthropic-version", ANTHROPIC_VERSION);
@@ -231,6 +275,8 @@ mod tests {
         assert_eq!(versioned_base_url("openai", "https://x/v1beta"), None);
         assert_eq!(versioned_base_url("openai", "https://x/v2/"), None);
         assert_eq!(versioned_base_url("openai", ""), None);
+        assert_eq!(versioned_base_url("openai", "https://"), None);
+        assert_eq!(versioned_base_url("openai", "not-a-url"), None);
         assert_eq!(versioned_base_url("anthropic", "https://api.anthropic.com"), None);
         let once = versioned_base_url("openai", "https://api.openai.com").unwrap();
         assert_eq!(versioned_base_url("openai", &once), None, "a second run changes nothing");
@@ -366,5 +412,101 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
         drop(listener);
         assert!(list_models("ollama", &format!("http://127.0.0.1:{port}/v1"), "").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn cross_origin_redirects_are_blocked_and_never_forward_credentials() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let sink_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let sink_addr = sink_listener.local_addr().unwrap();
+        let sink_hits = Arc::new(AtomicUsize::new(0));
+        let sink_hits_bg = Arc::clone(&sink_hits);
+        let sink_task = tokio::spawn(async move {
+            loop {
+                let Ok((mut stream, _)) = sink_listener.accept().await else {
+                    break;
+                };
+                sink_hits_bg.fetch_add(1, Ordering::SeqCst);
+                let mut buf = [0u8; 4096];
+                let _ = stream.read(&mut buf).await;
+                let _ = stream
+                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}")
+                    .await;
+            }
+        });
+
+        let redir_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let redir_addr = redir_listener.local_addr().unwrap();
+        let location = format!("http://{sink_addr}/steal");
+        let redir_task = tokio::spawn(async move {
+            for _ in 0..4 {
+                let Ok((mut stream, _)) = redir_listener.accept().await else {
+                    break;
+                };
+                let mut buf = [0u8; 4096];
+                let _ = stream.read(&mut buf).await;
+                let resp = format!(
+                    "HTTP/1.1 302 Found\r\nLocation: {location}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                );
+                let _ = stream.write_all(resp.as_bytes()).await;
+            }
+        });
+
+        let origin = format!("http://{redir_addr}");
+        let messages = vec![ChatMessage { role: "user".into(), content: "hi".into() }];
+        let host: &dyn crate::host::ShellHost = &NoHost;
+
+        assert!(list_models("anthropic", &origin, "sk-ant-secret").await.is_err());
+        assert!(list_models("openai", &format!("{origin}/v1"), "sk-openai-secret").await.is_err());
+        assert!(
+            crate::ai::anthropic::stream_chat(host, &origin, "sk-ant-secret", "claude", 0.3, &messages, false, "e", None)
+                .await
+                .is_err()
+        );
+        assert!(
+            crate::ai::openai_compat::stream_chat(host, &format!("{origin}/v1"), "sk-openai-secret", "gpt-4o", 0.3, &messages, None, "e", None)
+                .await
+                .is_err()
+        );
+
+        let _ = redir_task.await;
+        sink_task.abort();
+        assert_eq!(
+            sink_hits.load(Ordering::SeqCst),
+            0,
+            "cross-origin redirect target must never receive a request or credential"
+        );
+    }
+
+    #[tokio::test]
+    async fn same_origin_redirect_is_followed() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            for _ in 0..2 {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut buf = vec![0u8; 4096];
+                let n = stream.read(&mut buf).await.unwrap_or(0);
+                let req = String::from_utf8_lossy(&buf[..n]);
+                if req.starts_with("GET /v1/models ") {
+                    let resp = "HTTP/1.1 302 Found\r\nLocation: /v2/models\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+                    let _ = stream.write_all(resp.as_bytes()).await;
+                } else {
+                    let body = r#"{"data":[{"id":"m-redir"}]}"#;
+                    let resp = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = stream.write_all(resp.as_bytes()).await;
+                }
+            }
+        });
+
+        let list = list_models("anthropic", &format!("http://{addr}"), "sk-ant")
+            .await
+            .unwrap();
+        assert_eq!(list.models, ["m-redir"]);
+        let _ = server.await;
     }
 }

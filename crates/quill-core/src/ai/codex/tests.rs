@@ -68,6 +68,15 @@ impl Recorder {
         self.events.lock().unwrap().iter().any(|(e, p)| e == event && p["done"] == true)
     }
 
+    fn error(&self, event: &str) -> Option<String> {
+        self.events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(e, _)| e == event)
+            .find_map(|(_, p)| p["error"].as_str().map(str::to_string))
+    }
+
     async fn wait_done(&self, event: &str) {
         for _ in 0..200 {
             if self.done(event) {
@@ -260,6 +269,8 @@ fn parses_recorded_account_and_models() {
     assert!(!signed_out.signed_in);
     let custom_provider_null = parse_account(&json!({"account": null, "requiresOpenaiAuth": false}));
     assert!(!custom_provider_null.signed_in, "null account must not be treated as ready even when requiresOpenaiAuth is false");
+    let api_key_account = parse_account(&json!({"account": {"type": "apiKey"}, "requiresOpenaiAuth": true}));
+    assert!(!api_key_account.signed_in, "metered apiKey credentials must not pass ChatGPT subscription readiness");
     let non_openai = parse_account(&json!({"account": {"type": "amazonBedrock"}, "requiresOpenaiAuth": false}));
     assert!(!non_openai.signed_in);
 
@@ -284,6 +295,7 @@ fn isolation_overrides_cover_every_listed_server_plugin_and_builtin_tool() {
     assert_eq!(obj.get("plugins.chrome@openai-bundled.enabled"), Some(&json!(false)));
     assert_eq!(obj.get("plugins.documents@openai-primary-runtime.enabled"), Some(&json!(false)));
     assert_eq!(obj.get("features.shell_tool"), Some(&json!(false)));
+    assert_eq!(obj.get("features.shell_snapshot"), Some(&json!(false)));
     assert_eq!(obj.get("features.unified_exec"), Some(&json!(false)));
     assert_eq!(obj.get("features.multi_agent"), Some(&json!(false)));
     assert_eq!(obj.get("features.multi_agent_v2"), Some(&json!(false)));
@@ -292,13 +304,57 @@ fn isolation_overrides_cover_every_listed_server_plugin_and_builtin_tool() {
     assert_eq!(obj.get("features.hooks"), Some(&json!(false)));
     assert_eq!(obj.get("features.browser_use"), Some(&json!(false)));
     assert_eq!(obj.get("features.computer_use"), Some(&json!(false)));
+    assert_eq!(obj.get("skills.bundled.enabled"), Some(&json!(false)));
+    assert_eq!(obj.get("history.persistence"), Some(&json!("none")));
+    assert_eq!(obj.get("analytics.enabled"), Some(&json!(false)));
     assert_eq!(obj.get("web_search"), Some(&json!("disabled")));
 
-    let args = app_server_args();
+    let root = std::env::temp_dir().join("quill-data");
+    let cwd = root.join("codex-workspace");
+    let (state_dir, log_dir) = runtime_dirs(&cwd);
+    assert_eq!(state_dir, root.join("codex-runtime").join("state"));
+    assert_eq!(log_dir, root.join("codex-runtime").join("logs"));
+    assert!(!state_dir.starts_with(&cwd) && !log_dir.starts_with(&cwd));
+
+    let args = app_server_args(&state_dir, &log_dir);
     assert_eq!(args[0], "app-server");
     assert!(args.iter().any(|a| a == "model_provider=\"openai\""), "args={args:?}");
     assert!(args.iter().any(|a| a == "features.shell_tool=false"), "args={args:?}");
+    assert!(args.iter().any(|a| a == "features.shell_snapshot=false"), "args={args:?}");
     assert!(args.iter().any(|a| a == "web_search=\"disabled\""), "args={args:?}");
+    assert!(args.iter().any(|a| a == "skills.bundled.enabled=false"), "args={args:?}");
+    let decode_path_arg = |prefix: &str| -> PathBuf {
+        let raw = args
+            .iter()
+            .find_map(|a| a.strip_prefix(prefix))
+            .unwrap_or_else(|| panic!("missing {prefix} in {args:?}"));
+        let decoded: String = serde_json::from_str(raw)
+            .unwrap_or_else(|e| panic!("invalid TOML/JSON string {raw}: {e}"));
+        PathBuf::from(decoded)
+    };
+    assert_eq!(decode_path_arg("sqlite_home="), state_dir);
+    assert_eq!(decode_path_arg("log_dir="), log_dir);
+    assert!(args.iter().any(|a| a == "history.persistence=\"none\""), "args={args:?}");
+    assert!(args.iter().any(|a| a == "analytics.enabled=false"), "args={args:?}");
+    assert!(args.iter().any(|a| a == "check_for_update_on_startup=false"), "args={args:?}");
+
+    // Windows backslashes must be escaped as valid TOML basic strings.
+    let win_args = app_server_args(
+        Path::new(r"C:\Users\reader\Quill\codex-runtime\state"),
+        Path::new(r"C:\Users\reader\Quill\codex-runtime\logs"),
+    );
+    assert!(
+        win_args
+            .iter()
+            .any(|a| a == r#"sqlite_home="C:\\Users\\reader\\Quill\\codex-runtime\\state""#),
+        "win_args={win_args:?}"
+    );
+    assert!(
+        win_args
+            .iter()
+            .any(|a| a == r#"log_dir="C:\\Users\\reader\\Quill\\codex-runtime\\logs""#),
+        "win_args={win_args:?}"
+    );
 }
 
 #[test]
@@ -306,8 +362,22 @@ fn model_and_effort_are_always_explicit() {
     let models = parse_models(&fixture("model_list"));
     assert_eq!(resolve_model_and_effort(&models, Some("gpt-6-luna"), Some("high")), ("gpt-6-luna".into(), "high".into()));
     assert_eq!(resolve_model_and_effort(&models, Some("gpt-6-luna"), Some("default")), ("gpt-6-luna".into(), "medium".into()));
+    assert_eq!(
+        resolve_model_and_effort(&models, Some("gpt-6-luna"), Some("ultra")),
+        ("gpt-6-luna".into(), "medium".into()),
+        "unsupported tier for a known model falls back to that model's default"
+    );
+    assert_eq!(
+        resolve_model_and_effort(&models, Some("gpt-6.2-sol"), Some("ultra")),
+        ("gpt-6.2-sol".into(), "ultra".into())
+    );
     assert_eq!(resolve_model_and_effort(&models, Some(""), None), ("gpt-6.2-sol".into(), "low".into()));
     assert_eq!(resolve_model_and_effort(&models, Some("my-custom"), None), ("my-custom".into(), "low".into()));
+    assert_eq!(
+        resolve_model_and_effort(&models, Some("my-custom"), Some("ultra")),
+        ("my-custom".into(), "ultra".into()),
+        "custom models pass the chosen effort tier verbatim"
+    );
     assert_eq!(resolve_model_and_effort(&[], None, None), ("".into(), "low".into()));
 }
 
@@ -407,7 +477,9 @@ async fn death_mid_turn_reports_an_error_on_the_channel() {
     run(&codex, &host, spec("e", vec![msg("user", "x")], None)).await;
     let text = host.text("e");
     assert!(text.starts_with("Cl"), "partial reply streamed: {text}");
-    assert!(text.contains("Error: AI error: Codex stopped unexpectedly"), "{text}");
+    assert!(!text.contains("Error:"), "terminal error must not concatenate onto answer deltas: {text}");
+    let err = host.error("e").expect("structured terminal error on done chunk");
+    assert!(err.contains("Error: AI error: Codex stopped unexpectedly"), "{err}");
     drop(state);
 }
 
@@ -420,6 +492,8 @@ async fn failed_turn_maps_error_and_unauthorized() {
                 Reply::Then(
                     json!({"turn": {"id": "t"}}),
                     vec![
+                        json!({"method": "item/started", "params": {"threadId": thread, "turnId": "t", "item": {"type": "agentMessage", "id": "m1", "phase": "final_answer"}}}),
+                        json!({"method": "item/agentMessage/delta", "params": {"threadId": thread, "turnId": "t", "itemId": "m1", "delta": "Partial"}}),
                         json!({"method": "error", "params": {"threadId": thread, "turnId": "t", "willRetry": true, "error": {"message": "retrying"}}}),
                         json!({"method": "error", "params": {"threadId": thread, "turnId": "t", "willRetry": false, "error": {"message": "quota exhausted", "codexErrorInfo": info}}}),
                         json!({"method": "turn/completed", "params": {"threadId": thread, "turn": {"id": "t", "status": "failed", "items": [], "error": {"message": "quota exhausted"}}}}),
@@ -429,7 +503,8 @@ async fn failed_turn_maps_error_and_unauthorized() {
         });
         let host = Arc::new(Recorder::default());
         run(&codex, &host, spec("e", vec![msg("user", "x")], None)).await;
-        assert_eq!(host.text("e"), expected);
+        assert_eq!(host.text("e"), "Partial", "deltas must stay separate from terminal error");
+        assert_eq!(host.error("e").as_deref(), Some(expected));
     }
 }
 
@@ -497,14 +572,20 @@ async fn interrupt_sends_turn_interrupt_and_finishes_quietly() {
 
 #[tokio::test]
 async fn not_signed_in_is_a_sentinel_before_any_thread() {
-    let (codex, state) = codex_with(|method, _, _| {
-        (method == "account/read").then(|| Reply::Result(json!({"account": null, "requiresOpenaiAuth": true})))
-    });
-    let host = Arc::new(Recorder::default());
-    let err = codex.start_turn(host.clone(), None, spec("e", vec![msg("user", "x")], None)).await.unwrap_err();
-    assert_eq!(err.to_string(), CODEX_NOT_SIGNED_IN);
-    assert!(state.requests("thread/start").is_empty());
-    assert_eq!(codex.status(None).await.state, "not_signed_in");
+    for account_payload in [
+        json!({"account": null, "requiresOpenaiAuth": true}),
+        json!({"account": {"type": "apiKey"}, "requiresOpenaiAuth": true}),
+    ] {
+        let payload = account_payload.clone();
+        let (codex, state) = codex_with(move |method, _, _| {
+            (method == "account/read").then(|| Reply::Result(payload.clone()))
+        });
+        let host = Arc::new(Recorder::default());
+        let err = codex.start_turn(host.clone(), None, spec("e", vec![msg("user", "x")], None)).await.unwrap_err();
+        assert_eq!(err.to_string(), CODEX_NOT_SIGNED_IN, "payload={account_payload}");
+        assert!(state.requests("thread/start").is_empty());
+        assert_eq!(codex.status(None).await.state, "not_signed_in", "payload={account_payload}");
+    }
 }
 
 #[tokio::test]
@@ -881,7 +962,8 @@ async fn turn_start_error_and_forget_chat_unsubscribe_abandoned_threads() {
 
     // A fresh one-shot turn whose turn/start errors also unsubscribes its new thread.
     run(&codex, &host, spec("c2", vec![msg("user", "boom")], None)).await;
-    assert!(host.text("c2").contains("bad turn"));
+    assert!(host.text("c2").is_empty());
+    assert!(host.error("c2").unwrap_or_default().contains("bad turn"));
     assert!(
         state.requests("thread/unsubscribe").contains(&json!({"threadId": "thread-2"})),
         "abandoned thread-2 must be unsubscribed: {:?}",
@@ -1167,13 +1249,85 @@ async fn shutdown_terminates_wrapper_process_tree_and_blocks_racing_launch() {
     assert!(exited, "grandchild pid {grandchild_pid} survived wrapper teardown");
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn spawn_app_server_isolates_runtime_dirs_and_args() {
+    use std::os::unix::fs::PermissionsExt;
+    use tokio::io::AsyncReadExt;
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    let cwd = tmp.path().join("codex-workspace");
+    std::fs::create_dir_all(&cwd).unwrap();
+    let recorded = tmp.path().join("recorded.txt");
+    let version_home_recorded = tmp.path().join("version-home.txt");
+    let shim = tmp.path().join("fake-codex");
+    std::fs::write(
+        &shim,
+        format!(
+            "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  printf '%s' \"$CODEX_HOME\" > \"{}\"\n  echo \"codex-cli 0.170.0\"\n  exit 0\nfi\n{{\n  echo \"CODEX_SQLITE_HOME=$CODEX_SQLITE_HOME\"\n  for arg in \"$@\"; do echo \"ARG=$arg\"; done\n}} > \"{}\"\n",
+            version_home_recorded.display(),
+            recorded.display()
+        ),
+    )
+    .unwrap();
+    let mut perms = std::fs::metadata(&shim).unwrap().permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&shim, perms).unwrap();
+
+    let mut launched = spawn_app_server(Some(shim.display().to_string()), cwd.clone())
+        .await
+        .expect("spawn fake codex");
+    // Drain stdout until the shim finishes writing recorded.txt and exits.
+    let mut buf = Vec::new();
+    let _ = launched.reader.read_to_end(&mut buf).await;
+    if let Some(child) = launched.child.take() {
+        child.terminate(true);
+    }
+
+    // Version probe must have used a disposable private CODEX_HOME that was removed afterwards.
+    let probe_home = std::fs::read_to_string(&version_home_recorded).expect("version probe home");
+    assert!(
+        probe_home.contains("quill-codex-version-"),
+        "expected isolated probe CODEX_HOME, got: {probe_home}"
+    );
+    assert!(
+        !Path::new(&probe_home).exists(),
+        "temporary version probe CODEX_HOME should be cleaned up: {probe_home}"
+    );
+
+    let (state_dir, log_dir) = runtime_dirs(&cwd);
+    assert!(state_dir.is_dir(), "state_dir should be created beside cwd");
+    assert!(log_dir.is_dir(), "log_dir should be created beside cwd");
+    assert_eq!(std::fs::read_dir(&cwd).unwrap().count(), 0, "cwd must stay empty");
+
+    let text = std::fs::read_to_string(&recorded).expect("shim output");
+    assert!(
+        text.contains(&format!("CODEX_SQLITE_HOME={}", state_dir.display())),
+        "missing CODEX_SQLITE_HOME:\n{text}"
+    );
+    assert!(text.contains("ARG=skills.bundled.enabled=false"), "{text}");
+    assert!(text.contains("ARG=features.shell_snapshot=false"), "{text}");
+    assert!(
+        text.contains(&format!("ARG=sqlite_home=\"{}\"", state_dir.display())),
+        "{text}"
+    );
+    assert!(
+        text.contains(&format!("ARG=log_dir=\"{}\"", log_dir.display())),
+        "{text}"
+    );
+    assert!(text.contains("ARG=history.persistence=\"none\""), "{text}");
+    assert!(text.contains("ARG=analytics.enabled=false"), "{text}");
+    assert!(text.contains("ARG=check_for_update_on_startup=false"), "{text}");
+}
+
 /// Against the installed Codex: status, the catalog and one tiny turn on
 /// the cheapest model at low effort. Run with `--ignored` on a machine
 /// signed in to Codex.
 #[tokio::test]
 #[ignore]
 async fn live_installed_codex() {
-    let cwd = std::env::temp_dir().join(format!("quill-codex-live-{}", ulid::Ulid::new()));
+    let tmp = tempfile::TempDir::new().unwrap();
+    let cwd = tmp.path().join("codex-workspace");
     let codex = Arc::new(Codex::new(cwd));
     let status = codex.status(None).await;
     eprintln!("status: {} {:?} {:?}", status.state, status.version, status.path);
@@ -1191,7 +1345,10 @@ async fn live_installed_codex() {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     assert!(host.done("live"));
-    eprintln!("reply: {}", host.text("live"));
-    assert!(!host.text("live").contains("Error"));
+    assert!(host.error("live").is_none(), "error: {:?}", host.error("live"));
+    let reply = host.text("live");
+    eprintln!("reply: {reply}");
+    assert!(!reply.trim().is_empty(), "expected non-empty reply");
+    assert!(!reply.contains("Error"));
     codex.shutdown();
 }

@@ -1,5 +1,3 @@
-import { CURATED_CODEX_MODELS } from "../components/settings/codexModels";
-
 export function parseAiErrorMessage(content: string): string | null {
   const trimmed = content.trim();
   if (!trimmed.startsWith("Error:")) return null;
@@ -11,27 +9,24 @@ export function formatAiModelFooter(
   settings: Record<string, string>,
   formatEffort?: (effort: string) => string,
 ): string | null {
+  if (settings.ai_auth_mode === "codex") {
+    const model = settings.ai_model?.trim() || "Codex";
+    const effort = settings.ai_effort_deep?.trim();
+    if (effort && effort !== "default") {
+      const label = formatEffort ? formatEffort(effort) : effort;
+      return `${model} · ${label}`;
+    }
+    return model;
+  }
+
   const provider = settings.ai_provider?.trim();
   if (!provider) return null;
 
-  // Match crates/quill-core/src/commands/ai.rs:527 & :533 defaults when rows are absent.
-  const authMode = settings.ai_auth_mode === "oauth" ? "oauth" : "api_key";
   const model =
     settings.ai_model === undefined ? "llama3.2" : settings.ai_model.trim();
   if (!model) return null;
 
-  const displayName =
-    CURATED_CODEX_MODELS.find((m) => m.slug === model)?.display_name ?? model;
-
-  if (provider === "openai" && authMode === "oauth") {
-    const effort = settings.ai_effort_deep?.trim();
-    if (effort && effort !== "default") {
-      const label = formatEffort ? formatEffort(effort) : effort;
-      return `${displayName} · ${label}`;
-    }
-  }
-
-  return displayName;
+  return model;
 }
 
 export interface SelectionSentenceResult {

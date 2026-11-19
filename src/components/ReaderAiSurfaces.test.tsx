@@ -183,9 +183,8 @@ vi.mock("react-i18next", () => ({
       if (key === "ai.followup.simplify") return "Explain that more simply";
       if (key === "ai.followup.example") return "Give a concrete example";
       if (key === "ai.followup.context") return "How does this connect to the chapter?";
-      if (key === "ai.reauthTitle") return "Your ChatGPT sign-in expired";
-      if (key === "ai.notConfiguredTitle") return "Set up an AI provider";
-      if (key === "ai.signInAgain") return "Sign in again";
+      if (key === "ai.codexNotSignedInTitle") return "Sign in to Codex";
+      if (key === "ai.notConfiguredTitle") return "Set up AI for reading";
       if (key === "ai.openSettings") return "Open AI Settings";
       if (key === "aiPanel.quoteChip.label") return "Quoting passage";
       if (key === "aiPanel.quoteChip.labelWithPage") {
@@ -275,9 +274,8 @@ describe("M7 reader AI and word surfaces", () => {
     chunkListeners.clear();
     settingsMap = {
       translation_language: "zh",
-      ai_provider: "openai",
-      ai_auth_mode: "oauth",
-      ai_model: "gpt-5.6-sol",
+      ai_auth_mode: "codex",
+      ai_model: "gpt-6.2-sol",
       ai_effort_deep: "high",
     };
     vocabRows = [];
@@ -453,7 +451,7 @@ describe("M7 reader AI and word surfaces", () => {
 
     expect(container.querySelector('[role="alert"]')?.textContent).toContain("Gateway timeout");
 
-    // AI_REAUTH_REQUIRED card
+    // CODEX_NOT_SIGNED_IN card
     await act(async () => {
       root.render(
         <LookupPopover
@@ -468,14 +466,14 @@ describe("M7 reader AI and word surfaces", () => {
     });
     await flushMicrotasks();
     await act(async () => {
-      emitChunks("ai-lookup-chunk-", defReqs[defReqs.length - 1], ["AI_REAUTH_REQUIRED"]);
+      emitChunks("ai-lookup-chunk-", defReqs[defReqs.length - 1], ["CODEX_NOT_SIGNED_IN"]);
       emitChunks("ai-lookup-chunk-", ctxReqs[ctxReqs.length - 1], []);
     });
     await flushMicrotasks();
 
-    expect(container.textContent).toContain("Your ChatGPT sign-in expired");
+    expect(container.textContent).toContain("Sign in to Codex");
     await act(async () => {
-      findButton(container, "Sign in again").click();
+      findButton(container, "Open AI Settings").click();
     });
     expect(invokeMock).toHaveBeenCalledWith("open_settings_on_main", { section: "ai" });
     expect(focusWindowMock).toHaveBeenCalled();
@@ -500,7 +498,7 @@ describe("M7 reader AI and word surfaces", () => {
     });
     await flushMicrotasks();
 
-    expect(container.textContent).toContain("Set up an AI provider");
+    expect(container.textContent).toContain("Set up AI for reading");
   });
 
   it("ExplainPopover renders streaming, done with Quote in Chat CTA, error, and prompt cards", async () => {
@@ -559,7 +557,7 @@ describe("M7 reader AI and word surfaces", () => {
     await flushMicrotasks();
     expect(container.querySelector('[role="alert"]')?.textContent).toContain("Provider offline");
 
-    // AI_NOT_CONFIGURED & AI_REAUTH_REQUIRED
+    // AI_NOT_CONFIGURED & CODEX_NOT_SIGNED_IN
     await act(async () => {
       root.render(
         <ExplainPopover
@@ -577,7 +575,7 @@ describe("M7 reader AI and word surfaces", () => {
       emitChunks("ai-lookup-chunk-", reqs[2], ["AI_NOT_CONFIGURED"]);
     });
     await flushMicrotasks();
-    expect(container.textContent).toContain("Set up an AI provider");
+    expect(container.textContent).toContain("Set up AI for reading");
 
     await act(async () => {
       root.render(
@@ -593,10 +591,10 @@ describe("M7 reader AI and word surfaces", () => {
     });
     await flushMicrotasks();
     await act(async () => {
-      emitChunks("ai-lookup-chunk-", reqs[3], ["AI_REAUTH_REQUIRED"]);
+      emitChunks("ai-lookup-chunk-", reqs[3], ["CODEX_NOT_SIGNED_IN"]);
     });
     await flushMicrotasks();
-    expect(container.textContent).toContain("Your ChatGPT sign-in expired");
+    expect(container.textContent).toContain("Sign in to Codex");
   });
 
   it("TranslationPopover supports language switching without saving settings, surrounding context toggle, errors, and prompt cards", async () => {
@@ -701,7 +699,7 @@ describe("M7 reader AI and word surfaces", () => {
     expect(container.textContent).toContain("Set a translation language in Settings first");
 
     onAiTranslateImpl = async () => {
-      throw new Error("AI_REAUTH_REQUIRED");
+      throw new Error("CODEX_NOT_SIGNED_IN");
     };
     await act(async () => {
       root.render(
@@ -709,7 +707,7 @@ describe("M7 reader AI and word surfaces", () => {
       );
     });
     await flushMicrotasks();
-    expect(container.textContent).toContain("Your ChatGPT sign-in expired");
+    expect(container.textContent).toContain("Sign in to Codex");
 
     onAiTranslateImpl = async () => {
       throw new Error("AI_NOT_CONFIGURED");
@@ -720,7 +718,7 @@ describe("M7 reader AI and word surfaces", () => {
       );
     });
     await flushMicrotasks();
-    expect(container.textContent).toContain("Set up an AI provider");
+    expect(container.textContent).toContain("Set up AI for reading");
 
     // Unrelated paragraph context must not replace selected text or promise surrounding context
     const longSelection = "A ".repeat(110).trim();
@@ -949,7 +947,7 @@ describe("M7 reader AI and word surfaces", () => {
     // Thread loads existing messages + pending quote chip + model footer + follow-up chips on successful reply
     expect(container.textContent).toContain("Chapter 1 Themes");
     expect(container.textContent).toContain("Quoting · p. 1");
-    expect(container.textContent).toContain("GPT-5.6-Sol · high");
+    expect(container.textContent).toContain("gpt-6.2-sol · high");
     expect(container.querySelector('[data-testid="followup-chips"]')).toBeTruthy();
     expect(container.textContent).toContain("Explain that more simply");
     // Switcher metadata (list_all_chats) must NOT run on initial panel load while switcher is closed
@@ -1012,8 +1010,10 @@ describe("M7 reader AI and word surfaces", () => {
 
     // Keep switcher OPEN as streaming completes -> live count updates from 3 to 4 without reopening
     onAiChatImpl = null;
+    const chatCall = [...invokeMock.mock.calls].reverse().find(([cmd]) => cmd === "ai_chat");
+    const chatRequestId = String((chatCall?.[1] as { requestId?: string })?.requestId ?? "");
     await act(async () => {
-      emitChunks("ai-stream-chunk", "", ["Simplified explanation."]);
+      emitChunks("ai-stream-chunk-", chatRequestId, ["Simplified explanation."]);
       releaseChat.resolve();
     });
     await flushMicrotasks();
@@ -1094,7 +1094,7 @@ describe("M7 reader AI and word surfaces", () => {
     expect(container.textContent).toContain("Think alongside the book");
     expect(container.textContent).toContain("ai.prompt.summarize");
 
-    // Direct MessageBubble state matrix: streaming, error, AI_REAUTH_REQUIRED, AI_NOT_CONFIGURED
+    // Direct MessageBubble state matrix: streaming, error, CODEX_NOT_SIGNED_IN, AI_NOT_CONFIGURED
     const bubble = (msg: ChatMessage, isStreaming = false) => (
       <MessageBubble msg={msg} messages={[msg]} streaming={isStreaming} />
     );
@@ -1104,7 +1104,7 @@ describe("M7 reader AI and word surfaces", () => {
         <div>
           {bubble({ id: "s1", role: "assistant", content: "" }, true)}
           {bubble({ id: "e1", role: "assistant", content: "Error: Model overloaded" })}
-          {bubble({ id: "r1", role: "assistant", content: "AI_REAUTH_REQUIRED" })}
+          {bubble({ id: "r1", role: "assistant", content: "CODEX_NOT_SIGNED_IN" })}
           {bubble({ id: "n1", role: "assistant", content: "AI_NOT_CONFIGURED" })}
         </div>,
       );
@@ -1112,8 +1112,8 @@ describe("M7 reader AI and word surfaces", () => {
 
     expect(container.textContent).toContain("Thinking…");
     expect(container.querySelector('[role="alert"]')?.textContent).toContain("Model overloaded");
-    expect(container.textContent).toContain("Your ChatGPT sign-in expired");
-    expect(container.textContent).toContain("Set up an AI provider");
+    expect(container.textContent).toContain("Sign in to Codex");
+    expect(container.textContent).toContain("Set up AI for reading");
   });
 
   it("ChatsView renders 16px messages, 16px quote, 15px composer, error alert, and AI prompt cards", async () => {
@@ -1177,7 +1177,7 @@ describe("M7 reader AI and word surfaces", () => {
         id: "m-4",
         chat_id: "c-1",
         role: "assistant",
-        content: "AI_REAUTH_REQUIRED",
+        content: "CODEX_NOT_SIGNED_IN",
         context: null,
         context_cfi: null,
         created_at: 1_700_000_004,
@@ -1211,8 +1211,8 @@ describe("M7 reader AI and word surfaces", () => {
     expect(container.innerHTML).toContain("text-[16px] leading-[1.5]");
     expect(container.querySelector("textarea")?.className).toContain("text-[15px]");
     expect(container.querySelector('[role="alert"]')?.textContent).toContain("Network drop");
-    expect(container.textContent).toContain("Your ChatGPT sign-in expired");
-    expect(container.textContent).toContain("Set up an AI provider");
+    expect(container.textContent).toContain("Sign in to Codex");
+    expect(container.textContent).toContain("Set up AI for reading");
 
     // Opening or sending in ChatsView must not issue book-scoped switcher list_all_chats queries
     const bookScopedQueriesBeforeSend = invokeMock.mock.calls.filter(
@@ -1235,8 +1235,10 @@ describe("M7 reader AI and word surfaces", () => {
       );
     });
     await flushMicrotasks();
+    const secondChatCall = [...invokeMock.mock.calls].reverse().find(([cmd]) => cmd === "ai_chat");
+    const secondChatReqId = String((secondChatCall?.[1] as { requestId?: string })?.requestId ?? "");
     await act(async () => {
-      emitChunks("ai-stream-chunk", "", ["Syncretic religious text."]);
+      emitChunks("ai-stream-chunk-", secondChatReqId, ["Syncretic religious text."]);
     });
     await flushMicrotasks();
 

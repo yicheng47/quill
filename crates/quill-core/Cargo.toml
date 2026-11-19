@@ -20,9 +20,7 @@ futures = "0.3"
 rmcp = { version = "1.7", features = ["server", "transport-io"] }
 schemars = "1"
 toml_edit = "0.22"
-sha2 = "0.10"
 base64 = "0.22"
-rand = "0.8"
 ulid = { version = "1", features = ["serde"] }
 notify = "6"
 gethostname = "0.5"

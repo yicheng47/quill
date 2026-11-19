@@ -7,6 +7,13 @@ import {
   formatAiModelFooter,
   parseAiErrorMessage,
 } from "./aiStream";
+import {
+  formatCodexAccountLine,
+  isAiConfigured,
+  matchAiSentinel,
+  resolveConnectionKind,
+  shouldShowAiSetup,
+} from "../lib/aiConnections";
 import { parseDefinition, parseSavedVocabDefinition } from "./vocabParse";
 
 describe("parseAiErrorMessage", () => {
@@ -22,12 +29,12 @@ describe("parseAiErrorMessage", () => {
   it("returns null for normal content or sentinel tokens", () => {
     expect(parseAiErrorMessage("Hello world")).toBeNull();
     expect(parseAiErrorMessage("AI_NOT_CONFIGURED")).toBeNull();
-    expect(parseAiErrorMessage("AI_REAUTH_REQUIRED")).toBeNull();
+    expect(parseAiErrorMessage("CODEX_NOT_SIGNED_IN")).toBeNull();
   });
 });
 
 describe("formatAiModelFooter", () => {
-  it("returns null when no AI provider or empty stored model is configured", () => {
+  it("returns null when no AI connection or empty API model is configured", () => {
     expect(formatAiModelFooter({})).toBeNull();
     expect(formatAiModelFooter({ ai_provider: "  " })).toBeNull();
     expect(formatAiModelFooter({ ai_provider: "openai", ai_model: "  " })).toBeNull();
@@ -50,27 +57,27 @@ describe("formatAiModelFooter", () => {
     ).toBe("claude-sonnet-4-20250514");
   });
 
-  it("formats curated Codex model display name and confirmed OAuth effort", () => {
+  it("formats Codex model and deep reasoning effort", () => {
     expect(
       formatAiModelFooter(
         {
-          ai_provider: "openai",
-          ai_auth_mode: "oauth",
-          ai_model: "gpt-5.6-sol",
+          ai_auth_mode: "codex",
+          ai_model: "gpt-6.2-sol",
           ai_effort_deep: "high",
         },
         (effort) => `Effort ${effort}`,
       ),
-    ).toBe("GPT-5.6-Sol · Effort high");
+    ).toBe("gpt-6.2-sol · Effort high");
 
     expect(
       formatAiModelFooter({
-        ai_provider: "openai",
-        ai_auth_mode: "oauth",
-        ai_model: "gpt-5.6-sol",
+        ai_auth_mode: "codex",
+        ai_model: "gpt-6.2-sol",
         ai_effort_deep: "default",
       }),
-    ).toBe("GPT-5.6-Sol");
+    ).toBe("gpt-6.2-sol");
+
+    expect(formatAiModelFooter({ ai_auth_mode: "codex" })).toBe("Codex");
 
     expect(
       formatAiModelFooter({
@@ -80,6 +87,38 @@ describe("formatAiModelFooter", () => {
         ai_effort_deep: "high",
       }),
     ).toBe("gpt-4o");
+  });
+});
+
+describe("aiConnections helpers", () => {
+  it("resolves connection kind, setup eligibility, sentinels, and Codex account lines", () => {
+    expect(resolveConnectionKind({})).toBe("agent");
+    expect(resolveConnectionKind({ ai_auth_mode: "codex" })).toBe("agent");
+    expect(resolveConnectionKind({ ai_provider: "ollama" })).toBe("api");
+    expect(resolveConnectionKind({ ai_provider: "anthropic" })).toBe("api");
+
+    expect(isAiConfigured({})).toBe(false);
+    expect(isAiConfigured({ ai_auth_mode: "codex" })).toBe(true);
+    expect(isAiConfigured({ ai_provider: "ollama" })).toBe(true);
+    expect(isAiConfigured({ ai_provider: "openai" })).toBe(false);
+    expect(isAiConfigured({ ai_provider: "openai", ai_api_key: "sk-1" })).toBe(true);
+    expect(isAiConfigured({ ai_provider: "custom", ai_base_url: "http://localhost:8000/v1" })).toBe(
+      true,
+    );
+
+    expect(shouldShowAiSetup({})).toEqual({ show: true, isMigration: false });
+    expect(shouldShowAiSetup({ ai_setup_seen: "true" })).toEqual({ show: false, isMigration: false });
+    expect(shouldShowAiSetup({ ai_setup_seen: "true", ai_codex_migration_pending: "true" })).toEqual({
+      show: true,
+      isMigration: true,
+    });
+    expect(shouldShowAiSetup({ ai_auth_mode: "codex" })).toEqual({ show: false, isMigration: false });
+
+    expect(matchAiSentinel("Error: CODEX_TOO_OLD")).toBe("CODEX_TOO_OLD");
+    expect(matchAiSentinel("unrelated")).toBeNull();
+    expect(
+      formatCodexAccountLine({ email: "a@b.com", plan: "pro", version: "0.170.0" }, true),
+    ).toBe("a@b.com · ChatGPT Pro · Codex 0.170.0");
   });
 });
 
