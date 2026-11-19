@@ -171,7 +171,7 @@ export default function HomeView({
     return (
       <main
         data-testid="home-empty-state"
-        className="flex-1 min-h-0 overflow-y-auto px-7 pt-2 pb-7"
+        className="flex-1 min-h-0 overflow-y-auto px-7 -mt-2.5 pt-[18px] pb-6"
       >
         <div className="max-w-[1440px] mx-auto flex flex-col gap-4">
           <section className="dawn-glass rounded-surface p-9 flex flex-col items-center text-center gap-[18px]">
@@ -383,13 +383,13 @@ export default function HomeView({
   return (
     <main
       data-testid="home-bento"
-      className="flex-1 min-h-0 overflow-y-auto px-7 pt-2 pb-7"
+      className="flex-1 min-h-0 overflow-y-auto px-7 -mt-2.5 pt-[18px] pb-6"
     >
       <div className="max-w-[1440px] mx-auto flex flex-col gap-4">
         {/* Row 1: Now reading + Side column */}
         <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_380px] xl:grid-cols-[minmax(0,1fr)_420px] gap-4">
           {nowReadingBook && (
-            <section className="dawn-glass rounded-surface p-7 lg:p-8 flex flex-col sm:flex-row gap-8 lg:gap-10 min-h-[420px] lg:min-h-[484px]">
+            <section className="dawn-glass rounded-surface p-7 lg:p-8 flex flex-col sm:flex-row gap-8 lg:gap-10 min-h-[420px] lg:min-h-[448px]">
               <button
                 type="button"
                 onClick={() => void openReaderWindow(nowReadingBook.id)}
