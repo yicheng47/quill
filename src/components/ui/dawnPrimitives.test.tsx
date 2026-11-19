@@ -105,7 +105,7 @@ describe("Dawn UI primitives scoping and accessibility", () => {
     expect(dawnMenu).not.toBeNull();
   });
 
-  it("applies 12px control radius to Dawn Button sizes and IconButton while keeping pills", async () => {
+  it("applies the 8px control radius to Dawn Button sizes and IconButton while keeping pills", async () => {
     await act(async () => {
       root.render(
         <div>
