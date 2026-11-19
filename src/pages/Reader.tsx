@@ -1914,6 +1914,7 @@ export default function Reader() {
                   context={aiContext}
                   initialChatId={initialChatNav.chatId}
                   initialChatSeq={initialChatNav.seq}
+                  visible={sidePanel === "ai"}
                   onContextConsumed={() => setAiContext(undefined)}
                   onNavigateToCfi={(cfi) => {
                     pendingJumpFromPageRef.current = currentPageNumRef.current;

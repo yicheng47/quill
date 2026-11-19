@@ -27,7 +27,6 @@ import {
 import { invoke, openFileDialog, openUrl } from "../../platform";
 import {
   API_SERVICES,
-  CODEX_FALLBACK_EFFORT_LEVELS,
   CODEX_INSTALL_COMMAND,
   CODEX_INSTALL_GUIDE_URL,
   formatCodexAccountLine,
@@ -36,13 +35,21 @@ import {
   resolveConnectionKind,
   type ApiModelList,
   type ApiProvider,
-  type CodexModel,
-  type CodexModelList,
   type CodexStatus,
   type ConnectionKind,
   type LoginOutcome,
   type OllamaStatus,
 } from "../../lib/aiConnections";
+import {
+  CODEX_FEATURES,
+  applyCodexLegacyCarryOverLocal,
+  buildCodexEffortSave,
+  buildCodexModelSave,
+  resolveCodexFeature,
+  type CodexFeatureId,
+} from "../../lib/codexFeatures";
+import { invalidateCodexModelsCache, useCodexModels } from "../../hooks/useCodexModels";
+import CodexFeaturePicker from "../CodexFeaturePicker";
 import Button from "../ui/Button";
 import Select from "../ui/Select";
 import { StatusBadge } from "../ui/Badge";
@@ -138,14 +145,19 @@ export default function AiSettings({
   const [model, setModel] = useState(() => settings.ai_model ?? "");
   const [temperature, setTemperature] = useState(() => clampTemperature(settings.ai_temperature));
   const [keepAlive, setKeepAlive] = useState(() => settings.ai_keep_alive ?? "30m");
-  const [effortQuick, setEffortQuick] = useState(() => settings.ai_effort_quick ?? "default");
-  const [effortDeep, setEffortDeep] = useState(() => settings.ai_effort_deep ?? "default");
   const [codexPath, setCodexPath] = useState(() => settings.ai_codex_path ?? "");
+  const [codexSettings, setCodexSettings] = useState<Record<string, string>>(() => ({
+    ...settings,
+  }));
+  const [customCodexFeatures, setCustomCodexFeatures] = useState<
+    Partial<Record<CodexFeatureId, boolean>>
+  >({});
+  const [customFeatureDrafts, setCustomFeatureDrafts] = useState<
+    Partial<Record<CodexFeatureId, string>>
+  >({});
 
   const [codexStatus, setCodexStatus] = useState<CodexStatus | null>(null);
   const [codexChecking, setCodexChecking] = useState(true);
-  const [codexModels, setCodexModels] = useState<CodexModel[]>([]);
-  const [customCodexModel, setCustomCodexModel] = useState(false);
   const [signingIn, setSigningIn] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
   const [copiedCmd, setCopiedCmd] = useState(false);
@@ -155,6 +167,30 @@ export default function AiSettings({
   const [apiModelFilter, setApiModelFilter] = useState("");
   const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus | null>(null);
   const [refreshTick, setRefreshTick] = useState(0);
+
+  const codexAccountKey =
+    codexStatus?.state === "ready"
+      ? `${codexStatus.path ?? ""}|${codexStatus.email ?? ""}|${codexStatus.plan ?? ""}`
+      : undefined;
+
+  const { models: codexModels } = useCodexModels({
+    enabled: !loading && connectionKind === "agent" && codexStatus?.state === "ready",
+    codexPath,
+    accountKey: codexAccountKey,
+    refreshNonce,
+  });
+  const codexModelsRef = useRef(codexModels);
+  codexModelsRef.current = codexModels;
+
+  const codexSettingsRef = useRef(codexSettings);
+  codexSettingsRef.current = codexSettings;
+  const prevHydratedSettingsRef = useRef<Record<string, string> | null>(null);
+  const customFeatureInputRefs = useRef<Partial<Record<CodexFeatureId, HTMLInputElement | null>>>(
+    {},
+  );
+  const customFeatureDirtyRef = useRef<Partial<Record<CodexFeatureId, boolean>>>({});
+  const customFeaturePendingRef = useRef<Partial<Record<CodexFeatureId, string>>>({});
+  const customFeatureTimersRef = useRef<Partial<Record<CodexFeatureId, number>>>({});
 
   const dirtyTextRef = useRef<Record<TextFieldKey, boolean>>({
     ai_api_key: false,
@@ -201,7 +237,31 @@ export default function AiSettings({
       delete pendingTextRef.current[key];
       dirtyTextRef.current[key] = false;
     }
+    for (const id of Object.keys(customFeatureTimersRef.current) as CodexFeatureId[]) {
+      const timer = customFeatureTimersRef.current[id];
+      if (timer !== undefined) {
+        window.clearTimeout(timer);
+        delete customFeatureTimersRef.current[id];
+      }
+      delete customFeaturePendingRef.current[id];
+      customFeatureDirtyRef.current[id] = false;
+    }
     pendingUnboundApiKeyRef.current = null;
+  }, []);
+
+  const persistCodexUpdates = useCallback(async (updates: Record<string, string>) => {
+    const s = settingsRef.current;
+    const payload =
+      s.ai_auth_mode !== "codex"
+        ? { ai_auth_mode: "codex", ai_setup_seen: "true", ...updates }
+        : updates;
+    const entries = Object.entries(payload);
+    if (entries.length === 1) {
+      const [k, v] = entries[0];
+      await saveFnRef.current(k, v);
+    } else if (entries.length > 1) {
+      await saveBulkRef.current(payload);
+    }
   }, []);
 
   const persistSingleOrBaseline = useCallback(async (key: string, value: string) => {
@@ -459,12 +519,30 @@ export default function AiSettings({
   useEffect(() => {
     const timers = textTimersRef.current;
     const pending = pendingTextRef.current;
+    const customTimers = customFeatureTimersRef.current;
+    const customPending = customFeaturePendingRef.current;
     return () => {
       if (signingInRef.current) {
         void invoke("codex_login_cancel").catch(() => {});
       }
       if (copyTimerRef.current !== null) {
         window.clearTimeout(copyTimerRef.current);
+      }
+      const customEntries = Object.entries(customPending) as [CodexFeatureId, string][];
+      for (const [id] of customEntries) {
+        const timer = customTimers[id];
+        if (timer !== undefined) {
+          window.clearTimeout(timer);
+          delete customTimers[id];
+        }
+        delete customPending[id];
+      }
+      if (customEntries.length > 0 && connectionKindRef.current === "agent") {
+        const mergedUpdates: Record<string, string> = {};
+        for (const [id, rawValue] of customEntries) {
+          Object.assign(mergedUpdates, buildCodexModelSave(id, rawValue));
+        }
+        void persistCodexUpdates(mergedUpdates).catch(() => {});
       }
       const entries = Object.entries(pending) as [TextFieldKey, string][];
       for (const [key] of entries) {
@@ -528,7 +606,7 @@ export default function AiSettings({
         }
       }
     };
-  }, [persistSingleOrBaseline]);
+  }, [persistSingleOrBaseline, persistCodexUpdates]);
 
   // Hydrate local form state when saved settings load or update.
   useEffect(() => {
@@ -561,9 +639,51 @@ export default function AiSettings({
     }
     setTemperature(clampTemperature(settings.ai_temperature));
     if (settings.ai_keep_alive) setKeepAlive(settings.ai_keep_alive);
-    if (settings.ai_effort_quick) setEffortQuick(settings.ai_effort_quick);
-    if (settings.ai_effort_deep) setEffortDeep(settings.ai_effort_deep);
     setCodexPath(settings.ai_codex_path ?? "");
+    const prevCodex = codexSettingsRef.current;
+    const prevHydrated = prevHydratedSettingsRef.current;
+    const changedModelFeatures: CodexFeatureId[] = [];
+    const nextCodex: Record<string, string> = { ...settings };
+    for (const feature of CODEX_FEATURES) {
+      if (customFeatureDirtyRef.current[feature.id] && prevCodex[feature.modelKey] !== undefined) {
+        nextCodex[feature.modelKey] = prevCodex[feature.modelKey];
+      } else if (
+        prevHydrated !== null &&
+        ((settings[feature.modelKey] !== prevHydrated[feature.modelKey] &&
+          settings[feature.modelKey] !== prevCodex[feature.modelKey]) ||
+          (settings.ai_model !== prevHydrated.ai_model &&
+            settings.ai_model !== prevCodex.ai_model))
+      ) {
+        changedModelFeatures.push(feature.id);
+      }
+    }
+    prevHydratedSettingsRef.current = settings;
+    codexSettingsRef.current = nextCodex;
+    setCodexSettings(nextCodex);
+    if (changedModelFeatures.length > 0) {
+      setCustomCodexFeatures((prev) => {
+        let mutated = false;
+        const next = { ...prev };
+        for (const id of changedModelFeatures) {
+          if (next[id]) {
+            next[id] = false;
+            mutated = true;
+          }
+        }
+        return mutated ? next : prev;
+      });
+      setCustomFeatureDrafts((prev) => {
+        let mutated = false;
+        const next = { ...prev };
+        for (const id of changedModelFeatures) {
+          if (id in next) {
+            delete next[id];
+            mutated = true;
+          }
+        }
+        return mutated ? next : prev;
+      });
+    }
   }, [settings, loading, initialConnection]);
 
   // Re-check Codex when the window regains focus (e.g., user installed or signed in via CLI).
@@ -610,26 +730,6 @@ export default function AiSettings({
     autoActivatedCodexRef.current = true;
     void saveBulkRef.current({ ai_auth_mode: "codex", ai_setup_seen: "true" }).catch(() => {});
   }, [loading, initialConnection, connectionKind, settings.ai_auth_mode, settings.ai_provider, codexStatus]);
-
-  // Load Codex models when Agent is selected and Codex is ready.
-  useEffect(() => {
-    if (loading || connectionKind !== "agent" || codexStatus?.state !== "ready") {
-      return;
-    }
-    let stale = false;
-    invoke<CodexModelList>("list_codex_models")
-      .then((list) => {
-        if (stale) return;
-        setCodexModels(Array.isArray(list?.models) ? list.models : []);
-      })
-      .catch(() => {
-        if (stale) return;
-        setCodexModels([]);
-      });
-    return () => {
-      stale = true;
-    };
-  }, [loading, connectionKind, codexStatus?.state, codexPath, refreshNonce]);
 
   // Probe Ollama server when API + Ollama is selected.
   useEffect(() => {
@@ -698,6 +798,7 @@ export default function AiSettings({
           ai_codex_migration_pending: "false",
         });
         showSavedToast(t("settings.ai.codex.signedInToast"));
+        invalidateCodexModelsCache();
         await probeCodex();
       } else if (outcome?.error) {
         setLoginError(outcome.error);
@@ -726,24 +827,24 @@ export default function AiSettings({
 
     connectionKindRef.current = next;
     setConnectionKind(next);
-    setCustomCodexModel(false);
+    setCustomCodexFeatures({});
+    setCustomFeatureDrafts({});
     setCustomApiModel(false);
     setApiModelFilter("");
 
     if (next === "agent") {
-      const currentIsCodexModel =
-        modelRef.current !== "" && codexModels.some((m) => m.slug === modelRef.current);
-      const defaultCodexSlug =
-        codexModels.find((m) => m.is_default)?.slug ?? codexModels[0]?.slug ?? "";
-      const nextModel = currentIsCodexModel ? modelRef.current : defaultCodexSlug;
-      modelRef.current = nextModel;
-      setModel(nextModel);
+      modelRef.current = "";
+      setModel("");
+      const updates = {
+        ai_auth_mode: "codex",
+        ai_model: "",
+        ai_setup_seen: "true",
+      };
+      const nextCodex = applyCodexLegacyCarryOverLocal(codexSettingsRef.current, updates);
+      codexSettingsRef.current = nextCodex;
+      setCodexSettings(nextCodex);
       try {
-        await saveBulk({
-          ai_auth_mode: "codex",
-          ai_model: nextModel,
-          ai_setup_seen: "true",
-        });
+        await saveBulk(updates);
       } catch (err) {
         console.error("Failed to switch to Agent connection:", err);
       }
@@ -759,14 +860,18 @@ export default function AiSettings({
       setBaseUrl(nextBaseUrl);
       setCommittedBaseUrl(nextBaseUrl);
       setModel(nextModel);
+      const updates = {
+        ai_auth_mode: "api_key",
+        ai_provider: apiProviderRef.current,
+        ai_base_url: nextBaseUrl,
+        ai_model: nextModel,
+        ai_setup_seen: "true",
+      };
+      const nextCodex = applyCodexLegacyCarryOverLocal(codexSettingsRef.current, updates);
+      codexSettingsRef.current = nextCodex;
+      setCodexSettings(nextCodex);
       try {
-        await saveBulk({
-          ai_auth_mode: "api_key",
-          ai_provider: apiProviderRef.current,
-          ai_base_url: nextBaseUrl,
-          ai_model: nextModel,
-          ai_setup_seen: "true",
-        });
+        await saveBulk(updates);
       } catch (err) {
         console.error("Failed to switch to API connection:", err);
       }
@@ -848,36 +953,136 @@ export default function AiSettings({
     }, 2000);
   };
 
-  const handleCodexModelSelect = (nextValue: string) => {
-    if (nextValue === CUSTOM_MODEL) {
-      setCustomCodexModel(true);
-      return;
+  const applyCodexFeatureUpdates = useCallback(
+    (updates: Record<string, string>) => {
+      const nextCodex = applyCodexLegacyCarryOverLocal(codexSettingsRef.current, updates);
+      codexSettingsRef.current = nextCodex;
+      setCodexSettings(nextCodex);
+      void persistCodexUpdates(updates).catch((err) => {
+        console.error("Failed to save Codex feature setting:", err);
+      });
+    },
+    [persistCodexUpdates],
+  );
+
+  const clearCustomFeatureTimer = useCallback((featureId: CodexFeatureId) => {
+    const timer = customFeatureTimersRef.current[featureId];
+    if (timer !== undefined) {
+      window.clearTimeout(timer);
+      delete customFeatureTimersRef.current[featureId];
     }
-    setCustomCodexModel(false);
-    setModel(nextValue);
-    modelRef.current = nextValue;
-    const nextModel = codexModels.find((m) => m.slug === nextValue);
-    const supported = nextModel?.supported_reasoning_levels ?? [];
-    const updates: Record<string, string> = {
-      ai_auth_mode: "codex",
-      ai_model: nextValue,
-      ai_setup_seen: "true",
-    };
-    if (supported.length > 0) {
-      if (effortQuick !== "default" && !supported.includes(effortQuick)) {
-        setEffortQuick("default");
-        updates.ai_effort_quick = "default";
-      }
-      if (effortDeep !== "default" && !supported.includes(effortDeep)) {
-        setEffortDeep("default");
-        updates.ai_effort_deep = "default";
-      }
-    }
-    clearPendingTextSaves();
-    void saveBulkRef.current(updates).catch((err) => {
-      console.error("Failed to save Codex model:", err);
+    delete customFeaturePendingRef.current[featureId];
+    customFeatureDirtyRef.current[featureId] = false;
+  }, []);
+
+  const settleCustomFeatureEditor = useCallback((featureId: CodexFeatureId) => {
+    setCustomCodexFeatures((prev) => (prev[featureId] ? { ...prev, [featureId]: false } : prev));
+    setCustomFeatureDrafts((prev) => {
+      if (!(featureId in prev)) return prev;
+      const next = { ...prev };
+      delete next[featureId];
+      return next;
     });
-  };
+  }, []);
+
+  const commitCustomFeatureModel = useCallback(
+    (
+      featureId: CodexFeatureId,
+      rawValue: string,
+      trigger: "debounce" | "explicit" = "explicit",
+    ) => {
+      clearCustomFeatureTimer(featureId);
+      const trimmed = rawValue.trim();
+      const updates = buildCodexModelSave(featureId, trimmed);
+      // Keep the focused editor and draft open across debounced autosaves (even
+      // while the catalog is empty), and settle transient editing state on blur/Enter
+      // so settled UI derives directly from current settings.
+      if (trigger === "explicit") {
+        settleCustomFeatureEditor(featureId);
+      }
+      applyCodexFeatureUpdates(updates);
+    },
+    [applyCodexFeatureUpdates, clearCustomFeatureTimer, settleCustomFeatureEditor],
+  );
+
+  const handleCodexFeatureModelSelect = useCallback(
+    (featureId: CodexFeatureId, nextSlug: string) => {
+      clearCustomFeatureTimer(featureId);
+      settleCustomFeatureEditor(featureId);
+      const updates = buildCodexModelSave(featureId, nextSlug);
+      applyCodexFeatureUpdates(updates);
+    },
+    [applyCodexFeatureUpdates, clearCustomFeatureTimer, settleCustomFeatureEditor],
+  );
+
+  const handleCodexFeatureEffortSelect = useCallback(
+    (featureId: CodexFeatureId, nextEffort: string) => {
+      const updates = buildCodexEffortSave(featureId, nextEffort);
+      applyCodexFeatureUpdates(updates);
+    },
+    [applyCodexFeatureUpdates],
+  );
+
+  const handleRequestCustomCodexModel = useCallback((featureId: CodexFeatureId) => {
+    const resolved = resolveCodexFeature(
+      featureId,
+      codexSettingsRef.current,
+      codexModelsRef.current,
+    );
+    const seedDraft =
+      resolved.isCustomModel || (codexModelsRef.current.length === 0 && resolved.explicitModel)
+        ? resolved.effectiveModel
+        : "";
+    setCustomCodexFeatures((prev) => ({ ...prev, [featureId]: true }));
+    setCustomFeatureDrafts((prev) => ({
+      ...prev,
+      [featureId]: prev[featureId] ?? seedDraft,
+    }));
+    requestAnimationFrame(() => {
+      customFeatureInputRefs.current[featureId]?.focus();
+    });
+  }, []);
+
+  const handleCustomFeatureChange = useCallback(
+    (featureId: CodexFeatureId, nextValue: string) => {
+      setCustomFeatureDrafts((prev) => ({ ...prev, [featureId]: nextValue }));
+      customFeatureDirtyRef.current[featureId] = true;
+      customFeaturePendingRef.current[featureId] = nextValue;
+      const existing = customFeatureTimersRef.current[featureId];
+      if (existing !== undefined) {
+        window.clearTimeout(existing);
+      }
+      customFeatureTimersRef.current[featureId] = window.setTimeout(() => {
+        commitCustomFeatureModel(featureId, nextValue, "debounce");
+      }, TEXT_SAVE_DEBOUNCE_MS);
+    },
+    [commitCustomFeatureModel],
+  );
+
+  const handleCustomFeatureBlur = useCallback(
+    (featureId: CodexFeatureId) => {
+      if (customFeatureDirtyRef.current[featureId]) {
+        const val = customFeaturePendingRef.current[featureId] ?? customFeatureDrafts[featureId] ?? "";
+        commitCustomFeatureModel(featureId, val, "explicit");
+      } else {
+        settleCustomFeatureEditor(featureId);
+      }
+    },
+    [commitCustomFeatureModel, customFeatureDrafts, settleCustomFeatureEditor],
+  );
+
+  const handleCustomFeatureKeyDown = useCallback(
+    (featureId: CodexFeatureId, e: ReactKeyboardEvent<HTMLInputElement>) => {
+      if (e.key !== "Enter") return;
+      if (customFeatureDirtyRef.current[featureId]) {
+        commitCustomFeatureModel(featureId, e.currentTarget.value, "explicit");
+      } else {
+        settleCustomFeatureEditor(featureId);
+      }
+      e.currentTarget.blur();
+    },
+    [commitCustomFeatureModel, settleCustomFeatureEditor],
+  );
 
   const handleApiModelSelect = (nextValue: string) => {
     if (nextValue === CUSTOM_MODEL) {
@@ -892,16 +1097,6 @@ export default function AiSettings({
     void commitTextField("ai_model", nextValue);
   };
 
-  const handleEffortChange = (which: "quick" | "deep", value: string) => {
-    if (which === "quick") {
-      setEffortQuick(value);
-      void persistSingleOrBaseline("ai_effort_quick", value);
-    } else {
-      setEffortDeep(value);
-      void persistSingleOrBaseline("ai_effort_deep", value);
-    }
-  };
-
   const handleTemperatureStep = (delta: number) => {
     const next = stepTemperatureValue(temperature, delta);
     if (next === temperature) return;
@@ -912,64 +1107,6 @@ export default function AiSettings({
   const handleKeepAliveChange = (next: string) => {
     setKeepAlive(next);
     void persistSingleOrBaseline("ai_keep_alive", next);
-  };
-
-  // Codex model & effort options
-  const catalogDefaultModel = useMemo(
-    () => codexModels.find((m) => m.is_default) ?? codexModels[0] ?? null,
-    [codexModels],
-  );
-  const effectiveCodexModel = model.trim() || catalogDefaultModel?.slug || "";
-  const codexModelInList =
-    effectiveCodexModel !== "" && codexModels.some((m) => m.slug === effectiveCodexModel);
-  const isCustomCodexModel =
-    customCodexModel || (model.trim() !== "" && codexModels.length > 0 && !codexModelInList);
-
-  const codexModelOptions = [
-    ...codexModels.map((m) => ({
-      value: m.slug,
-      label: m.display_name || m.slug,
-      description: m.description || undefined,
-    })),
-    { value: CUSTOM_MODEL, label: t("settings.ai.modelCustom") },
-  ];
-
-  const effortLabel = (level: string) => {
-    const key = `settings.ai.effort.${level}`;
-    const label = t(key);
-    return label === key ? level : label;
-  };
-
-  const knownCodexModel = !isCustomCodexModel
-    ? (codexModels.find((m) => m.slug === effectiveCodexModel) ?? catalogDefaultModel)
-    : null;
-  const hasKnownSupportedEfforts = Boolean(
-    knownCodexModel && knownCodexModel.supported_reasoning_levels.length > 0,
-  );
-  const effortLevels = hasKnownSupportedEfforts
-    ? knownCodexModel!.supported_reasoning_levels
-    : [...CODEX_FALLBACK_EFFORT_LEVELS];
-  const defaultEffortModel = knownCodexModel ?? catalogDefaultModel;
-  const defaultEffortDisplay = defaultEffortModel?.default_reasoning_level
-    ? t("settings.ai.effortDefaultWithLevel", {
-        level: effortLabel(defaultEffortModel.default_reasoning_level),
-      })
-    : t("settings.ai.effortDefault");
-
-  const displayedEffort = (saved: string) => {
-    if (!hasKnownSupportedEfforts || saved === "default") return saved;
-    return effortLevels.includes(saved) ? saved : "default";
-  };
-
-  const effortOptions = (saved: string) => {
-    const options = [
-      { value: "default", label: defaultEffortDisplay },
-      ...effortLevels.map((level) => ({ value: level, label: effortLabel(level) })),
-    ];
-    if (!hasKnownSupportedEfforts && saved !== "default" && !options.some((o) => o.value === saved)) {
-      options.push({ value: saved, label: effortLabel(saved) });
-    }
-    return options;
   };
 
   // API service & model options
@@ -1488,69 +1625,50 @@ export default function AiSettings({
         <SettingsGroup>
           {connectionKind === "agent" ? (
             <>
-              <div className="flex flex-col">
-                <SettingsRow
-                  title={t("settings.ai.model")}
-                  hint={
-                    isCustomCodexModel
-                      ? t("settings.ai.modelHint")
-                      : codexModels.length > 0
-                        ? t("settings.ai.codex.modelPickerHint")
-                        : t("settings.ai.codex.modelUnavailableHint")
-                  }
-                >
-                  <Select
-                    appearance="dawn"
-                    ariaLabel={t("settings.ai.model")}
-                    className="w-[220px]"
-                    menuMinWidth={320}
-                    icon={<Cpu size={14} />}
-                    value={isCustomCodexModel ? CUSTOM_MODEL : effectiveCodexModel}
-                    placeholder={t("settings.ai.codex.modelDefaultPlaceholder")}
-                    onChange={handleCodexModelSelect}
-                    options={codexModelOptions}
-                  />
-                </SettingsRow>
-                {isCustomCodexModel && (
-                  <div className="px-5 pb-4 -mt-1">
-                    <input
-                      type="text"
-                      {...textFieldHandlers("ai_model", model, setModel)}
-                      placeholder={catalogDefaultModel?.slug || "gpt-6.2-sol"}
-                      aria-label={t("settings.ai.modelCustomInput")}
-                      className={`w-full text-[13px] ${monoInputClass}`}
-                    />
+              {CODEX_FEATURES.map((feature) => {
+                const resolved = resolveCodexFeature(feature.id, codexSettings, codexModels);
+                const showCustomInput =
+                  Boolean(customCodexFeatures[feature.id]) || resolved.isCustomModel;
+                const draftValue =
+                  customFeatureDrafts[feature.id] ??
+                  (resolved.isCustomModel ? resolved.effectiveModel : "");
+                return (
+                  <div key={feature.id} className="flex flex-col">
+                    <SettingsRow title={t(feature.titleKey)} hint={t(feature.hintKey)}>
+                      <CodexFeaturePicker
+                        feature={feature.id}
+                        settings={codexSettings}
+                        models={codexModels}
+                        variant="settings"
+                        customMode={Boolean(customCodexFeatures[feature.id])}
+                        onSelectModel={(slug) => handleCodexFeatureModelSelect(feature.id, slug)}
+                        onSelectEffort={(level) =>
+                          handleCodexFeatureEffortSelect(feature.id, level)
+                        }
+                        onRequestCustomModel={() => handleRequestCustomCodexModel(feature.id)}
+                      />
+                    </SettingsRow>
+                    {showCustomInput && (
+                      <div className="px-5 pb-4 -mt-1">
+                        <input
+                          ref={(el) => {
+                            customFeatureInputRefs.current[feature.id] = el;
+                          }}
+                          type="text"
+                          value={draftValue}
+                          onChange={(e) => handleCustomFeatureChange(feature.id, e.target.value)}
+                          onBlur={() => handleCustomFeatureBlur(feature.id)}
+                          onKeyDown={(e) => handleCustomFeatureKeyDown(feature.id, e)}
+                          placeholder={resolved.defaultModel?.slug || "gpt-6.2-sol"}
+                          aria-label={`${t(feature.titleKey)} — ${t("settings.ai.modelCustomInput")}`}
+                          data-testid={`codex-custom-model-input-${feature.id}`}
+                          className={`w-full text-[13px] ${monoInputClass}`}
+                        />
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
-
-              <SettingsRow
-                title={t("settings.ai.effortQuick")}
-                hint={t("settings.ai.effortQuickHint")}
-              >
-                <Select
-                  appearance="dawn"
-                  ariaLabel={t("settings.ai.effortQuick")}
-                  className="w-[175px]"
-                  value={displayedEffort(effortQuick)}
-                  onChange={(value) => handleEffortChange("quick", value)}
-                  options={effortOptions(effortQuick)}
-                />
-              </SettingsRow>
-
-              <SettingsRow
-                title={t("settings.ai.effortDeep")}
-                hint={t("settings.ai.effortDeepHint")}
-              >
-                <Select
-                  appearance="dawn"
-                  ariaLabel={t("settings.ai.effortDeep")}
-                  className="w-[175px]"
-                  value={displayedEffort(effortDeep)}
-                  onChange={(value) => handleEffortChange("deep", value)}
-                  options={effortOptions(effortDeep)}
-                />
-              </SettingsRow>
+                );
+              })}
             </>
           ) : (
             <>
@@ -1635,7 +1753,9 @@ export default function AiSettings({
         </SettingsGroup>
 
         <p className="text-[12.5px] leading-[1.45] text-text-tertiary px-1 pt-0.5">
-          {t("settings.ai.footerNote")}
+          {connectionKind === "agent"
+            ? t("settings.ai.codex.footerNote")
+            : t("settings.ai.footerNote")}
         </p>
       </section>
     </div>

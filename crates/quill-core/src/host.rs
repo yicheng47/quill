@@ -139,6 +139,9 @@ pub fn boot(config: BootConfig, host: Arc<dyn ShellHost>) -> AppResult<Arc<Core>
 
     crate::commands::mcp::repair_legacy_mcp_configs(config.is_dev, &config.mcp_binary_path);
 
+    let codex = Arc::new(crate::ai::codex::Codex::new(local_dir.join("codex-workspace")));
+    codex.set_host(Arc::clone(&host));
+
     let core = Arc::new(Core {
         local_dir: local_dir.clone(),
         log_dir: config.log_dir,
@@ -148,7 +151,7 @@ pub fn boot(config: BootConfig, host: Arc<dyn ShellHost>) -> AppResult<Arc<Core>
         device,
         sync_writer,
         sync_state: SyncState::new(None, None),
-        codex: Arc::new(crate::ai::codex::Codex::new(local_dir.join("codex-workspace"))),
+        codex,
         api_streams: Default::default(),
         host,
     });
