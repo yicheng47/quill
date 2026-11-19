@@ -105,6 +105,36 @@ describe("AiSetupDialog (#326 first-launch & OAuth migration helper)", () => {
     expect(onClose).toHaveBeenCalled();
   });
 
+  it("re-checks Codex on window focus without dropping back to the checking state", async () => {
+    const recheck = deferred<CodexStatus>();
+    let calls = 0;
+    mocks.invoke.mockImplementation(async (cmd) => {
+      if (cmd !== "codex_status") return undefined;
+      calls += 1;
+      return calls === 1 ? READY_STATUS : recheck.promise;
+    });
+
+    await act(async () => {
+      root.render(<AiSetupDialog open isMigration={false} onClose={vi.fn()} onUseApi={vi.fn()} />);
+    });
+    await flush();
+    const dialog = document.querySelector('[data-testid="ai-setup-dialog"]');
+    expect(dialog?.getAttribute("data-state")).toBe("ready");
+
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    await flush();
+    expect(calls).toBe(2);
+    expect(dialog?.getAttribute("data-state")).toBe("ready");
+
+    await act(async () => {
+      recheck.resolve({ ...READY_STATUS, state: "not_signed_in", email: null, plan: null });
+    });
+    await flush();
+    expect(dialog?.getAttribute("data-state")).toBe("not_signed_in");
+  });
+
   it("shows migration note banner and clears ai_codex_migration_pending on completion", async () => {
     mocks.invoke.mockImplementation(async (cmd) => {
       if (cmd === "codex_status") return READY_STATUS;

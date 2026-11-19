@@ -57,15 +57,36 @@ const DISABLED_CODEX_FEATURES: &[&str] = &[
     "tool_suggest",
 ];
 
-/// Quill-owned runtime directories for Codex's SQLite state and logs, placed
-/// beside (never inside) the empty thread `cwd` so the child never mutates
-/// `~/.codex/*.sqlite*` and the thread workspace remains empty.
-pub(crate) fn runtime_dirs(cwd: &Path) -> (PathBuf, PathBuf) {
-    let base = cwd
-        .parent()
+fn runtime_root(cwd: &Path) -> PathBuf {
+    cwd.parent()
         .map(|p| p.join("codex-runtime"))
-        .unwrap_or_else(|| cwd.with_extension("runtime"));
-    (base.join("state"), base.join("logs"))
+        .unwrap_or_else(|| cwd.with_extension("runtime"))
+}
+
+/// Quill-owned directory for Codex's logs, beside (never inside) the empty
+/// thread `cwd` so the thread workspace remains empty.
+pub(crate) fn runtime_log_dir(cwd: &Path) -> PathBuf {
+    runtime_root(cwd).join("logs")
+}
+
+/// Where Quill once kept a private copy of Codex's state databases. Codex
+/// fills an empty copy by indexing every session in `~/.codex/sessions`
+/// before it answers `initialize`, which held up the first start for many
+/// seconds, so the child now shares the user's `~/.codex` state like the
+/// Codex CLI and app do, and the copy is removed.
+pub(crate) fn legacy_state_dir(cwd: &Path) -> PathBuf {
+    runtime_root(cwd).join("state")
+}
+
+fn remove_legacy_state_dir(cwd: &Path) {
+    let dir = legacy_state_dir(cwd);
+    if !dir.exists() {
+        return;
+    }
+    match std::fs::remove_dir_all(&dir) {
+        Ok(()) => log::info!("codex: removed legacy state dir {}", dir.display()),
+        Err(e) => log::warn!("codex: could not remove legacy state dir {}: {e}", dir.display()),
+    }
 }
 
 fn toml_path_string(path: &Path) -> String {
@@ -74,10 +95,10 @@ fn toml_path_string(path: &Path) -> String {
 }
 
 /// CLI arguments Quill passes to `codex` so the child always uses the OpenAI
-/// provider, isolates its SQLite/log state into Quill-owned directories,
-/// skips bundled system-skills installs in `~/.codex/skills/.system`, and
-/// disables built-in coding/agent capabilities regardless of `~/.codex/config.toml`.
-pub(crate) fn app_server_args(state_dir: &Path, log_dir: &Path) -> Vec<String> {
+/// provider, keeps its logs in a Quill-owned directory, skips bundled
+/// system-skills installs in `~/.codex/skills/.system`, and disables
+/// built-in coding/agent capabilities regardless of `~/.codex/config.toml`.
+pub(crate) fn app_server_args(log_dir: &Path) -> Vec<String> {
     let mut args = vec![
         "app-server".to_string(),
         "-c".to_string(),
@@ -86,8 +107,6 @@ pub(crate) fn app_server_args(state_dir: &Path, log_dir: &Path) -> Vec<String> {
         "web_search=\"disabled\"".to_string(),
         "-c".to_string(),
         "skills.bundled.enabled=false".to_string(),
-        "-c".to_string(),
-        format!("sqlite_home={}", toml_path_string(state_dir)),
         "-c".to_string(),
         format!("log_dir={}", toml_path_string(log_dir)),
         "-c".to_string(),
@@ -478,17 +497,15 @@ fn spawn_app_server(override_path: Option<String>, cwd: PathBuf) -> BoxFuture<'s
         if version < MIN_VERSION {
             return Err(StartError::TooOld { version, path: found.path });
         }
-        let (state_dir, log_dir) = runtime_dirs(&cwd);
-        for dir in [&state_dir, &log_dir] {
-            std::fs::create_dir_all(dir).map_err(|e| StartError::Failed {
-                message: format!("could not create {}: {e}", dir.display()),
-                version: Some(version),
-                path: Some(found.path.clone()),
-            })?;
-        }
+        let log_dir = runtime_log_dir(&cwd);
+        std::fs::create_dir_all(&log_dir).map_err(|e| StartError::Failed {
+            message: format!("could not create {}: {e}", log_dir.display()),
+            version: Some(version),
+            path: Some(found.path.clone()),
+        })?;
+        remove_legacy_state_dir(&cwd);
         let mut cmd = discovery::command(&found.path);
-        cmd.args(app_server_args(&state_dir, &log_dir))
-            .env("CODEX_SQLITE_HOME", &state_dir)
+        cmd.args(app_server_args(&log_dir))
             .current_dir(&cwd)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

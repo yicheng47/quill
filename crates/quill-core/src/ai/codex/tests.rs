@@ -311,12 +311,12 @@ fn isolation_overrides_cover_every_listed_server_plugin_and_builtin_tool() {
 
     let root = std::env::temp_dir().join("quill-data");
     let cwd = root.join("codex-workspace");
-    let (state_dir, log_dir) = runtime_dirs(&cwd);
-    assert_eq!(state_dir, root.join("codex-runtime").join("state"));
+    let log_dir = runtime_log_dir(&cwd);
     assert_eq!(log_dir, root.join("codex-runtime").join("logs"));
-    assert!(!state_dir.starts_with(&cwd) && !log_dir.starts_with(&cwd));
+    assert_eq!(legacy_state_dir(&cwd), root.join("codex-runtime").join("state"));
+    assert!(!log_dir.starts_with(&cwd));
 
-    let args = app_server_args(&state_dir, &log_dir);
+    let args = app_server_args(&log_dir);
     assert_eq!(args[0], "app-server");
     assert!(args.iter().any(|a| a == "model_provider=\"openai\""), "args={args:?}");
     assert!(args.iter().any(|a| a == "features.shell_tool=false"), "args={args:?}");
@@ -332,23 +332,14 @@ fn isolation_overrides_cover_every_listed_server_plugin_and_builtin_tool() {
             .unwrap_or_else(|e| panic!("invalid TOML/JSON string {raw}: {e}"));
         PathBuf::from(decoded)
     };
-    assert_eq!(decode_path_arg("sqlite_home="), state_dir);
+    assert!(!args.iter().any(|a| a.starts_with("sqlite_home=")), "args={args:?}");
     assert_eq!(decode_path_arg("log_dir="), log_dir);
     assert!(args.iter().any(|a| a == "history.persistence=\"none\""), "args={args:?}");
     assert!(args.iter().any(|a| a == "analytics.enabled=false"), "args={args:?}");
     assert!(args.iter().any(|a| a == "check_for_update_on_startup=false"), "args={args:?}");
 
     // Windows backslashes must be escaped as valid TOML basic strings.
-    let win_args = app_server_args(
-        Path::new(r"C:\Users\reader\Quill\codex-runtime\state"),
-        Path::new(r"C:\Users\reader\Quill\codex-runtime\logs"),
-    );
-    assert!(
-        win_args
-            .iter()
-            .any(|a| a == r#"sqlite_home="C:\\Users\\reader\\Quill\\codex-runtime\\state""#),
-        "win_args={win_args:?}"
-    );
+    let win_args = app_server_args(Path::new(r"C:\Users\reader\Quill\codex-runtime\logs"));
     assert!(
         win_args
             .iter()
@@ -1251,13 +1242,16 @@ async fn shutdown_terminates_wrapper_process_tree_and_blocks_racing_launch() {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn spawn_app_server_isolates_runtime_dirs_and_args() {
+async fn spawn_app_server_shares_codex_state_and_keeps_logs_apart() {
     use std::os::unix::fs::PermissionsExt;
     use tokio::io::AsyncReadExt;
 
     let tmp = tempfile::TempDir::new().unwrap();
     let cwd = tmp.path().join("codex-workspace");
     std::fs::create_dir_all(&cwd).unwrap();
+    let legacy_state = legacy_state_dir(&cwd);
+    std::fs::create_dir_all(&legacy_state).unwrap();
+    std::fs::write(legacy_state.join("state_5.sqlite"), b"stale").unwrap();
     let recorded = tmp.path().join("recorded.txt");
     let version_home_recorded = tmp.path().join("version-home.txt");
     let shim = tmp.path().join("fake-codex");
@@ -1295,22 +1289,19 @@ async fn spawn_app_server_isolates_runtime_dirs_and_args() {
         "temporary version probe CODEX_HOME should be cleaned up: {probe_home}"
     );
 
-    let (state_dir, log_dir) = runtime_dirs(&cwd);
-    assert!(state_dir.is_dir(), "state_dir should be created beside cwd");
+    let log_dir = runtime_log_dir(&cwd);
     assert!(log_dir.is_dir(), "log_dir should be created beside cwd");
+    assert!(!legacy_state.exists(), "the legacy private state copy should be removed");
     assert_eq!(std::fs::read_dir(&cwd).unwrap().count(), 0, "cwd must stay empty");
 
     let text = std::fs::read_to_string(&recorded).expect("shim output");
     assert!(
-        text.contains(&format!("CODEX_SQLITE_HOME={}", state_dir.display())),
-        "missing CODEX_SQLITE_HOME:\n{text}"
+        !text.contains(&legacy_state.display().to_string()),
+        "the child must not be pointed at a private state dir:\n{text}"
     );
+    assert!(!text.contains("ARG=sqlite_home="), "{text}");
     assert!(text.contains("ARG=skills.bundled.enabled=false"), "{text}");
     assert!(text.contains("ARG=features.shell_snapshot=false"), "{text}");
-    assert!(
-        text.contains(&format!("ARG=sqlite_home=\"{}\"", state_dir.display())),
-        "{text}"
-    );
     assert!(
         text.contains(&format!("ARG=log_dir=\"{}\"", log_dir.display())),
         "{text}"
