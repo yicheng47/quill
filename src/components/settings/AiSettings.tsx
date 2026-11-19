@@ -99,7 +99,7 @@ function stepTemperatureValue(current: number, delta: number): number {
 }
 
 const monoInputClass =
-  "h-9 px-3 rounded-[10px] bg-surface-solid border border-border-default font-mono text-[12.5px] text-text-primary placeholder:text-text-disabled focus:outline-none focus:border-accent focus:ring-[3px] focus:ring-focus-ring transition-colors";
+  "h-9 px-3 rounded-[6px] bg-surface-solid border border-border-default font-mono text-[12.5px] text-text-primary placeholder:text-text-disabled focus:outline-none focus:border-accent focus:ring-[3px] focus:ring-focus-ring transition-colors";
 
 interface SignOutConfirmModalProps {
   open: boolean;
@@ -155,7 +155,7 @@ function SignOutConfirmModal({
         aria-modal="true"
         aria-labelledby="signout-dialog-title"
         data-testid="oauth-signout-dialog"
-        className="w-full max-w-[420px] bg-surface-solid border border-border-subtle rounded-[24px] p-6 shadow-xl flex flex-col gap-[18px]"
+        className="w-full max-w-[420px] bg-surface-solid border border-border-subtle rounded-surface p-6 shadow-xl flex flex-col gap-[18px]"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-3">
@@ -850,7 +850,7 @@ export default function AiSettings({
                 </div>
 
                 <div className="flex items-center gap-2.5">
-                  <div className="flex-1 h-[38px] px-3 rounded-[10px] bg-surface-solid border border-border-default focus-within:border-accent focus-within:ring-[3px] focus-within:ring-focus-ring flex items-center gap-2 transition-colors">
+                  <div className="flex-1 h-[38px] px-3 rounded-[6px] bg-surface-solid border border-border-default focus-within:border-accent focus-within:ring-[3px] focus-within:ring-focus-ring flex items-center gap-2 transition-colors">
                     <KeyRound size={14} className="text-text-tertiary shrink-0" />
                     <input
                       type={showApiKey ? "text" : "password"}
@@ -932,7 +932,7 @@ export default function AiSettings({
         {isCodexPath && oauthLoading && (
           <div
             data-testid="oauth-waiting-card"
-            className="rounded-[14px] bg-surface-solid border border-accent/35 px-5 py-[18px] flex items-center justify-between gap-4"
+            className="rounded-[6px] bg-surface-solid border border-accent/35 px-5 py-[18px] flex items-center justify-between gap-4"
           >
             <div className="flex items-start gap-3.5 min-w-0">
               <div className="size-10 rounded-[12px] bg-accent-tint text-accent-on-tint flex items-center justify-center shrink-0">
@@ -962,7 +962,7 @@ export default function AiSettings({
         {isCodexPath && !oauthLoading && !oauthStatus.connected && oauthError && (
           <div
             data-testid="oauth-error-card"
-            className="rounded-[14px] bg-surface-solid border border-danger/25 px-5 py-[18px] flex items-center justify-between gap-4"
+            className="rounded-[6px] bg-surface-solid border border-danger/25 px-5 py-[18px] flex items-center justify-between gap-4"
           >
             <div className="flex items-start gap-3.5 min-w-0">
               <div className="size-10 rounded-[12px] bg-danger-tint text-danger flex items-center justify-center shrink-0">

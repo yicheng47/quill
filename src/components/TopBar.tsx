@@ -301,7 +301,7 @@ export function UpdateIndicator({
         <div
           role="dialog"
           aria-label={t("update.popover.readyTitle", { version })}
-          className="absolute left-0 top-full mt-2 w-[264px] p-4 rounded-[14px] bg-surface-solid border border-border-subtle shadow-menu flex flex-col gap-3 z-50 no-drag"
+          className="absolute left-0 top-full mt-2 w-[264px] p-4 rounded-surface bg-surface-solid border border-border-subtle shadow-menu flex flex-col gap-3 z-50 no-drag"
         >
           <div className="flex flex-col gap-1">
             <p className="text-[14.5px] font-semibold text-text-primary leading-snug">

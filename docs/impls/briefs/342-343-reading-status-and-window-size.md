@@ -14,14 +14,19 @@
 
 **Approach.** Measure first: at the default size (`DEFAULT_MAIN_WIDTH`/`HEIGHT` in `electron/main/windowState.ts`), find what the Home content height actually is against the viewport and which rows overflow. Then pick the smallest fix and state the reason in the PR: raise the default window size, and/or tighten `HomeView.tsx`'s min-heights and padding so the bento fits the 1440×960 frame as the design does. The design wins on layout. Also clamp the default size to the primary display's work area so a smaller display (a 14" MacBook's work area is about 1512×945) never gets a window larger than the screen; Home may still scroll when the work area itself is too small. A saved window state still overrides the default; do not migrate or reset existing users' saved size. Unit-test the default/clamp logic in `electron/main/windowState.test.ts`.
 
+## #345 — 8px radius for every large surface
+
+**Outcome.** Every large surface uses `8px` (`--radius-surface: 8px` / `rounded-surface`, matching `$radius-xl: 8` on option D of `RNplP` and `l5t2M` in `quill/desktop/specs/331-rebrand.pen`): reader page and side panels, Home bento and Library empty/list cards, Highlights/Words/Chats/Settings panes, modals, reader popovers, menus/context menus/dropdowns, the `⌘K` palette, import overlays, and toasts. Nested cards, insets, rows, chips, composer, quotes, search hits, Dawn code blocks, and text inputs drop to `6px` (`$radius-lg` / `$radius-md` = `6`); buttons (`12px`), pills, book covers, small icon tiles, chat bubbles (`16px`), and window corners stay unchanged, and `--radius-xl: 14px` remains untouched.
+
 ## Validation
 
 - **Automated:** `make typecheck`, `make lint`, `npm test`, `npm run electron:build`; CI green.
 - **Live, `qa` in `make dev` on macOS with iCloud sync off.** Check port 1430 first and wait if another development Quill runs. Back up `~/Library/Application Support/com.wycstudios.quill-dev` and `~/Library/Application Support/com.wycstudios.quill-chromium-dev`, and restore both byte-for-byte afterwards. Never touch the installed Quill or its data.
   - `F-342-OPEN-READING`: import a small book (status `unread`), open it, return to Home: it is the `Now reading` hero and appears under Library's Reading filter. Then mark a book `finished`, reopen it, and confirm it stays finished.
   - `F-343-DEFAULT-FIT`: move `window-state.json` aside in `com.wycstudios.quill-chromium-dev`, launch with a populated library (at least 5 books, a highlight, a saved word and a chat so every bento card renders), and confirm Home shows every row with no scrolling; screenshot it next to `m2srt`. Then restore `window-state.json`.
+  - `F-345-RADIUS`: visual pass in the dev app over Home, Library, Highlights, Settings, a reader on the Original and Sepia pages with Ask Quill open, the Aa popover, `⌘K`, one modal, a context menu, a filter popover, and a text input, with screenshots.
 - Record the run in `docs/tests/runs/342-343-reading-status-and-window-size-mac.md`. Windows is left to Jason.
 
 ## Authorization
 
-`hydrogen trio`, approved by Jason on 2026-11-19. The crew may commit on `fix/342-343-reading-status-window-size` (one commit per issue; fold this brief into one of them, and fold review and QA fixes into the commits they correct), push, and open one PR against `main` that closes #342 and #343, labeled with the risk label its diff warrants and `needs-live-test` until qa passes, then drive CI green and stop. Jason merges.
+`hydrogen trio`, approved by Jason on 2026-11-19 (scope addition #345 approved by Jason on 2026-11-19). The crew may commit on `fix/342-343-reading-status-window-size` (one commit per issue: #342 with brief, #343, and #345 as `feat(ui): use an 8px radius for every large surface (#345)`), push, and open one PR against `main` that closes #342, #343, and #345, labeled with the risk label its diff warrants and `needs-live-test` until qa passes, then drive CI green and stop. Jason merges.

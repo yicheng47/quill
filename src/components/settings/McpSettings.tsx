@@ -135,7 +135,7 @@ export default function McpSettings() {
       {/* OTHER CLIENTS */}
       <section className="flex flex-col gap-2.5">
         <SettingsOverline>{t("settings.mcp.otherClientsGroup")}</SettingsOverline>
-        <div className="bg-surface-solid border border-border-subtle rounded-[14px] px-[18px] py-4 flex flex-col gap-3">
+        <div className="bg-surface-solid border border-border-subtle rounded-[6px] px-[18px] py-4 flex flex-col gap-3">
           <pre className="font-mono text-[12px] text-text-secondary leading-[1.6] whitespace-pre-wrap break-all m-0 select-all">
             {snippet ?? ""}
           </pre>
@@ -159,7 +159,7 @@ export default function McpSettings() {
           </div>
         </div>
 
-        <div className="bg-warning-tint rounded-[10px] px-3.5 py-3 flex items-start gap-2.5">
+        <div className="bg-warning-tint rounded-[6px] px-3.5 py-3 flex items-start gap-2.5">
           <ShieldAlert size={16} className="text-warning shrink-0 mt-0.5" />
           <p className="text-[12.5px] text-text-secondary leading-[1.5]">
             {t("settings.mcp.caveat")}
@@ -170,7 +170,7 @@ export default function McpSettings() {
       {error && (
         <div
           role="alert"
-          className="bg-danger-tint border border-danger/25 rounded-[14px] px-[18px] py-3.5 flex items-center justify-between gap-4"
+          className="bg-danger-tint border border-danger/25 rounded-[6px] px-[18px] py-3.5 flex items-center justify-between gap-4"
         >
           <p className="text-[12.5px] text-danger min-w-0 break-words">{error}</p>
           <Button

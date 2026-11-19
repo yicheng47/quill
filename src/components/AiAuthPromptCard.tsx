@@ -20,7 +20,7 @@ export default function AiAuthPromptCard({
 
   const wrapperClass = embedded
     ? "flex flex-col items-center text-center gap-3.5 px-[22px] py-[22px]"
-    : "bg-surface-solid border border-border-subtle rounded-[18px] p-6 flex flex-col items-center text-center gap-3.5 shadow-glass";
+    : "bg-surface-solid border border-border-subtle rounded-[6px] p-6 flex flex-col items-center text-center gap-3.5 shadow-glass";
 
   return (
     <div

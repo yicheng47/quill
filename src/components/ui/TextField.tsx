@@ -10,7 +10,7 @@ const TextField = forwardRef<HTMLInputElement, TextFieldProps>(
   ({ error = false, trailing, containerClassName = "", className = "", ...props }, ref) => {
     return (
       <div
-        className={`h-11 px-4 rounded-[14px] bg-surface-solid border inline-flex items-center gap-2.5 transition-colors ${
+        className={`h-11 px-4 rounded-[6px] bg-surface-solid border inline-flex items-center gap-2.5 transition-colors ${
           error
             ? "border-danger focus-within:ring-[3px] focus-within:ring-danger/20"
             : "border-border-default focus-within:border-accent focus-within:ring-[3px] focus-within:ring-focus-ring"

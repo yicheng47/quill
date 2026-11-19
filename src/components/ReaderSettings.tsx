@@ -208,12 +208,12 @@ export default function ReaderSettings({
       aria-label={t("readerSettings.typography")}
       className={`fixed z-50 ${
         isPdf ? "w-[296px] p-4" : "w-[316px] p-[18px]"
-      } max-h-[calc(100vh-88px)] overflow-y-auto reader-popover rounded-[24px] flex flex-col gap-3.5`}
+      } max-h-[calc(100vh-88px)] overflow-y-auto reader-popover rounded-surface flex flex-col gap-3.5`}
       style={{ top: position.top, right: position.right }}
     >
       {/* Font size bar — EPUB only */}
       {!isPdf && (
-        <div className="grid grid-cols-[1fr_92px_1fr] h-10 rounded-[10px] bg-surface-inset border border-border-subtle overflow-hidden shrink-0">
+        <div className="grid grid-cols-[1fr_92px_1fr] h-10 rounded-[6px] bg-surface-inset border border-border-subtle overflow-hidden shrink-0">
           <button
             type="button"
             onClick={() => update({ fontSize: nudgeFontSize(settings.fontSize, -1) })}
@@ -328,7 +328,7 @@ export default function ReaderSettings({
             type="button"
             onClick={() => update({ readingMode: "scrolling" })}
             aria-pressed={settings.readingMode === "scrolling"}
-            className={`flex items-center justify-center gap-[7px] h-[34px] px-2.5 rounded-[10px] border cursor-pointer transition-colors ${
+            className={`flex items-center justify-center gap-[7px] h-[34px] px-2.5 rounded-[6px] border cursor-pointer transition-colors ${
               settings.readingMode === "scrolling"
                 ? "bg-accent-tint border-accent/35 text-accent-on-tint font-semibold"
                 : "bg-surface-inset border-border-subtle text-text-secondary font-medium hover:bg-surface-solid"
@@ -341,7 +341,7 @@ export default function ReaderSettings({
             type="button"
             onClick={() => update({ readingMode: "paginated" })}
             aria-pressed={settings.readingMode === "paginated"}
-            className={`flex items-center justify-center gap-[7px] h-[34px] px-2.5 rounded-[10px] border cursor-pointer transition-colors ${
+            className={`flex items-center justify-center gap-[7px] h-[34px] px-2.5 rounded-[6px] border cursor-pointer transition-colors ${
               settings.readingMode === "paginated"
                 ? "bg-accent-tint border-accent/35 text-accent-on-tint font-semibold"
                 : "bg-surface-inset border-border-subtle text-text-secondary font-medium hover:bg-surface-solid"
@@ -364,7 +364,7 @@ export default function ReaderSettings({
               type="button"
               onClick={() => update({ pageColumns: 1 })}
               aria-pressed={settings.pageColumns === 1}
-              className={`flex items-center justify-center gap-1.5 h-8 px-2.5 rounded-[10px] border cursor-pointer transition-colors ${
+              className={`flex items-center justify-center gap-1.5 h-8 px-2.5 rounded-[6px] border cursor-pointer transition-colors ${
                 settings.pageColumns === 1
                   ? "bg-accent-tint border-accent/35 text-accent-on-tint font-semibold"
                   : "bg-surface-inset border-border-subtle text-text-secondary font-medium hover:bg-surface-solid"
@@ -377,7 +377,7 @@ export default function ReaderSettings({
               type="button"
               onClick={() => update({ pageColumns: 2 })}
               aria-pressed={settings.pageColumns === 2}
-              className={`flex items-center justify-center gap-1.5 h-8 px-2.5 rounded-[10px] border cursor-pointer transition-colors ${
+              className={`flex items-center justify-center gap-1.5 h-8 px-2.5 rounded-[6px] border cursor-pointer transition-colors ${
                 settings.pageColumns === 2
                   ? "bg-accent-tint border-accent/35 text-accent-on-tint font-semibold"
                   : "bg-surface-inset border-border-subtle text-text-secondary font-medium hover:bg-surface-solid"

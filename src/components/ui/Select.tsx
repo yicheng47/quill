@@ -196,7 +196,7 @@ export default function Select({
             onMouseDown={(e) => e.stopPropagation()}
             className={
               dawn
-                ? "fixed z-[70] dawn-menu rounded-[14px] p-1.5 overflow-y-auto"
+                ? "fixed z-[70] dawn-menu rounded-surface p-1.5 overflow-y-auto"
                 : "fixed z-[70] bg-bg-surface border border-border rounded-xl shadow-popover overflow-y-auto"
             }
           >

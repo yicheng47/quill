@@ -385,7 +385,7 @@ export default function ChatsView({
 
       {/* Body */}
       {isGloballyEmpty ? (
-        <div className="flex-1 min-h-0 dawn-glass rounded-[16px] flex items-center justify-center p-8">
+        <div className="flex-1 min-h-0 dawn-glass rounded-surface flex items-center justify-center p-8">
           <div className="max-w-[430px] flex flex-col items-center text-center">
             <div className="size-12 rounded-[14px] bg-accent-tint text-accent flex items-center justify-center mb-4">
               <Sparkles size={22} />
@@ -407,7 +407,7 @@ export default function ChatsView({
           </div>
         </div>
       ) : loading && chats.length === 0 ? (
-        <div className="flex-1 min-h-0 dawn-glass rounded-[16px] flex items-center justify-center">
+        <div className="flex-1 min-h-0 dawn-glass rounded-surface flex items-center justify-center">
           <Loader2 size={22} className="text-text-tertiary animate-spin" />
         </div>
       ) : (
@@ -415,7 +415,7 @@ export default function ChatsView({
           {/* Left Chat List (visible scrollbar — #322) */}
           <aside
             aria-label={t("chats.listLabel")}
-            className="w-[340px] lg:w-[380px] xl:w-[400px] shrink-0 dawn-glass rounded-[16px] p-3 overflow-y-auto flex flex-col gap-3"
+            className="w-[340px] lg:w-[380px] xl:w-[400px] shrink-0 dawn-glass rounded-surface p-3 overflow-y-auto flex flex-col gap-3"
           >
             {groupedChats.map((group) => (
               <div key={group.key}>
@@ -434,7 +434,7 @@ export default function ChatsView({
                         type="button"
                         onClick={() => setSelectedChatId(chat.id)}
                         aria-current={selected ? "true" : undefined}
-                        className={`w-full px-2.5 py-2.5 rounded-[10px] flex items-center gap-3 text-left cursor-pointer transition-colors ${
+                        className={`w-full px-2.5 py-2.5 rounded-[6px] flex items-center gap-3 text-left cursor-pointer transition-colors ${
                           selected
                             ? "bg-accent-tint text-accent-on-tint"
                             : "text-text-primary hover:bg-surface-hover"
@@ -479,7 +479,7 @@ export default function ChatsView({
           </aside>
 
           {/* Right Conversation Pane */}
-          <section className="flex-1 min-w-0 dawn-glass rounded-[16px] flex flex-col overflow-hidden">
+          <section className="flex-1 min-w-0 dawn-glass rounded-surface flex flex-col overflow-hidden">
             {activeChat ? (
               <ChatConversationPane
                 key={activeChat.id}
@@ -743,7 +743,7 @@ function ChatConversationPane({
                   }}
                   onBlur={() => void submitRename()}
                   aria-label={t("chats.renameInputLabel")}
-                  className="w-full max-w-[360px] h-9 px-3 rounded-[9px] bg-surface-solid border border-accent ring-[3px] ring-focus-ring text-[15px] font-semibold text-text-primary outline-none"
+                  className="w-full max-w-[360px] h-9 px-3 rounded-[6px] bg-surface-solid border border-accent ring-[3px] ring-focus-ring text-[15px] font-semibold text-text-primary outline-none"
                 />
                 <span className="font-mono text-[11px] text-text-tertiary shrink-0">
                   {t("chats.renameHint")}
@@ -887,7 +887,7 @@ function ChatConversationPane({
                     <div
                       key={msg.id}
                       role="alert"
-                      className="flex items-start gap-2 rounded-[12px] bg-danger-tint/70 border border-danger/20 px-3.5 py-2.5 text-[14px] text-danger"
+                      className="flex items-start gap-2 rounded-[6px] bg-danger-tint/70 border border-danger/20 px-3.5 py-2.5 text-[14px] text-danger"
                     >
                       <AlertCircle size={15} className="shrink-0 mt-0.5" />
                       <span>{errorMessage}</span>
@@ -945,7 +945,7 @@ function ChatConversationPane({
 
       {/* Bottom Composer */}
       <div className="px-6 pb-5 pt-2 shrink-0">
-        <div className="max-w-[640px] mx-auto bg-surface-solid border border-border-default focus-within:border-accent focus-within:ring-[3px] focus-within:ring-focus-ring rounded-[12px] px-4 py-2.5 flex items-center gap-2.5 shadow-sm transition-shadow">
+        <div className="max-w-[640px] mx-auto bg-surface-solid border border-border-default focus-within:border-accent focus-within:ring-[3px] focus-within:ring-focus-ring rounded-[6px] px-4 py-2.5 flex items-center gap-2.5 shadow-sm transition-shadow">
           <textarea
             rows={1}
             value={input}
@@ -984,7 +984,7 @@ function ChatConversationPane({
             aria-modal="true"
             aria-labelledby="delete-chat-modal-title"
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-[400px] bg-surface-solid rounded-[18px] p-6 border border-border-default shadow-xl"
+            className="w-full max-w-[400px] bg-surface-solid rounded-surface p-6 border border-border-default shadow-xl"
           >
             <div className="flex items-center gap-2.5 mb-2.5">
               <div className="size-8 rounded-[10px] bg-danger-tint text-danger flex items-center justify-center shrink-0">

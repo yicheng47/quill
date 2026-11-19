@@ -499,7 +499,7 @@ export default function WordsView({
 
       {/* Body */}
       {isGloballyEmpty ? (
-        <div className="flex-1 min-h-0 dawn-glass rounded-[16px] flex items-center justify-center p-8">
+        <div className="flex-1 min-h-0 dawn-glass rounded-surface flex items-center justify-center p-8">
           <div className="max-w-[420px] flex flex-col items-center text-center">
             <div className="size-12 rounded-[14px] bg-accent-tint text-accent flex items-center justify-center mb-4">
               <Languages size={22} />
@@ -521,7 +521,7 @@ export default function WordsView({
           </div>
         </div>
       ) : loading && words.length === 0 ? (
-        <div className="flex-1 min-h-0 dawn-glass rounded-[16px] flex items-center justify-center text-[13.5px] text-text-tertiary">
+        <div className="flex-1 min-h-0 dawn-glass rounded-surface flex items-center justify-center text-[13.5px] text-text-tertiary">
           {t("common.loading")}
         </div>
       ) : (
@@ -529,7 +529,7 @@ export default function WordsView({
           {/* Left Word List (visible scrollbar — #322) */}
           <aside
             aria-label={t("words.listLabel")}
-            className="w-[380px] xl:w-[440px] shrink-0 dawn-glass rounded-[16px] p-3 overflow-y-auto flex flex-col"
+            className="w-[380px] xl:w-[440px] shrink-0 dawn-glass rounded-surface p-3 overflow-y-auto flex flex-col"
           >
             {sortedWords.length === 0 ? (
               <div className="flex-1 flex flex-col items-center justify-center text-center px-6 py-8">
@@ -578,7 +578,7 @@ export default function WordsView({
                             type="button"
                             onClick={() => setSelectedWordId(w.id)}
                             aria-current={selected ? "true" : undefined}
-                            className={`w-full px-3 py-2.5 rounded-[10px] text-left cursor-pointer transition-colors ${
+                            className={`w-full px-3 py-2.5 rounded-[6px] text-left cursor-pointer transition-colors ${
                               selected
                                 ? "bg-accent-tint text-accent-on-tint"
                                 : "text-text-primary hover:bg-surface-hover"
@@ -640,7 +640,7 @@ export default function WordsView({
           </aside>
 
           {/* Right Detail Pane */}
-          <section className="flex-1 min-w-0 dawn-glass rounded-[16px] overflow-y-auto p-8">
+          <section className="flex-1 min-w-0 dawn-glass rounded-surface overflow-y-auto p-8">
             {activeWord && activeParsed ? (
               <div className="max-w-[740px]">
                 <div className="flex items-start justify-between gap-4">
@@ -717,7 +717,7 @@ export default function WordsView({
                     <h3 className="font-mono text-[11px] font-semibold tracking-[0.08em] uppercase text-text-tertiary mb-2.5">
                       {t("words.inContextHeading")}
                     </h3>
-                    <div className="bg-paper rounded-[12px] border border-border-subtle p-5">
+                    <div className="bg-paper rounded-[6px] border border-border-subtle p-5">
                       <p className="font-reading text-[16px] leading-[1.65] text-text-primary select-text">
                         {renderHighlightedSentence(activeWord.context_sentence, activeWord.word)}
                       </p>

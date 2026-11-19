@@ -855,7 +855,7 @@ export default function Home() {
             </div>
           ) : isCollectionEmpty && activeCollection ? (
             <div className="flex items-center justify-center py-20">
-              <div className="dawn-glass rounded-[24px] p-8 max-w-[440px] w-full flex flex-col items-center text-center gap-3.5">
+              <div className="dawn-glass rounded-surface p-8 max-w-[440px] w-full flex flex-col items-center text-center gap-3.5">
                 <div className="size-14 rounded-[18px] bg-accent-tint flex items-center justify-center text-accent-on-tint">
                   <FolderOpen size={24} />
                 </div>
@@ -886,7 +886,7 @@ export default function Home() {
             </div>
           ) : isLibraryEmpty ? (
             <div className="flex items-center justify-center py-20">
-              <div className="dawn-glass rounded-[24px] p-8 max-w-[440px] w-full flex flex-col items-center text-center gap-3.5">
+              <div className="dawn-glass rounded-surface p-8 max-w-[440px] w-full flex flex-col items-center text-center gap-3.5">
                 <div className="size-14 rounded-[18px] bg-accent-tint flex items-center justify-center text-accent-on-tint">
                   <BookOpen size={24} />
                 </div>
@@ -910,7 +910,7 @@ export default function Home() {
             </div>
           ) : isFilteredEmpty ? (
             <div className="flex items-center justify-center py-20">
-              <div className="dawn-glass rounded-[24px] p-8 max-w-[420px] w-full flex flex-col items-center text-center gap-3">
+              <div className="dawn-glass rounded-surface p-8 max-w-[420px] w-full flex flex-col items-center text-center gap-3">
                 <h2 className="text-[16px] font-semibold text-text-primary">
                   {t("library.noFilteredBooks", {
                     filter: t(`library.filter.${statusFilter}`),

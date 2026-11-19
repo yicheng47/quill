@@ -212,7 +212,7 @@ export default function CollectionsPopover({
       ref={popoverRef}
       role="dialog"
       aria-label={t("collections.popoverLabel")}
-      className="absolute right-0 top-full mt-2 w-[348px] max-w-[calc(100vw-32px)] rounded-[18px] bg-surface-popover border border-surface-glass-border backdrop-blur-[34px] shadow-[var(--shadow-menu)] overflow-hidden z-40 flex flex-col"
+      className="absolute right-0 top-full mt-2 w-[348px] max-w-[calc(100vw-32px)] rounded-surface bg-surface-popover border border-surface-glass-border backdrop-blur-[34px] shadow-[var(--shadow-menu)] overflow-hidden z-40 flex flex-col"
     >
       <div className="px-2 pt-2 pb-1.5 flex flex-col gap-0.5">
         <button
@@ -221,7 +221,7 @@ export default function CollectionsPopover({
             onSelectFilter("all");
             onClose();
           }}
-          className={`w-full flex items-center justify-between px-2.5 py-2 rounded-[10px] cursor-pointer transition-colors ${
+          className={`w-full flex items-center justify-between px-2.5 py-2 rounded-[6px] cursor-pointer transition-colors ${
             allSelected
               ? "bg-accent-tint text-accent-on-tint font-semibold"
               : "text-text-primary hover:bg-surface-hover"
@@ -290,7 +290,7 @@ export default function CollectionsPopover({
                           }
                         }}
                         aria-label={t("collections.renameInputLabel")}
-                        className="flex-1 min-w-0 h-[34px] px-2.5 rounded-[8px] bg-surface-inset border border-accent text-[13px] font-medium text-text-primary outline-none"
+                        className="flex-1 min-w-0 h-[34px] px-2.5 rounded-[6px] bg-surface-inset border border-accent text-[13px] font-medium text-text-primary outline-none"
                       />
                       <button
                         type="submit"
@@ -327,7 +327,7 @@ export default function CollectionsPopover({
                       onClose();
                     }
                   }}
-                  className={`group w-full flex items-center justify-between px-2.5 py-2 rounded-[10px] cursor-pointer transition-colors ${
+                  className={`group w-full flex items-center justify-between px-2.5 py-2 rounded-[6px] cursor-pointer transition-colors ${
                     isActive
                       ? "bg-accent-tint text-accent-on-tint"
                       : "hover:bg-surface-hover text-text-primary"
@@ -424,7 +424,7 @@ export default function CollectionsPopover({
               {t("collections.newFormHint")}
             </span>
           </div>
-          <div className="h-9 px-[11px] rounded-[10px] bg-surface-solid border border-accent flex items-center gap-2">
+          <div className="h-9 px-[11px] rounded-[6px] bg-surface-solid border border-accent flex items-center gap-2">
             <FolderPlus size={14.5} className="text-accent shrink-0" />
             <input
               ref={newInputRef}

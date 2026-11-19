@@ -1707,7 +1707,7 @@ export default function Reader() {
 
             {/* Floating Paper Island */}
             <main
-              className="flex-1 min-w-0 h-full relative rounded-[24px] border shadow-glass overflow-hidden @container/paper"
+              className="flex-1 min-w-0 h-full relative rounded-surface border shadow-glass overflow-hidden @container/paper"
               style={paperSurfaceStyle}
               onContextMenu={handleContextMenu}
               onClick={() => {
@@ -1828,7 +1828,7 @@ export default function Reader() {
               <div
                 className={
                   sidePanel === "ai"
-                    ? "h-full rounded-[24px] overflow-hidden reader-island"
+                    ? "h-full rounded-surface overflow-hidden reader-island"
                     : "hidden"
                 }
               >
@@ -1873,7 +1873,7 @@ export default function Reader() {
                 />
               )}
               {sidePanel === "vocab" && bookId && (
-                <div className="h-full rounded-[24px] overflow-hidden reader-island">
+                <div className="h-full rounded-surface overflow-hidden reader-island">
                   <DictionaryPanel
                     bookId={bookId}
                     bookTitle={book.title}

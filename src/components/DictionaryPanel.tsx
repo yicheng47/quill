@@ -134,7 +134,7 @@ export default function DictionaryPanel({
                     if (word.cfi) onNavigate?.(word.cfi);
                   }
                 }}
-                className={`group relative w-full text-left p-3.5 rounded-[14px] border transition-colors cursor-pointer flex flex-col gap-1.5 ${
+                className={`group relative w-full text-left p-3.5 rounded-[6px] border transition-colors cursor-pointer flex flex-col gap-1.5 ${
                   selected
                     ? "bg-surface-solid border-accent/40"
                     : "bg-surface-inset border-border-subtle hover:bg-surface-solid hover:border-accent/35"

@@ -58,6 +58,7 @@
   --radius-lg: 10px;
   --radius-control: 12px;
   --radius-xl: 14px;
+  --radius-surface: 8px;
   --radius-full: 9999px;
 
   --shadow-card: 0px 4px 6px -1px rgba(0, 0, 0, 0.1),
@@ -603,7 +604,7 @@ body {
 }
 .dawn .markdown-body pre {
   background: rgba(21, 21, 26, 0.04);
-  border-radius: 10px;
+  border-radius: 6px;
 }
 .dawn .markdown-body hr {
   border-color: var(--color-border-subtle);
