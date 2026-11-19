@@ -1,77 +1,100 @@
-# 326 — Agent Connections (Codex App Server + Claude Code)
+# 326 — Codex Connection (Replaces the ChatGPT Login) + First-Launch AI Setup
 
 GitHub issue: https://github.com/yicheng47/quill/issues/326
 
 ## Motivation
 
-Quill can reach a model in three ways today. It can use an API key (OpenAI or Anthropic) or a local Ollama endpoint. For OpenAI only, it can also use a ChatGPT login, which runs Quill's own PKCE flow against the Codex CLI's public OAuth client and then calls the Codex backend directly (`src-tauri/src/ai/oauth.rs`, `src-tauri/src/ai/openai_responses.rs`). The login path is the one most people want, because it uses a subscription they already pay for instead of metered API credit. It has two weaknesses.
+Quill reaches a model in three ways today: an API key (OpenAI or Anthropic), a local Ollama endpoint, or, for OpenAI only, a ChatGPT login. The ChatGPT login is the one most people want, because it uses a subscription they already pay for. It is also borrowed: Quill runs its own PKCE flow against the Codex CLI's public OAuth client and then calls the Codex backend's private request shape (`crates/quill-core/src/ai/oauth.rs`, `openai_responses.rs`, `codex_models.rs`). The login, token refresh, the model catalog (#294) and the request format all depend on an interface OpenAI can change without notice, and when it changes, Quill stays broken until a release ships.
 
-**It is borrowed.** Quill presents the Codex CLI's client ID and speaks the Codex backend's private request shape. The login flow, token refresh, the model catalog (#294) and the request format all depend on an interface that OpenAI owns and can change without notice. When OpenAI changes it, Quill stays broken until a new release ships.
+OpenAI now ships the supported version of the same idea. `codex app-server` is a JSON-RPC protocol over stdio that OpenAI's own clients use, and its documentation invites other products to embed it for authentication, history and streamed events. A program that starts it uses the login the user already has in `~/.codex`, so a Codex user needs no sign-in at all, and a user who is not signed in can sign in through the app server's own ChatGPT login. Checked on 2026-11-19 against Codex CLI 0.170.0: `account/read` returned the signed-in ChatGPT account and plan, and `model/list` returned the catalog with each model's supported and default reasoning efforts, with no sign-in from the client.
 
-**It covers only one vendor.** Quill has no subscription path to Claude at all, so Anthropic is API-key only.
+Quill 2.0 therefore replaces the ChatGPT login with a Codex connection. 2.0 has not shipped yet (production is v1.3.4), so the change lands once, at the major version, with a migration for people saved on the ChatGPT login. Because Codex becomes the main way to get subscription AI, Quill also gains a first-launch AI setup helper that detects Codex and gets a reader to a working lookup in one or two clicks.
 
-Both vendors now ship a supported way for another program to drive their agent locally with the user's own login. Codex has `codex app-server`, a JSON-RPC protocol over stdio that IDE integrations use. Claude Code has `claude -p`, its headless print mode with streaming JSON output. Connecting through them moves auth, token refresh, model routing and protocol changes onto the CLI, which the user keeps up to date anyway. It also gives Claude subscribers the same path that ChatGPT subscribers have. The agent connection therefore becomes the first option. The existing ChatGPT login stays as the second option and keeps working for people who don't have the CLI installed. The API key comes last.
-
-This revisits #183 (closed as not planned), which proposed one-shot `claude -p` and `codex exec` providers. Two things have changed since then. Codex now has a persistent app server, so it is no longer limited to one `exec` process per request. The comment on #183 also settled that chat needs a mapping to agent sessions instead of replaying the whole transcript as a single prompt on every turn.
+Codex is the only agent in scope. Anthropic's terms do not allow a third-party product to use a Claude subscription login without prior approval, which rules out driving `claude -p` from a shipped app. Other CLIs have no supported embedding path comparable to the app server.
 
 ## Scope
 
 In scope:
 
-- **Connection options per provider, agent first.** The provider dropdown stays OpenAI / Anthropic / Ollama. The authentication row becomes:
-  - OpenAI: **Codex** (agent) → **ChatGPT login** (today's OAuth) → **API key**
-  - Anthropic: **Claude Code** (agent) → **API key**
-  - Ollama: unchanged
+- **Authentication options.** The provider dropdown stays OpenAI / Anthropic / Ollama. OpenAI offers **Codex** first and **API key** second; the ChatGPT login is removed. Anthropic stays API key only, and Ollama is unchanged. `ai_auth_mode` gains `codex`, and choosing OpenAI fresh preselects it.
 
-  `ai_auth_mode` gains an `agent` value. Picking OpenAI or Anthropic in the provider dropdown now preselects the agent option. A saved `oauth` or `api_key` mode is left as it is. Nobody is migrated, and the ChatGPT login keeps working unchanged: the OAuth flow, its tokens in `secrets.db`, and the model picker and effort tiers from #294.
+- **Codex through `codex app-server`.** Quill starts its own app server as a child process on the first AI call, keeps it for the session, restarts it after an unexpected exit, and stops it when Quill quits. It does not connect to the user's Codex daemon: most users don't run one, its lifecycle and version are not Quill's, and threads created there would show up in the user's Codex app. The child process reads the same `~/.codex` login, so the user signs in once for both. Each Quill call runs one turn and streams `item/agentMessage/delta` notifications into the existing per-request event channels, so the reader, chat and translation UIs keep their streaming code.
 
-- **Codex via `codex app-server`.** Quill starts the app server on the first AI call, keeps it running for the session, and restarts it if it exits. Each call runs one turn over JSON-RPC. Its `item/agentMessage/delta` notifications stream into the existing per-request event channels, so the reader, chat and translation UIs need no changes. The model picker reads `model/list`, and the quick and deep effort tiers from #294 map onto each turn's effort, so the agent path gets the same model card and tiers as the login path. The app server exits when Quill exits.
+- **Model and effort.** The model card from #294 is filled from `model/list` (display name, description, hidden models filtered), with the existing Custom escape hatch. The quick and deep effort tiers keep their meaning and settings keys (`ai_effort_quick`, `ai_effort_deep`), with options from the selected model's `supportedReasoningEfforts`. Quill always sends the model and the effort on every turn and never inherits the user's Codex defaults: on the machine checked, an unset thread came up on the most capable model at `xhigh` effort, which would make every dictionary lookup slow and expensive. The tiers' default sentinel now means the selected model's `defaultReasoningEffort` from `model/list`, and an empty model means the catalog's `isDefault` model.
 
-- **Claude Code via `claude -p`.** Each call runs its own process with `--output-format stream-json --include-partial-messages`, and the text deltas go to the same event channels. The model is free text (an alias like `sonnet` or `opus`, or a full ID) and is passed through `--model`. The effort tiers map onto `--effort`.
+- **Reading assistant, not coding agent.** Every thread starts in an empty working directory that Quill owns, with the read-only sandbox, the `never` approval policy, Quill's system prompt as `baseInstructions`, and a per-thread `config` that turns off each MCP server listed by `config/read`, plus apps and plugins. Checked against 0.170.0: with those overrides, no MCP server starts. One gap remains: every thread loads the user's global `~/.codex/AGENTS.md`, and no per-thread setting tried removes it. Quill accepts this for v1, relies on its own base instructions taking precedence, and verifies it with a deliberately loud `AGENTS.md`. Pointing `CODEX_HOME` at a Quill-owned folder would remove the file but forces a second sign-in, and sharing `auth.json` between two homes is unsafe because Codex rotates refresh tokens.
 
-- **Reading assistant, not coding agent.** Both agents run with no tools, no approvals, Quill's own system prompts, and no file access beyond an empty working directory that Quill owns. On the Codex side, this uses the read-only sandbox, the `never` approval policy and base instructions on `thread/start`. None of the user's own agent setup may reach Quill's calls: `AGENTS.md` and `CLAUDE.md` files, hooks, plugins, skills and MCP servers. A dictionary lookup should not be steered by someone's coding instructions. Claude's `--bare` flag can't provide this isolation, because it skips keychain reads and would therefore bypass the subscription login this feature exists to use. Isolation comes from explicit flags instead: `--tools ""`, `--strict-mcp-config`, `--system-prompt`, `--setting-sources` and `--disable-slash-commands`.
+- **Sign-in through Codex.** When Codex is installed but not signed in, Quill offers **Sign in with ChatGPT**: it calls `account/login/start` with `type: "chatgpt"`, opens the returned `authUrl` in the browser, and waits for `account/login/completed`; Cancel calls `account/login/cancel`. The login lands in `~/.codex`, so it also signs in the user's Codex CLI and app, which the UI says. Quill stores no OpenAI tokens of its own.
 
-- **Chat sessions map to agent sessions.** Each Quill chat records the agent session it last used: a Codex thread ID, or a Claude session set with `--session-id` on the first turn and continued with `--resume` after that. Follow-up turns then send only the new message and get prompt caching. Quill reuses the session only while the chat's history is exactly what that session last saw. Any of the following starts a fresh session seeded with the chat transcript: switching provider mid-chat, editing or deleting messages, a missing session, or a failed resume. The mapping stays on the machine and does not sync, so another device simply starts a fresh session the same way. Lookup, explain, translate and title generation are one-shot calls and leave no session behind (an `ephemeral` Codex thread, Claude's `--no-session-persistence`), so they don't clutter the user's Codex or Claude history.
+- **Chat continuity.** A chat keeps an ephemeral Codex thread in memory while Quill runs, and follow-up turns send only the new message. Any of these starts a fresh thread seeded with the chat's transcript: a Quill restart, an app-server restart, a changed model or provider, an edited or deleted message, or a failed turn on the old thread. Ephemeral threads leave nothing in the user's Codex history and need no stored mapping, so there is no schema change. Lookup, explain, translate and title generation are one-turn ephemeral threads. The implementation confirms that an ephemeral thread accepts several turns; if it does not, chat falls back to sending the transcript on each turn.
 
-- **Finding the CLI.** A macOS app launched from Finder does not inherit the shell PATH, so a naive lookup misses a `codex` installed through nvm or a `claude` in `~/.local/bin`. Quill finds the binary through the user's login shell and the usual install locations. Settings also offer an optional path override.
+- **Finding Codex.** A Finder-launched app does not inherit the shell PATH. Quill resolves `codex` from the path override in settings, then the user's login shell (`$SHELL -ilc 'command -v codex'` on macOS), then the usual install locations on each platform (Homebrew, `~/.local/bin`, the npm global prefix and nvm on macOS; the npm global folder and `PATH` on Windows). It reads `codex --version` and requires a minimum version, initially the one the protocol tests are recorded against (0.170.0), lowered only when an older version is verified.
 
-- **Status and errors.** Where the ChatGPT login shows its OAuth login panel, the agent option shows a status row instead. The row says whether the CLI was found and its version, plus the signed-in account when the CLI reports one (`account/read` for Codex). Three failure cases each get their own inline message that tells the user what to run (`codex login`, or `claude` and then `/login`): the CLI is not installed, the user is not signed in, or the version is too old for the protocol. The same messages appear in the chat bubble when a call fails, instead of a generic AI error.
+- **Status and errors.** Codex has six states that settings, the setup helper, and the AI entry points all share: checking, ready (account email, plan and Codex version), not installed, not signed in, too old, and failed to start (with the process's error). The backend returns a sentinel for each failure alongside `AI_NOT_CONFIGURED`, and the reader's AI popovers and Ask Quill map them to the setup card from #348 instead of a red error.
 
-- i18n for all new labels, status lines and errors in `en.json` and `zh.json`.
+- **First-launch AI setup helper.** On the first launch with no AI configured, Quill runs Codex detection and offers the next step for its state: **Use Codex** when it is ready, **Sign in with ChatGPT** when it is not signed in, and the install command, a link to OpenAI's install page and **Check again** when it is missing or too old. Every state also offers the other options (API key, Ollama), which open Settings → AI, and **Skip for now**. Skipping or finishing records `ai_setup_seen` so the helper never reappears on its own; afterwards the AI entry points' setup card and Settings → AI cover the same ground. The placement and visual form are open design choices (see Design).
+
+- **Migration from the ChatGPT login.** On the first 2.0 launch, a saved `ai_auth_mode = oauth` becomes `codex`, the saved model and effort tiers carry over (the slugs are the same catalog), and the ChatGPT OAuth tokens are deleted from `secrets.db`, since no code can use them any more. These users see the setup helper once with a short note that ChatGPT sign-in now goes through Codex, whatever `ai_setup_seen` says.
+
+- **Removal.** The borrowed path goes: `ai/oauth.rs`, `ai/openai_responses.rs`, `ai/codex_models.rs`, `commands/oauth.rs`, their `dispatch.rs` entries, the OAuth login panel and the `openai-oauth-changed` handling in the frontend, and `src/components/settings/codexModels.ts` once `model/list` fills the picker. `AI_REAUTH_REQUIRED` goes with it unless a Codex state reuses it.
+
+- i18n for every new label, status line, error and helper string in `en.json` and `zh.json`.
 
 Out of scope:
 
-- Signing in to the CLI from inside Quill. Codex's app server does offer a login flow, but v1 tells the user to sign in from the terminal. People who want to log in inside the app can still use the ChatGPT login option.
-- Letting the agent use tools, including Quill's own MCP server. Giving chat read access to the library and highlights through MCP is a natural follow-up. It would change what a chat turn can do, so it needs its own spec.
-- Other agents (Gemini CLI, OpenCode, pi). The connection layer should not hard-code two cases into every call site, but only Codex and Claude Code ship here.
-- Removing or deprecating the ChatGPT login.
+- Claude Code, Antigravity, Gemini CLI and other agents. The connection layer stays one code path, not a plugin system.
+- Bundling or downloading Codex. The macOS arm64 package is about 380 MB unpacked, larger than Quill; the helper links to the install instead.
+- Connecting to a running Codex daemon or remote app server.
+- Agent tools, including Quill's own MCP server. Letting chat read the library and highlights is a follow-up that needs its own spec.
+- Device-code sign-in. The app server offers it (`chatgptDeviceCode`), and it can follow if the browser flow fails for someone.
+
+## Design
+
+The UI is drawn in Pencil at `quill/desktop/specs/326-agent-connections.pen` in `YeelinksCo/yeelinks_design` and needs sign-off before implementation. It covers:
+
+- Settings → AI with OpenAI selected: the Codex / API key choice, the Codex status row in each state, the model card and the effort tiers.
+- The first-launch helper in three placements for comparison: a modal over Home, a card on the Home page, and a step inside the empty-library view, each shown in its ready, not-signed-in and not-installed states.
+- The migration note for former ChatGPT-login users.
 
 ## Implementation Phases
 
-1. **Consolidate provider dispatch.** Five commands repeat the same settings read and provider `match`: `ai_lookup`, `ai_explain`, `ai_generate_title`, `ai_chat` (`src-tauri/src/commands/ai.rs`) and `ai_translate_passage` (`src-tauri/src/commands/translation.rs`). Move that into one shared load-and-dispatch path before adding two more connection types, so each new path is wired once instead of five times. Behavior doesn't change, and the existing tests stay green.
+1. **Consolidate provider dispatch.** `ai_lookup`, `ai_explain`, `ai_generate_title`, `ai_chat` (`commands/ai.rs`) and `ai_translate_passage` (`commands/translation.rs`) each repeat the settings read, `resolve_ai_auth` and a provider `match`. Move them onto one load-and-dispatch path first so Codex is wired once. No behavior change; existing tests stay green.
 
-2. **CLI discovery.** Find `codex` and `claude` by checking the path override, then the login shell, then the usual install locations, and read each one's version. Unit tests for the lookup order and for version parsing.
+2. **Codex discovery.** Path override, login shell, install locations, version parsing and the minimum-version check. Unit tests for lookup order and version parsing.
 
-3. **Codex app-server client.** Process lifecycle (start on first use, `initialize` handshake, restart after an exit), routing of JSON-RPC requests and notifications, turn streaming into the event channels, `model/list` and `account/read`. Unit tests against recorded protocol transcripts cover delta mapping, turn completion, error mapping and restart.
+3. **App-server client.** Process lifecycle (start on first use, `initialize`/`initialized`, restart after exit, stop on quit), JSON-RPC request/notification routing, `account/read`, `model/list`, `config/read`, `account/login/start`/`cancel`/`completed`, `thread/start` with the isolation settings, `turn/start` with explicit model and effort, deltas into the event channel, turn completion and error mapping, and `turn/interrupt` when a stream is cancelled. Unit tests against recorded protocol transcripts cover each mapping, the isolation parameters on every `thread/start`, and restart.
 
-4. **Claude Code runner.** One process per call with the isolation flags, stream-json parsing into deltas, and session-ID and resume handling. Unit tests check that the isolation flags are always present in the arguments and that stream parsing is correct.
+4. **Chat continuity.** The in-memory chat → thread map and its reseed rules, one test per trigger.
 
-5. **Chat session mapping.** Store each chat's link to its agent session locally, together with the point in the history that session has seen, and apply the reseed rules. One test per reseed trigger.
+5. **Remove the ChatGPT login and migrate.** Delete the files listed under Removal, migrate `oauth` to `codex`, and delete the stale tokens from `secrets.db`. Tests for the migration, including a second launch being a no-op.
 
-6. **Settings UI.** Design the reordered authentication row and the agent status states in Pencil first: found and signed in, not installed, not signed in, and too old. Then build them in `AiSettings.tsx` following the section's row pattern. Codex reuses the model card from #294, filled from `model/list`. Claude Code uses a free-text model field.
+6. **Settings UI and setup helper.** Build the signed-off design: the Codex option and status row in `AiSettings.tsx` following the section's row pattern, the model card on `model/list`, the setup helper, the migration note, and the #348 setup card for the new sentinels.
 
-7. **i18n + QA.** Strings in both languages, light and dark themes, and the full matrix below.
+7. **i18n and QA.**
+
+The PR changes secrets storage, so it gets `core-review`; it removes a sign-in path and migrates saved settings, so it is `risk-high`.
 
 ## Verification
 
-- OpenAI shows Codex, ChatGPT login and API key in that order. Anthropic shows Claude Code, then API key. Choosing either provider fresh preselects the agent option.
-- An existing install saved on ChatGPT login still opens on ChatGPT login after the update. Lookup, explain, chat, translate, titles, the model picker and the effort tiers all keep working.
-- With Codex selected, all five call types stream through the app server. Only one app-server process exists across many calls. If that process is killed mid-session, the next call recovers.
-- With Claude Code selected, all five call types stream through `claude -p`.
-- Isolation: set up a deliberately loud `CLAUDE.md` / `AGENTS.md`, a hook and an MCP server in the user's own agent configuration. Quill's responses show no trace of any of them, and no tool calls are made.
-- Chat: a second turn in the same chat reuses the session and sends only the new message. Switching provider mid-chat, deleting a message, or deleting the agent's session on disk each starts a fresh session from the full transcript, with no error.
-- One-shot calls don't appear in the `codex` or `claude` session history.
-- When Quill is launched from Finder rather than a terminal, it finds a `codex` installed through nvm and a `claude` in `~/.local/bin`. A path override is used when set.
-- A missing CLI, a signed-out CLI and a CLI that is too old each show their own message in settings and in the chat bubble.
-- Ollama and both API-key paths are untouched.
-- All new strings are localized in English and Chinese.
+Automated:
+
+- Discovery order, version parsing and the minimum-version gate.
+- Recorded transcripts: delta streaming, completion, each error state, restart after the process is killed, and interrupt.
+- Every `thread/start` carries the empty Quill cwd, read-only sandbox, `never` approval, base instructions and the MCP/apps/plugins overrides; every `turn/start` carries an explicit model and effort.
+- Migration from `oauth`: mode, model and tiers carried over, OAuth tokens gone, second run unchanged.
+- Chat reseed: one test per trigger.
+
+Live checks (development app, sync off, an inexpensive model with tiny prompts):
+
+- With Codex installed and signed in, a fresh profile shows the setup helper in the ready state; **Use Codex** makes Look Up work with no sign-in.
+- Settings shows the account, plan and Codex version; the model card lists the live catalog; changing the quick tier changes lookups only.
+- Look Up, Explain, Translate, Ask Quill and chat titles all stream through Codex, and only one app-server process exists across them. Killing it mid-session, the next call recovers.
+- A second chat turn continues the same thread; editing an earlier message starts a fresh thread from the transcript with no error.
+- With a loud `~/.codex/AGENTS.md` and MCP servers configured, responses show no trace of them and no tool calls happen; none of Quill's calls appear in the Codex history.
+- With Codex signed out (on a test machine or a `CODEX_HOME` test profile, never Jason's own login), **Sign in with ChatGPT** completes in the browser and the helper moves to ready; Cancel returns to not signed in.
+- With `codex` hidden from discovery, the helper and settings show not installed; **Check again** finds it once restored. A path override is honored.
+- Launched from Finder, Quill finds a `codex` installed through Homebrew or npm.
+- A profile saved on the ChatGPT login opens on Codex after the update, shows the migration note once, and keeps its model and effort tiers.
+- Skip for now: the helper does not return; Look Up shows the setup card linking to Settings.
+- API-key OpenAI, Anthropic and Ollama still work.
+- Light and dark themes; English and Chinese strings.
