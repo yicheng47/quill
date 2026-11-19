@@ -108,7 +108,7 @@ export default function BookList({
 
   return (
     <>
-      <div className="dawn-glass rounded-[24px] px-5 py-3.5 flex flex-col gap-1">
+      <div className="dawn-glass rounded-surface px-5 py-3.5 flex flex-col gap-1">
         {books.map((book) => {
           const isICloud = book.available === false;
           const isFinished = book.status === "finished" && !isICloud;
@@ -135,7 +135,7 @@ export default function BookList({
                   }
                 }}
               onContextMenu={(e) => handleContextMenu(e, book)}
-              className={`w-full min-h-[122px] px-3.5 py-3 rounded-[14px] border border-border-subtle flex items-center gap-[18px] text-left cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-focus-ring ${
+              className={`w-full min-h-[122px] px-3.5 py-3 rounded-[6px] border border-border-subtle flex items-center gap-[18px] text-left cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-focus-ring ${
                 isICloud ? "bg-surface-inset hover:bg-surface-solid" : "hover:bg-surface-chip"
               }`}
             >

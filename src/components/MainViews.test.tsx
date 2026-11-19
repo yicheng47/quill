@@ -261,6 +261,71 @@ describe("Main Views (Home, Highlights, Words, Chats)", () => {
         collectionId: "col1",
         statusFilter: "all",
       });
+
+      // Last conversation bento card keeps last_message selectable without navigating on pointer-drag release
+      const lastChatCard = Array.from(container.querySelectorAll<HTMLElement>('section[role="button"]')).find(
+        (s) => s.textContent?.includes("Meaning of nonresistance"),
+      )!;
+      const lastChatTitle = lastChatCard.querySelector("h2")!;
+      const lastChatExcerpt = Array.from(lastChatCard.querySelectorAll("p")).find((p) =>
+        p.textContent?.includes("Inner peace arises from presence."),
+      )!;
+      expect(lastChatTitle.className).not.toContain("select-text");
+      expect(lastChatExcerpt.className).toContain("select-text");
+
+      const sel = window.getSelection();
+      sel?.removeAllRanges();
+      const excerptText = lastChatExcerpt.firstChild!;
+
+      // First drag-selection on excerpt suppresses click release
+      const range1 = document.createRange();
+      range1.setStart(excerptText, 0);
+      range1.setEnd(excerptText, 11);
+      onNavigate.mockClear();
+      await act(async () => {
+        lastChatExcerpt.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, detail: 1 }));
+        sel?.removeAllRanges();
+        sel?.addRange(range1);
+        document.dispatchEvent(new Event("selectionchange"));
+        lastChatExcerpt.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, detail: 1 }));
+      });
+      expect(onNavigate).not.toHaveBeenCalled();
+
+      // Second drag-selection replacing range1 also suppresses click release
+      const range2 = document.createRange();
+      range2.setStart(excerptText, 12);
+      range2.setEnd(excerptText, 24);
+      await act(async () => {
+        lastChatExcerpt.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, detail: 1 }));
+        sel?.removeAllRanges();
+        sel?.addRange(range2);
+        document.dispatchEvent(new Event("selectionchange"));
+        lastChatExcerpt.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, detail: 1 }));
+      });
+      expect(onNavigate).not.toHaveBeenCalled();
+
+      // First ordinary pointer click on unselectable card title activates even while range2 remains selected
+      await act(async () => {
+        lastChatTitle.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, detail: 1 }));
+        lastChatTitle.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, detail: 1 }));
+      });
+      expect(onNavigate).toHaveBeenCalledTimes(1);
+      expect(onNavigate).toHaveBeenLastCalledWith("chats", { chatId: "ch1" });
+
+      // Keyboard activation and normal clicks with no selection still navigate to Chats
+      await act(async () => {
+        lastChatCard.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+      });
+      expect(onNavigate).toHaveBeenCalledTimes(2);
+      expect(onNavigate).toHaveBeenLastCalledWith("chats", { chatId: "ch1" });
+
+      onNavigate.mockClear();
+      sel?.removeAllRanges();
+      await act(async () => {
+        lastChatCard.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, detail: 1 }));
+        lastChatCard.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, detail: 1 }));
+      });
+      expect(onNavigate).toHaveBeenCalledWith("chats", { chatId: "ch1" });
     });
   });
 
@@ -439,6 +504,36 @@ describe("Main Views (Home, Highlights, Words, Chats)", () => {
       });
       expect(firstCard.textContent).toContain("Updated margin note");
 
+      // Saved note span keeps select-text; pointer selection ignores click while keyboard-style click (detail=0) edits
+      const noteSpan = Array.from(firstCard.querySelectorAll("button span")).find((s) =>
+        s.textContent?.includes("Updated margin note"),
+      )!;
+      const noteBtn = noteSpan.closest("button")!;
+      expect(noteSpan.className).toContain("select-text");
+
+      const range = document.createRange();
+      range.selectNodeContents(noteSpan);
+      const sel = window.getSelection();
+      sel?.removeAllRanges();
+      sel?.addRange(range);
+
+      await act(async () => {
+        noteBtn.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, detail: 1 }));
+      });
+      expect(firstCard.querySelector("textarea")).toBeNull();
+
+      await act(async () => {
+        noteBtn.click();
+      });
+      expect(firstCard.querySelector("textarea")).not.toBeNull();
+      const cancelNoteBtn = Array.from(firstCard.querySelectorAll("button")).find((b) =>
+        b.textContent?.includes("Cancel"),
+      );
+      await act(async () => {
+        cancelNoteBtn?.click();
+      });
+      sel?.removeAllRanges();
+
       // Delete confirmation popover -> Remove
       const delBtn = firstCard.querySelector<HTMLButtonElement>('button[aria-label="Delete highlight"]');
       await act(async () => {
@@ -550,6 +645,33 @@ describe("Main Views (Home, Highlights, Words, Chats)", () => {
       // Speech button hidden when no voices available
       expect(container.querySelector('button[aria-label="Pronounce word"]')).toBeNull();
 
+      // Recent list layout puts select-text only on briefGloss, suppressing pointer click when selected
+      const recentPonderousBtn = Array.from(leftRail.querySelectorAll("button")).find((b) =>
+        b.textContent?.includes("ponderous"),
+      )!;
+      const recentGlossSpan = Array.from(recentPonderousBtn.querySelectorAll("span")).find((s) =>
+        s.textContent?.includes("Slow and heavy."),
+      )!;
+      expect(recentGlossSpan.className).toContain("select-text");
+      const recentWordSpan = Array.from(recentPonderousBtn.querySelectorAll("span")).find(
+        (s) => s.textContent === "ponderous",
+      )!;
+      expect(recentWordSpan.className).not.toContain("select-text");
+
+      const recentRange = document.createRange();
+      recentRange.selectNodeContents(recentGlossSpan);
+      const sel = window.getSelection();
+      sel?.removeAllRanges();
+      sel?.addRange(recentRange);
+
+      await act(async () => {
+        recentPonderousBtn.dispatchEvent(
+          new MouseEvent("click", { bubbles: true, cancelable: true, detail: 1 }),
+        );
+      });
+      expect(container.querySelector("h2")?.textContent).toBe("ephemeral");
+      sel?.removeAllRanges();
+
       // Switch to A-Z sort and select "ponderous" (which has context + cfi)
       const sortBtn = container.querySelector<HTMLButtonElement>('button[aria-label="Sort words"]');
       await act(async () => {
@@ -567,10 +689,28 @@ describe("Main Views (Home, Highlights, Words, Chats)", () => {
 
       const ponderousBtn = Array.from(leftRail.querySelectorAll("button")).find((b) =>
         b.textContent?.includes("ponderous"),
-      );
+      )!;
+      const azDefParagraph = ponderousBtn.querySelector("p")!;
+      expect(azDefParagraph.className).toContain("select-text");
+
+      const azRange = document.createRange();
+      azRange.selectNodeContents(azDefParagraph);
+      sel?.removeAllRanges();
+      sel?.addRange(azRange);
       await act(async () => {
-        ponderousBtn?.click();
+        ponderousBtn.dispatchEvent(
+          new MouseEvent("click", { bubbles: true, cancelable: true, detail: 1 }),
+        );
       });
+      expect(container.querySelector("h2")?.textContent).toBe("ephemeral");
+
+      sel?.removeAllRanges();
+      await act(async () => {
+        ponderousBtn.dispatchEvent(
+          new MouseEvent("click", { bubbles: true, cancelable: true, detail: 1 }),
+        );
+      });
+      expect(container.querySelector("h2")?.textContent).toBe("ponderous");
 
       // Prefix search with 0 hits shows no-match in left rail while keeping detail pane visible
       const searchInput = container.querySelector<HTMLInputElement>('input[placeholder="Filter words…"]')!;

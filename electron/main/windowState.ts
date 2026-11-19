@@ -36,10 +36,19 @@ export interface ResolvedMainWindowState {
   restored: boolean;
 }
 
-export function defaultMainWindowState(): ResolvedMainWindowState {
+function clampDefaultDimension(defaultSize: number, workAreaSize: number | undefined): number {
+  if (typeof workAreaSize !== "number" || !Number.isFinite(workAreaSize) || workAreaSize <= 0) {
+    return defaultSize;
+  }
+  return Math.min(defaultSize, Math.round(workAreaSize));
+}
+
+export function defaultMainWindowState(
+  primaryWorkArea?: Rect | null,
+): ResolvedMainWindowState {
   return {
-    width: DEFAULT_MAIN_WIDTH,
-    height: DEFAULT_MAIN_HEIGHT,
+    width: clampDefaultDimension(DEFAULT_MAIN_WIDTH, primaryWorkArea?.width),
+    height: clampDefaultDimension(DEFAULT_MAIN_HEIGHT, primaryWorkArea?.height),
     isMaximized: false,
     isFullScreen: false,
     restored: false,
@@ -96,9 +105,10 @@ export function resolveMainWindowState(
   saved: SavedWindowState | null | undefined,
   workAreas: ReadonlyArray<Rect>,
   minSize: { width: number; height: number } = { width: MAIN_MIN_WIDTH, height: MAIN_MIN_HEIGHT },
+  primaryWorkArea: Rect | null = workAreas[0] ?? null,
 ): ResolvedMainWindowState {
   if (!saved) {
-    return defaultMainWindowState();
+    return defaultMainWindowState(primaryWorkArea);
   }
   const width = Math.max(minSize.width, Math.round(saved.width));
   const height = Math.max(minSize.height, Math.round(saved.height));
@@ -109,7 +119,7 @@ export function resolveMainWindowState(
     titlebarVisibleInWorkArea({ x, y, width, height }, area),
   );
   if (!visible) {
-    return defaultMainWindowState();
+    return defaultMainWindowState(primaryWorkArea);
   }
 
   return {

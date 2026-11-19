@@ -65,7 +65,7 @@ export default function EditMetadataModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby="edit-book-info-title"
-        className="w-full max-w-[380px] p-[22px] rounded-[24px] bg-surface-solid border border-border-subtle shadow-menu flex flex-col gap-4"
+        className="w-full max-w-[380px] p-[22px] rounded-surface bg-surface-solid border border-border-subtle shadow-menu flex flex-col gap-4"
       >
         <h3
           id="edit-book-info-title"
@@ -83,7 +83,7 @@ export default function EditMetadataModal({
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               autoFocus
-              className="w-full h-9 px-3 rounded-[10px] bg-surface-inset border border-border-default focus:bg-surface-solid focus:border-accent text-[13.5px] text-text-primary outline-none transition-colors"
+              className="w-full h-9 px-3 rounded-[6px] bg-surface-inset border border-border-default focus:bg-surface-solid focus:border-accent text-[13.5px] text-text-primary outline-none transition-colors"
             />
           </div>
           <div className="flex flex-col gap-1.5">
@@ -93,7 +93,7 @@ export default function EditMetadataModal({
             <input
               value={author}
               onChange={(e) => setAuthor(e.target.value)}
-              className="w-full h-9 px-3 rounded-[10px] bg-surface-inset border border-border-default focus:bg-surface-solid focus:border-accent text-[13.5px] text-text-primary outline-none transition-colors"
+              className="w-full h-9 px-3 rounded-[6px] bg-surface-inset border border-border-default focus:bg-surface-solid focus:border-accent text-[13.5px] text-text-primary outline-none transition-colors"
             />
           </div>
         </div>

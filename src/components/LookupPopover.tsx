@@ -319,7 +319,7 @@ export default function LookupPopover({
           ) : definitionError ? (
             <div
               role="alert"
-              className="flex items-start gap-2 rounded-[10px] bg-danger-tint/70 border border-danger/20 px-3 py-2.5 text-[13px] text-danger"
+              className="flex items-start gap-2 rounded-[6px] bg-danger-tint/70 border border-danger/20 px-3 py-2.5 text-[13px] text-danger"
             >
               <AlertCircle size={15} className="shrink-0 mt-0.5" />
               <span>{definitionError}</span>
@@ -345,7 +345,7 @@ export default function LookupPopover({
           ))}
 
         {!hasConfigurationError && !definitionError && (context.content || context.streaming) && (
-          <div className="mt-0.5 p-3 rounded-[10px] bg-surface-tint flex flex-col gap-1">
+          <div className="mt-0.5 p-3 rounded-[6px] bg-surface-tint flex flex-col gap-1">
             <span className="text-[10.5px] font-semibold tracking-[0.8px] uppercase text-accent-on-tint">
               {t("lookup.inContext")}
             </span>

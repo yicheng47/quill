@@ -81,7 +81,7 @@ export default function ReaderContextMenu({
     <div
       ref={menuRef}
       role="menu"
-      className="fixed z-50 w-[252px] reader-popover rounded-[14px] p-1.5 flex flex-col gap-0.5"
+      className="fixed z-50 w-[252px] reader-popover rounded-surface p-1.5 flex flex-col gap-0.5"
       style={{ left: x, top: y }}
     >
       {showLookup && (

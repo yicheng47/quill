@@ -85,7 +85,7 @@ export default function ReaderPopover({
         ref={popoverRef}
         role="dialog"
         aria-label={title}
-        className={`fixed z-50 ${widthClass} max-w-[calc(100vw-32px)] reader-popover rounded-[24px] overflow-hidden`}
+        className={`fixed z-50 ${widthClass} max-w-[calc(100vw-32px)] reader-popover rounded-surface overflow-hidden`}
         style={{ left: pos.left, top: pos.top }}
       >
         <div className="flex items-center justify-between gap-2 px-4 py-3 bg-surface-tint border-b border-border-subtle">

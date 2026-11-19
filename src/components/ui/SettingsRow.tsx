@@ -23,7 +23,7 @@ interface SettingsGroupProps {
 export function SettingsGroup({ children, className = "" }: SettingsGroupProps) {
   return (
     <div
-      className={`dawn-inset rounded-[14px] divide-y divide-border-subtle overflow-hidden ${className}`}
+      className={`dawn-inset rounded-[6px] divide-y divide-border-subtle overflow-hidden ${className}`}
     >
       {children}
     </div>

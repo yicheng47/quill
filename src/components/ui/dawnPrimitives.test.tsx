@@ -2,6 +2,8 @@
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
+import fs from "node:fs";
+import path from "node:path";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -15,6 +17,11 @@ import { StatusBadge } from "./Badge";
 import BookCover from "./BookCover";
 import SearchField from "./SearchField";
 import Stepper from "./Stepper";
+import Tile from "./Tile";
+import { Menu } from "./Menu";
+import Toast from "./Toast";
+import TextField from "./TextField";
+import { SettingsGroup } from "./SettingsRow";
 
 vi.mock("../../platform", () => ({
   convertFileSrc: (p: string) => `quill-file://local/${p}`,
@@ -163,5 +170,45 @@ describe("Dawn UI primitives scoping and accessibility", () => {
     expect(container.querySelector('button[aria-label="清除"]')).not.toBeNull();
     expect(container.querySelector('button[aria-label="减少"]')).not.toBeNull();
     expect(container.querySelector('button[aria-label="增加"]')).not.toBeNull();
+  });
+
+  it("defines --radius-surface: 8px separately from --radius-xl: 14px and applies 8px/6px radii to surfaces and nested controls", async () => {
+    const css = fs.readFileSync(path.resolve(process.cwd(), "src/index.css"), "utf8");
+    expect(css).toContain("--radius-surface: 8px;");
+    expect(css).toContain("--radius-xl: 14px;");
+    expect(css).toMatch(/\.dawn \.markdown-body pre\s*\{[^}]*border-radius:\s*6px;/);
+
+    await act(async () => {
+      root.render(
+        <div>
+          <Tile title="Saved words">Content</Tile>
+          <Menu>Menu item</Menu>
+          <Toast>Notice</Toast>
+          <TextField placeholder="Name" />
+          <SettingsGroup>Row</SettingsGroup>
+        </div>,
+      );
+    });
+    const wrapper = container.firstElementChild as HTMLElement;
+    const [tile, menu, toast, textField, settingsGroup] = Array.from(wrapper.children) as HTMLElement[];
+    expect(tile.className).toContain("rounded-surface");
+    expect(menu.className).toContain("rounded-surface");
+    expect(toast.firstElementChild?.className).toContain("rounded-surface");
+    expect(textField.className).toContain("rounded-[6px]");
+    expect(settingsGroup.className).toContain("rounded-[6px]");
+  });
+
+  it("disables text selection on interactive chrome in @layer base while keeping inputs and editable regions selectable", () => {
+    const css = fs.readFileSync(path.resolve(process.cwd(), "src/index.css"), "utf8");
+    const baseMatch = css.match(/@layer base\s*\{([\s\S]*?)\n\}/);
+    expect(baseMatch).not.toBeNull();
+    const baseBlock = baseMatch![1];
+
+    expect(baseBlock).toMatch(
+      /button[\s\S]*\[role="button"\][\s\S]*\[role="tab"\][\s\S]*\[role="menuitem"\][\s\S]*\[role="option"\][\s\S]*\.dawn-inset[\s\S]*\{[\s\S]*-webkit-user-select:\s*none;\s*user-select:\s*none;/,
+    );
+    expect(baseBlock).toMatch(
+      /input,\s*textarea,\s*\[contenteditable\]:not\(\[contenteditable="false"\]\)\s*\{[\s\S]*-webkit-user-select:\s*text;\s*user-select:\s*text;/,
+    );
   });
 });

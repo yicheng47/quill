@@ -187,7 +187,7 @@ export default function BookContextMenu({
       <div
         ref={menuRef}
         role="menu"
-        className="fixed z-50 w-[236px] p-1.5 rounded-[14px] bg-surface-popover border border-surface-glass-border backdrop-blur-[34px] shadow-[var(--shadow-menu)] flex flex-col gap-0.5"
+        className="fixed z-50 w-[236px] p-1.5 rounded-surface bg-surface-popover border border-surface-glass-border backdrop-blur-[34px] shadow-[var(--shadow-menu)] flex flex-col gap-0.5"
         style={{ left: menuPos.left, top: menuPos.top }}
       >
         <button
@@ -340,7 +340,7 @@ export default function BookContextMenu({
       {showCollections && (
         <div
           ref={submenuRef}
-          className="fixed z-[51] w-[254px] p-1.5 rounded-[14px] bg-surface-popover border border-surface-glass-border backdrop-blur-[34px] shadow-[var(--shadow-menu)] flex flex-col gap-0.5"
+          className="fixed z-[51] w-[254px] p-1.5 rounded-surface bg-surface-popover border border-surface-glass-border backdrop-blur-[34px] shadow-[var(--shadow-menu)] flex flex-col gap-0.5"
           style={submenuStyle}
           onMouseEnter={() => {
             if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
@@ -411,7 +411,7 @@ export default function BookContextMenu({
                   }
                 }}
                 placeholder={t("bookMenu.collectionPlaceholder")}
-                className="flex-1 min-w-0 h-[30px] px-[9px] rounded-[8px] bg-surface-solid border border-border-default focus:border-accent text-[12.5px] font-medium text-text-primary placeholder:text-text-tertiary outline-none"
+                className="flex-1 min-w-0 h-[30px] px-[9px] rounded-[6px] bg-surface-solid border border-border-default focus:border-accent text-[12.5px] font-medium text-text-primary placeholder:text-text-tertiary outline-none"
               />
               <button
                 type="submit"

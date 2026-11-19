@@ -5,7 +5,6 @@ import {
   BookOpen,
   Check,
   Cloud,
-  FolderClosed,
   Languages,
   MessageSquare,
   Plus,
@@ -23,6 +22,7 @@ import type { SettingsSection } from "./settings/types";
 import { invoke } from "../platform";
 import { openReaderWindow } from "../utils/openReaderWindow";
 import { getHighlightColorMeta } from "../utils/highlightColors";
+import { shouldSuppressSelectionClick } from "../utils/selection";
 import { isMacOS, shortcutModSymbol } from "../lib/platformEnv";
 import QuillLogo from "./QuillLogo";
 import BookCover from "./ui/BookCover";
@@ -174,7 +174,7 @@ export default function HomeView({
         className="flex-1 min-h-0 overflow-y-auto px-7 pt-2 pb-7"
       >
         <div className="max-w-[1440px] mx-auto flex flex-col gap-4">
-          <section className="dawn-glass rounded-[24px] p-9 flex flex-col items-center text-center gap-[18px]">
+          <section className="dawn-glass rounded-surface p-9 flex flex-col items-center text-center gap-[18px]">
             <QuillLogo size={68} />
             <div className="max-w-[520px] flex flex-col items-center gap-2.5">
               <h1 className="text-[30px] font-semibold tracking-[-0.8px] leading-[1.2] text-text-primary">
@@ -214,7 +214,7 @@ export default function HomeView({
 
           <section className="grid grid-cols-1 lg:grid-cols-3 gap-4">
             {/* Highlights specimen (I4cPVe) */}
-            <div className="dawn-glass rounded-[24px] p-[22px] flex flex-col gap-3.5">
+            <div className="dawn-glass rounded-surface p-[22px] flex flex-col gap-3.5">
               <div className="flex items-center justify-between gap-2">
                 <span className="text-[11.5px] font-semibold uppercase tracking-[1px] text-text-tertiary">
                   {t("home.empty.specimenHighlightsEyebrow")}
@@ -226,8 +226,8 @@ export default function HomeView({
                   <span className="size-[9px] rounded-full bg-hl-pink border border-border-default" />
                 </span>
               </div>
-              <div className="bg-surface-inset border border-border-subtle rounded-[16px] p-3.5 flex-1 flex items-center justify-center min-h-[210px]">
-                <div className="bg-paper border border-border-subtle rounded-[12px] px-[15px] py-[13px] w-full flex flex-col gap-2.5">
+              <div className="bg-surface-inset border border-border-subtle rounded-[6px] p-3.5 flex-1 flex items-center justify-center min-h-[210px]">
+                <div className="bg-paper border border-border-subtle rounded-[6px] px-[15px] py-[13px] w-full flex flex-col gap-2.5">
                   <div className="border-l-2 border-hl-yellow pl-3 py-0.5">
                     <div className="bg-hl-yellow/60 rounded-[6px] px-2 py-[5px]">
                       <p className="font-reading text-[13px] leading-[1.45] text-text-primary">
@@ -259,7 +259,7 @@ export default function HomeView({
             </div>
 
             {/* Lexicon specimen (Gh64n) */}
-            <div className="dawn-glass rounded-[24px] p-[22px] flex flex-col gap-3.5">
+            <div className="dawn-glass rounded-surface p-[22px] flex flex-col gap-3.5">
               <div className="flex items-center justify-between gap-2">
                 <span className="text-[11.5px] font-semibold uppercase tracking-[1px] text-text-tertiary">
                   {t("home.empty.specimenWordsEyebrow")}
@@ -271,8 +271,8 @@ export default function HomeView({
                   </span>
                 </span>
               </div>
-              <div className="bg-surface-inset border border-border-subtle rounded-[16px] p-3.5 flex-1 flex items-center justify-center min-h-[210px]">
-                <div className="bg-surface-solid border border-border-subtle rounded-[12px] px-[15px] py-[13px] w-full flex flex-col gap-2">
+              <div className="bg-surface-inset border border-border-subtle rounded-[6px] p-3.5 flex-1 flex items-center justify-center min-h-[210px]">
+                <div className="bg-surface-solid border border-border-subtle rounded-[6px] px-[15px] py-[13px] w-full flex flex-col gap-2">
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-[7px] min-w-0 flex-wrap">
                       <span className="font-reading text-[17.5px] font-bold text-text-primary">
@@ -312,7 +312,7 @@ export default function HomeView({
             </div>
 
             {/* Chats specimen (f6Yyeq) */}
-            <div className="dawn-glass rounded-[24px] p-[22px] flex flex-col gap-3.5">
+            <div className="dawn-glass rounded-surface p-[22px] flex flex-col gap-3.5">
               <div className="flex items-center justify-between gap-2">
                 <span className="text-[11.5px] font-semibold uppercase tracking-[1px] text-text-tertiary">
                   {t("home.empty.specimenChatsEyebrow")}
@@ -324,7 +324,7 @@ export default function HomeView({
                   </span>
                 </span>
               </div>
-              <div className="bg-surface-inset border border-border-subtle rounded-[16px] px-3.5 py-3 flex-1 flex flex-col justify-center gap-2 min-h-[210px]">
+              <div className="bg-surface-inset border border-border-subtle rounded-[6px] px-3.5 py-3 flex-1 flex flex-col justify-center gap-2 min-h-[210px]">
                 <div className="border-l-2 border-accent pl-[9px] py-px">
                   <p className="font-reading text-[11.5px] text-text-tertiary truncate">
                     {t("home.empty.specimenChatQuote")}
@@ -389,7 +389,7 @@ export default function HomeView({
         {/* Row 1: Now reading + Side column */}
         <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_380px] xl:grid-cols-[minmax(0,1fr)_420px] gap-4">
           {nowReadingBook && (
-            <section className="dawn-glass rounded-[24px] p-7 lg:p-9 flex flex-col sm:flex-row gap-8 lg:gap-10 min-h-[420px] lg:min-h-[520px]">
+            <section className="dawn-glass rounded-surface p-7 lg:p-8 flex flex-col sm:flex-row gap-8 lg:gap-10 min-h-[420px] lg:min-h-[484px]">
               <button
                 type="button"
                 onClick={() => void openReaderWindow(nowReadingBook.id)}
@@ -445,7 +445,7 @@ export default function HomeView({
                   </div>
 
                   {heroHighlight?.text_content && nowHighlightMeta && (
-                    <div className="rounded-[14px] bg-surface-inset px-4 py-3.5 flex flex-col gap-1.5">
+                    <div className="rounded-[6px] bg-surface-inset px-4 py-3.5 flex flex-col gap-1.5">
                       <span className="text-[12px] text-text-tertiary">
                         {t("home.lastHighlight")}
                       </span>
@@ -490,7 +490,7 @@ export default function HomeView({
 
           <div className="flex flex-col gap-4">
             {/* Saved words card */}
-            <section className="dawn-glass rounded-[24px] p-6 flex-1 flex flex-col gap-3.5">
+            <section className="dawn-glass rounded-surface p-6 flex-1 flex flex-col gap-3.5">
               <div className="flex items-center justify-between gap-2">
                 <span className="text-[13px] font-medium text-text-secondary">
                   {t("home.savedWords")}
@@ -519,7 +519,8 @@ export default function HomeView({
                         key={word.id}
                         type="button"
                         onClick={() => onNavigate("words", { wordId: word.id })}
-                        className="px-[11px] py-[5px] rounded-full bg-surface-chip border border-border-subtle hover:bg-surface-solid text-[13px] text-text-primary cursor-pointer transition-colors"
+                        title={word.word}
+                        className="max-w-[calc(50%-3px)] truncate px-[11px] py-[5px] rounded-full bg-surface-chip border border-border-subtle hover:bg-surface-solid text-[13px] text-text-primary cursor-pointer transition-colors"
                       >
                         {word.word}
                       </button>
@@ -537,8 +538,9 @@ export default function HomeView({
             <section
               role={lastChat ? "button" : undefined}
               tabIndex={lastChat ? 0 : undefined}
-              onClick={() => {
-                if (lastChat) onNavigate("chats", { chatId: lastChat.id });
+              onClick={(e) => {
+                if (!lastChat || shouldSuppressSelectionClick(e)) return;
+                onNavigate("chats", { chatId: lastChat.id });
               }}
               onKeyDown={(e) => {
                 if (!lastChat) return;
@@ -547,7 +549,7 @@ export default function HomeView({
                   onNavigate("chats", { chatId: lastChat.id });
                 }
               }}
-              className={`dawn-glass rounded-[24px] p-6 flex-1 flex flex-col gap-3.5 ${
+              className={`dawn-glass rounded-surface p-6 flex-1 flex flex-col gap-3.5 ${
                 lastChat
                   ? "cursor-pointer hover:bg-surface-solid transition-colors focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-focus-ring"
                   : ""
@@ -580,7 +582,7 @@ export default function HomeView({
                     {lastChat.title}
                   </h2>
                   {lastChat.last_message && (
-                    <p className="text-[13.5px] leading-[1.5] text-text-tertiary line-clamp-3">
+                    <p className="text-[13.5px] leading-[1.5] text-text-tertiary line-clamp-3 select-text">
                       {lastChat.last_message}
                     </p>
                   )}
@@ -596,9 +598,9 @@ export default function HomeView({
 
         {/* Row 2: Library 5-up shelf + Also reading / Collections */}
         <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_380px] xl:grid-cols-[minmax(0,1fr)_420px] gap-4">
-          <section className="dawn-glass rounded-[24px] p-6 flex flex-col gap-3.5">
+          <section className="dawn-glass rounded-surface p-6 lg:px-6 lg:py-5 flex flex-col gap-3.5">
             <div className="flex items-center justify-between gap-2">
-              <span className="text-[13px] font-medium text-text-secondary">
+              <span className="text-[13px] leading-tight font-medium text-text-secondary">
                 {t("home.libraryCount", { count: totalBooksCount })}
               </span>
               <button
@@ -633,10 +635,10 @@ export default function HomeView({
             </div>
           </section>
 
-          <section className="dawn-glass rounded-[24px] p-6 flex flex-col justify-between gap-4">
-            <div className="flex flex-col gap-3.5">
+          <section className="dawn-glass rounded-surface p-6 lg:px-6 lg:py-5 flex flex-col justify-between gap-3">
+            <div className="flex flex-col gap-3">
               <div className="flex items-center justify-between gap-2">
-                <span className="text-[13px] font-medium text-text-secondary">
+                <span className="text-[13px] leading-tight font-medium text-text-secondary">
                   {t("home.alsoReading")}
                 </span>
                 <button
@@ -660,7 +662,7 @@ export default function HomeView({
                         key={book.id}
                         type="button"
                         onClick={() => void openReaderWindow(book.id)}
-                        className="w-full flex items-center gap-3.5 text-left rounded-[12px] p-1 -m-1 hover:bg-surface-hover cursor-pointer transition-colors"
+                        className="w-full flex items-center gap-3.5 text-left rounded-[6px] p-1 -m-1 hover:bg-surface-hover cursor-pointer transition-colors"
                       >
                         <BookCover
                           title={book.title}
@@ -700,16 +702,17 @@ export default function HomeView({
             </div>
 
             {collections.length > 0 && (
-              <div className="flex flex-col gap-2.5 pt-2">
-                <span className="text-[13px] font-medium text-text-secondary">
+              <div className="flex flex-col gap-2">
+                <span className="text-[13px] leading-tight font-medium text-text-secondary">
                   {t("collections.sectionTitle")}
                 </span>
                 <div className="flex flex-wrap gap-1.5">
                   {collections.slice(0, 4).map((col) => (
                     <Chip
                       key={col.id}
-                      icon={<FolderClosed size={13} />}
                       count={col.book_count}
+                      title={col.name}
+                      className="max-w-[calc(50%-3px)]"
                       onClick={() =>
                         onNavigate("library", {
                           collectionId: col.id,

@@ -52,7 +52,7 @@ export default function DeleteBookModal({ book, onClose, onConfirm }: DeleteBook
         role="dialog"
         aria-modal="true"
         aria-labelledby="delete-book-title"
-        className="w-full max-w-[400px] p-5 rounded-[24px] bg-surface-solid border border-border-subtle shadow-menu flex flex-col gap-3"
+        className="w-full max-w-[400px] p-5 rounded-surface bg-surface-solid border border-border-subtle shadow-menu flex flex-col gap-3"
       >
         <h3
           id="delete-book-title"

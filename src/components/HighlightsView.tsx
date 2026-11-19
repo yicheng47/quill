@@ -23,6 +23,7 @@ import {
 } from "../utils/highlightColors";
 import { sortHighlights, type HighlightSortMode } from "../utils/highlightSort";
 import { openReaderWindow } from "../utils/openReaderWindow";
+import { shouldSuppressSelectionClick } from "../utils/selection";
 import { formatShortDate } from "../utils/vocabParse";
 import BookCover from "./ui/BookCover";
 import { Menu, MenuItem } from "./ui/Menu";
@@ -408,7 +409,7 @@ export default function HighlightsView({
 
       {/* Body */}
       {isGloballyEmpty ? (
-        <div className="flex-1 min-h-0 dawn-glass rounded-[16px] flex items-center justify-center p-8">
+        <div className="flex-1 min-h-0 dawn-glass rounded-surface flex items-center justify-center p-8">
           <div className="max-w-[420px] flex flex-col items-center text-center">
             <div className="size-12 rounded-[14px] bg-accent-tint text-accent flex items-center justify-center mb-4">
               <Highlighter size={22} />
@@ -440,13 +441,13 @@ export default function HighlightsView({
           {/* Left Book Rail */}
           <aside
             aria-label={t("highlights.booksRail")}
-            className="w-[290px] lg:w-[320px] shrink-0 dawn-glass rounded-[16px] p-2.5 overflow-y-auto flex flex-col gap-0.5"
+            className="w-[290px] lg:w-[320px] shrink-0 dawn-glass rounded-surface p-2.5 overflow-y-auto flex flex-col gap-0.5"
           >
             <button
               type="button"
               onClick={() => setSelectedBookId(null)}
               aria-current={selectedBookId === null ? "true" : undefined}
-              className={`w-full px-3 py-2.5 rounded-[10px] flex items-center gap-2.5 text-left cursor-pointer transition-colors ${
+              className={`w-full px-3 py-2.5 rounded-[6px] flex items-center gap-2.5 text-left cursor-pointer transition-colors ${
                 selectedBookId === null
                   ? "bg-accent-tint text-accent-on-tint font-semibold"
                   : "text-text-primary hover:bg-surface-hover font-medium"
@@ -481,7 +482,7 @@ export default function HighlightsView({
                   type="button"
                   onClick={() => setSelectedBookId(b.book_id)}
                   aria-current={active ? "true" : undefined}
-                  className={`w-full px-2.5 py-2 rounded-[10px] flex items-center gap-2.5 text-left cursor-pointer transition-colors ${
+                  className={`w-full px-2.5 py-2 rounded-[6px] flex items-center gap-2.5 text-left cursor-pointer transition-colors ${
                     active
                       ? "bg-accent-tint text-accent-on-tint font-semibold"
                       : "text-text-primary hover:bg-surface-hover"
@@ -510,7 +511,7 @@ export default function HighlightsView({
           </aside>
 
           {/* Right Highlight Stream */}
-          <section className="flex-1 min-w-0 dawn-glass rounded-[16px] overflow-y-auto p-6 flex flex-col">
+          <section className="flex-1 min-w-0 dawn-glass rounded-surface overflow-y-auto p-6 flex flex-col">
             {selectedBookId && selectedBookSummary && (
               <div className="flex flex-wrap items-center justify-between gap-4 pb-5 mb-5 border-b border-border-subtle shrink-0">
                 <div className="flex items-center gap-3.5 min-w-0">
@@ -598,7 +599,7 @@ export default function HighlightsView({
                     <article
                       key={h.id}
                       data-highlight-id={h.id}
-                      className={`group relative rounded-[12px] border p-4 transition-all ${
+                      className={`group relative rounded-[6px] border p-4 transition-all ${
                         isEditing || isActiveTarget
                           ? "border-accent/55 bg-surface-solid ring-2 ring-focus-ring"
                           : "border-border-subtle bg-surface-inset hover:border-accent/40 hover:bg-surface-solid"
@@ -741,7 +742,7 @@ export default function HighlightsView({
 
                       {/* Inline Note Editor or Saved Note */}
                       {isEditing ? (
-                        <div className="mt-3 rounded-[10px] border border-accent/60 bg-surface-solid p-3">
+                        <div className="mt-3 rounded-[6px] border border-accent/60 bg-surface-solid p-3">
                           <textarea
                             autoFocus
                             rows={3}
@@ -788,11 +789,14 @@ export default function HighlightsView({
                         h.note && (
                           <button
                             type="button"
-                            onClick={() => startEdit(h)}
+                            onClick={(e) => {
+                              if (shouldSuppressSelectionClick(e)) return;
+                              startEdit(h);
+                            }}
                             className="mt-2.5 w-full text-left px-3 py-2 rounded-[8px] bg-surface-hover hover:bg-border-subtle border border-border-subtle flex items-start gap-2 cursor-pointer transition-colors"
                           >
                             <StickyNote size={13} className="text-accent mt-0.5 shrink-0" />
-                            <span className="text-[13px] leading-[1.45] text-text-secondary whitespace-pre-wrap">
+                            <span className="text-[13px] leading-[1.45] text-text-secondary whitespace-pre-wrap select-text">
                               {h.note}
                             </span>
                           </button>
@@ -805,7 +809,7 @@ export default function HighlightsView({
                           ref={deletePopoverRef}
                           role="dialog"
                           aria-label={t("highlights.deleteTitle")}
-                          className="absolute right-4 top-12 z-30 w-[300px] dawn-menu rounded-[14px] p-4 border border-border-default"
+                          className="absolute right-4 top-12 z-30 w-[300px] dawn-menu rounded-surface p-4 border border-border-default"
                         >
                           <div className="flex items-center gap-2 text-text-primary mb-1.5">
                             <Trash2 size={14} className="text-danger shrink-0" />

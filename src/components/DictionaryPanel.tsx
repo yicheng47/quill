@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { BookOpen, Search, Trash2, X } from "lucide-react";
 import { useDictionary } from "../hooks/useDictionary";
+import { shouldSuppressSelectionClick } from "../utils/selection";
 import { timeAgo } from "../utils/timeAgo";
 import { parseSavedVocabDefinition } from "../utils/vocabParse";
 
@@ -122,7 +123,8 @@ export default function DictionaryPanel({
                 key={word.id}
                 role="button"
                 tabIndex={0}
-                onClick={() => {
+                onClick={(e) => {
+                  if (shouldSuppressSelectionClick(e)) return;
                   setSelectedWordId(word.id);
                   if (word.cfi) onNavigate?.(word.cfi);
                 }}
@@ -134,7 +136,7 @@ export default function DictionaryPanel({
                     if (word.cfi) onNavigate?.(word.cfi);
                   }
                 }}
-                className={`group relative w-full text-left p-3.5 rounded-[14px] border transition-colors cursor-pointer flex flex-col gap-1.5 ${
+                className={`group relative w-full text-left p-3.5 rounded-[6px] border transition-colors cursor-pointer flex flex-col gap-1.5 ${
                   selected
                     ? "bg-surface-solid border-accent/40"
                     : "bg-surface-inset border-border-subtle hover:bg-surface-solid hover:border-accent/35"
@@ -171,13 +173,13 @@ export default function DictionaryPanel({
                 </div>
 
                 {parsed.definition && (
-                  <p className="text-[12.5px] leading-[1.45] text-text-secondary line-clamp-2">
+                  <p className="text-[12.5px] leading-[1.45] text-text-secondary line-clamp-2 select-text">
                     {parsed.definition}
                   </p>
                 )}
 
                 {word.context_sentence && (
-                  <p className="font-reading italic text-[12px] leading-[1.4] text-text-tertiary line-clamp-2">
+                  <p className="font-reading italic text-[12px] leading-[1.4] text-text-tertiary line-clamp-2 select-text">
                     “{word.context_sentence}”
                   </p>
                 )}

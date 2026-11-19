@@ -463,11 +463,24 @@ export function createMainWindow(
   }
 
   const userDataDir = app.getPath("userData");
+  const primaryWorkArea = screen.getPrimaryDisplay().workArea;
   const workAreas = screen.getAllDisplays().map((d) => d.workArea);
-  const resolved = resolveMainWindowState(loadWindowState(userDataDir), workAreas, {
-    width: MAIN_MIN_WIDTH,
-    height: MAIN_MIN_HEIGHT,
-  });
+  const resolved = resolveMainWindowState(
+    loadWindowState(userDataDir),
+    workAreas,
+    {
+      width: MAIN_MIN_WIDTH,
+      height: MAIN_MIN_HEIGHT,
+    },
+    primaryWorkArea,
+  );
+
+  const minWidth = resolved.restored
+    ? MAIN_MIN_WIDTH
+    : Math.min(MAIN_MIN_WIDTH, resolved.width);
+  const minHeight = resolved.restored
+    ? MAIN_MIN_HEIGHT
+    : Math.min(MAIN_MIN_HEIGHT, resolved.height);
 
   const win = createWindow({
     label: "main",
@@ -478,8 +491,8 @@ export function createMainWindow(
     ...(resolved.x !== undefined && resolved.y !== undefined
       ? { x: resolved.x, y: resolved.y }
       : {}),
-    minWidth: MAIN_MIN_WIDTH,
-    minHeight: MAIN_MIN_HEIGHT,
+    minWidth,
+    minHeight,
     initialDark,
     initialDarkSeed,
   });

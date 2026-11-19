@@ -216,6 +216,56 @@ describe("CommandSearchModal", () => {
     expect(container.textContent).toContain("cityscape");
     expect(container.textContent).toContain("City memory symbolism");
 
+    // Highlight quote/note and word definition spans stay selectable while result chrome stays unselectable
+    const resultButtons = Array.from(container.querySelectorAll("button"));
+    const highlightBtn = resultButtons.find((b) =>
+      b.textContent?.includes("Cities, like dreams, are made of desires and fears."),
+    )!;
+    const hlQuoteSpan = Array.from(highlightBtn.querySelectorAll("span")).find((s) =>
+      s.textContent?.includes("Cities, like dreams, are made of desires and fears."),
+    )!;
+    const hlNoteSpan = Array.from(highlightBtn.querySelectorAll("span")).find(
+      (s) => s.textContent === "memory vs city",
+    )!;
+    expect(hlQuoteSpan.className).toContain("select-text");
+    expect(hlNoteSpan.className).toContain("select-text");
+    expect(hlNoteSpan.parentElement?.className).not.toContain("select-text");
+
+    const wordBtn = resultButtons.find((b) => b.textContent?.includes("cityscape"))!;
+    const wordHeadingSpan = Array.from(wordBtn.querySelectorAll("span")).find(
+      (s) => s.textContent === "cityscape",
+    )!;
+    const wordDefSpan = Array.from(wordBtn.querySelectorAll("span")).find((s) =>
+      s.textContent?.includes("Urban view."),
+    )!;
+    expect(wordHeadingSpan.className).not.toContain("select-text");
+    expect(wordDefSpan.className).toContain("select-text");
+
+    // Selecting inside highlight/word content suppresses pointer activation (detail=1), while detail=0 still activates
+    const sel = window.getSelection();
+    const hlRange = document.createRange();
+    hlRange.selectNodeContents(hlNoteSpan);
+    sel?.removeAllRanges();
+    sel?.addRange(hlRange);
+    await act(async () => {
+      highlightBtn.dispatchEvent(
+        new MouseEvent("click", { bubbles: true, cancelable: true, detail: 1 }),
+      );
+    });
+    expect(onNavigate).not.toHaveBeenCalled();
+
+    const wordRange = document.createRange();
+    wordRange.selectNodeContents(wordDefSpan);
+    sel?.removeAllRanges();
+    sel?.addRange(wordRange);
+    await act(async () => {
+      wordBtn.dispatchEvent(
+        new MouseEvent("click", { bubbles: true, cancelable: true, detail: 1 }),
+      );
+    });
+    expect(onNavigate).not.toHaveBeenCalled();
+    sel?.removeAllRanges();
+
     // ArrowDown moves selection from Book (0) -> Highlight (1); Enter navigates in main window
     await act(async () => {
       input.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));

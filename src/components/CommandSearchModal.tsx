@@ -12,6 +12,7 @@ import { openReaderWindow } from "../utils/openReaderWindow";
 import { getHighlightColorMeta } from "../utils/highlightColors";
 import { formatShortDate, parseDefinition } from "../utils/vocabParse";
 import { parseChatMessageContextCfi } from "../hooks/useAiChat";
+import { shouldSuppressSelectionClick } from "../utils/selection";
 import { shortcutModSymbol } from "../lib/platformEnv";
 
 interface BookPage {
@@ -512,7 +513,7 @@ export default function CommandSearchModal({
         role="dialog"
         aria-modal="true"
         aria-label={t("commandSearch.ariaLabel")}
-        className="w-full max-w-[680px] rounded-[22px] bg-surface-popover border border-surface-glass-border backdrop-blur-[36px] shadow-[var(--shadow-modal)] overflow-hidden flex flex-col"
+        className="w-full max-w-[680px] rounded-surface bg-surface-popover border border-surface-glass-border backdrop-blur-[36px] shadow-[var(--shadow-modal)] overflow-hidden flex flex-col"
       >
         <div className="h-[58px] px-5 flex items-center justify-between gap-3 border-b border-border-subtle">
           <div className="flex-1 min-w-0 flex items-center gap-3">
@@ -640,7 +641,7 @@ export default function CommandSearchModal({
                         type="button"
                         onMouseEnter={() => setActiveIndex(idx)}
                         onClick={(e) => handleActivate(hit, Boolean(e.metaKey || e.ctrlKey))}
-                        className={`w-full flex items-center justify-between gap-3 px-2.5 py-2 rounded-[12px] text-left cursor-pointer transition-colors ${
+                        className={`w-full flex items-center justify-between gap-3 px-2.5 py-2 rounded-[6px] text-left cursor-pointer transition-colors ${
                           isSelected ? "bg-accent-tint" : "hover:bg-surface-hover"
                         }`}
                       >
@@ -705,8 +706,11 @@ export default function CommandSearchModal({
                         }}
                         type="button"
                         onMouseEnter={() => setActiveIndex(idx)}
-                        onClick={(e) => handleActivate(hit, Boolean(e.metaKey || e.ctrlKey))}
-                        className={`w-full flex items-center justify-between gap-3 px-2.5 py-2.5 rounded-[12px] text-left cursor-pointer transition-colors ${
+                        onClick={(e) => {
+                          if (shouldSuppressSelectionClick(e)) return;
+                          handleActivate(hit, Boolean(e.metaKey || e.ctrlKey));
+                        }}
+                        className={`w-full flex items-center justify-between gap-3 px-2.5 py-2.5 rounded-[6px] text-left cursor-pointer transition-colors ${
                           isSelected ? "bg-accent-tint" : "hover:bg-surface-hover"
                         }`}
                       >
@@ -714,7 +718,7 @@ export default function CommandSearchModal({
                           <span className={`w-1 h-8 rounded-full shrink-0 ${colorMeta.bgClass}`} />
                           <div className="min-w-0 flex-1 flex flex-col gap-0.5">
                             <span
-                              className={`font-reading text-[13px] truncate ${
+                              className={`font-reading text-[13px] truncate select-text ${
                                 isSelected ? "text-accent-on-tint" : "text-text-primary"
                               }`}
                             >
@@ -726,7 +730,12 @@ export default function CommandSearchModal({
                               }`}
                             >
                               {highlight.book_title || t("common.unknownBook")}
-                              {highlight.note ? ` · ${highlight.note}` : ""}
+                              {highlight.note ? (
+                                <>
+                                  {" · "}
+                                  <span className="select-text">{highlight.note}</span>
+                                </>
+                              ) : null}
                             </span>
                           </div>
                         </div>
@@ -753,8 +762,11 @@ export default function CommandSearchModal({
                         }}
                         type="button"
                         onMouseEnter={() => setActiveIndex(idx)}
-                        onClick={(e) => handleActivate(hit, Boolean(e.metaKey || e.ctrlKey))}
-                        className={`w-full flex items-center justify-between gap-3 px-2.5 py-2 rounded-[12px] text-left cursor-pointer transition-colors ${
+                        onClick={(e) => {
+                          if (shouldSuppressSelectionClick(e)) return;
+                          handleActivate(hit, Boolean(e.metaKey || e.ctrlKey));
+                        }}
+                        className={`w-full flex items-center justify-between gap-3 px-2.5 py-2 rounded-[6px] text-left cursor-pointer transition-colors ${
                           isSelected ? "bg-accent-tint" : "hover:bg-surface-hover"
                         }`}
                       >
@@ -771,7 +783,7 @@ export default function CommandSearchModal({
                               {word.word}
                             </span>
                             <span
-                              className={`text-[12px] truncate ${
+                              className={`text-[12px] truncate select-text ${
                                 isSelected ? "text-accent-on-tint/80" : "text-text-tertiary"
                               }`}
                             >
@@ -815,7 +827,7 @@ export default function CommandSearchModal({
                       type="button"
                       onMouseEnter={() => setActiveIndex(idx)}
                       onClick={(e) => handleActivate(hit, Boolean(e.metaKey || e.ctrlKey))}
-                      className={`w-full flex items-center justify-between gap-3 px-2.5 py-2 rounded-[12px] text-left cursor-pointer transition-colors ${
+                      className={`w-full flex items-center justify-between gap-3 px-2.5 py-2 rounded-[6px] text-left cursor-pointer transition-colors ${
                         isSelected ? "bg-accent-tint" : "hover:bg-surface-hover"
                       }`}
                     >

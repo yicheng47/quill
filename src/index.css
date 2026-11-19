@@ -58,6 +58,7 @@
   --radius-lg: 10px;
   --radius-control: 12px;
   --radius-xl: 14px;
+  --radius-surface: 8px;
   --radius-full: 9999px;
 
   --shadow-card: 0px 4px 6px -1px rgba(0, 0, 0, 0.1),
@@ -315,6 +316,40 @@ body {
 .dawn body {
   font-family: var(--font-ui);
   color: var(--color-text-primary);
+}
+
+@layer base {
+  button,
+  label,
+  summary,
+  nav,
+  [role="navigation"],
+  [role="button"],
+  [role="tab"],
+  [role="tablist"],
+  [role="menu"],
+  [role="menuitem"],
+  [role="menuitemradio"],
+  [role="menuitemcheckbox"],
+  [role="listbox"],
+  [role="option"],
+  [role="switch"],
+  [role="checkbox"],
+  [role="radio"],
+  [role="slider"],
+  [role="spinbutton"],
+  [data-drag-region],
+  .dawn-inset {
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  input,
+  textarea,
+  [contenteditable]:not([contenteditable="false"]) {
+    -webkit-user-select: text;
+    user-select: text;
+  }
 }
 
 /* ── Dawn Atmosphere & Glass Utilities ── */
@@ -603,7 +638,7 @@ body {
 }
 .dawn .markdown-body pre {
   background: rgba(21, 21, 26, 0.04);
-  border-radius: 10px;
+  border-radius: 6px;
 }
 .dawn .markdown-body hr {
   border-color: var(--color-border-subtle);

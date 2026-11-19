@@ -210,7 +210,7 @@ export default function UpdatesSettings({ settings, loading, save }: SettingsPro
       <div
         data-testid="updates-hero-card"
         data-update-status={status}
-        className="dawn-inset rounded-[14px] p-5 flex flex-col gap-3.5"
+        className="dawn-inset rounded-[6px] p-5 flex flex-col gap-3.5"
       >
         <div className="flex items-center gap-4">
           <QuillLogo

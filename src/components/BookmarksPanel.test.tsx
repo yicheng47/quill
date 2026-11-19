@@ -180,4 +180,41 @@ describe("BookmarksPanel nested action keyboard isolation", () => {
     expect(mockInvoke).toHaveBeenCalledWith("remove_bookmark", { id: "bm-1" });
     expect(onNavigate).not.toHaveBeenCalled();
   });
+
+  it("keeps highlight quote and note text selectable inside clickable cards and skips navigation while text is selected", async () => {
+    const onNavigate = vi.fn();
+    await renderPanel({ onNavigate });
+
+    const card = container.querySelector<HTMLElement>('[role="button"]');
+    expect(card).not.toBeNull();
+    const quote = Array.from(card!.querySelectorAll("p")).find((p) =>
+      p.textContent?.includes("We must imagine Sisyphus happy."),
+    );
+    expect(quote).toBeDefined();
+    expect(quote!.className).toContain("select-text");
+
+    const range = document.createRange();
+    range.selectNodeContents(quote!);
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(range);
+
+    await act(async () => {
+      card!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, detail: 1 }));
+    });
+    expect(onNavigate).not.toHaveBeenCalled();
+
+    // Keyboard / AT-style click (detail === 0) still navigates even while a range is active.
+    await act(async () => {
+      card!.click();
+    });
+    expect(onNavigate).toHaveBeenCalledWith("cfi-h");
+    onNavigate.mockClear();
+
+    sel?.removeAllRanges();
+    await act(async () => {
+      card!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, detail: 1 }));
+    });
+    expect(onNavigate).toHaveBeenCalledWith("cfi-h");
+  });
 });

@@ -88,7 +88,7 @@ export default function GeneralSettings({ settings, loading, save }: SettingsPro
                   }}
                   aria-label={t("settings.general.displayName")}
                   placeholder="Reader"
-                  containerClassName="w-[200px] !h-[34px] !rounded-[10px] !px-4 !border-accent !border-[1.5px]"
+                  containerClassName="w-[200px] !h-[34px] !rounded-[6px] !px-4 !border-accent !border-[1.5px]"
                 />
                 <Button
                   variant="secondary"

@@ -111,7 +111,7 @@ export default function TableOfContents({
   return (
     <aside
       aria-label={t("reader.tocTitle")}
-      className="w-[300px] max-w-[calc(100%-256px)] shrink-0 h-full reader-island rounded-[24px] p-[18px] flex flex-col gap-3.5"
+      className="w-[300px] max-w-[calc(100%-256px)] shrink-0 h-full reader-island rounded-surface p-[18px] flex flex-col gap-3.5"
     >
       <div className="shrink-0 flex items-center justify-between px-1 py-0.5">
         <div className="min-w-0">

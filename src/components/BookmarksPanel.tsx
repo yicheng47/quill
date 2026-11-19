@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { useBookmarks, useHighlights } from "../hooks/useBookmarks";
 import { HIGHLIGHT_SWATCHES } from "./HighlightToolbar";
+import { shouldSuppressSelectionClick } from "../utils/selection";
 import { timeAgo } from "../utils/timeAgo";
 
 interface BookmarksPanelProps {
@@ -101,7 +102,7 @@ export default function BookmarksPanel({
   });
 
   return (
-    <div className="@container/panel flex flex-col h-full min-w-0 reader-island rounded-[24px] p-4 @[340px]/panel:p-5 gap-3.5">
+    <div className="@container/panel flex flex-col h-full min-w-0 reader-island rounded-surface p-4 @[340px]/panel:p-5 gap-3.5">
       {/* Header: segmented tabs + Bookmark action pill */}
       <div className="flex flex-wrap items-center justify-between gap-2 shrink-0">
         <div
@@ -246,7 +247,10 @@ export default function BookmarksPanel({
                     key={highlight.id}
                     role="button"
                     tabIndex={0}
-                    onClick={() => onNavigate?.(highlight.cfi_range)}
+                    onClick={(e) => {
+                      if (shouldSuppressSelectionClick(e)) return;
+                      onNavigate?.(highlight.cfi_range);
+                    }}
                     onKeyDown={(e) => {
                       if (e.target !== e.currentTarget) return;
                       if (e.key === "Enter" || e.key === " ") {
@@ -254,19 +258,19 @@ export default function BookmarksPanel({
                         onNavigate?.(highlight.cfi_range);
                       }
                     }}
-                    className="group w-full text-left p-3.5 rounded-[14px] bg-surface-inset border border-border-subtle hover:bg-surface-solid hover:border-accent/35 transition-colors cursor-pointer"
+                    className="group w-full text-left p-3.5 rounded-[6px] bg-surface-inset border border-border-subtle hover:bg-surface-solid hover:border-accent/35 transition-colors cursor-pointer"
                   >
                     <div
                       className="pl-3 py-0.5 border-l-[3px] flex flex-col gap-2"
                       style={{ borderLeftColor: swatchHexFor(highlight.color) }}
                     >
                       {highlight.text_content && (
-                        <p className="font-reading text-[13.5px] text-text-primary leading-[1.55] line-clamp-3">
+                        <p className="font-reading text-[13.5px] text-text-primary leading-[1.55] line-clamp-3 select-text">
                           {highlight.text_content}
                         </p>
                       )}
                       {highlight.note && (
-                        <p className="text-[12px] text-text-secondary leading-relaxed line-clamp-2">
+                        <p className="text-[12px] text-text-secondary leading-relaxed line-clamp-2 select-text">
                           {highlight.note}
                         </p>
                       )}
@@ -350,7 +354,7 @@ export default function BookmarksPanel({
                         onNavigate?.(bookmark.cfi);
                       }
                     }}
-                    className="group w-full text-left p-3.5 rounded-[14px] bg-surface-inset border border-border-subtle hover:bg-surface-solid hover:border-accent/35 transition-colors flex items-start gap-3 cursor-pointer"
+                    className="group w-full text-left p-3.5 rounded-[6px] bg-surface-inset border border-border-subtle hover:bg-surface-solid hover:border-accent/35 transition-colors flex items-start gap-3 cursor-pointer"
                   >
                     <div className="size-7 rounded-[8px] bg-surface-solid text-text-secondary group-hover:bg-accent-tint group-hover:text-accent-on-tint flex items-center justify-center shrink-0 transition-colors">
                       <Bookmark size={14} />

@@ -369,7 +369,7 @@ export default function LibrarySyncSettings({
               role="dialog"
               aria-modal="true"
               aria-labelledby="sync-toggle-confirm-title"
-              className="w-full max-w-[460px] p-[22px] rounded-[24px] bg-surface-solid border border-border-subtle shadow-menu flex flex-col gap-4"
+              className="w-full max-w-[460px] p-[22px] rounded-surface bg-surface-solid border border-border-subtle shadow-menu flex flex-col gap-4"
             >
               <div className="flex flex-col gap-2">
                 <div className="flex items-center gap-2.5">
@@ -420,7 +420,7 @@ export default function LibrarySyncSettings({
               role="dialog"
               aria-modal="true"
               aria-labelledby="sync-copying-title"
-              className="w-full max-w-[460px] p-[22px] rounded-[24px] bg-surface-solid border border-accent/35 shadow-menu flex flex-col gap-3.5 focus:outline-none"
+              className="w-full max-w-[460px] p-[22px] rounded-surface bg-surface-solid border border-accent/35 shadow-menu flex flex-col gap-3.5 focus:outline-none"
             >
               <div className="flex items-center gap-2.5">
                 <Loader2 size={18} className="text-accent animate-spin shrink-0" />
@@ -475,7 +475,7 @@ export default function LibrarySyncSettings({
               role="dialog"
               aria-modal="true"
               aria-labelledby="sync-remove-peer-title"
-              className="w-full max-w-[460px] p-[22px] rounded-[24px] bg-surface-solid border border-border-subtle shadow-menu flex flex-col gap-4"
+              className="w-full max-w-[460px] p-[22px] rounded-surface bg-surface-solid border border-border-subtle shadow-menu flex flex-col gap-4"
             >
               <div className="flex flex-col gap-2">
                 <div className="flex items-center gap-2.5">
@@ -526,7 +526,7 @@ export default function LibrarySyncSettings({
               role="dialog"
               aria-modal="true"
               aria-labelledby="sync-rebuild-title"
-              className="w-full max-w-[460px] p-[22px] rounded-[24px] bg-surface-solid border border-border-subtle shadow-menu flex flex-col gap-4"
+              className="w-full max-w-[460px] p-[22px] rounded-surface bg-surface-solid border border-border-subtle shadow-menu flex flex-col gap-4"
             >
               <div className="flex flex-col gap-2">
                 <div className="flex items-center gap-2.5">
@@ -670,7 +670,7 @@ export default function LibrarySyncSettings({
         {syncOn && syncing && (
           <div
             data-testid="sync-active-card"
-            className="bg-surface-solid border border-accent/35 rounded-[14px] p-5 flex flex-col gap-3"
+            className="bg-surface-solid border border-accent/35 rounded-[6px] p-5 flex flex-col gap-3"
           >
             <div className="flex items-center justify-between gap-4">
               <div className="flex items-center gap-2.5 min-w-0">
@@ -707,7 +707,7 @@ export default function LibrarySyncSettings({
           <div
             role="alert"
             data-testid="sync-error-banner"
-            className="bg-danger-tint border border-danger/25 rounded-[14px] px-[18px] py-3.5 flex items-center justify-between gap-4"
+            className="bg-danger-tint border border-danger/25 rounded-[6px] px-[18px] py-3.5 flex items-center justify-between gap-4"
           >
             <div className="flex items-center gap-3 min-w-0">
               <AlertTriangle size={17} className="text-danger shrink-0" />
@@ -818,7 +818,7 @@ export default function LibrarySyncSettings({
               {peers.length === 0 && (
                 <div
                   data-testid="sync-empty-peers-card"
-                  className="bg-surface-solid border border-border-subtle rounded-[14px] px-5 py-[22px] flex items-center gap-3.5"
+                  className="bg-surface-solid border border-border-subtle rounded-[6px] px-5 py-[22px] flex items-center gap-3.5"
                 >
                   <div className="size-[38px] rounded-[12px] bg-surface-inset border border-border-subtle flex items-center justify-center shrink-0">
                     <Laptop size={17} className="text-text-tertiary" />

@@ -14,7 +14,7 @@ export default function Toast({ children, icon, className = "" }: ToastProps) {
       aria-live="polite"
       className={`fixed top-5 left-1/2 z-[60] -translate-x-1/2 ${className}`}
     >
-      <div className="flex min-w-[260px] items-center gap-3 rounded-[14px] border border-border-default bg-surface-popover py-2.5 pl-4 pr-3 backdrop-blur-[16px] shadow-[var(--shadow-menu)]">
+      <div className="flex min-w-[260px] items-center gap-3 rounded-surface border border-border-default bg-surface-popover py-2.5 pl-4 pr-3 backdrop-blur-[16px] shadow-[var(--shadow-menu)]">
         {icon ?? <Check size={14} className="shrink-0 text-success" />}
         <span className="flex-1 whitespace-nowrap text-[13px] font-normal tracking-[-0.08px] text-text-primary">
           {children}

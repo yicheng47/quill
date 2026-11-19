@@ -272,7 +272,7 @@ export default function AddBooksModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby="add-books-modal-title"
-        className="w-full max-w-[440px] max-h-[80vh] rounded-[24px] bg-surface-solid border border-border-subtle shadow-menu overflow-hidden flex flex-col"
+        className="w-full max-w-[440px] max-h-[80vh] rounded-surface bg-surface-solid border border-border-subtle shadow-menu overflow-hidden flex flex-col"
       >
         <div className="px-5 pt-[18px] pb-3.5 border-b border-border-subtle flex flex-col gap-3 shrink-0">
           <div className="flex items-center justify-between gap-2">
@@ -338,7 +338,7 @@ export default function AddBooksModal({
                     role="checkbox"
                     aria-checked={selected}
                     onClick={() => toggleBook(book.id)}
-                    className={`w-full px-2.5 py-[7px] rounded-[10px] flex items-center justify-between gap-2.5 text-left cursor-pointer transition-colors ${
+                    className={`w-full px-2.5 py-[7px] rounded-[6px] flex items-center justify-between gap-2.5 text-left cursor-pointer transition-colors ${
                       selected ? "bg-accent-tint" : "hover:bg-surface-hover"
                     }`}
                   >

@@ -14,7 +14,9 @@ const testState = vi.hoisted(() => ({
   initialReaderTheme: "original",
   windowLabel: "reader-book-1",
   setWindowBackgroundColor: vi.fn<(color: string) => Promise<void>>(() => Promise.resolve()),
+  emitTo: vi.fn<(windowLabel: string, event: string, payload?: unknown) => Promise<void>>(() => Promise.resolve()),
   getBook: vi.fn(),
+  updateBookStatus: vi.fn<(id: string, status: "reading" | "finished" | "unread") => Promise<void>>(() => Promise.resolve()),
   getAllSettings: vi.fn(),
   viewGoTo: vi.fn<(target: string) => Promise<void>>(() => Promise.resolve()),
   viewInit: vi.fn(() => Promise.resolve()),
@@ -25,7 +27,7 @@ const testState = vi.hoisted(() => ({
 
 vi.mock("../platform", () => ({
   convertFileSrc: (p: string) => `quill-file://local/${p}`,
-  emitTo: () => Promise.resolve(),
+  emitTo: (windowLabel: string, event: string, payload?: unknown) => testState.emitTo(windowLabel, event, payload),
   focusWindow: () => Promise.resolve(true),
   getCurrentWindowLabel: () => testState.windowLabel,
   getInitialReaderTheme: () => testState.initialReaderTheme,
@@ -48,6 +50,7 @@ vi.mock("../platform", () => ({
 
 vi.mock("../hooks/useBooks", () => ({
   getBook: (...args: unknown[]) => testState.getBook(...args),
+  updateBookStatus: (id: string, status: "reading" | "finished" | "unread") => testState.updateBookStatus(id, status),
   updateReadingProgress: () => Promise.resolve(),
   checkBookAvailable: () => Promise.resolve(true),
   checkBookReadable: () => Promise.resolve(true),
@@ -222,7 +225,9 @@ describe("Reader shell themes, cascade, and startup navigation", () => {
     testState.initialReaderTheme = "original";
     testState.windowLabel = "reader-book-1";
     testState.setWindowBackgroundColor.mockClear();
+    testState.emitTo.mockReset().mockResolvedValue(undefined);
     testState.getBook.mockReset();
+    testState.updateBookStatus.mockReset().mockResolvedValue(undefined);
     testState.getAllSettings.mockReset();
     testState.viewGoTo.mockClear();
     testState.viewInit.mockClear();
@@ -501,5 +506,87 @@ describe("Reader shell themes, cascade, and startup navigation", () => {
     await flushAsync();
     expect(directAiStub.getAttribute("data-chat-id")).toBe("chat-A");
     expect(Number(directAiStub.getAttribute("data-chat-seq"))).toBeGreaterThan(seq1);
+  });
+
+  it("marks unread books as reading once on open and leaves reading/finished untouched", async () => {
+    testState.getAllSettings.mockResolvedValue({});
+
+    testState.getBook.mockResolvedValue({
+      id: "book-unread",
+      title: "Unread Book",
+      author: "Author",
+      format: "epub",
+      file_path: "/tmp/unread.epub",
+      status: "unread",
+      progress: 0,
+      available: true,
+    });
+
+    await renderReader("/reader/book-unread");
+    await flushAsync();
+
+    expect(testState.updateBookStatus).toHaveBeenCalledTimes(1);
+    expect(testState.updateBookStatus).toHaveBeenCalledWith("book-unread", "reading");
+    expect(testState.emitTo).toHaveBeenCalledWith("main", "book-status-changed", "book-unread");
+
+    // Progress updates (relocate) do not re-trigger updateBookStatus
+    testState.updateBookStatus.mockClear();
+    testState.emitTo.mockClear();
+    const viewEl = container.querySelector("foliate-view");
+    await act(async () => {
+      viewEl?.dispatchEvent(
+        new CustomEvent("relocate", {
+          detail: { fraction: 0.2, cfi: "epubcfi(/6/4!/2)" },
+        }),
+      );
+    });
+    await flushAsync();
+    expect(testState.updateBookStatus).not.toHaveBeenCalled();
+
+    // Reopening a book already in "reading" does not call updateBookStatus
+    await act(async () => {
+      root.unmount();
+    });
+    testState.updateBookStatus.mockClear();
+    testState.emitTo.mockClear();
+    testState.getBook.mockResolvedValue({
+      id: "book-reading",
+      title: "Reading Book",
+      author: "Author",
+      format: "epub",
+      file_path: "/tmp/reading.epub",
+      status: "reading",
+      progress: 35,
+      available: true,
+    });
+    root = createRoot(container);
+    await renderReader("/reader/book-reading");
+    await flushAsync();
+
+    expect(testState.updateBookStatus).not.toHaveBeenCalled();
+    expect(testState.emitTo).not.toHaveBeenCalledWith("main", "book-status-changed", expect.anything());
+
+    // Reopening a "finished" book keeps it finished (e.g. looking up a quote)
+    await act(async () => {
+      root.unmount();
+    });
+    testState.updateBookStatus.mockClear();
+    testState.emitTo.mockClear();
+    testState.getBook.mockResolvedValue({
+      id: "book-finished",
+      title: "Finished Book",
+      author: "Author",
+      format: "epub",
+      file_path: "/tmp/finished.epub",
+      status: "finished",
+      progress: 100,
+      available: true,
+    });
+    root = createRoot(container);
+    await renderReader("/reader/book-finished");
+    await flushAsync();
+
+    expect(testState.updateBookStatus).not.toHaveBeenCalled();
+    expect(testState.emitTo).not.toHaveBeenCalledWith("main", "book-status-changed", expect.anything());
   });
 });

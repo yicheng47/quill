@@ -289,7 +289,7 @@ export default function TranslationPopover({
             {langMenuOpen && (
               <div
                 role="menu"
-                className="absolute left-0 top-[calc(100%+4px)] z-50 min-w-[132px] reader-popover rounded-[12px] p-1 flex flex-col gap-0.5"
+                className="absolute left-0 top-[calc(100%+4px)] z-50 min-w-[132px] reader-popover rounded-surface p-1 flex flex-col gap-0.5"
               >
                 {languageChoices.map((opt) => {
                   const active = opt.value === targetLang;
@@ -416,7 +416,7 @@ export default function TranslationPopover({
           ) : errorMessage ? (
             <div
               role="alert"
-              className="flex items-start gap-2 rounded-[10px] bg-danger-tint/70 border border-danger/20 px-3 py-2.5 text-[13px] text-danger"
+              className="flex items-start gap-2 rounded-[6px] bg-danger-tint/70 border border-danger/20 px-3 py-2.5 text-[13px] text-danger"
             >
               <AlertCircle size={15} className="shrink-0 mt-0.5" />
               <span>{errorMessage}</span>

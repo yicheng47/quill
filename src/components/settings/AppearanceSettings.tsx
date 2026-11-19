@@ -66,7 +66,7 @@ export default function AppearanceSettings({ save }: Partial<SettingsProps> = {}
                 aria-pressed={active}
                 data-theme-card={card.id}
                 onClick={() => handleSelectTheme(card.id)}
-                className={`rounded-[14px] p-2 flex flex-col gap-2.5 bg-surface-inset text-left transition-colors ${
+                className={`rounded-[6px] p-2 flex flex-col gap-2.5 bg-surface-inset text-left transition-colors ${
                   active
                     ? "border-2 border-accent cursor-default"
                     : "border border-border-subtle hover:border-border-default cursor-pointer"

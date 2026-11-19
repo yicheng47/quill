@@ -342,7 +342,7 @@ export default function AiPanel({
         {pickerOpen && (
           <div
             role="menu"
-            className="absolute top-[calc(100%+8px)] left-0 right-0 reader-popover rounded-[14px] p-1.5 z-50 flex flex-col gap-0.5"
+            className="absolute top-[calc(100%+8px)] left-0 right-0 reader-popover rounded-surface p-1.5 z-50 flex flex-col gap-0.5"
           >
             <div className="max-h-[260px] overflow-y-auto flex flex-col gap-0.5">
               {chats.map((chat) => {
@@ -496,7 +496,7 @@ export default function AiPanel({
       {/* Pending Quote + Composer + Model Footer */}
       <div className="flex flex-col gap-2.5 shrink-0">
         {pendingQuote && (
-          <div className="flex items-start gap-2 px-3 py-2.5 rounded-[10px] bg-surface-tint border border-accent">
+          <div className="flex items-start gap-2 px-3 py-2.5 rounded-[6px] bg-surface-tint border border-accent">
             <div className="flex-1 min-w-0 flex flex-col gap-[3px]">
               <span className="font-mono text-[10px] font-semibold uppercase tracking-wide text-accent-on-tint">
                 {pendingQuote.page != null
@@ -519,7 +519,7 @@ export default function AiPanel({
           </div>
         )}
 
-        <div className="bg-surface-solid border border-border-default focus-within:border-accent focus-within:ring-[3px] focus-within:ring-focus-ring rounded-[14px] px-3.5 py-2 flex items-end gap-2 shadow-xs transition-shadow">
+        <div className="bg-surface-solid border border-border-default focus-within:border-accent focus-within:ring-[3px] focus-within:ring-focus-ring rounded-[6px] px-3.5 py-2 flex items-end gap-2 shadow-xs transition-shadow">
           <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}

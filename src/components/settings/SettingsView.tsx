@@ -184,7 +184,7 @@ export default function SettingsView({
 
         <div
           ref={paneRef}
-          className="flex-1 min-w-0 h-full dawn-glass rounded-[24px] overflow-y-auto px-8 py-9"
+          className="flex-1 min-w-0 h-full dawn-glass rounded-surface overflow-y-auto px-8 py-9"
         >
           <div className="w-full max-w-[720px] mx-auto flex flex-col gap-7">
             <div className="flex flex-col gap-1">

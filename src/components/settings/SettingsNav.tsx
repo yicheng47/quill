@@ -81,7 +81,7 @@ export default function SettingsNav({
   return (
     <aside
       aria-label={t("settings.title")}
-      className="w-[260px] shrink-0 h-full dawn-glass rounded-[24px] p-3 flex flex-col gap-4 overflow-y-auto"
+      className="w-[260px] shrink-0 h-full dawn-glass rounded-surface p-3 flex flex-col gap-4 overflow-y-auto"
     >
       {NAV_GROUPS.map((group) => {
         const items = group.items.filter((item) => !item.macOnly || isMac);
@@ -103,7 +103,7 @@ export default function SettingsNav({
                   data-settings-tab={item.id}
                   aria-current={isActive ? "page" : undefined}
                   onClick={() => onSelectSection(item.id)}
-                  className={`w-full px-3 py-[9px] rounded-[10px] flex items-center gap-3 text-left text-[14px] cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-focus-ring ${
+                  className={`w-full px-3 py-[9px] rounded-[6px] flex items-center gap-3 text-left text-[14px] cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-focus-ring ${
                     isActive
                       ? "bg-accent-tint text-accent-on-tint font-semibold"
                       : "text-text-primary font-normal hover:bg-surface-hover"

@@ -57,7 +57,7 @@ export default function DeleteCollectionModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby="delete-collection-title"
-        className="w-full max-w-[460px] p-[22px] rounded-[24px] bg-surface-solid border border-border-subtle shadow-menu flex flex-col gap-3.5"
+        className="w-full max-w-[460px] p-[22px] rounded-surface bg-surface-solid border border-border-subtle shadow-menu flex flex-col gap-3.5"
       >
         <div className="flex items-center gap-2.5">
           <div className="size-8 rounded-[10px] bg-danger-tint flex items-center justify-center text-danger shrink-0">

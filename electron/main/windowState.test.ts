@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   DEFAULT_MAIN_HEIGHT,
   DEFAULT_MAIN_WIDTH,
+  defaultMainWindowState,
   getWindowStatePath,
   loadWindowState,
   parseWindowState,
@@ -182,6 +183,81 @@ describe("windowState pure validation and persistence", () => {
       height: 780,
       isMaximized: true,
       isFullScreen: false,
+    });
+  });
+
+  it("clamps the default main window size to the primary display work area without altering saved state", () => {
+    expect(defaultMainWindowState()).toEqual({
+      width: DEFAULT_MAIN_WIDTH,
+      height: DEFAULT_MAIN_HEIGHT,
+      isMaximized: false,
+      isFullScreen: false,
+      restored: false,
+    });
+
+    // 14" MacBook work area (~1512x945): width stays 1440, height clamps to 945
+    const macbook14 = { x: 0, y: 37, width: 1512, height: 945 };
+    expect(resolveMainWindowState(null, [macbook14])).toEqual({
+      width: 1440,
+      height: 945,
+      isMaximized: false,
+      isFullScreen: false,
+      restored: false,
+    });
+
+    // Smaller laptop display clamps both width and height
+    const smallLaptop = { x: 0, y: 25, width: 1280, height: 775 };
+    expect(resolveMainWindowState(null, [smallLaptop])).toEqual({
+      width: 1280,
+      height: 775,
+      isMaximized: false,
+      isFullScreen: false,
+      restored: false,
+    });
+
+    // Explicit primaryWorkArea overrides display list order (e.g. secondary display appears first)
+    expect(
+      resolveMainWindowState(null, [secondWorkArea, macbook14], undefined, macbook14),
+    ).toEqual({
+      width: 1440,
+      height: 945,
+      isMaximized: false,
+      isFullScreen: false,
+      restored: false,
+    });
+
+    // Off-screen saved state fallback also clamps to primaryWorkArea
+    expect(
+      resolveMainWindowState(
+        { x: 3000, y: 120, width: 1440, height: 960 },
+        [macbook14],
+        undefined,
+        macbook14,
+      ),
+    ).toEqual({
+      width: 1440,
+      height: 945,
+      isMaximized: false,
+      isFullScreen: false,
+      restored: false,
+    });
+
+    // Existing saved window state still overrides the clamped default untouched
+    expect(
+      resolveMainWindowState(
+        { x: 20, y: 50, width: 1500, height: 960, isMaximized: false, isFullScreen: false },
+        [macbook14],
+        undefined,
+        macbook14,
+      ),
+    ).toEqual({
+      x: 20,
+      y: 50,
+      width: 1500,
+      height: 960,
+      isMaximized: false,
+      isFullScreen: false,
+      restored: true,
     });
   });
 });

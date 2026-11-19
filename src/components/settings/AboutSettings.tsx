@@ -45,7 +45,7 @@ export default function AboutSettings() {
   return (
     <div className="flex flex-col gap-7">
       {/* Identity Card */}
-      <div className="dawn-inset rounded-[14px] p-5 flex items-center gap-4">
+      <div className="dawn-inset rounded-[6px] p-5 flex items-center gap-4">
         <QuillLogo
           size={56}
           className="rounded-[13px] shadow-[0_6px_16px_rgba(109,91,255,0.25)] shrink-0"

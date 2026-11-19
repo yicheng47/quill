@@ -8,7 +8,7 @@ export const Menu = forwardRef<HTMLDivElement, MenuProps>(
   ({ className = "", children, ...props }, ref) => (
     <div
       ref={ref}
-      className={`dawn-menu rounded-[14px] p-1.5 flex flex-col gap-0.5 ${className}`}
+      className={`dawn-menu rounded-surface p-1.5 flex flex-col gap-0.5 ${className}`}
       {...props}
     >
       {children}

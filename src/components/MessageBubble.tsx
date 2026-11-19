@@ -50,7 +50,7 @@ export default function MessageBubble({
       return (
         <div
           role="alert"
-          className="flex items-start gap-2 rounded-[12px] bg-danger-tint/70 border border-danger/20 px-3.5 py-2.5 text-[14px] text-danger"
+          className="flex items-start gap-2 rounded-[6px] bg-danger-tint/70 border border-danger/20 px-3.5 py-2.5 text-[14px] text-danger"
         >
           <AlertCircle size={15} className="shrink-0 mt-0.5" />
           <span>{errorMessage}</span>
