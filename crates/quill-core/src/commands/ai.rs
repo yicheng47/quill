@@ -7,7 +7,7 @@ use crate::ai::AI_NOT_CONFIGURED;
 use crate::error::{AppError, AppResult};
 use crate::host::{Core, ShellHost};
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct ChatMessage {
     pub role: String,
     pub content: String,
@@ -37,10 +37,34 @@ pub(crate) fn effort_from_setting(value: Option<String>) -> Option<String> {
     value.filter(|v| !v.is_empty() && v != "default")
 }
 
-pub async fn list_codex_models(
-    core: &Core,
-) -> AppResult<crate::ai::codex_models::CodexModelList> {
-    Ok(crate::ai::codex_models::list_models(&core.secrets).await)
+fn codex_path_override(core: &Core) -> Option<String> {
+    non_empty_setting(
+        core.db
+            .reader()
+            .query_row("SELECT value FROM settings WHERE key = 'ai_codex_path'", [], |row| row.get(0))
+            .ok(),
+    )
+}
+
+pub async fn codex_status(core: &Core) -> AppResult<crate::ai::codex::CodexStatus> {
+    Ok(core.codex.status(codex_path_override(core)).await)
+}
+
+pub async fn list_codex_models(core: &Core) -> AppResult<crate::ai::codex::CodexModelList> {
+    core.codex.models(codex_path_override(core)).await
+}
+
+pub async fn codex_login(core: &Core) -> AppResult<crate::ai::codex::LoginOutcome> {
+    core.codex.login(core.host.as_ref(), codex_path_override(core)).await
+}
+
+pub async fn codex_login_cancel(core: &Core) -> AppResult<()> {
+    core.codex.cancel_login().await
+}
+
+pub async fn ai_cancel(core: &Core, channel: String) -> AppResult<()> {
+    crate::ai::dispatch::cancel(core, &channel).await;
+    Ok(())
 }
 
 pub async fn check_ollama_status(
@@ -297,6 +321,7 @@ pub async fn ai_lookup(
             event_name: format!("ai-lookup-chunk-{}", request_id),
             max_tokens,
             temperature: Some(0.3),
+            chat_id: None,
         },
     )
     .await
@@ -384,6 +409,7 @@ pub async fn ai_explain(
             event_name: format!("ai-lookup-chunk-{}", request_id),
             max_tokens: None,
             temperature: Some(0.3),
+            chat_id: None,
         },
     )
     .await
@@ -421,6 +447,7 @@ pub async fn ai_generate_title(
             event_name: format!("ai-title-chunk-{}", request_id),
             max_tokens: Some(32),
             temperature: Some(0.3),
+            chat_id: None,
         },
     )
     .await
@@ -428,6 +455,7 @@ pub async fn ai_generate_title(
 
 pub async fn ai_chat(
     core: Arc<Core>,
+    chat_id: Option<String>,
     messages: Vec<ChatMessage>,
     book_title: Option<String>,
     book_author: Option<String>,
@@ -466,6 +494,7 @@ pub async fn ai_chat(
             event_name: "ai-stream-chunk".to_string(),
             max_tokens: None,
             temperature: None,
+            chat_id,
         },
     )
     .await

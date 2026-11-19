@@ -15,7 +15,7 @@ uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 thiserror = "1"
 reqwest = { version = "0.12", features = ["json", "stream"] }
-tokio = { version = "1", features = ["sync", "macros", "rt-multi-thread", "net", "io-util", "time"] }
+tokio = { version = "1", features = ["sync", "macros", "rt-multi-thread", "net", "io-util", "time", "process"] }
 futures = "0.3"
 rmcp = { version = "1.7", features = ["server", "transport-io"] }
 schemars = "1"
@@ -28,6 +28,9 @@ notify = "6"
 gethostname = "0.5"
 pdfium-render = "0.9"
 image = { version = "0.25", default-features = false, features = ["jpeg"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"

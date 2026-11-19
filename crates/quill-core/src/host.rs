@@ -53,6 +53,8 @@ pub struct Core {
     pub sync_writer: SyncWriter,
     pub sync_state: SyncState,
     pub oauth_pending: crate::ai::oauth::OAuthPendingLogin,
+    pub codex: Arc<crate::ai::codex::Codex>,
+    pub api_streams: crate::ai::dispatch::ApiStreams,
     pub host: Arc<dyn ShellHost>,
 }
 
@@ -147,6 +149,8 @@ pub fn boot(config: BootConfig, host: Arc<dyn ShellHost>) -> AppResult<Arc<Core>
         sync_writer,
         sync_state: SyncState::new(None, None),
         oauth_pending: Default::default(),
+        codex: Arc::new(crate::ai::codex::Codex::new(local_dir.join("codex-workspace"))),
+        api_streams: Default::default(),
         host,
     });
 

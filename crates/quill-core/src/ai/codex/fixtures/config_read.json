@@ -1,0 +1,39 @@
+{
+ "config": {
+  "model": "gpt-6.2-sol",
+  "model_reasoning_effort": "xhigh",
+  "mcp_servers": {
+   "quill": {
+    "command": "/Applications/Quill.app/Contents/Resources/quill-mcp",
+    "args": [
+     "mcp"
+    ],
+    "environment_id": "local",
+    "enabled": true,
+    "tool_timeout_sec": null
+   },
+   "pencil": {
+    "command": "/Applications/Pen.app/mcp-server",
+    "args": [
+     "--app",
+     "desktop",
+     "--agent",
+     "codexCLI"
+    ],
+    "environment_id": "local",
+    "enabled": true,
+    "tool_timeout_sec": null
+   }
+  },
+  "plugins": {
+   "chrome@openai-bundled": {
+    "enabled": true
+   },
+   "documents@openai-primary-runtime": {
+    "enabled": true
+   }
+  },
+  "apps": null
+ },
+ "origins": {}
+}

@@ -1,4 +1,5 @@
 pub mod anthropic;
+pub mod codex;
 pub mod codex_models;
 pub mod dispatch;
 pub mod oauth;
@@ -16,5 +17,13 @@ pub fn is_reauth_required(err: &AppError) -> bool {
 }
 
 pub fn is_ai_sentinel(err: &AppError) -> bool {
-    matches!(err, AppError::Other(msg) if msg == AI_REAUTH_REQUIRED || msg == AI_NOT_CONFIGURED)
+    matches!(err, AppError::Other(msg) if [
+        AI_REAUTH_REQUIRED,
+        AI_NOT_CONFIGURED,
+        codex::CODEX_NOT_INSTALLED,
+        codex::CODEX_NOT_SIGNED_IN,
+        codex::CODEX_TOO_OLD,
+        codex::CODEX_FAILED,
+    ]
+    .contains(&msg.as_str()))
 }

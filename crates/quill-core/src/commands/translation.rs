@@ -104,6 +104,7 @@ pub async fn ai_translate_passage(
             event_name: format!("ai-translate-chunk-{}", request_id),
             max_tokens: None,
             temperature: Some(0.3),
+            chat_id: None,
         },
     )
     .await

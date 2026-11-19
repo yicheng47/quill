@@ -1,0 +1,67 @@
+{
+ "thread": {
+  "id": "id-125cd6",
+  "environments": [
+   {
+    "environmentId": "local",
+    "cwd": "/tmp/quill-codex",
+    "runtimeWorkspaceRoots": [
+     "/tmp/quill-codex"
+    ]
+   }
+  ],
+  "extra": null,
+  "sessionId": "id-125cd6",
+  "forkedFromId": null,
+  "attachedToThreadId": null,
+  "parentThreadId": null,
+  "preview": "",
+  "ephemeral": true,
+  "section": null,
+  "sectionEnteredAt": null,
+  "projectId": null,
+  "historyMode": "paginated",
+  "modelProvider": "openai",
+  "model": "gpt-6.2-sol",
+  "reasoningEffort": "xhigh",
+  "createdAt": 1795075966,
+  "updatedAt": 1795075966,
+  "recencyAt": 1795075966,
+  "status": {
+   "type": "idle"
+  },
+  "path": null,
+  "cwd": "/tmp/quill-codex",
+  "cliVersion": "0.170.0",
+  "originator": "quill",
+  "source": "vscode",
+  "canAcceptDirectInput": true,
+  "threadSource": null,
+  "agentNickname": null,
+  "agentRole": null,
+  "gitInfo": null,
+  "name": null,
+  "daybreakEnabled": null,
+  "turns": []
+ },
+ "model": "gpt-6.2-sol",
+ "modelProvider": "openai",
+ "serviceTier": "default",
+ "disabledPluginIds": [],
+ "cwd": "/tmp/quill-codex",
+ "runtimeWorkspaceRoots": [
+  "/tmp/quill-codex"
+ ],
+ "instructionSources": [
+  "/Users/reader/.codex/AGENTS.md"
+ ],
+ "approvalPolicy": "never",
+ "approvalsReviewer": "auto_review",
+ "sandbox": {
+  "type": "readOnly",
+  "networkAccess": false
+ },
+ "activePermissionProfile": null,
+ "reasoningEffort": "xhigh",
+ "multiAgentMode": "explicitRequestOnly"
+}

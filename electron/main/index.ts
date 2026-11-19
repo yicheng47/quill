@@ -96,6 +96,10 @@ if (!gotSingleInstanceLock) {
     markQuitting();
   });
 
+  app.on("will-quit", () => {
+    core?.shutdown();
+  });
+
   app.on("activate", async () => {
     if (!core) return;
     if (!focusManagedWindow("main")) {

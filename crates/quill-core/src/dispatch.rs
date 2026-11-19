@@ -227,6 +227,8 @@ struct AddBooksToCollectionArgs {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct AiChatArgs {
+    #[serde(default)]
+    chat_id: Option<String>,
     messages: Vec<ChatMessage>,
     #[serde(default)]
     book_title: Option<String>,
@@ -385,6 +387,12 @@ struct SyncRemovePeerArgs {
 struct CheckOllamaStatusArgs {
     #[serde(default)]
     base_url: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AiCancelArgs {
+    channel: String,
 }
 
 macro_rules! command_table {
@@ -804,6 +812,7 @@ command_table! {
             async move {
                 commands::ai::ai_chat(
                     core,
+                    a.chat_id,
                     a.messages,
                     a.book_title,
                     a.book_author,
@@ -860,6 +869,35 @@ command_table! {
         "list_codex_models" => |core, _args| {
             async move {
                 commands::ai::list_codex_models(&core)
+                    .await
+                    .and_then(to_json)
+            }
+        },
+        "codex_status" => |core, _args| {
+            async move {
+                commands::ai::codex_status(&core)
+                    .await
+                    .and_then(to_json)
+            }
+        },
+        "codex_login" => |core, _args| {
+            async move {
+                commands::ai::codex_login(&core)
+                    .await
+                    .and_then(to_json)
+            }
+        },
+        "codex_login_cancel" => |core, _args| {
+            async move {
+                commands::ai::codex_login_cancel(&core)
+                    .await
+                    .and_then(to_json)
+            }
+        },
+        "ai_cancel" => |core, args| {
+            let a: AiCancelArgs = parse_args(args)?;
+            async move {
+                commands::ai::ai_cancel(&core, a.channel)
                     .await
                     .and_then(to_json)
             }
@@ -1404,6 +1442,40 @@ mod tests {
         let _ = server.await;
     }
 
+    #[tokio::test]
+    async fn codex_connection_routes_every_call_to_codex() {
+        let (dir, _host, core) = boot_test_core();
+        let missing = dir.path().join("no-codex-here");
+        dispatch(
+            Arc::clone(&core),
+            "set_settings_bulk",
+            &json!({"settings": {"ai_auth_mode": "codex", "ai_codex_path": missing, "language": "en"}}).to_string(),
+        )
+        .await
+        .expect("save codex connection");
+
+        let calls = [
+            ("ai_chat", json!({"chatId": "c1", "messages": [{"role": "user", "content": "hi"}]})),
+            ("ai_lookup", json!({"word": "wit", "sentence": "s", "requestId": "r1"})),
+            ("ai_explain", json!({"passage": "p", "requestId": "r2"})),
+            ("ai_generate_title", json!({"userMessage": "hi", "assistantMessage": "", "requestId": "r3"})),
+            ("ai_translate_passage", json!({"text": "hi", "bookId": "b", "targetLanguage": "zh", "requestId": "r4"})),
+        ];
+        for (cmd, args) in calls {
+            let err = dispatch(Arc::clone(&core), cmd, &args.to_string())
+                .await
+                .expect_err(&format!("{cmd} with a missing codex must error"));
+            assert_eq!(err.to_string(), "CODEX_NOT_INSTALLED", "{cmd}");
+        }
+
+        let status = dispatch(Arc::clone(&core), "codex_status", "{}").await.expect("codex_status");
+        assert_eq!(status["state"], "not_installed");
+        assert_eq!(status["min_version"], "0.170.0");
+        dispatch(Arc::clone(&core), "ai_cancel", r#"{"channel":"ai-lookup-chunk-r1"}"#)
+            .await
+            .expect("cancelling an idle channel is a no-op");
+    }
+
     #[test]
     fn command_table_has_no_duplicates_and_covers_frontend() {
         let core_set: BTreeSet<&str> = CORE_COMMAND_NAMES.iter().copied().collect();
@@ -1412,7 +1484,7 @@ mod tests {
             CORE_COMMAND_NAMES.len(),
             "duplicate entries in CORE_COMMAND_NAMES"
         );
-        assert_eq!(CORE_COMMAND_NAMES.len(), 80);
+        assert_eq!(CORE_COMMAND_NAMES.len(), 84);
 
         let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
