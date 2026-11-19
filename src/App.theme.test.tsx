@@ -245,7 +245,7 @@ describe("App startup theme and reveal", () => {
     expect(mocks.appReady).toHaveBeenCalledOnce();
   });
 
-  it("defaults missing stored theme to system without writing DB, tracks OS changes live, and sends one native update per user toggle", async () => {
+  it("defaults missing stored theme to light without writing DB, ignores OS changes, and tracks the OS only once System is chosen", async () => {
     mqMatches = true;
     mocks.getCurrentWindowLabel.mockReturnValue("main");
     mocks.invoke.mockResolvedValue({});
@@ -257,11 +257,26 @@ describe("App startup theme and reveal", () => {
     });
 
     expect(document.documentElement.classList.contains("dawn")).toBe(true);
-    expect(document.documentElement.classList.contains("dark")).toBe(true);
-    expect(mocks.setWindowBackgroundColor).toHaveBeenLastCalledWith("#12111A");
-    expect(localStorage.getItem("quill-theme")).toBe("system");
+    expect(document.documentElement.classList.contains("dark")).toBe(false);
+    expect(mocks.setWindowBackgroundColor).toHaveBeenLastCalledWith("#EEEBF8");
+    expect(localStorage.getItem("quill-theme")).toBe("light");
     expect(mocks.invoke).toHaveBeenCalledTimes(1);
     expect(mocks.invoke).toHaveBeenCalledWith("get_all_settings");
+
+    // The light default ignores OS appearance changes.
+    await setSystemDark(false);
+    await setSystemDark(true);
+    expect(document.documentElement.classList.contains("dark")).toBe(false);
+
+    // Choosing System triggers exactly one native background update and follows the OS.
+    mocks.setWindowBackgroundColor.mockClear();
+    await act(async () => {
+      setAppTheme("system");
+      await Promise.resolve();
+    });
+    expect(document.documentElement.classList.contains("dark")).toBe(true);
+    expect(mocks.setWindowBackgroundColor).toHaveBeenCalledTimes(1);
+    expect(mocks.setWindowBackgroundColor).toHaveBeenCalledWith("#12111A");
 
     await setSystemDark(false);
     expect(document.documentElement.classList.contains("dark")).toBe(false);
@@ -271,7 +286,7 @@ describe("App startup theme and reveal", () => {
     expect(document.documentElement.classList.contains("dark")).toBe(true);
     expect(mocks.setWindowBackgroundColor).toHaveBeenLastCalledWith("#12111A");
 
-    // Switching via setAppTheme triggers exactly one native background update.
+    // Switching back to light stops OS tracking.
     mocks.setWindowBackgroundColor.mockClear();
     await act(async () => {
       setAppTheme("light");
@@ -280,21 +295,8 @@ describe("App startup theme and reveal", () => {
     expect(document.documentElement.classList.contains("dark")).toBe(false);
     expect(mocks.setWindowBackgroundColor).toHaveBeenCalledTimes(1);
     expect(mocks.setWindowBackgroundColor).toHaveBeenCalledWith("#EEEBF8");
-
-    // On light, OS changes are ignored.
     await setSystemDark(false);
     await setSystemDark(true);
-    expect(document.documentElement.classList.contains("dark")).toBe(false);
-
-    // Switching back to system resumes OS tracking.
-    mocks.setWindowBackgroundColor.mockClear();
-    await act(async () => {
-      setAppTheme("system");
-      await Promise.resolve();
-    });
-    expect(mocks.setWindowBackgroundColor).toHaveBeenCalledTimes(1);
-    expect(mocks.setWindowBackgroundColor).toHaveBeenCalledWith("#12111A");
-    await setSystemDark(false);
     expect(document.documentElement.classList.contains("dark")).toBe(false);
   });
 

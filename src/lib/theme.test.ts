@@ -58,15 +58,15 @@ describe("theme helpers", () => {
     vi.unstubAllGlobals();
   });
 
-  it("normalizes missing or unknown stored theme values to system", () => {
-    expect(normalizeAppTheme(undefined)).toBe("system");
-    expect(normalizeAppTheme(null)).toBe("system");
-    expect(normalizeAppTheme("")).toBe("system");
+  it("normalizes missing or unknown stored theme values to light and keeps an explicit system choice", () => {
+    expect(normalizeAppTheme(undefined)).toBe("light");
+    expect(normalizeAppTheme(null)).toBe("light");
+    expect(normalizeAppTheme("")).toBe("light");
+    expect(normalizeAppTheme("sepia")).toBe("light");
     expect(normalizeAppTheme("system")).toBe("system");
-    expect(normalizeAppTheme("sepia")).toBe("system");
     expect(normalizeAppTheme("light")).toBe("light");
     expect(normalizeAppTheme("dark")).toBe("dark");
-    expect(readAppTheme()).toBe("system");
+    expect(readAppTheme()).toBe("light");
   });
 
   it("resolves darkness for system, light, and dark modes across OS appearances", () => {

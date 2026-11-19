@@ -3,6 +3,8 @@ import { setWindowBackgroundColor } from "../platform";
 
 export type AppTheme = "system" | "light" | "dark";
 
+export const DEFAULT_APP_THEME: AppTheme = "light";
+
 export interface ThemeSelectionState {
   committedTheme: AppTheme;
   activeTheme: AppTheme;
@@ -41,8 +43,8 @@ export function bumpAppThemeRevision(): number {
 }
 
 export function normalizeAppTheme(value: string | null | undefined): AppTheme {
-  if (value === "light" || value === "dark") return value;
-  return "system";
+  if (value === "light" || value === "dark" || value === "system") return value;
+  return DEFAULT_APP_THEME;
 }
 
 export function systemPrefersDark(): boolean {
@@ -67,7 +69,7 @@ export function readAppTheme(): AppTheme {
   try {
     return normalizeAppTheme(localStorage.getItem(STORAGE_APP_THEME));
   } catch {
-    return "system";
+    return DEFAULT_APP_THEME;
   }
 }
 

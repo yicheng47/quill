@@ -24,7 +24,7 @@ export interface ReaderWindowParams {
 }
 
 export interface InitialAppearance {
-  /** Native backing color (uses OS appearance if DB lookup timed out or failed). */
+  /** Native backing color (Light if DB lookup timed out or failed). */
   dark: boolean;
   /** Preload seed forwarded to renderer only when DB lookup succeeded. */
   preloadDark: boolean | null;
@@ -272,8 +272,8 @@ export function isQuitting(): boolean {
 
 export function resolveInitialDark(themeSetting: string | null | undefined): boolean {
   if (themeSetting === "dark") return true;
-  if (themeSetting === "light") return false;
-  return nativeTheme.shouldUseDarkColors;
+  if (themeSetting === "system") return nativeTheme.shouldUseDarkColors;
+  return false;
 }
 
 export function labelForWebContents(id: number): string | undefined {

@@ -303,8 +303,9 @@ describe("SettingsView and redesigned sections", () => {
     expect(systemCard?.disabled).toBe(false);
     expect(lightCard?.disabled).toBe(false);
     expect(darkCard?.disabled).toBe(false);
-    expect(systemCard?.getAttribute("aria-pressed")).toBe("true");
-    expect(lightCard?.getAttribute("aria-pressed")).toBe("false");
+    // No stored theme: Light is the default selection, not System.
+    expect(systemCard?.getAttribute("aria-pressed")).toBe("false");
+    expect(lightCard?.getAttribute("aria-pressed")).toBe("true");
     expect(darkCard?.getAttribute("aria-pressed")).toBe("false");
 
     mocks.setWindowBackgroundColor.mockClear();

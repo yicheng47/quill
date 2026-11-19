@@ -49,7 +49,7 @@ describe("readInitialDark", () => {
     );
   });
 
-  it("falls back within timeout when dispatch hangs", async () => {
+  it("falls back to the light default within timeout when dispatch hangs", async () => {
     vi.useFakeTimers();
     state.systemDark = true;
     const core = {
@@ -58,7 +58,7 @@ describe("readInitialDark", () => {
 
     const promise = readInitialDark(core, 100);
     await vi.advanceTimersByTimeAsync(100);
-    await expect(promise).resolves.toBe(true);
+    await expect(promise).resolves.toBe(false);
   });
 
   it("distinguishes confirmed DB lookup from timeout or error in readInitialAppearance", async () => {
@@ -70,8 +70,18 @@ describe("readInitialDark", () => {
       preloadDark: true,
     });
 
-    // Confirmed missing row ("null") resolves as System and produces a confirmed seed.
-    state.systemDark = false;
+    // An explicit System choice follows the OS appearance.
+    state.systemDark = true;
+    const confirmedSystem = {
+      dispatch: vi.fn().mockResolvedValue(JSON.stringify("system")),
+    };
+    await expect(readInitialAppearance(confirmedSystem, 50)).resolves.toEqual({
+      dark: true,
+      preloadDark: true,
+    });
+
+    // Confirmed missing row ("null") resolves to the light default, even with a dark OS.
+    state.systemDark = true;
     const confirmedMissing = {
       dispatch: vi.fn().mockResolvedValue("null"),
     };
@@ -80,7 +90,7 @@ describe("readInitialDark", () => {
       preloadDark: false,
     });
 
-    // Hung DB query uses OS appearance for native backing, but leaves preloadDark null.
+    // Hung DB query falls back to the light default for native backing, but leaves preloadDark null.
     vi.useFakeTimers();
     state.systemDark = true;
     const hangingCore = {
@@ -89,7 +99,7 @@ describe("readInitialDark", () => {
     const timeoutPromise = readInitialAppearance(hangingCore, 100);
     await vi.advanceTimersByTimeAsync(100);
     await expect(timeoutPromise).resolves.toEqual({
-      dark: true,
+      dark: false,
       preloadDark: null,
     });
 
