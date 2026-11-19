@@ -315,10 +315,16 @@ describe("AiSetupDialog (#326 first-launch & OAuth migration helper)", () => {
       const dialog = document.querySelector<HTMLElement>('[data-testid="ai-setup-dialog"]')!;
       const focusable = Array.from(dialog.querySelectorAll<HTMLElement>("button:not([disabled])"));
       expect(focusable.length).toBeGreaterThanOrEqual(2);
-      expect(dialog.contains(document.activeElement)).toBe(true);
+      expect(document.activeElement).toBe(dialog);
 
       const first = focusable[0];
       const last = focusable[focusable.length - 1];
+
+      // Shift+Tab from the dialog itself wraps to the last control.
+      await act(async () => {
+        window.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, cancelable: true }));
+      });
+      expect(document.activeElement).toBe(last);
 
       // Shift+Tab on first focusable wraps to last.
       first.focus();

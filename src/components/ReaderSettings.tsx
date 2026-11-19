@@ -239,7 +239,7 @@ export default function ReaderSettings({
             onClick={() => update({ fontSize: nudgeFontSize(settings.fontSize, -1) })}
             aria-label={t("readerSettings.decreaseFontSize")}
             disabled={settings.fontSize <= FONT_SIZE_MIN}
-            className="flex items-center justify-center border-r border-border-subtle cursor-pointer text-[13.5px] font-semibold text-text-primary hover:bg-border-subtle transition-colors disabled:opacity-40 disabled:pointer-events-none"
+            className="flex items-center justify-center border-r border-border-subtle cursor-pointer text-[13.5px] font-semibold text-text-primary hover:bg-border-subtle transition-colors disabled:opacity-40 disabled:pointer-events-none focus-visible:outline-offset-[-3px]"
           >
             A−
           </button>
@@ -251,7 +251,7 @@ export default function ReaderSettings({
             onClick={() => update({ fontSize: nudgeFontSize(settings.fontSize, 1) })}
             aria-label={t("readerSettings.increaseFontSize")}
             disabled={settings.fontSize >= FONT_SIZE_MAX}
-            className="flex items-center justify-center border-l border-border-subtle cursor-pointer text-[17px] font-semibold text-text-primary hover:bg-border-subtle transition-colors disabled:opacity-40 disabled:pointer-events-none"
+            className="flex items-center justify-center border-l border-border-subtle cursor-pointer text-[17px] font-semibold text-text-primary hover:bg-border-subtle transition-colors disabled:opacity-40 disabled:pointer-events-none focus-visible:outline-offset-[-3px]"
           >
             A+
           </button>

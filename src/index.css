@@ -355,6 +355,13 @@ body {
     -webkit-user-select: text;
     user-select: text;
   }
+
+  /* Controls without their own focus style get the shared Button's ring
+     instead of the browser's default outline. */
+  :focus-visible {
+    outline: 3px solid var(--color-focus-ring);
+    outline-offset: 0;
+  }
 }
 
 /* ── Dawn Atmosphere & Glass Utilities ── */

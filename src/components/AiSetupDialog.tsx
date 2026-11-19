@@ -235,8 +235,10 @@ export default function AiSetupDialog({
       const dialog = dialogRef.current;
       if (!dialog) return;
       if (document.activeElement && dialog.contains(document.activeElement)) return;
-      const focusable = getFocusable();
-      (focusable[0] ?? dialog).focus();
+      // Focus the dialog itself: while Codex is checked the primary action is
+      // disabled, so the first control is the footer link, and a ring on it at
+      // launch reads as a selection.
+      dialog.focus();
     };
     focusDialog();
 
