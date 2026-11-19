@@ -1,4 +1,4 @@
-# 326 — Codex Connection (Replaces the ChatGPT Login) + First-Launch AI Setup
+# 326 — AI Connections: Agent (Codex) or API, + First-Launch AI Setup
 
 GitHub issue: https://github.com/yicheng47/quill/issues/326
 
@@ -10,15 +10,23 @@ OpenAI now ships the supported version of the same idea. `codex app-server` is a
 
 Quill 2.0 therefore replaces the ChatGPT login with a Codex connection. 2.0 has not shipped yet (production is v1.3.4), so the change lands once, at the major version, with a migration for people saved on the ChatGPT login. Because Codex becomes the main way to get subscription AI, Quill also gains a first-launch AI setup helper that detects Codex and gets a reader to a working lookup in one or two clicks.
 
+The same change simplifies the rest of the connection settings. Most model services now speak the OpenAI API at their own address, and Quill already sends OpenAI and Ollama calls through one OpenAI-compatible client (`ai/openai_compat.rs`). So Settings → AI offers two connections: an **Agent**, which today means Codex, and an **API**, one option with service presets that covers OpenAI, Anthropic, Gemini, DeepSeek, OpenRouter, Ollama and any custom endpoint.
+
 Codex is the only agent in scope. Anthropic's terms do not allow a third-party product to use a Claude subscription login without prior approval, which rules out driving `claude -p` from a shipped app. Other CLIs have no supported embedding path comparable to the app server.
 
 ## Scope
 
 In scope:
 
-- **One connection list.** Settings → AI replaces the Provider and Sign-in-with rows with a single Connection list of three peer choices: **Codex** (tagged Recommended, the default for a fresh install), **API key**, and **Ollama**. The selected choice expands its details beneath it: Codex shows its status and location, API key shows a vendor choice (OpenAI or Anthropic) and the key field, and Ollama keeps its endpoint and model settings. The ChatGPT login is removed. `ai_auth_mode` gains `codex`; the stored `ai_provider` and `ai_auth_mode` keys stay, with the list mapping onto them (Codex = `openai` + `codex`, API key = `openai` or `anthropic` + `api_key`, Ollama = `ollama`).
+- **Two connections: Agent or API.** Settings → AI replaces the Provider and Sign-in-with rows with a Connection list of two choices, and the selected one expands its details beneath it.
+  - **Agent** (tagged Recommended, the default for a fresh install): an agent picker whose only entry is Codex for now, then the Codex status row and Codex location. The picker leaves room for another agent later without reshaping the screen.
+  - **API**: a Service picker, Base URL, and API key. The services are presets: OpenAI, Anthropic, Google Gemini, DeepSeek, OpenRouter, Ollama, and Custom (any OpenAI-compatible URL). A preset only fills the base URL and says whether a key is needed; the URL stays editable. Ollama needs no key and adds its server-status row. Anthropic keeps Quill's native Anthropic client behind its preset; every other service uses the OpenAI-compatible client.
 
-- **Two kinds of connection, no extra harness.** API keys and Ollama stay direct HTTP calls: they are official, stable APIs, and routing them through Codex would force Ollama users to install Codex and wrap small local models in a coding agent's prompt and tools. The shared dispatch path from phase 1 sends each call to one of two kinds: Codex (the app server) or direct (OpenAI, Anthropic or Ollama over HTTP).
+  The ChatGPT login is removed. Settings keys: `ai_auth_mode` is `codex` for the agent and `api_key` for API; `ai_provider` holds the API service (`openai`, `anthropic`, `gemini`, `deepseek`, `openrouter`, `ollama`, `custom`). The existing `openai`, `anthropic` and `ollama` values keep their meaning, so a saved API-key or Ollama setup opens on API with the matching service.
+
+- **API connection details.** The base URL now includes the API version path (`https://api.openai.com/v1`, `https://generativelanguage.googleapis.com/v1beta/openai`), and Quill appends only `/chat/completions`; today it appends `/v1/chat/completions`, which breaks services whose path is not `/v1`. A saved OpenAI or Ollama base URL without a version path gets `/v1` appended once on the first 2.0 launch. The model picker lists the service's `GET {base}/models` and keeps free-text entry for any model ID; when the listing fails, it falls back to free text. Temperature stays an API-only setting.
+
+- **Two kinds of connection, no extra harness.** API services stay direct HTTP calls: they are official, stable APIs, and routing them through Codex would force API and Ollama users to install Codex and wrap small local models in a coding agent's prompt and tools. The shared dispatch path from phase 1 sends each call to one of two kinds: agent (the Codex app server) or API (the OpenAI-compatible client, or the Anthropic client for the Anthropic preset).
 
 - **Codex through `codex app-server`.** Quill starts its own app server as a child process on the first AI call, keeps it for the session, restarts it after an unexpected exit, and stops it when Quill quits. It does not connect to the user's Codex daemon: most users don't run one, its lifecycle and version are not Quill's, and threads created there would show up in the user's Codex app. The child process reads the same `~/.codex` login, so the user signs in once for both. Each Quill call runs one turn and streams `item/agentMessage/delta` notifications into the existing per-request event channels, so the reader, chat and translation UIs keep their streaming code.
 
@@ -34,7 +42,7 @@ In scope:
 
 - **Status and errors.** Codex has six states that settings, the setup helper, and the AI entry points all share: checking, ready (account email, plan and Codex version), not installed, not signed in, too old, and failed to start (with the process's error). The backend returns a sentinel for each failure alongside `AI_NOT_CONFIGURED`, and the reader's AI popovers and Ask Quill map them to the setup card from #348 instead of a red error.
 
-- **First-launch AI setup helper.** On the first launch with no AI configured, Quill runs Codex detection and offers the next step for its state: **Use Codex** when it is ready, **Sign in with ChatGPT** when it is not signed in, and the install command, a link to OpenAI's install page and **Check again** when it is missing or too old. Every state also offers the other options (API key, Ollama), which open Settings → AI, and **Skip for now**. Skipping or finishing records `ai_setup_seen` so the helper never reappears on its own; afterwards the AI entry points' setup card and Settings → AI cover the same ground. The placement and visual form are open design choices (see Design).
+- **First-launch AI setup helper.** On the first launch with no AI configured, Quill runs Codex detection and offers the next step for its state: **Use Codex** when it is ready, **Sign in with ChatGPT** when it is not signed in, and the install command, a link to OpenAI's install page and **Check again** when it is missing or too old. Every state also offers **Use an API key or Ollama**, which opens Settings → AI on API, and **Skip for now**. Skipping or finishing records `ai_setup_seen` so the helper never reappears on its own; afterwards the AI entry points' setup card and Settings → AI cover the same ground. The placement and visual form are open design choices (see Design).
 
 - **Migration from the ChatGPT login.** On the first 2.0 launch, a saved `ai_auth_mode = oauth` becomes `codex`, the saved model and effort tiers carry over (the slugs are the same catalog), and the ChatGPT OAuth tokens are deleted from `secrets.db`, since no code can use them any more. These users see the setup helper once with a short note that ChatGPT sign-in now goes through Codex, whatever `ai_setup_seen` says.
 
@@ -44,7 +52,8 @@ In scope:
 
 Out of scope:
 
-- Claude Code, Antigravity, Gemini CLI and other agents. The connection layer stays one code path, not a plugin system.
+- Claude Code, Antigravity, Gemini CLI and other agents. The agent picker has one entry; the connection layer stays one code path, not a plugin system.
+- Several saved API connections at once, per-feature connections, and service-specific extras (for example OpenRouter's ranking headers).
 - Bundling or downloading Codex. The macOS arm64 package is about 380 MB unpacked, larger than Quill; the helper links to the install instead.
 - Connecting to a running Codex daemon or remote app server.
 - Agent tools, including Quill's own MCP server. Letting chat read the library and highlights is a follow-up that needs its own spec.
@@ -54,7 +63,7 @@ Out of scope:
 
 The UI is drawn in Pencil at `quill/desktop/specs/326-agent-connections.pen` in `YeelinksCo/yeelinks_design` and needs sign-off before implementation. It covers:
 
-- Settings → AI: the Connection list (option R1, chosen over a segmented control and a Codex-first layout), with Codex selected and with API key selected; the Codex status row in each state; the model card and the effort tiers. Temperature is not shown for Codex, which does not take it.
+- Settings → AI: the Connection list with Agent and API (chosen over three peer choices with a separate Ollama option, a segmented control, and a Codex-first layout), shown with the agent selected and with API on OpenRouter and on Ollama; the service menu; the Codex status row in each state; the model card and the effort tiers. Temperature is not shown for the agent, which does not take it.
 - The first-launch helper in three placements for comparison: a modal over Home (A1, recommended), a banner on Home (A2), and a step inside the empty-library view (A3), with the modal's not-signed-in, signing-in, not-installed and too-old states.
 - The migration note for former ChatGPT-login users.
 
@@ -68,11 +77,13 @@ The UI is drawn in Pencil at `quill/desktop/specs/326-agent-connections.pen` in 
 
 4. **Chat continuity.** The in-memory chat → thread map and its reseed rules, one test per trigger.
 
-5. **Remove the ChatGPT login and migrate.** Delete the files listed under Removal, migrate `oauth` to `codex`, and delete the stale tokens from `secrets.db`. Tests for the migration, including a second launch being a no-op.
+5. **API connection.** Service presets, the version-in-base-URL convention and its one-time migration, the `/models` listing with free-text fallback, and the `ai_provider` values for the new services. Unit tests for each preset's request URL and auth header, the URL migration, and model-list parsing.
 
-6. **Settings UI and setup helper.** Build the signed-off design: the Connection list and Codex status row in `AiSettings.tsx` following the section's row pattern, the model card on `model/list`, the setup helper, the migration note, and the #348 setup card for the new sentinels.
+6. **Remove the ChatGPT login and migrate.** Delete the files listed under Removal, migrate `oauth` to `codex`, and delete the stale tokens from `secrets.db`. Tests for the migration, including a second launch being a no-op.
 
-7. **i18n and QA.**
+7. **Settings UI and setup helper.** Build the signed-off design: the Agent/API connection list, the service picker, the Codex status row in `AiSettings.tsx` following the section's row pattern, the model card on `model/list`, the setup helper, the migration note, and the #348 setup card for the new sentinels.
+
+8. **i18n and QA.**
 
 The PR changes secrets storage, so it gets `core-review`; it removes a sign-in path and migrates saved settings, so it is `risk-high`.
 
@@ -85,6 +96,7 @@ Automated:
 - Every `thread/start` carries the empty Quill cwd, read-only sandbox, `never` approval, base instructions and the MCP/apps/plugins overrides; every `turn/start` carries an explicit model and effort.
 - Migration from `oauth`: mode, model and tiers carried over, OAuth tokens gone, second run unchanged.
 - Chat reseed: one test per trigger.
+- Each API preset builds the right request URL and auth header; a saved base URL without a version path gains `/v1` once; `/models` parsing and the free-text fallback.
 
 Live checks (development app, sync off, an inexpensive model with tiny prompts):
 
@@ -98,5 +110,5 @@ Live checks (development app, sync off, an inexpensive model with tiny prompts):
 - Launched from Finder, Quill finds a `codex` installed through Homebrew or npm.
 - A profile saved on the ChatGPT login opens on Codex after the update, shows the migration note once, and keeps its model and effort tiers.
 - Skip for now: the helper does not return; Look Up shows the setup card linking to Settings.
-- API-key OpenAI, Anthropic and Ollama still work.
+- API: OpenAI and Anthropic keys still work; a saved Ollama setup opens on API → Ollama and still works; one other preset (OpenRouter or DeepSeek, on a cheap model) and a Custom URL stream a lookup; the model picker lists the service's models.
 - Light and dark themes; English and Chinese strings.
