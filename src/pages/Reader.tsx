@@ -33,7 +33,7 @@ import ExplainPopover from "../components/ExplainPopover";
 import DictionaryPanel from "../components/DictionaryPanel";
 import TranslationPopover from "../components/TranslationPopover";
 import TableOfContents from "../components/TableOfContents";
-import { getBook, updateReadingProgress, checkBookAvailable, checkBookReadable, type Book } from "../hooks/useBooks";
+import { getBook, updateBookStatus, updateReadingProgress, checkBookAvailable, checkBookReadable, type Book } from "../hooks/useBooks";
 import { getAllSettings } from "../hooks/useSettings";
 import type { Highlight } from "../hooks/useBookmarks";
 import {
@@ -426,17 +426,39 @@ export default function Reader() {
   // Load book metadata and default settings from DB
   useEffect(() => {
     if (!bookId) return;
+    let cancelled = false;
     getBook(bookId)
       .then((b) => {
-        setBook(b);
+        if (cancelled) return;
+        if (b && b.status === "unread") {
+          setBook({ ...b, status: "reading" });
+          void updateBookStatus(b.id, "reading")
+            .then(() => {
+              if (isStandaloneWindow) {
+                void emitTo("main", "book-status-changed", b.id).catch(() => {});
+              }
+            })
+            .catch(() => {
+              if (!cancelled) {
+                setBook((prev) => (prev?.id === b.id ? { ...prev, status: "unread" } : prev));
+              }
+            });
+        } else {
+          setBook(b);
+        }
         if (isStandaloneWindow && b) {
           void setWindowTitle(b.title);
         }
       })
-      .catch(() => setBook(null))
-      .finally(() => setLoading(false));
+      .catch(() => {
+        if (!cancelled) setBook(null);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
 
     getAllSettings().then((globalSettings) => {
+      if (cancelled) return;
       const saved = localStorage.getItem(`reader-settings-${bookId}`);
       const bookSettings = saved ? JSON.parse(saved) as Partial<ReaderSettingsState> : {};
       const g = globalSettings;
@@ -467,6 +489,10 @@ export default function Reader() {
       }
       dbSettingsLoaded.current = true;
     }).catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
   }, [bookId]);
 
   // Persist reader settings to localStorage when they change — only after load completes

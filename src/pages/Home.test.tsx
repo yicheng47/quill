@@ -628,6 +628,74 @@ describe("Home integration flows (R1, R2, R3, R6)", () => {
     expect(nowReadingCard?.textContent).toContain("80%");
   });
 
+  it("refreshes Home hero and Library filter counts immediately on book-status-changed from a side-by-side reader", async () => {
+    let book1 = makeBook("b1", {
+      title: "Older Book",
+      status: "reading",
+      progress: 15,
+      updated_at: 1000,
+    });
+    let book2 = makeBook("b2", {
+      title: "Just Opened Unread",
+      status: "unread",
+      progress: 0,
+      updated_at: 500,
+    });
+    let counts = { all: 2, reading: 1, finished: 0, unread: 1 };
+
+    mocks.invoke.mockImplementation(async (cmd: string, args?: Record<string, unknown>) => {
+      if (cmd === "list_collections") return [];
+      if (cmd === "get_book_counts") return counts;
+      if (cmd === "list_books") {
+        const all = [book1, book2];
+        const filter = args?.filter as string | null;
+        const filtered = filter ? all.filter((b) => b.status === filter) : all;
+        return { books: filtered, next_cursor: null, total: filtered.length };
+      }
+      if (cmd === "list_all_highlights") return [];
+      if (cmd === "list_all_vocab_words") return [];
+      if (cmd === "list_all_chats") return { chats: [], next_cursor: null, total: 0 };
+      return [];
+    });
+
+    await act(async () => {
+      root.render(<Home />);
+    });
+    await flushMicrotasks();
+
+    expect(container.textContent).toContain("Older Book");
+
+    // Simulate standalone reader opening book2 and emitting book-status-changed without focusing main
+    book2 = { ...book2, status: "reading", updated_at: 9999 };
+    book1 = { ...book1 };
+    counts = { all: 2, reading: 2, finished: 0, unread: 0 };
+
+    await act(async () => {
+      for (const cb of mocks.genericListeners.get("book-status-changed") ?? []) {
+        cb({ payload: "b2" });
+      }
+    });
+    await flushMicrotasks();
+
+    const nowReadingCard = Array.from(container.querySelectorAll("section")).find((el) =>
+      el.textContent?.includes("Now reading"),
+    );
+    expect(nowReadingCard?.textContent).toContain("Just Opened Unread");
+
+    const libraryTab = Array.from(
+      container.querySelectorAll<HTMLButtonElement>("nav button"),
+    ).find((b) => b.textContent === "Library");
+    await act(async () => {
+      libraryTab?.click();
+    });
+    await flushMicrotasks();
+
+    const readingFilterBtn = Array.from(container.querySelectorAll("button")).find((b) =>
+      b.textContent?.includes("Reading"),
+    );
+    expect(readingFilterBtn?.textContent).toContain("2");
+  });
+
   it("toggles in-window Settings via gear and Cmd+,, exits on route click, and routes open-settings sections", async () => {
     mocks.invoke.mockImplementation(async (cmd) => {
       if (cmd === "list_books") return { books: [], next_cursor: null, total: 0 };

@@ -475,10 +475,17 @@ export default function Home() {
     );
   }, [patchBook]);
 
-  // Refresh after initial sync / MCP changes / ingested covers
+  // Refresh after initial sync / MCP changes / ingested covers / reader status changes
   useEffect(() => {
     let mcpDebounce: ReturnType<typeof setTimeout> | undefined;
     let coversDebounce: ReturnType<typeof setTimeout> | undefined;
+
+    const disposeBookStatus = subscribeAsync((isActive) =>
+      listenCurrentWindow<string>("book-status-changed", () => {
+        if (!isActive()) return;
+        void refreshAllSilentlyRef.current();
+      }),
+    );
 
     const disposeSync = subscribeAsync((isActive) =>
       listen("sync-initial-tick-done", () => {
@@ -516,6 +523,7 @@ export default function Home() {
     );
 
     return () => {
+      disposeBookStatus();
       disposeSync();
       disposeMcpBooks();
       disposeMcpCols();
