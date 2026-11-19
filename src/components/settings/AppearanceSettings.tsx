@@ -83,7 +83,7 @@ export default function AppearanceSettings({ save }: Partial<SettingsProps> = {}
                         }
                       : {
                           background:
-                            "radial-gradient(circle at 90% 10%, var(--color-bg-glow-peach, transparent), transparent 60%), linear-gradient(135deg, var(--color-bg-start) 0%, var(--color-bg-end) 100%)",
+                            "linear-gradient(135deg, var(--color-preview-light-start) 0%, var(--color-preview-light-end) 100%)",
                         }
                   }
                 >
@@ -113,7 +113,7 @@ export default function AppearanceSettings({ save }: Partial<SettingsProps> = {}
                     >
                       <div
                         className={`absolute left-2.5 bottom-2.5 w-10 h-2.5 rounded-full ${
-                          card.id === "dark" ? "bg-preview-night-accent" : "bg-accent"
+                          card.id === "dark" ? "bg-preview-night-accent" : "bg-preview-light-accent"
                         }`}
                       />
                     </div>

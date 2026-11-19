@@ -302,7 +302,7 @@ describe("electron windows titlebar & lifecycle", () => {
 
     createMainWindow(true);
     const mainRec = mockState.instances[0];
-    expect(mainRec.options.backgroundColor).toBe("#12111A");
+    expect(mainRec.options.backgroundColor).toBe("#0D0C0B");
     expect(
       (mainRec.options.webPreferences as { additionalArguments?: string[] } | undefined)
         ?.additionalArguments,
@@ -433,7 +433,7 @@ describe("electron windows titlebar & lifecycle", () => {
       ["original", "#EEEBF8"],
       ["paper", "#F0E7D4"],
       ["quiet", "#D2D2D8"],
-      ["dark", "#12111A"],
+      ["dark", "#0D0C0B"],
     ];
 
     for (const [pageTheme, expectedBg] of cases) {
@@ -474,7 +474,7 @@ describe("electron windows titlebar & lifecycle", () => {
     );
     const liveRec = mockState.instances[mockState.instances.length - 1];
     setWindowBackgroundColor("reader-live-bg", READER_SHELL_BG.dark);
-    expect(liveRec.setBackgroundColor).toHaveBeenCalledWith("#12111A");
+    expect(liveRec.setBackgroundColor).toHaveBeenCalledWith("#0D0C0B");
     closeIfOpen("reader-live-bg", liveRec);
   });
 

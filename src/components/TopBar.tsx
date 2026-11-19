@@ -150,7 +150,7 @@ export function UpdateIndicator({
         title={t("update.checking")}
         className="inline-flex items-center gap-1.5 px-2 lg:px-2.5 py-1 rounded-full dawn-chip text-[11px] font-medium text-text-secondary min-w-0 max-w-full overflow-hidden"
       >
-        <Loader2 size={11} className="animate-spin text-accent shrink-0" />
+        <Loader2 size={11} className="animate-spin text-accent-fg shrink-0" />
         <span className="truncate">
           <span className="hidden lg:inline">{t("update.checking")}</span>
           <span className="lg:hidden">{t("settings.updates.checkingButton")}</span>
@@ -232,7 +232,7 @@ export function UpdateIndicator({
               : "cursor-default"
         }`}
       >
-        {status === "available" && <CircleArrowDown size={14} className="text-accent" />}
+        {status === "available" && <CircleArrowDown size={14} className="text-accent-fg" />}
         {status === "downloading" && (
           <svg
             width="14"
@@ -293,7 +293,7 @@ export function UpdateIndicator({
         {status === "ready" && (
           <RotateCw
             size={14}
-            className={readyPopoverOpen ? "text-accent-on-tint" : "text-accent"}
+            className={readyPopoverOpen ? "text-accent-on-tint" : "text-accent-fg"}
           />
         )}
         {status === "error" && <TriangleAlert size={14} className="text-warning" />}

@@ -437,6 +437,12 @@ describe("Main Views (Home, Highlights, Words, Chats)", () => {
       });
       await flushMicrotasks();
 
+      // Selected rail icon and count use text-accent-fg for dark-mode contrast on bg-accent-tint
+      const activeRailBtn = container.querySelector<HTMLButtonElement>('aside button[aria-current="true"]');
+      expect(activeRailBtn?.querySelector("svg")?.getAttribute("class")).toContain("text-accent-fg");
+      expect(activeRailBtn?.querySelector(".font-mono")?.className).toContain("text-accent-fg");
+      expect(activeRailBtn?.querySelector(".text-accent")).toBeNull();
+
       // Switch sort to Book chapter order -> Earlier chapter quote comes before Later chapter quote
       const sortBtn = container.querySelector<HTMLButtonElement>('button[aria-label="Sort highlights"]');
       await act(async () => {

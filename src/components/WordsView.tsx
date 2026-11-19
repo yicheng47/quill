@@ -407,7 +407,7 @@ export default function WordsView({
               >
                 <BookOpen
                   size={14}
-                  className={bookFilter ? "text-accent" : "text-text-secondary"}
+                  className={bookFilter ? "text-accent-fg" : "text-text-secondary"}
                 />
                 <span className="truncate max-w-[160px]">{activeBookFilterTitle}</span>
                 <ChevronDown size={14} className="text-text-tertiary shrink-0" />
@@ -502,7 +502,7 @@ export default function WordsView({
       {isGloballyEmpty ? (
         <div className="flex-1 min-h-0 dawn-glass rounded-surface flex items-center justify-center p-8">
           <div className="max-w-[420px] flex flex-col items-center text-center">
-            <div className="size-12 rounded-[14px] bg-accent-tint text-accent flex items-center justify-center mb-4">
+            <div className="size-12 rounded-[14px] bg-accent-tint text-accent-fg flex items-center justify-center mb-4">
               <Languages size={22} />
             </div>
             <h2 className="text-[20px] font-semibold tracking-[-0.3px] text-text-primary mb-2">
@@ -758,7 +758,7 @@ export default function WordsView({
                               ...(activeWord.cfi ? { cfi: activeWord.cfi } : {}),
                             })
                           }
-                          className="text-[12.5px] font-medium text-text-primary hover:text-accent inline-flex items-center gap-1 cursor-pointer transition-colors shrink-0"
+                          className="text-[12.5px] font-medium text-text-primary hover:text-accent-fg inline-flex items-center gap-1 cursor-pointer transition-colors shrink-0"
                         >
                           <ArrowUpRight size={14} />
                           <span>{t("words.goToPassage")}</span>

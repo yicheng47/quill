@@ -117,13 +117,15 @@ describe("Reader page-theme materials", () => {
     delete document.documentElement.dataset.readerTheme;
   });
 
-  it("resolves Dawn glass, Sepia (#F7F0E1/#E4D8BE), Gray (#EDEDF0/#D4D4DA), and Nocturne dark CSS tokens per theme", () => {
+  it("resolves Dawn glass, Sepia (#F7F0E1/#E4D8BE), Gray (#EDEDF0/#D4D4DA), and Nocturne (Ember) dark CSS tokens per theme", () => {
     applyReaderTheme("original");
     const originalStyle = getComputedStyle(document.documentElement);
     expect(originalStyle.getPropertyValue("--color-reader-island").trim()).toBe("var(--color-surface-glass)");
     expect(originalStyle.getPropertyValue("--color-surface-glass").trim()).toBe("rgba(255, 255, 255, 0.72)");
     expect(originalStyle.getPropertyValue("--color-reader-pill-accent").trim()).toContain("--color-reader-pill");
     expect(originalStyle.getPropertyValue("--color-surface-tint").trim()).toBe("#f3f0ff");
+    expect(originalStyle.getPropertyValue("--color-accent").trim()).toBe("#6f63d2");
+    expect(originalStyle.getPropertyValue("--color-accent-fg").trim()).toBe("#6f63d2");
 
     applyReaderTheme("paper");
     const paperStyle = getComputedStyle(document.documentElement);
@@ -146,11 +148,13 @@ describe("Reader page-theme materials", () => {
 
     applyReaderTheme("dark");
     const darkStyle = getComputedStyle(document.documentElement);
-    expect(darkStyle.getPropertyValue("--color-surface-glass").trim()).toBe("rgba(30, 29, 41, 0.8)");
-    expect(darkStyle.getPropertyValue("--color-surface-solid").trim()).toBe("#232130");
-    expect(darkStyle.getPropertyValue("--color-reader-pill").trim()).toBe("rgba(42, 41, 51, 0.86)");
-    expect(darkStyle.getPropertyValue("--color-reader-pill-border").trim()).toBe("rgba(255, 255, 255, 0.12)");
-    expect(darkStyle.getPropertyValue("--color-surface-tint").trim()).toBe("rgba(132, 119, 238, 0.17)");
+    expect(darkStyle.getPropertyValue("--color-surface-glass").trim()).toBe("rgba(27, 25, 23, 0.97)");
+    expect(darkStyle.getPropertyValue("--color-surface-solid").trim()).toBe("#27241f");
+    expect(darkStyle.getPropertyValue("--color-reader-pill").trim()).toBe("rgba(46, 42, 38, 0.88)");
+    expect(darkStyle.getPropertyValue("--color-reader-pill-border").trim()).toBe("rgba(255, 243, 227, 0.12)");
+    expect(darkStyle.getPropertyValue("--color-surface-tint").trim()).toBe("rgba(161, 147, 245, 0.15)");
+    expect(darkStyle.getPropertyValue("--color-accent").trim()).toBe("#6f62da");
+    expect(darkStyle.getPropertyValue("--color-accent-fg").trim()).toBe("#a193f5");
   });
 
   it("applies shared reader-island, reader-pill, and reader-popover material classes across M6+M7 surfaces", async () => {
@@ -241,6 +245,10 @@ describe("Reader page-theme materials", () => {
     expect(pillsTsx).toContain("reader-pill-accent");
     expect(pillsTsx).not.toContain("#8477EE");
     expect(pillsTsx).not.toContain("#C8C0FF");
+    expect(pillsTsx).not.toContain("#9B99AB");
+
+    const indexCss = fs.readFileSync(path.resolve(__dirname, "../index.css"), "utf8");
+    expect(indexCss).toMatch(/\.markdown-body a\s*\{[^}]*color:\s*var\(--color-accent-fg\)/);
 
     const readerTsx = fs.readFileSync(path.resolve(__dirname, "../pages/Reader.tsx"), "utf8");
     const tocTsx = fs.readFileSync(path.resolve(__dirname, "./TableOfContents.tsx"), "utf8");

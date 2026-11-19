@@ -28,7 +28,7 @@ describe("readerLayout helpers", () => {
       original: "#EEEBF8",
       paper: "#F0E7D4",
       quiet: "#D2D2D8",
-      dark: "#12111A",
+      dark: "#0D0C0B",
     });
   });
 });

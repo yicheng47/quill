@@ -12,7 +12,7 @@ export interface ThemeSelectionState {
 
 export const STORAGE_APP_THEME = "quill-theme";
 export const MAIN_DAWN_BG = "#EEEBF8";
-export const MAIN_NOCTURNE_BG = "#12111A";
+export const MAIN_NOCTURNE_BG = "#0D0C0B";
 
 let appThemeRevision = 0;
 let committedTheme: AppTheme = readAppTheme();

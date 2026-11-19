@@ -265,7 +265,7 @@ export default function HomeView({
                   {t("home.empty.specimenWordsEyebrow")}
                 </span>
                 <span className="px-[9px] py-[3px] rounded-full bg-surface-solid border border-border-subtle inline-flex items-center gap-[5px]">
-                  <Languages size={12} className="text-accent" />
+                  <Languages size={12} className="text-accent-fg" />
                   <span className="font-mono text-[10.5px] font-semibold text-text-secondary">
                     {t("lookup.title")}
                   </span>
@@ -294,7 +294,7 @@ export default function HomeView({
                     {t("home.empty.specimenWordDef")}
                   </p>
                   <div className="pt-[7px] border-t border-border-subtle flex items-center gap-1.5">
-                    <Sparkles size={12} className="text-accent shrink-0" />
+                    <Sparkles size={12} className="text-accent-fg shrink-0" />
                     <span className="text-[11.5px] text-accent-on-tint truncate">
                       {t("home.empty.specimenWordContext")}
                     </span>

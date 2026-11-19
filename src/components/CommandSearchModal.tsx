@@ -517,7 +517,7 @@ export default function CommandSearchModal({
       >
         <div className="h-[58px] px-5 flex items-center justify-between gap-3 border-b border-border-subtle">
           <div className="flex-1 min-w-0 flex items-center gap-3">
-            <Search size={18} className="text-accent shrink-0" />
+            <Search size={18} className="text-accent-fg shrink-0" />
             <input
               ref={inputRef}
               type="text"

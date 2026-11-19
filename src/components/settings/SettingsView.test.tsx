@@ -2,6 +2,8 @@
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
+import fs from "node:fs";
+import path from "node:path";
 import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -319,7 +321,7 @@ describe("SettingsView and redesigned sections", () => {
     expect(document.documentElement.classList.contains("dawn")).toBe(true);
     expect(document.documentElement.classList.contains("dark")).toBe(true);
     expect(mocks.setWindowBackgroundColor).toHaveBeenCalledTimes(1);
-    expect(mocks.setWindowBackgroundColor).toHaveBeenCalledWith("#12111A");
+    expect(mocks.setWindowBackgroundColor).toHaveBeenCalledWith("#0D0C0B");
 
     mocks.setWindowBackgroundColor.mockClear();
     await act(async () => {
@@ -434,9 +436,29 @@ describe("SettingsView and redesigned sections", () => {
     mocks.settingsMap.theme = "light";
     await renderView("appearance");
 
-    // Verify Light and System previews include fallback for --color-bg-glow-peach in Dawn Light.
-    const lightPreview = container.querySelector<HTMLButtonElement>('button[data-theme-card="light"] > div');
-    expect(lightPreview?.getAttribute("style")).toContain("--color-bg-glow-peach, transparent");
+    // Verify Light and System previews pin their light side to Dawn preview tokens rather than live palette variables.
+    const lightPreview = container.querySelector<HTMLDivElement>('button[data-theme-card="light"] > div');
+    const systemPreview = container.querySelector<HTMLDivElement>('button[data-theme-card="system"] > div');
+    expect(lightPreview?.getAttribute("style")).toContain("--color-preview-light-start");
+    expect(lightPreview?.getAttribute("style")).toContain("--color-preview-light-end");
+    expect(lightPreview?.getAttribute("style")).not.toContain("--color-bg-start");
+    expect(lightPreview?.getAttribute("style")).not.toContain("--color-bg-glow-peach");
+    expect(systemPreview?.getAttribute("style")).toContain("--color-preview-light-start");
+    expect(systemPreview?.getAttribute("style")).toContain("--color-preview-light-end");
+    expect(lightPreview?.querySelector(".bg-preview-light-accent")).not.toBeNull();
+    expect(lightPreview?.querySelector(".bg-accent")).toBeNull();
+    expect(systemPreview?.querySelector(".bg-preview-light-accent")).not.toBeNull();
+    expect(systemPreview?.querySelector(".bg-accent")).toBeNull();
+
+    // Verify .dawn.dark does not override the pinned Dawn preview tokens.
+    const indexCss = fs.readFileSync(path.resolve(__dirname, "../../index.css"), "utf8");
+    expect(indexCss).toContain("--color-preview-light-start: #eeebf8;");
+    expect(indexCss).toContain("--color-preview-light-end: #f7f5f3;");
+    expect(indexCss).toContain("--color-preview-light-accent: #6f63d2;");
+    const darkBlockStart = indexCss.indexOf(".dawn.dark {");
+    const darkBlockEnd = indexCss.indexOf("\n}", darkBlockStart);
+    const darkBlock = indexCss.slice(darkBlockStart, darkBlockEnd);
+    expect(darkBlock).not.toContain("--color-preview-light-");
 
     let rejectFirstSave!: (reason: unknown) => void;
     const savedCalls: string[] = [];
@@ -477,7 +499,7 @@ describe("SettingsView and redesigned sections", () => {
     expect(savedCalls).toEqual(["dark"]);
     expect(remountedSystemCard?.getAttribute("aria-pressed")).toBe("true");
     expect(document.documentElement.classList.contains("dark")).toBe(true);
-    expect(mocks.setWindowBackgroundColor).toHaveBeenLastCalledWith("#12111A");
+    expect(mocks.setWindowBackgroundColor).toHaveBeenLastCalledWith("#0D0C0B");
 
     // Rejecting the obsolete Dark write must NOT revert System or report an error or send #EEEBF8.
     mocks.setWindowBackgroundColor.mockClear();

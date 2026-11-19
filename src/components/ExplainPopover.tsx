@@ -195,7 +195,7 @@ export default function ExplainPopover({
           />
         ) : streaming && !content ? (
           <div className="flex items-center gap-2 py-1 text-text-tertiary">
-            <Loader2 size={14} className="animate-spin text-accent" />
+            <Loader2 size={14} className="animate-spin text-accent-fg" />
             <span className="text-[13px]">{t("explain.thinking")}</span>
           </div>
         ) : errorMessage ? (
