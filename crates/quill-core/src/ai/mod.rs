@@ -1,5 +1,6 @@
 pub mod anthropic;
 pub mod codex_models;
+pub mod dispatch;
 pub mod oauth;
 pub mod ollama;
 pub mod openai_compat;

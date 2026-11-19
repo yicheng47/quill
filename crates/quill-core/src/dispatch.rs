@@ -1316,7 +1316,7 @@ mod tests {
         })
         .to_string();
         let title_args = json!({
-            "userMessage": "hello",
+            "userMessage": "读".repeat(67),
             "assistantMessage": "",
             "requestId": "req-absent-3"
         })
