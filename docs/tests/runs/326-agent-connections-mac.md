@@ -47,7 +47,7 @@ The two original development profile trees and the development log tree were mov
 
 ## 2026-11-19 — retry candidate `f9215c4`
 
-**Verdict: Failed on shared-home isolation.** All five Codex call types, discovery recovery, cancellation and app-server restart passed under the macOS write guard. Codex still attempted to create shell snapshots in the shared home. The guard prevented those writes. Prior-message edit reseeding remains blocked because neither chat surface offers message editing.
+**Verdict: Failed on shared-home isolation.** All five Codex call types, discovery recovery, cancellation and app-server restart passed under the macOS write guard. Codex still attempted to create shell snapshots in the shared home. The guard prevented those writes. Prior-message edit reseeding does not apply because neither chat surface offers message editing.
 
 | Item | Value |
 | --- | --- |
@@ -69,7 +69,7 @@ The two original development profile trees and the development log tree were mov
 | AI-04 Ask Quill and title | Passed | Ask Quill returned “OK” to a short synthetic prompt and generated “Amber Status Confirmation.” The Quill log recorded a separate Codex title turn, and the diagnostic trace recorded answer delta events. `chat-first-start.jpg`, `chat-first-result-and-title.jpg`, `runtime-final.txt`. |
 | Pending popover cancellation and reasoning separation | Passed | With Quick changed to Medium and Deep still Low, a new Explain ran at Low. Escape removed the popover with no later UI reappearance. The trace records `turn/start`, `turn/interrupt`, and `thread/unsubscribe` in that order. Quick was switched back to Low in the scratch profile. `quick-medium-deep-low.jpg`, `cancel-second-start.jpg`, `cancel-second-closed.jpg`, `quick-restored-low.jpg`, `runtime-final.txt`. |
 | Chat follow-up and app-server reseed | Passed | A follow-up recalled AMBER and the diagnostic trace recorded the same thread ID as the first turn. After a verified TERM to the Quill child, the existing conversation recalled AMBER on a new Codex thread. `chat-follow-up-result.jpg`, `chat-recovery-start.jpg`, `chat-recovery-result.jpg`, `trace-follow-up.txt`, `thread-history-check.txt`. |
-| Prior-message edit reseeding | Blocked | Neither the reader's chat nor the main Chats view offers an edit action for a prior message. The conversation menu offers rename, open, copy and whole-conversation deletion. The backend test for changed transcript remains separate coverage. `chats-view-no-message-edit.jpg`, `chats-conversation-options.jpg`. |
+| Prior-message edit reseeding | Not applicable | Quill has no message editing, so the spec no longer lists this case. Neither the reader's chat nor the main Chats view offers an edit action for a prior message. The conversation menu offers rename, open, copy and whole-conversation deletion. The backend test for changed transcript remains separate coverage. `chats-view-no-message-edit.jpg`, `chats-conversation-options.jpg`. |
 | Child reuse and recovery | Passed | A single Codex PID (91274) with Electron PPID 90142 handled every call type. QA verified command and parent ownership before TERM. The next chat call spawned PID 5869 under the same Electron parent and succeeded. The new child and the rest of the app process tree were gone after normal Quit. `process-before-term.txt`, `runtime-final.txt`, `cleanup.txt`. |
 | No model tool calls or Codex history | Passed | No non-text model tool activity appeared in Quill's application log or the inspected diagnostic events. Shared rollout metadata had no newly created or changed Quill workspace session log. The shell snapshot warnings were internal Codex runtime activity. `runtime-final.txt`, `thread-history-check.txt`, `history-result.json`. |
 | Prior non-model cases and owner checks | Carried forward or skipped as above | The retry diff touched only Codex discovery, process setup and tests. The earlier UI, Home hero and migration results carry forward. Jason's remaining live checks retain their original scope. |
@@ -84,7 +84,7 @@ The retry initially reused the first run's screenshot destination. The first run
 
 ## 2026-11-19 — shell-snapshot recheck and confirmation on `8214810`
 
-**Targeted verdict: Passed.** Concurrent Lookup completed in two fresh guarded app-server processes on this candidate. Both runs recorded zero shell-snapshot diagnostics. The confirmation verified that the bundled skills and shared snapshot paths matched their baselines through process exit. The blocked prior-message edit and owner-only cases above remain outside this targeted verdict.
+**Targeted verdict: Passed.** Concurrent Lookup completed in two fresh guarded app-server processes on this candidate. Both runs recorded zero shell-snapshot diagnostics. The confirmation verified that the bundled skills and shared snapshot paths matched their baselines through process exit. The owner-only cases above remain outside this targeted verdict; prior-message edit reseeding does not apply.
 
 | Item | Value |
 | --- | --- |
