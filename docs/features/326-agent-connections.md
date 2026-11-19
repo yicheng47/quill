@@ -16,7 +16,9 @@ Codex is the only agent in scope. Anthropic's terms do not allow a third-party p
 
 In scope:
 
-- **Authentication options.** The provider dropdown stays OpenAI / Anthropic / Ollama. OpenAI offers **Codex** first and **API key** second; the ChatGPT login is removed. Anthropic stays API key only, and Ollama is unchanged. `ai_auth_mode` gains `codex`, and choosing OpenAI fresh preselects it.
+- **One connection list.** Settings → AI replaces the Provider and Sign-in-with rows with a single Connection list of three peer choices: **Codex** (tagged Recommended, the default for a fresh install), **API key**, and **Ollama**. The selected choice expands its details beneath it: Codex shows its status and location, API key shows a vendor choice (OpenAI or Anthropic) and the key field, and Ollama keeps its endpoint and model settings. The ChatGPT login is removed. `ai_auth_mode` gains `codex`; the stored `ai_provider` and `ai_auth_mode` keys stay, with the list mapping onto them (Codex = `openai` + `codex`, API key = `openai` or `anthropic` + `api_key`, Ollama = `ollama`).
+
+- **Two kinds of connection, no extra harness.** API keys and Ollama stay direct HTTP calls: they are official, stable APIs, and routing them through Codex would force Ollama users to install Codex and wrap small local models in a coding agent's prompt and tools. The shared dispatch path from phase 1 sends each call to one of two kinds: Codex (the app server) or direct (OpenAI, Anthropic or Ollama over HTTP).
 
 - **Codex through `codex app-server`.** Quill starts its own app server as a child process on the first AI call, keeps it for the session, restarts it after an unexpected exit, and stops it when Quill quits. It does not connect to the user's Codex daemon: most users don't run one, its lifecycle and version are not Quill's, and threads created there would show up in the user's Codex app. The child process reads the same `~/.codex` login, so the user signs in once for both. Each Quill call runs one turn and streams `item/agentMessage/delta` notifications into the existing per-request event channels, so the reader, chat and translation UIs keep their streaming code.
 
@@ -52,8 +54,8 @@ Out of scope:
 
 The UI is drawn in Pencil at `quill/desktop/specs/326-agent-connections.pen` in `YeelinksCo/yeelinks_design` and needs sign-off before implementation. It covers:
 
-- Settings → AI with OpenAI selected: the Codex / API key choice, the Codex status row in each state, the model card and the effort tiers.
-- The first-launch helper in three placements for comparison: a modal over Home, a card on the Home page, and a step inside the empty-library view, each shown in its ready, not-signed-in and not-installed states.
+- Settings → AI: the Connection list (option R1, chosen over a segmented control and a Codex-first layout), with Codex selected and with API key selected; the Codex status row in each state; the model card and the effort tiers. Temperature is not shown for Codex, which does not take it.
+- The first-launch helper in three placements for comparison: a modal over Home (A1, recommended), a banner on Home (A2), and a step inside the empty-library view (A3), with the modal's not-signed-in, signing-in, not-installed and too-old states.
 - The migration note for former ChatGPT-login users.
 
 ## Implementation Phases
@@ -68,7 +70,7 @@ The UI is drawn in Pencil at `quill/desktop/specs/326-agent-connections.pen` in 
 
 5. **Remove the ChatGPT login and migrate.** Delete the files listed under Removal, migrate `oauth` to `codex`, and delete the stale tokens from `secrets.db`. Tests for the migration, including a second launch being a no-op.
 
-6. **Settings UI and setup helper.** Build the signed-off design: the Codex option and status row in `AiSettings.tsx` following the section's row pattern, the model card on `model/list`, the setup helper, the migration note, and the #348 setup card for the new sentinels.
+6. **Settings UI and setup helper.** Build the signed-off design: the Connection list and Codex status row in `AiSettings.tsx` following the section's row pattern, the model card on `model/list`, the setup helper, the migration note, and the #348 setup card for the new sentinels.
 
 7. **i18n and QA.**
 
