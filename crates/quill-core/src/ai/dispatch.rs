@@ -127,6 +127,7 @@ async fn start_agent(core: &Arc<Core>, agent: AgentConnection, request: AiReques
 async fn start_api(core: &Arc<Core>, connection: ApiConnection, request: AiRequest) -> AppResult<()> {
     let (api_key, oauth_account_id) =
         resolve_ai_auth(core, &connection.provider, &connection.auth_mode).await?;
+    let url = crate::ai::api::base_url(&connection.provider, connection.base_url.clone())?;
 
     log::info!(
         "ai_{}: spawn provider={} model={}",
@@ -153,17 +154,16 @@ async fn start_api(core: &Arc<Core>, connection: ApiConnection, request: AiReque
         let ApiConnection {
             provider,
             model,
-            base_url,
             keep_alive,
             auth_mode,
             temperature: saved_temperature,
             effort,
+            ..
         } = connection;
         let temperature = temperature.unwrap_or(saved_temperature);
         let host = core.host.as_ref();
         let result = match provider.as_str() {
             "anthropic" => {
-                let url = base_url.unwrap_or_else(|| "https://api.anthropic.com".to_string());
                 crate::ai::anthropic::stream_chat(host, &url, &api_key, &model, temperature, &messages, false, &event_name, max_tokens).await
             }
             "openai" if auth_mode == "oauth" => {
@@ -171,8 +171,6 @@ async fn start_api(core: &Arc<Core>, connection: ApiConnection, request: AiReque
                 crate::ai::openai_responses::stream_chat(host, &core.secrets, &url, &api_key, &model, &messages, oauth_account_id.as_deref(), effort.as_deref(), &event_name).await
             }
             _ => {
-                let default_url = if provider == "ollama" { "http://localhost:11434" } else { "https://api.openai.com" };
-                let url = base_url.unwrap_or_else(|| default_url.to_string());
                 let ka = if provider == "ollama" { Some(keep_alive.as_str()) } else { None };
                 crate::ai::openai_compat::stream_chat(host, &url, &api_key, &model, temperature, &messages, ka, &event_name, max_tokens).await
             }

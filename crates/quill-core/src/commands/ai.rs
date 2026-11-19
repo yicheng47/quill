@@ -71,22 +71,62 @@ pub async fn check_ollama_status(
     core: &Core,
     base_url: Option<String>,
 ) -> AppResult<crate::ai::ollama::OllamaStatus> {
-    let configured_url = base_url
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .or_else(|| {
+    let configured_url = match base_url {
+        Some(draft) => non_empty_setting(Some(draft)),
+        None => {
             let conn = core.db.reader();
-            conn.query_row(
-                "SELECT value FROM settings WHERE key = 'ai_base_url'",
-                [],
-                |row| row.get::<_, String>(0),
-            )
-            .ok()
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-        })
-        .unwrap_or_else(|| "http://localhost:11434".to_string());
+            let saved_provider: Option<String> = conn
+                .query_row("SELECT value FROM settings WHERE key = 'ai_provider'", [], |row| row.get(0))
+                .ok();
+            if saved_provider.as_deref() == Some("ollama") {
+                non_empty_setting(
+                    conn.query_row("SELECT value FROM settings WHERE key = 'ai_base_url'", [], |row| row.get(0))
+                        .ok(),
+                )
+            } else {
+                None
+            }
+        }
+    }
+    .unwrap_or_else(|| crate::ai::api::default_base_url("ollama").unwrap_or_default().to_string());
     Ok(crate::ai::ollama::check_ollama_status(&configured_url).await)
+}
+
+/// List a service's models for the model picker. Unsaved drafts from the
+/// settings screen take precedence over the saved values.
+pub async fn list_api_models(
+    core: &Core,
+    provider: String,
+    base_url: Option<String>,
+    api_key: Option<String>,
+) -> AppResult<crate::ai::api::ApiModelList> {
+    let url_override = match base_url {
+        Some(draft) => non_empty_setting(Some(draft)),
+        None => {
+            let conn = core.db.reader();
+            let saved_provider: Option<String> = conn
+                .query_row("SELECT value FROM settings WHERE key = 'ai_provider'", [], |row| row.get(0))
+                .ok();
+            if saved_provider.as_deref() == Some(provider.as_str()) {
+                non_empty_setting(
+                    conn.query_row("SELECT value FROM settings WHERE key = 'ai_base_url'", [], |row| row.get(0))
+                        .ok(),
+                )
+            } else {
+                None
+            }
+        }
+    };
+    let url = crate::ai::api::base_url(&provider, url_override)?;
+    let key = if provider == "ollama" {
+        String::new()
+    } else {
+        match api_key {
+            Some(draft) => draft,
+            None => core.secrets.get("ai_api_key").unwrap_or_default(),
+        }
+    };
+    crate::ai::api::list_models(&provider, &url, key.trim()).await
 }
 
 fn truncate_at_char_boundary(text: &str, max_bytes: usize) -> &str {
@@ -137,8 +177,12 @@ pub(crate) async fn resolve_ai_auth(
             }
         }
     } else {
-        let api_key = core.secrets.get("ai_api_key").unwrap_or_default();
-        if api_key.is_empty() && provider != "ollama" {
+        let api_key = if provider == "ollama" {
+            String::new()
+        } else {
+            core.secrets.get("ai_api_key").unwrap_or_default()
+        };
+        if api_key.is_empty() && crate::ai::api::requires_key(provider) {
             log::warn!("ai_auth: AI_NOT_CONFIGURED provider={provider}");
             return Err(AppError::Other(AI_NOT_CONFIGURED.to_string()));
         }

@@ -47,7 +47,7 @@ pub async fn stream_chat(
     });
 
     let mut request = client
-        .post(format!("{}/v1/messages", base_url.trim_end_matches('/')))
+        .post(crate::ai::api::anthropic_messages_url(base_url))
         .header("anthropic-version", "2023-06-01")
         .header("content-type", "application/json");
 

@@ -391,6 +391,16 @@ struct CheckOllamaStatusArgs {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct ListApiModelsArgs {
+    provider: String,
+    #[serde(default)]
+    base_url: Option<String>,
+    #[serde(default)]
+    api_key: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct AiCancelArgs {
     channel: String,
 }
@@ -898,6 +908,14 @@ command_table! {
             let a: AiCancelArgs = parse_args(args)?;
             async move {
                 commands::ai::ai_cancel(&core, a.channel)
+                    .await
+                    .and_then(to_json)
+            }
+        },
+        "list_api_models" => |core, args| {
+            let a: ListApiModelsArgs = parse_args(args)?;
+            async move {
+                commands::ai::list_api_models(&core, a.provider, a.base_url, a.api_key)
                     .await
                     .and_then(to_json)
             }
@@ -1484,7 +1502,7 @@ mod tests {
             CORE_COMMAND_NAMES.len(),
             "duplicate entries in CORE_COMMAND_NAMES"
         );
-        assert_eq!(CORE_COMMAND_NAMES.len(), 84);
+        assert_eq!(CORE_COMMAND_NAMES.len(), 85);
 
         let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()

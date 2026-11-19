@@ -128,6 +128,7 @@ pub fn boot(config: BootConfig, host: Arc<dyn ShellHost>) -> AppResult<Arc<Core>
 
     let secrets = Secrets::init(&local_dir)?;
     secrets.migrate_from_settings(&db)?;
+    crate::ai::api::migrate_saved_base_url(&db)?;
 
     let sync_writer = SyncWriter::new(device.device_uuid.clone());
     if sync::migration::is_sync_enabled(&local_dir) {

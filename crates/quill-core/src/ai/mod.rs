@@ -1,4 +1,5 @@
 pub mod anthropic;
+pub mod api;
 pub mod codex;
 pub mod codex_models;
 pub mod dispatch;
