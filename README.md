@@ -6,7 +6,7 @@
 </h1>
 
 <p align="center">
-  Remember what you read
+  Trace your thoughts as you read
   <br />
   A local-first ebook reader with native AI and agent integration — bring your own subscriptions, API keys, local models, or agents.
 </p>
