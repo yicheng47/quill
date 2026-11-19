@@ -11,6 +11,11 @@
   "topBar.import": "Import book",
   "topBar.settings": "Settings",
 
+  "window.minimize": "Minimize",
+  "window.maximize": "Maximize",
+  "window.restore": "Restore",
+  "window.close": "Close",
+
   "commandSearch.ariaLabel": "Search Quill",
   "commandSearch.placeholder": "Search books, highlights, words, or chats…",
   "commandSearch.scopesLabel": "Search scopes",

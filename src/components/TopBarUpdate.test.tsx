@@ -28,6 +28,10 @@ const mocks = vi.hoisted(() => ({
   },
   getOpenReaderCount: vi.fn<() => Promise<number>>(),
   openUrl: vi.fn<(url: string) => Promise<void>>(),
+  minimizeWindow: vi.fn<() => Promise<void>>(),
+  toggleMaximizeWindow: vi.fn<() => Promise<void>>(),
+  closeWindow: vi.fn<() => Promise<void>>(),
+  isWindowMaximized: vi.fn<() => Promise<boolean>>(),
   readerChangedListeners: new Set<(e: { payload: number }) => void>(),
   genericListeners: new Map<string, Set<(e: { payload: unknown }) => void>>(),
 }));
@@ -39,6 +43,11 @@ vi.mock("../contexts/UpdateContext", () => ({
 vi.mock("../platform", () => ({
   getOpenReaderCount: () => mocks.getOpenReaderCount(),
   openUrl: (url: string) => mocks.openUrl(url),
+  minimizeWindow: () => mocks.minimizeWindow(),
+  toggleMaximizeWindow: () => mocks.toggleMaximizeWindow(),
+  closeWindow: () => mocks.closeWindow(),
+  isWindowMaximized: () => mocks.isWindowMaximized(),
+  onWindowMaximized: () => Promise.resolve(() => {}),
   listenCurrentWindow: (event: string, cb: (e: { payload: number }) => void) => {
     if (event === "reader-windows-changed") {
       mocks.readerChangedListeners.add(cb);
@@ -110,6 +119,10 @@ describe("TopBar and UpdateIndicator states", () => {
     mocks.getOpenReaderCount.mockResolvedValue(0);
     mocks.openUrl.mockReset();
     mocks.openUrl.mockResolvedValue();
+    mocks.minimizeWindow.mockReset().mockResolvedValue();
+    mocks.toggleMaximizeWindow.mockReset().mockResolvedValue();
+    mocks.closeWindow.mockReset().mockResolvedValue();
+    mocks.isWindowMaximized.mockReset().mockResolvedValue(false);
     mocks.updateState = {
       status: "idle",
       update: null,
@@ -322,14 +335,82 @@ describe("TopBar and UpdateIndicator states", () => {
       const leftCluster = header.firstElementChild as HTMLElement;
       const nav = header.querySelector("nav")!;
       const rightCluster = header.lastElementChild as HTMLElement;
+      expect(header.className).toContain("z-30");
+      expect(header.className).toContain("pl-7 pr-4 lg:px-7");
+      expect(nav.parentElement).toBe(header);
       expect(leftCluster.className).toContain("min-w-fit");
       expect(rightCluster.className).toContain("min-w-fit");
       expect(rightCluster.className).not.toContain("no-drag");
+      expect(container.querySelector('button[aria-label="Minimize"]')).toBeNull();
+      expect(container.querySelector('button[aria-label="Maximize"]')).toBeNull();
+      expect(container.querySelector('button[aria-label="Close"]')).toBeNull();
       expect(leftCluster.querySelector("span")?.className).toContain("hidden sm:inline");
       for (const tab of Array.from(nav.querySelectorAll("button"))) {
         expect(tab.className).toContain("whitespace-nowrap");
         expect(tab.className).toContain("px-2 sm:px-3 md:px-4");
       }
+    } finally {
+      Object.defineProperty(window.navigator, "userAgent", {
+        value: origUa,
+        configurable: true,
+      });
+    }
+  });
+
+  it("centers Windows nav from 920px+ (two full wings) and wraps into a compact two-row layout below 920px", async () => {
+    const origUa = navigator.userAgent;
+    Object.defineProperty(window.navigator, "userAgent", {
+      value: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+      configurable: true,
+    });
+    try {
+      await renderTopBar();
+      const header = container.querySelector("header")!;
+      const leftCluster = header.firstElementChild as HTMLElement;
+      const nav = header.querySelector("nav")!;
+      const navRow = nav.parentElement as HTMLElement;
+      const rightCluster = header.lastElementChild as HTMLElement;
+
+      // Header avoids trapping WindowControls in a z-30 stacking context and uses symmetric padding for centering.
+      expect(header.className).not.toContain("z-30");
+      expect(header.className).toContain("px-3 min-[920px]:px-5 lg:px-7");
+      expect(header.className).toContain("max-[920px]:flex-wrap");
+      expect(header.className).toContain("max-[920px]:h-auto");
+      expect(header.className).toContain("min-[920px]:h-[71px]");
+      expect(header.className).toContain("min-[920px]:flex-nowrap");
+
+      // Both clusters flex equally once two 225px wings + nav fit (920px+, including 1000px and 1440px),
+      // and wrap cleanly below 920px (including 768px, 800px, 919px, and 700 DIP @ 150% = ~467 CSS px).
+      expect(leftCluster.className).toContain("flex-1");
+      expect(leftCluster.className).toContain("basis-0");
+      expect(leftCluster.className).toContain("max-[920px]:order-1");
+      expect(rightCluster.className).toContain("max-[920px]:order-2");
+      expect(rightCluster.className).toContain("min-[920px]:flex-1");
+      expect(rightCluster.className).toContain("min-[920px]:basis-0");
+      expect(rightCluster.className).toContain("min-[920px]:min-w-fit");
+      expect(rightCluster.className).not.toContain("no-drag");
+
+      expect(navRow).not.toBe(header);
+      expect(navRow.className).toContain("max-[920px]:order-3");
+      expect(navRow.className).toContain("max-[920px]:basis-full");
+      expect(navRow.className).toContain("max-[920px]:justify-center");
+      expect(navRow.className).toContain("min-[920px]:contents");
+      expect(nav.className).toContain("max-w-full");
+      expect(nav.className).toContain("overflow-x-auto");
+
+      expect(container.querySelector("header .w-\\[60px\\]")).toBeNull();
+
+      const minBtn = rightCluster.querySelector('button[aria-label="Minimize"]');
+      const maxBtn = rightCluster.querySelector('button[aria-label="Maximize"]');
+      const closeBtn = rightCluster.querySelector('button[aria-label="Close"]');
+      const divider = rightCluster.querySelector("span[aria-hidden='true']");
+      expect(divider).not.toBeNull();
+      expect(minBtn).not.toBeNull();
+      expect(maxBtn).not.toBeNull();
+      expect(closeBtn).not.toBeNull();
+      expect(divider?.nextElementSibling).toBe(rightCluster.lastElementChild);
+      expect(rightCluster.lastElementChild?.className).toContain("z-[55]");
+      expect(rightCluster.lastElementChild?.contains(closeBtn!)).toBe(true);
     } finally {
       Object.defineProperty(window.navigator, "userAgent", {
         value: origUa,

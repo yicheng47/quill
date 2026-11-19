@@ -15,6 +15,10 @@ const mocks = vi.hoisted(() => ({
   invoke: vi.fn<(cmd: string, args?: Record<string, unknown>) => Promise<unknown>>(),
   openFileDialog: vi.fn<() => Promise<string | null>>(),
   openReaderWindow: vi.fn<(id: string) => Promise<void>>(),
+  minimizeWindow: vi.fn<() => Promise<void>>(),
+  toggleMaximizeWindow: vi.fn<() => Promise<void>>(),
+  closeWindow: vi.fn<() => Promise<void>>(),
+  isWindowMaximized: vi.fn<() => Promise<boolean>>(),
   dragDropListeners: new Set<DragDropCallback>(),
   fileOpenListeners: new Set<(e: { payload: string[] }) => void>(),
   genericListeners: new Map<string, Set<(e: { payload: unknown }) => void>>(),
@@ -26,6 +30,11 @@ vi.mock("../platform", () => ({
   convertFileSrc: (p: string) => `quill-file://local/${p}`,
   openUrl: vi.fn().mockResolvedValue(undefined),
   getOpenReaderCount: vi.fn().mockResolvedValue(0),
+  minimizeWindow: () => mocks.minimizeWindow(),
+  toggleMaximizeWindow: () => mocks.toggleMaximizeWindow(),
+  closeWindow: () => mocks.closeWindow(),
+  isWindowMaximized: () => mocks.isWindowMaximized(),
+  onWindowMaximized: () => Promise.resolve(() => {}),
   listenCurrentWindow: (event: string, cb: (e: { payload: unknown }) => void) => {
     const set = mocks.genericListeners.get(event) ?? new Set();
     set.add(cb);
@@ -171,6 +180,10 @@ describe("Home integration flows (R1, R2, R3, R6)", () => {
     mocks.invoke.mockReset();
     mocks.openFileDialog.mockReset();
     mocks.openReaderWindow.mockReset();
+    mocks.minimizeWindow.mockReset().mockResolvedValue();
+    mocks.toggleMaximizeWindow.mockReset().mockResolvedValue();
+    mocks.closeWindow.mockReset().mockResolvedValue();
+    mocks.isWindowMaximized.mockReset().mockResolvedValue(false);
     mocks.dragDropListeners.clear();
     mocks.fileOpenListeners.clear();
     mocks.genericListeners.clear();
@@ -827,5 +840,64 @@ describe("Home integration flows (R1, R2, R3, R6)", () => {
       wordsBtn?.click();
     });
     expect(container.querySelector('[data-testid="settings-view"]')).toBeNull();
+  });
+
+  it("keeps Windows caption buttons stacked and operable above CommandSearchModal while backdrop click still closes search", async () => {
+    mocks.invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "list_collections") return [];
+      if (cmd === "get_book_counts") return { all: 0, reading: 0, finished: 0, unread: 0 };
+      if (cmd === "list_books") return { books: [], next_cursor: null, total: 0 };
+      if (cmd === "list_highlights" || cmd === "list_vocabulary" || cmd === "list_chats") return [];
+      return null;
+    });
+
+    const origUa = navigator.userAgent;
+    Object.defineProperty(window.navigator, "userAgent", {
+      value: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+      configurable: true,
+    });
+    try {
+      await act(async () => {
+        root.render(<Home />);
+      });
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      const searchBtn = container.querySelector<HTMLButtonElement>('button[aria-label="Search Quill"]');
+      await act(async () => {
+        searchBtn?.click();
+      });
+
+      const searchDialog = container.querySelector('[role="dialog"][aria-label="Search Quill"]');
+      expect(searchDialog).not.toBeNull();
+      const backdrop = searchDialog!.parentElement as HTMLElement;
+      expect(backdrop.className).toContain("z-50");
+
+      const header = container.querySelector("header")!;
+      expect(header.className).not.toContain("z-30");
+      const minBtn = container.querySelector<HTMLButtonElement>('button[aria-label="Minimize"]')!;
+      const closeBtn = container.querySelector<HTMLButtonElement>('button[aria-label="Close"]')!;
+      expect(minBtn.parentElement?.className).toContain("z-[55]");
+
+      await act(async () => {
+        minBtn.click();
+        closeBtn.click();
+      });
+      expect(mocks.minimizeWindow).toHaveBeenCalledTimes(1);
+      expect(mocks.closeWindow).toHaveBeenCalledTimes(1);
+      expect(container.querySelector('[role="dialog"][aria-label="Search Quill"]')).not.toBeNull();
+
+      // Clicking the search backdrop itself still dismisses search.
+      await act(async () => {
+        backdrop.click();
+      });
+      expect(container.querySelector('[role="dialog"][aria-label="Search Quill"]')).toBeNull();
+    } finally {
+      Object.defineProperty(window.navigator, "userAgent", {
+        value: origUa,
+        configurable: true,
+      });
+    }
   });
 });

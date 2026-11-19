@@ -134,6 +134,10 @@ export function getDefaultReaderTheme(): ReaderTheme {
   return document.documentElement.classList.contains("dark") ? "dark" : "original";
 }
 
+const EPUB_POPOVER_WIDTH = 316;
+const PDF_POPOVER_WIDTH = 296;
+const POPOVER_VIEWPORT_MARGIN = 12;
+
 export default function ReaderSettings({
   open,
   onClose,
@@ -148,14 +152,30 @@ export default function ReaderSettings({
   const isPdf = bookFormat === "pdf";
 
   useEffect(() => {
-    if (open && anchorRef.current) {
+    if (!open) return;
+    const popoverWidth = isPdf ? PDF_POPOVER_WIDTH : EPUB_POPOVER_WIDTH;
+    const updatePosition = () => {
+      if (!anchorRef.current) return;
       const rect = anchorRef.current.getBoundingClientRect();
+      const effectiveWidth = Math.min(
+        popoverWidth,
+        Math.max(0, window.innerWidth - POPOVER_VIEWPORT_MARGIN * 2),
+      );
+      const maxRight = Math.max(
+        POPOVER_VIEWPORT_MARGIN,
+        window.innerWidth - effectiveWidth - POPOVER_VIEWPORT_MARGIN,
+      );
       setPosition({
         top: rect.bottom + 8,
-        right: Math.max(12, window.innerWidth - rect.right),
+        right: Math.min(maxRight, Math.max(POPOVER_VIEWPORT_MARGIN, window.innerWidth - rect.right)),
       });
-    }
-  }, [open, anchorRef]);
+    };
+    updatePosition();
+    window.addEventListener("resize", updatePosition);
+    return () => {
+      window.removeEventListener("resize", updatePosition);
+    };
+  }, [open, anchorRef, isPdf]);
 
   useEffect(() => {
     if (!open) return;
@@ -206,9 +226,9 @@ export default function ReaderSettings({
       ref={popoverRef}
       role="dialog"
       aria-label={t("readerSettings.typography")}
-      className={`fixed z-50 ${
+      className={`no-drag fixed z-50 ${
         isPdf ? "w-[296px] p-4" : "w-[316px] p-[18px]"
-      } max-h-[calc(100vh-88px)] overflow-y-auto reader-popover rounded-surface flex flex-col gap-3.5`}
+      } max-w-[calc(100vw-24px)] max-h-[calc(100vh-88px)] overflow-y-auto reader-popover rounded-surface flex flex-col gap-3.5`}
       style={{ top: position.top, right: position.right }}
     >
       {/* Font size bar — EPUB only */}

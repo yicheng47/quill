@@ -18,3 +18,4 @@ Specs of features in development. A feature is filed as a GitHub issue only; its
 - [326 — Agent Connections (Codex App Server + Claude Code)](326-agent-connections.md)
 - [327 — Electron Shell](327-electron-shell.md)
 - [331 — Desktop Rebrand (Dawn & Nocturne Design System & Shell)](331-rebrand.md)
+- [347 — Windows Title Bar (Quill-Drawn Window Controls)](347-windows-titlebar.md)

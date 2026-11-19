@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import Button from "../components/ui/Button";
 import IconButton from "../components/ui/IconButton";
+import WindowControls from "../components/WindowControls";
 import AiPanel, { type AiQuoteContext } from "../components/AiPanel";
 import BookmarksPanel from "../components/BookmarksPanel";
 import ReaderBottomPills from "../components/ReaderBottomPills";
@@ -60,7 +61,11 @@ import {
   refreshAppZoom,
   zoomShortcutActionForEvent,
 } from "../lib/appZoom";
-import { MAC_TRAFFIC_LIGHT_SPACER_CLASS } from "../lib/platformEnv";
+import {
+  isMacOS,
+  isWindows,
+  MAC_TRAFFIC_LIGHT_SPACER_CLASS,
+} from "../lib/platformEnv";
 import { createAnnotationDrawCallback } from "../lib/highlightPalette";
 import {
   canShowDualIslands,
@@ -202,8 +207,6 @@ interface TocChapter {
   depth: number;
 }
 
-const isMac = typeof navigator !== "undefined" && navigator.userAgent.includes("Macintosh");
-
 const windowLabel = getCurrentWindowLabel();
 const isMainWindow = windowLabel === "main";
 const isStandaloneWindow = windowLabel.startsWith("reader-");
@@ -271,6 +274,8 @@ export default function Reader() {
   const navigate = useNavigate();
   const location = useLocation();
   const { t } = useTranslation();
+  const isMac = isMacOS();
+  const isWin = isWindows();
   const [book, setBook] = useState<Book | null>(null);
   const [loading, setLoading] = useState(true);
   const [sidePanel, setSidePanel] = useState<SidePanel>(null);
@@ -1533,23 +1538,43 @@ export default function Reader() {
 
   const shellClass = readerShellClassForTheme(readerSettings.theme);
 
-  if (loading) {
+  if (loading || !book) {
     return (
-      <div className={`flex flex-col items-center justify-center h-screen gap-3 ${shellClass}`}>
-        <Loader2 size={24} className="animate-spin text-text-tertiary" />
-        <p className="text-text-secondary text-[14px]">{t("reader.loading")}</p>
-      </div>
-    );
-  }
-
-  if (!book) {
-    return (
-      <div className={`flex flex-col items-center justify-center h-screen gap-4 ${shellClass}`}>
-        <p className="text-[15px] font-medium text-text-primary">{t("reader.bookNotFound")}</p>
-        <Button appearance="dawn" variant="secondary" size="md" onClick={handleCloudBackToLibrary}>
-          <ArrowLeft size={16} />
-          <span>{t("reader.backToLibrary")}</span>
-        </Button>
+      <div
+        className={`flex flex-col h-screen ${shellClass} ${
+          isWin ? "overflow-hidden" : `items-center justify-center ${loading ? "gap-3" : "gap-4"}`
+        }`}
+      >
+        {isWin && (
+          <header
+            data-drag-region
+            className="h-16 px-3 sm:px-6 py-3.5 shrink-0 flex items-center justify-end relative select-none"
+          >
+            <WindowControls showDivider={false} />
+          </header>
+        )}
+        <div
+          className={
+            isWin
+              ? `flex-1 flex flex-col items-center justify-center ${loading ? "gap-3" : "gap-4"}`
+              : "contents"
+          }
+        >
+          {loading ? (
+            <>
+              <Loader2 size={24} className="animate-spin text-text-tertiary" />
+              <p className="text-text-secondary text-[14px]">{t("reader.loading")}</p>
+            </>
+          ) : (
+            <>
+              <p className="text-[15px] font-medium text-text-primary">{t("reader.bookNotFound")}</p>
+              <Button appearance="dawn" variant="secondary" size="md" onClick={handleCloudBackToLibrary}>
+                <ArrowLeft size={16} />
+                <span>{t("reader.backToLibrary")}</span>
+              </Button>
+            </>
+          )}
+        </div>
       </div>
     );
   }
@@ -1592,17 +1617,26 @@ export default function Reader() {
 
       {/* 64px Dawn Reader Toolbar */}
       <header
-        data-drag-region={isMac ? "" : undefined}
-        className="h-16 px-6 py-3.5 shrink-0 flex items-center justify-between gap-4 relative select-none"
+        data-drag-region={isMac || isWin ? "" : undefined}
+        className={
+          isWin
+            ? "h-16 px-3 sm:px-6 py-3.5 shrink-0 flex items-center justify-between gap-2 sm:gap-4 relative select-none"
+            : "h-16 px-6 py-3.5 shrink-0 flex items-center justify-between gap-4 relative select-none"
+        }
       >
         {/* Left cluster */}
-        <div className="flex items-center gap-4 min-w-0">
+        <div
+          className={
+            isWin ? "flex items-center gap-2 sm:gap-4 min-w-0" : "flex items-center gap-4 min-w-0"
+          }
+        >
           {isMac && <div className={`${MAC_TRAFFIC_LIGHT_SPACER_CLASS} h-3 shrink-0`} aria-hidden="true" />}
 
           <IconButton
             onClick={handleToolbarLibraryClick}
             aria-label={t("reader.backToLibrary")}
             title={t("reader.backToLibrary")}
+            className={isWin ? "max-sm:size-8" : undefined}
           >
             <ChevronLeft size={16} />
           </IconButton>
@@ -1614,6 +1648,7 @@ export default function Reader() {
             aria-expanded={tocOpen}
             title={t(tocOpen ? "reader.tocClose" : "reader.tocOpen")}
             onClick={toggleTocPanel}
+            className={isWin ? "max-sm:size-8" : undefined}
           >
             <List size={16} />
           </IconButton>
@@ -1631,13 +1666,20 @@ export default function Reader() {
         </div>
 
         {/* Right cluster */}
-        <div className="flex items-center gap-2 shrink-0">
+        <div
+          className={
+            isWin
+              ? "flex items-center gap-1.5 sm:gap-2 shrink-0"
+              : "flex items-center gap-2 shrink-0"
+          }
+        >
           <IconButton
             ref={settingsAnchorRef}
             active={settingsOpen}
             disabled={isCloudScreen}
             aria-label={t("readerSettings.typography")}
             title={t("readerSettings.typography")}
+            className={isWin ? "max-sm:size-8" : undefined}
             onClick={() => {
               setSettingsOpen((open) => !open);
               setTocOpen(false);
@@ -1659,6 +1701,7 @@ export default function Reader() {
             disabled={isCloudScreen}
             aria-label={t("reader.bookmarksAndHighlights")}
             title={t("reader.bookmarksAndHighlights")}
+            className={isWin ? "max-sm:size-8" : undefined}
             onClick={() => togglePanel("bookmarks")}
           >
             <Bookmark size={16} />
@@ -1669,6 +1712,7 @@ export default function Reader() {
             disabled={isCloudScreen}
             aria-label={t("vocab.title")}
             title={t("vocab.title")}
+            className={isWin ? "max-sm:size-8" : undefined}
             onClick={() => togglePanel("vocab")}
           >
             <Languages size={16} />
@@ -1679,10 +1723,12 @@ export default function Reader() {
             disabled={isCloudScreen}
             aria-label={t("reader.aiAssistant")}
             title={t("reader.aiAssistant")}
+            className={isWin ? "max-sm:size-8" : undefined}
             onClick={() => togglePanel("ai")}
           >
             <Sparkles size={16} />
           </IconButton>
+          <WindowControls />
         </div>
       </header>
 

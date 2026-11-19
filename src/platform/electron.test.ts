@@ -12,6 +12,11 @@ describe("electronPlatform", () => {
   const cancelUpdateDownloadMock = vi.fn();
   const getPlatformInfoMock = vi.fn();
   const relaunchMock = vi.fn();
+  const minimizeWindowMock = vi.fn<() => Promise<void>>();
+  const toggleMaximizeWindowMock = vi.fn<() => Promise<void>>();
+  const closeWindowMock = vi.fn<() => Promise<void>>();
+  const isWindowMaximizedMock = vi.fn<() => Promise<boolean>>();
+  const maximizedListeners = new Set<(maximized: boolean) => void>();
   const progressListeners = new Set<(event: UpdateProgressEvent) => void>();
 
   beforeEach(() => {
@@ -22,6 +27,11 @@ describe("electronPlatform", () => {
     cancelUpdateDownloadMock.mockReset();
     getPlatformInfoMock.mockReset();
     relaunchMock.mockReset();
+    minimizeWindowMock.mockReset().mockResolvedValue();
+    toggleMaximizeWindowMock.mockReset().mockResolvedValue();
+    closeWindowMock.mockReset().mockResolvedValue();
+    isWindowMaximizedMock.mockReset().mockResolvedValue(false);
+    maximizedListeners.clear();
     progressListeners.clear();
     window.quillShell = {
       getWindowLabel: () => "main",
@@ -34,6 +44,16 @@ describe("electronPlatform", () => {
       appReady: async () => {},
       setWindowTitle: async () => {},
       setWindowBackgroundColor: async () => {},
+      minimizeWindow: minimizeWindowMock,
+      toggleMaximizeWindow: toggleMaximizeWindowMock,
+      closeWindow: closeWindowMock,
+      isWindowMaximized: isWindowMaximizedMock,
+      onWindowMaximized: (handler) => {
+        maximizedListeners.add(handler);
+        return () => {
+          maximizedListeners.delete(handler);
+        };
+      },
       focusWindow: async () => true,
       openReaderWindow: async () => {},
       getOpenReaderCount: async () => 0,
@@ -168,5 +188,32 @@ describe("electronPlatform", () => {
       platform: expect.any(String),
       arch: expect.any(String),
     });
+  });
+
+  it("bridges window-control actions and maximized-state subscriptions", async () => {
+    await electronPlatform.minimizeWindow();
+    await electronPlatform.toggleMaximizeWindow();
+    await electronPlatform.closeWindow();
+    expect(minimizeWindowMock).toHaveBeenCalledTimes(1);
+    expect(toggleMaximizeWindowMock).toHaveBeenCalledTimes(1);
+    expect(closeWindowMock).toHaveBeenCalledTimes(1);
+
+    isWindowMaximizedMock.mockResolvedValueOnce(true);
+    await expect(electronPlatform.isWindowMaximized()).resolves.toBe(true);
+
+    const events: boolean[] = [];
+    const unlisten = await electronPlatform.onWindowMaximized((maximized) => {
+      events.push(maximized);
+    });
+    for (const cb of maximizedListeners) cb(true);
+    for (const cb of maximizedListeners) cb(false);
+    expect(events).toEqual([true, false]);
+
+    unlisten();
+    expect(maximizedListeners.size).toBe(0);
+
+    delete window.quillShell;
+    await expect(electronPlatform.minimizeWindow()).rejects.toThrow("Electron preload bridge");
+    await expect(electronPlatform.isWindowMaximized()).rejects.toThrow("Electron preload bridge");
   });
 });

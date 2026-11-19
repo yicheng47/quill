@@ -17,9 +17,20 @@ interface MockWindowRecord {
   destroyed: boolean;
   setWindowButtonPosition: ReturnType<typeof vi.fn<(pos: { x: number; y: number }) => void>>;
   setBackgroundColor: ReturnType<typeof vi.fn<(color: string) => void>>;
+  removeMenu: ReturnType<typeof vi.fn<() => void>>;
+  minimize: ReturnType<typeof vi.fn<() => void>>;
+  close: ReturnType<typeof vi.fn<() => void>>;
   maximize: ReturnType<typeof vi.fn<() => void>>;
   unmaximize: ReturnType<typeof vi.fn<() => void>>;
   setFullScreen: ReturnType<typeof vi.fn<(flag: boolean) => void>>;
+  webContents: {
+    id: number;
+    send: ReturnType<typeof vi.fn>;
+    reload: ReturnType<typeof vi.fn>;
+    reloadIgnoringCache: ReturnType<typeof vi.fn>;
+    toggleDevTools: ReturnType<typeof vi.fn>;
+    emit: (event: string, ...args: unknown[]) => void;
+  };
   listeners: Map<string, Listener[]>;
   emit: (event: string, ...args: unknown[]) => void;
 }
@@ -31,6 +42,7 @@ const mockState = vi.hoisted(() => ({
   userDataDir: "",
   asyncFullScreen: false,
   primaryDisplayIndex: 0,
+  isPackaged: false,
   displays: [
     {
       id: 1,
@@ -65,12 +77,16 @@ vi.mock("electron", () => {
       send: ReturnType<typeof vi.fn>;
       setWindowOpenHandler: ReturnType<typeof vi.fn>;
       on: ReturnType<typeof vi.fn>;
+      reload: ReturnType<typeof vi.fn>;
+      reloadIgnoringCache: ReturnType<typeof vi.fn>;
+      toggleDevTools: ReturnType<typeof vi.fn>;
     };
     private record: MockWindowRecord;
 
     constructor(options: Record<string, unknown> = {}) {
       const id = mockState.nextId++;
       const listeners = new Map<string, Listener[]>();
+      const webContentsListeners = new Map<string, Listener[]>();
       const width = Number(options.width ?? 1440);
       const height = Number(options.height ?? 960);
       const workArea = mockState.displays[0].workArea;
@@ -82,6 +98,19 @@ vi.mock("electron", () => {
         typeof options.y === "number"
           ? options.y
           : Math.round(workArea.y + (workArea.height - height) / 2);
+      const webContents = {
+        id,
+        send: vi.fn(),
+        setWindowOpenHandler: vi.fn(),
+        on: vi.fn((event: string, cb: Listener) => {
+          const list = webContentsListeners.get(event) ?? [];
+          list.push(cb);
+          webContentsListeners.set(event, list);
+        }),
+        reload: vi.fn(),
+        reloadIgnoringCache: vi.fn(),
+        toggleDevTools: vi.fn(),
+      };
       const record: MockWindowRecord = {
         id,
         options,
@@ -94,6 +123,11 @@ vi.mock("electron", () => {
         destroyed: false,
         setWindowButtonPosition: vi.fn<(pos: { x: number; y: number }) => void>(),
         setBackgroundColor: vi.fn<(color: string) => void>(),
+        removeMenu: vi.fn<() => void>(),
+        minimize: vi.fn(() => {
+          record.minimized = true;
+        }),
+        close: vi.fn<() => void>(),
         maximize: vi.fn(() => {
           record.maximized = true;
           record.bounds = { ...workArea };
@@ -107,6 +141,18 @@ vi.mock("electron", () => {
             record.fullscreen = flag;
           }
         }),
+        webContents: {
+          id,
+          send: webContents.send,
+          reload: webContents.reload,
+          reloadIgnoringCache: webContents.reloadIgnoringCache,
+          toggleDevTools: webContents.toggleDevTools,
+          emit: (event: string, ...args: unknown[]) => {
+            for (const cb of webContentsListeners.get(event) ?? []) {
+              cb(...args);
+            }
+          },
+        },
         listeners,
         emit: (event: string, ...args: unknown[]) => {
           for (const cb of listeners.get(event) ?? []) {
@@ -116,12 +162,7 @@ vi.mock("electron", () => {
       };
       this.record = record;
       mockState.instances.push(record);
-      this.webContents = {
-        id,
-        send: vi.fn(),
-        setWindowOpenHandler: vi.fn(),
-        on: vi.fn(),
-      };
+      this.webContents = webContents;
     }
 
     on(event: string, cb: Listener) {
@@ -148,7 +189,9 @@ vi.mock("electron", () => {
       this.record.visible = false;
       this.record.emit("hide");
     });
-    close = vi.fn();
+    close = () => this.record.close();
+    minimize = () => this.record.minimize();
+    removeMenu = () => this.record.removeMenu();
     maximize = () => this.record.maximize();
     unmaximize = () => this.record.unmaximize();
     setFullScreen = (flag: boolean) => this.record.setFullScreen(flag);
@@ -163,6 +206,9 @@ vi.mock("electron", () => {
   return {
     app: {
       getPath: () => mockState.userDataDir,
+      get isPackaged() {
+        return mockState.isPackaged;
+      },
     },
     BrowserWindow: MockBrowserWindow,
     nativeTheme: { shouldUseDarkColors: false },
@@ -223,6 +269,7 @@ describe("electron windows titlebar & lifecycle", () => {
     mockState.cursorPoint = { x: 200, y: 200 };
     mockState.asyncFullScreen = false;
     mockState.primaryDisplayIndex = 0;
+    mockState.isPackaged = false;
     mockState.userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "quill-win-test-"));
     mockState.displays = [
       {
@@ -1231,5 +1278,159 @@ describe("electron windows titlebar & lifecycle", () => {
     expect(win.options.minHeight).toBe(480);
 
     closeIfOpen("main", win);
+  });
+
+  it("configures win32 windows with hidden titleBarStyle, no overlay/menu, maximized events, and menu-only shortcuts", () => {
+    const originalPlatform = process.platform;
+    const withPlatform = (platform: NodeJS.Platform, fn: () => void) => {
+      Object.defineProperty(process, "platform", { value: platform, configurable: true });
+      try {
+        fn();
+      } finally {
+        Object.defineProperty(process, "platform", { value: originalPlatform, configurable: true });
+      }
+    };
+
+    withPlatform("darwin", () => {
+      createMainWindow(false);
+      const macRec = mockState.instances[0];
+      expect(macRec.options.titleBarStyle).toBe("hiddenInset");
+      expect(macRec.options.trafficLightPosition).toEqual({ x: 28, y: 29 });
+      expect(macRec.removeMenu).not.toHaveBeenCalled();
+
+      const preventDefault = vi.fn();
+      macRec.webContents.emit(
+        "before-input-event",
+        { preventDefault },
+        { type: "keyDown", key: "F11", control: false, shift: false, alt: false, meta: false, isAutoRepeat: false },
+      );
+      expect(macRec.setFullScreen).not.toHaveBeenCalled();
+      expect(preventDefault).not.toHaveBeenCalled();
+      closeIfOpen("main", macRec);
+    });
+
+    withPlatform("win32", () => {
+      createMainWindow(false);
+      createReaderWindow(
+        {
+          label: "reader-win",
+          url: "/reader/win",
+          title: "Win Book",
+          width: 1200,
+          height: 800,
+          minWidth: 700,
+          minHeight: 500,
+        },
+        false,
+      );
+
+      const mainRec = mockState.instances[1];
+      const readerRec = mockState.instances[2];
+      for (const rec of [mainRec, readerRec]) {
+        expect(rec.options.titleBarStyle).toBe("hidden");
+        expect(rec.options.titleBarOverlay).toBeUndefined();
+        expect(rec.options.trafficLightPosition).toBeUndefined();
+        expect(rec.removeMenu).toHaveBeenCalledTimes(1);
+      }
+
+      // Maximized/restorable-state events push to the window's renderer for both main and reader windows,
+      // including entering and leaving F11 full screen from a restored window.
+      readerRec.maximized = true;
+      readerRec.emit("maximize");
+      expect(readerRec.webContents.send).toHaveBeenLastCalledWith("quill:window-maximized", true);
+      readerRec.maximized = false;
+      readerRec.emit("unmaximize");
+      expect(readerRec.webContents.send).toHaveBeenLastCalledWith("quill:window-maximized", false);
+
+      readerRec.fullscreen = true;
+      readerRec.emit("enter-full-screen");
+      expect(readerRec.webContents.send).toHaveBeenLastCalledWith("quill:window-maximized", true);
+      readerRec.fullscreen = false;
+      readerRec.emit("leave-full-screen");
+      expect(readerRec.webContents.send).toHaveBeenLastCalledWith("quill:window-maximized", false);
+
+      readerRec.maximized = true;
+      readerRec.emit("leave-full-screen");
+      expect(readerRec.webContents.send).toHaveBeenLastCalledWith("quill:window-maximized", true);
+
+      // Menu-only shortcuts in dev: F11, Ctrl+W, Ctrl+M, Ctrl+R, Ctrl+Shift+R, Ctrl+Shift+I.
+      const baseInput = {
+        type: "keyDown",
+        control: false,
+        shift: false,
+        alt: false,
+        meta: false,
+        isAutoRepeat: false,
+      };
+      const f11Prevent = vi.fn();
+      mainRec.webContents.emit("before-input-event", { preventDefault: f11Prevent }, { ...baseInput, key: "F11" });
+      expect(mainRec.setFullScreen).toHaveBeenCalledWith(true);
+      expect(f11Prevent).toHaveBeenCalledTimes(1);
+
+      mainRec.setFullScreen.mockClear();
+      mainRec.webContents.emit("before-input-event", { preventDefault: f11Prevent }, { ...baseInput, key: "F11", isAutoRepeat: true });
+      expect(mainRec.setFullScreen).not.toHaveBeenCalled();
+
+      mainRec.webContents.emit("before-input-event", { preventDefault: f11Prevent }, { ...baseInput, key: "F11" });
+      expect(mainRec.setFullScreen).toHaveBeenCalledWith(false);
+
+      const wmPrevent = vi.fn();
+      readerRec.webContents.emit("before-input-event", { preventDefault: wmPrevent }, { ...baseInput, key: "m", control: true });
+      expect(readerRec.minimize).toHaveBeenCalledTimes(1);
+      expect(wmPrevent).toHaveBeenCalledTimes(1);
+
+      readerRec.webContents.emit("before-input-event", { preventDefault: wmPrevent }, { ...baseInput, key: "w", control: true });
+      expect(readerRec.close).toHaveBeenCalledTimes(1);
+      expect(wmPrevent).toHaveBeenCalledTimes(2);
+
+      // Modified variants Ctrl+Shift+W / Ctrl+Shift+M do not trigger close/minimize.
+      readerRec.webContents.emit("before-input-event", { preventDefault: wmPrevent }, { ...baseInput, key: "W", control: true, shift: true });
+      readerRec.webContents.emit("before-input-event", { preventDefault: wmPrevent }, { ...baseInput, key: "M", control: true, shift: true });
+      expect(readerRec.close).toHaveBeenCalledTimes(1);
+      expect(readerRec.minimize).toHaveBeenCalledTimes(1);
+      expect(wmPrevent).toHaveBeenCalledTimes(2);
+
+      const reloadPrevent = vi.fn();
+      mainRec.webContents.emit("before-input-event", { preventDefault: reloadPrevent }, { ...baseInput, key: "r", control: true });
+      expect(mainRec.webContents.reload).toHaveBeenCalledTimes(1);
+      expect(reloadPrevent).toHaveBeenCalledTimes(1);
+
+      mainRec.webContents.emit("before-input-event", { preventDefault: reloadPrevent }, { ...baseInput, key: "R", control: true, shift: true });
+      expect(mainRec.webContents.reloadIgnoringCache).toHaveBeenCalledTimes(1);
+
+      const devToolsPrevent = vi.fn();
+      readerRec.webContents.emit("before-input-event", { preventDefault: devToolsPrevent }, { ...baseInput, key: "I", control: true, shift: true });
+      expect(readerRec.webContents.toggleDevTools).toHaveBeenCalledTimes(1);
+      expect(devToolsPrevent).toHaveBeenCalledTimes(1);
+
+      // Packaged builds keep F11, Ctrl+W, and Ctrl+M, but disable Reload and Toggle DevTools.
+      mockState.isPackaged = true;
+      mainRec.webContents.reload.mockClear();
+      mainRec.webContents.reloadIgnoringCache.mockClear();
+      readerRec.webContents.toggleDevTools.mockClear();
+      mainRec.setFullScreen.mockClear();
+      mainRec.minimize.mockClear();
+      mainRec.close.mockClear();
+
+      const prodPrevent = vi.fn();
+      mainRec.webContents.emit("before-input-event", { preventDefault: prodPrevent }, { ...baseInput, key: "r", control: true });
+      mainRec.webContents.emit("before-input-event", { preventDefault: prodPrevent }, { ...baseInput, key: "R", control: true, shift: true });
+      readerRec.webContents.emit("before-input-event", { preventDefault: prodPrevent }, { ...baseInput, key: "I", control: true, shift: true });
+      expect(mainRec.webContents.reload).not.toHaveBeenCalled();
+      expect(mainRec.webContents.reloadIgnoringCache).not.toHaveBeenCalled();
+      expect(readerRec.webContents.toggleDevTools).not.toHaveBeenCalled();
+      expect(prodPrevent).not.toHaveBeenCalled();
+
+      mainRec.webContents.emit("before-input-event", { preventDefault: prodPrevent }, { ...baseInput, key: "F11" });
+      expect(mainRec.setFullScreen).toHaveBeenCalledWith(true);
+      mainRec.webContents.emit("before-input-event", { preventDefault: prodPrevent }, { ...baseInput, key: "m", control: true });
+      expect(mainRec.minimize).toHaveBeenCalledTimes(1);
+      mainRec.webContents.emit("before-input-event", { preventDefault: prodPrevent }, { ...baseInput, key: "w", control: true });
+      expect(mainRec.close).toHaveBeenCalledTimes(1);
+      expect(prodPrevent).toHaveBeenCalledTimes(3);
+
+      closeIfOpen("reader-win", readerRec);
+      closeIfOpen("main", mainRec);
+    });
   });
 });

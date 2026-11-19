@@ -31,6 +31,11 @@ interface QuillShellBridge {
   appReady(): Promise<void>;
   setWindowTitle(title: string): Promise<void>;
   setWindowBackgroundColor(color: string): Promise<void>;
+  minimizeWindow(): Promise<void>;
+  toggleMaximizeWindow(): Promise<void>;
+  closeWindow(): Promise<void>;
+  isWindowMaximized(): Promise<boolean>;
+  onWindowMaximized(handler: (maximized: boolean) => void): UnlistenFn;
   focusWindow(label: string): Promise<boolean>;
   openReaderWindow(params: ReaderWindowParams): Promise<void>;
   getOpenReaderCount(): Promise<number>;
@@ -129,6 +134,26 @@ export const electronPlatform: Platform = {
 
   setWindowBackgroundColor(color: string): Promise<void> {
     return bridge().setWindowBackgroundColor(color);
+  },
+
+  async minimizeWindow(): Promise<void> {
+    return bridge().minimizeWindow();
+  },
+
+  async toggleMaximizeWindow(): Promise<void> {
+    return bridge().toggleMaximizeWindow();
+  },
+
+  async closeWindow(): Promise<void> {
+    return bridge().closeWindow();
+  },
+
+  async isWindowMaximized(): Promise<boolean> {
+    return bridge().isWindowMaximized();
+  },
+
+  async onWindowMaximized(handler: (maximized: boolean) => void): Promise<UnlistenFn> {
+    return bridge().onWindowMaximized(handler);
   },
 
   appReady(): Promise<void> {

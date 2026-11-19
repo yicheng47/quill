@@ -21,6 +21,9 @@ const testState = vi.hoisted(() => ({
   viewGoTo: vi.fn<(target: string) => Promise<void>>(() => Promise.resolve()),
   viewInit: vi.fn(() => Promise.resolve()),
   viewOpen: vi.fn(() => Promise.resolve()),
+  minimizeWindow: vi.fn<() => Promise<void>>(() => Promise.resolve()),
+  toggleMaximizeWindow: vi.fn<() => Promise<void>>(() => Promise.resolve()),
+  closeWindow: vi.fn<() => Promise<void>>(() => Promise.resolve()),
   resizeObservers: [] as Array<{ el: Element; cb: ResizeObserverCallback }>,
   navigateListeners: new Set<(e: { payload: unknown }) => void>(),
 }));
@@ -46,6 +49,11 @@ vi.mock("../platform", () => ({
   setWindowTitle: () => Promise.resolve(),
   setZoom: () => Promise.resolve(),
   setTitlebarZoom: () => Promise.resolve(),
+  minimizeWindow: () => testState.minimizeWindow(),
+  toggleMaximizeWindow: () => testState.toggleMaximizeWindow(),
+  closeWindow: () => testState.closeWindow(),
+  isWindowMaximized: () => Promise.resolve(false),
+  onWindowMaximized: () => Promise.resolve(() => {}),
 }));
 
 vi.mock("../hooks/useBooks", () => ({
@@ -232,6 +240,9 @@ describe("Reader shell themes, cascade, and startup navigation", () => {
     testState.viewGoTo.mockClear();
     testState.viewInit.mockClear();
     testState.viewOpen.mockClear();
+    testState.minimizeWindow.mockClear();
+    testState.toggleMaximizeWindow.mockClear();
+    testState.closeWindow.mockClear();
     testState.resizeObservers = [];
     testState.navigateListeners.clear();
 
@@ -588,5 +599,163 @@ describe("Reader shell themes, cascade, and startup navigation", () => {
 
     expect(testState.updateBookStatus).not.toHaveBeenCalled();
     expect(testState.emitTo).not.toHaveBeenCalledWith("main", "book-status-changed", expect.anything());
+  });
+
+  it("renders Reader toolbar drag region without window controls on macOS, and with WindowControls on Windows", async () => {
+    testState.getBook.mockResolvedValue({
+      id: "book-1",
+      title: "Notes from Underground",
+      author: "Fyodor Dostoevsky",
+      format: "epub",
+      file_path: "/tmp/notes.epub",
+      progress: 0,
+      available: true,
+    });
+    testState.getAllSettings.mockResolvedValue({});
+
+    const origUa = navigator.userAgent;
+    try {
+      Object.defineProperty(window.navigator, "userAgent", {
+        value: "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_0)",
+        configurable: true,
+      });
+      await renderReader("/reader/book-1");
+      await flushAsync();
+
+      const macHeader = container.querySelector("header")!;
+      expect(macHeader.hasAttribute("data-drag-region")).toBe(true);
+      expect(macHeader.querySelector(".w-\\[60px\\]")).not.toBeNull();
+      expect(macHeader.querySelector('button[aria-label="Minimize"]')).toBeNull();
+      expect(macHeader.querySelector('button[aria-label="Close"]')).toBeNull();
+
+      await act(async () => {
+        root.unmount();
+      });
+      root = createRoot(container);
+
+      Object.defineProperty(window.navigator, "userAgent", {
+        value: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+        configurable: true,
+      });
+      await renderReader("/reader/book-1");
+      await flushAsync();
+
+      const winHeader = container.querySelector("header")!;
+      expect(winHeader.hasAttribute("data-drag-region")).toBe(true);
+      expect(winHeader.className).toContain("px-3 sm:px-6");
+      expect(winHeader.className).not.toMatch(/\bz-\d/);
+      expect(winHeader.querySelector(".w-\\[60px\\]")).toBeNull();
+      const rightCluster = winHeader.lastElementChild as HTMLElement;
+      const minBtn = rightCluster.querySelector<HTMLButtonElement>('button[aria-label="Minimize"]')!;
+      const maxBtn = rightCluster.querySelector<HTMLButtonElement>('button[aria-label="Maximize"]')!;
+      const closeBtn = rightCluster.querySelector<HTMLButtonElement>('button[aria-label="Close"]')!;
+      expect(minBtn).not.toBeNull();
+      expect(maxBtn).not.toBeNull();
+      expect(closeBtn).not.toBeNull();
+      expect(minBtn.parentElement?.className).toContain("z-[55]");
+
+      // Opening Typography popover puts a z-40 dismiss backdrop in place while WindowControls stays above at z-[55].
+      const typographyBtn = rightCluster.querySelector<HTMLButtonElement>('button[aria-label="Typography"]')!;
+      await act(async () => {
+        typographyBtn.click();
+      });
+      const backdrop = container.querySelector<HTMLElement>(".fixed.inset-0.z-40");
+      expect(backdrop).not.toBeNull();
+      expect(container.querySelector('[role="dialog"][aria-label="Typography"]')).not.toBeNull();
+
+      // Clicking Minimize (full mousedown -> mouseup -> click sequence) operates the window.
+      await act(async () => {
+        minBtn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+        minBtn.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+        minBtn.click();
+      });
+      expect(testState.minimizeWindow).toHaveBeenCalledTimes(1);
+
+      // Re-open Typography and verify backdrop mousedown still dismisses the popover.
+      await act(async () => {
+        typographyBtn.click();
+      });
+      const reopenedBackdrop = container.querySelector<HTMLElement>(".fixed.inset-0.z-40")!;
+      expect(reopenedBackdrop).not.toBeNull();
+      await act(async () => {
+        reopenedBackdrop.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+      });
+      expect(container.querySelector('[role="dialog"][aria-label="Typography"]')).toBeNull();
+    } finally {
+      Object.defineProperty(window.navigator, "userAgent", {
+        value: origUa,
+        configurable: true,
+      });
+    }
+  });
+
+  it("keeps a draggable header with working WindowControls on Windows when getBook is pending or fails", async () => {
+    testState.getAllSettings.mockResolvedValue({});
+    const origUa = navigator.userAgent;
+
+    try {
+      // Pending getBook() on Windows still mounts draggable header and caption buttons (no divider).
+      Object.defineProperty(window.navigator, "userAgent", {
+        value: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+        configurable: true,
+      });
+      testState.getBook.mockReturnValue(new Promise(() => {}));
+      await renderReader("/reader/book-pending");
+
+      const pendingHeader = container.querySelector("header")!;
+      expect(pendingHeader).not.toBeNull();
+      expect(pendingHeader.hasAttribute("data-drag-region")).toBe(true);
+      expect(pendingHeader.querySelector("span[aria-hidden='true']")).toBeNull();
+      const pendingMin = pendingHeader.querySelector<HTMLButtonElement>('button[aria-label="Minimize"]')!;
+      const pendingClose = pendingHeader.querySelector<HTMLButtonElement>('button[aria-label="Close"]')!;
+      expect(pendingMin).not.toBeNull();
+      expect(pendingClose).not.toBeNull();
+      await act(async () => {
+        pendingMin.click();
+        pendingClose.click();
+      });
+      expect(testState.minimizeWindow).toHaveBeenCalledTimes(1);
+      expect(testState.closeWindow).toHaveBeenCalledTimes(1);
+
+      // Rejected getBook() on Windows keeps draggable header and working controls on the error screen.
+      await act(async () => {
+        root.unmount();
+      });
+      root = createRoot(container);
+      testState.minimizeWindow.mockClear();
+      testState.closeWindow.mockClear();
+      testState.getBook.mockRejectedValue(new Error("not found"));
+      await renderReader("/reader/book-missing");
+      await flushAsync();
+
+      const failedHeader = container.querySelector("header")!;
+      expect(failedHeader).not.toBeNull();
+      expect(failedHeader.hasAttribute("data-drag-region")).toBe(true);
+      expect(failedHeader.querySelector("span[aria-hidden='true']")).toBeNull();
+      const failedClose = failedHeader.querySelector<HTMLButtonElement>('button[aria-label="Close"]')!;
+      expect(failedClose).not.toBeNull();
+      await act(async () => {
+        failedClose.click();
+      });
+      expect(testState.closeWindow).toHaveBeenCalledTimes(1);
+
+      // macOS loading/failed screens remain header-free.
+      await act(async () => {
+        root.unmount();
+      });
+      root = createRoot(container);
+      Object.defineProperty(window.navigator, "userAgent", {
+        value: "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_0)",
+        configurable: true,
+      });
+      await renderReader("/reader/book-missing");
+      await flushAsync();
+      expect(container.querySelector("header")).toBeNull();
+    } finally {
+      Object.defineProperty(window.navigator, "userAgent", {
+        value: origUa,
+        configurable: true,
+      });
+    }
   });
 });
