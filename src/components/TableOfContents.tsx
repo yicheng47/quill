@@ -134,7 +134,7 @@ export default function TableOfContents({
         )}
       </div>
 
-      <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-0.5">
+      <div className="flex-1 min-h-0 overflow-y-auto -mr-[14px] pr-[14px] flex flex-col gap-0.5">
         {visibleRows.map((chapter, index) => {
           const isActive = currentPage === chapter.page;
           const isExpanded = expandedPages.has(chapter.page);

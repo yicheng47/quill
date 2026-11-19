@@ -102,7 +102,7 @@ export default function BookmarksPanel({
   });
 
   return (
-    <div className="@container/panel flex flex-col h-full min-w-0 reader-island rounded-surface p-4 @[340px]/panel:p-5 gap-3.5">
+    <div className="@container/panel flex flex-col h-full min-w-0 reader-island rounded-surface p-4 gap-3.5">
       {/* Header: segmented tabs + Bookmark action pill */}
       <div className="flex flex-wrap items-center justify-between gap-2 shrink-0">
         <div
@@ -228,7 +228,7 @@ export default function BookmarksPanel({
             </div>
           </div>
 
-          <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-2.5 pr-0.5">
+          <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-2.5 -mr-3 pr-3">
             {filteredHighlights.length === 0 ? (
               <p className="text-[13px] text-text-tertiary text-center mt-8 px-4">
                 {highlights.length === 0
@@ -329,7 +329,7 @@ export default function BookmarksPanel({
       {/* Bookmarks tab */}
       {tab === "bookmarks" && (
         <>
-          <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-2.5 pr-0.5">
+          <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-2.5 -mr-3 pr-3">
             {bookmarks.length === 0 ? (
               <p className="text-[13px] text-text-tertiary text-center mt-8 px-4">
                 {t("bookmarks.empty")}

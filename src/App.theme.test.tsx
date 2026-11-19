@@ -68,7 +68,7 @@ describe("App startup theme and reveal", () => {
     localStorage.clear();
     delete document.documentElement.dataset.readerTheme;
     delete document.documentElement.dataset.themeOverride;
-    document.documentElement.classList.remove("dawn", "dark");
+    document.documentElement.classList.remove("dawn", "dark", "platform-mac");
     mocks.invoke.mockReset();
     mocks.appReady.mockReset();
     mocks.appReady.mockResolvedValue();
@@ -105,7 +105,7 @@ describe("App startup theme and reveal", () => {
     container.remove();
     delete document.documentElement.dataset.readerTheme;
     delete document.documentElement.dataset.themeOverride;
-    document.documentElement.classList.remove("dark", "dawn");
+    document.documentElement.classList.remove("dark", "dawn", "platform-mac");
     vi.useRealTimers();
   });
 
@@ -438,5 +438,43 @@ describe("App startup theme and reveal", () => {
     await setSystemDark(false);
     expect(document.documentElement.classList.contains("dark")).toBe(true);
     expect(mocks.setWindowBackgroundColor).not.toHaveBeenCalled();
+  });
+
+  it("applies platform-mac on documentElement only on macOS", async () => {
+    const originalUA = navigator.userAgent;
+    try {
+      Object.defineProperty(window.navigator, "userAgent", {
+        configurable: true,
+        value: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+      });
+      mocks.invoke.mockResolvedValue({ theme: "light" });
+      await act(async () => {
+        root.render(<App />);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(document.documentElement.classList.contains("platform-mac")).toBe(true);
+
+      await act(async () => {
+        root.unmount();
+      });
+      root = createRoot(container);
+
+      Object.defineProperty(window.navigator, "userAgent", {
+        configurable: true,
+        value: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+      });
+      await act(async () => {
+        root.render(<App />);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(document.documentElement.classList.contains("platform-mac")).toBe(false);
+    } finally {
+      Object.defineProperty(window.navigator, "userAgent", {
+        configurable: true,
+        value: originalUA,
+      });
+    }
   });
 });

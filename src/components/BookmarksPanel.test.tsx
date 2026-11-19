@@ -217,4 +217,28 @@ describe("BookmarksPanel nested action keyboard isolation", () => {
     });
     expect(onNavigate).toHaveBeenCalledWith("cfi-h");
   });
+
+  it("keeps Highlights and Bookmarks scroll offsets inset 4px inside the panel's p-4 padding", async () => {
+    await renderPanel();
+
+    const panel = container.firstElementChild as HTMLElement;
+    expect(panel.className).toContain("p-4");
+    expect(panel.className).not.toContain("@[340px]/panel:p-5");
+
+    const checkScrollBox = () => {
+      const scrollBox = container.querySelector<HTMLElement>(".overflow-y-auto");
+      expect(scrollBox).not.toBeNull();
+      expect(scrollBox!.className).toContain("-mr-3");
+      expect(scrollBox!.className).toContain("pr-3");
+      expect(scrollBox!.className).not.toContain("-mr-4");
+    };
+
+    checkScrollBox();
+
+    const bookmarksTab = container.querySelectorAll<HTMLButtonElement>('[role="tab"]')[1];
+    await act(async () => {
+      bookmarksTab.click();
+    });
+    checkScrollBox();
+  });
 });

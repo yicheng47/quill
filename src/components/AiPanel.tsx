@@ -466,7 +466,7 @@ export default function AiPanel({
 
       {/* Messages / Empty State */}
       <div
-        className="flex-1 min-h-0 overflow-y-auto pr-0.5"
+        className="flex-1 min-h-0 overflow-y-auto -mr-5 pr-5"
         onClick={() => pickerOpen && setPickerOpen(false)}
       >
         {messages.length === 0 ? (

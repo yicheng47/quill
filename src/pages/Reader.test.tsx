@@ -796,6 +796,62 @@ describe("Reader shell themes, cascade, and startup navigation", () => {
       "true",
     );
   });
+
+  it("omits custom iframe scrollbar CSS on macOS and injects an inset scrollbar on Windows", async () => {
+    const originalUA = navigator.userAgent;
+    const epubBook = {
+      id: "book-1",
+      title: "Stoner",
+      author: "John Williams",
+      format: "epub",
+      file_path: "/tmp/stoner.epub",
+      progress: 0,
+      status: "reading",
+      current_cfi: null,
+    };
+
+    try {
+      Object.defineProperty(window.navigator, "userAgent", {
+        configurable: true,
+        value: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+      });
+      testState.getBook.mockResolvedValue(epubBook);
+      testState.getAllSettings.mockResolvedValue({ reader_theme: "dark" });
+
+      await renderReader("/reader/book-1");
+      await flushAsync();
+
+      const macView = container.querySelector("foliate-view") as MockFoliateView | null;
+      const macCalls = macView?.renderer.setStyles.mock.calls ?? [];
+      const macCss = macCalls[macCalls.length - 1]?.[0] as string;
+      expect(macCss).toContain("color-scheme: dark;");
+      expect(macCss).not.toContain("::-webkit-scrollbar");
+
+      await act(async () => {
+        root.unmount();
+      });
+      root = createRoot(container);
+
+      Object.defineProperty(window.navigator, "userAgent", {
+        configurable: true,
+        value: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+      });
+      await renderReader("/reader/book-1");
+      await flushAsync();
+
+      const winView = container.querySelector("foliate-view") as MockFoliateView | null;
+      const winCalls = winView?.renderer.setStyles.mock.calls ?? [];
+      const winCss = winCalls[winCalls.length - 1]?.[0] as string;
+      expect(winCss).toContain("color-scheme: dark;");
+      expect(winCss).toContain("::-webkit-scrollbar");
+      expect(winCss).toContain("background-clip: content-box;");
+    } finally {
+      Object.defineProperty(window.navigator, "userAgent", {
+        configurable: true,
+        value: originalUA,
+      });
+    }
+  });
 });
 
 function parseHexChannelTuple(hex: string): [number, number, number] {

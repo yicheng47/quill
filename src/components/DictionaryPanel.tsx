@@ -93,7 +93,7 @@ export default function DictionaryPanel({
       </div>
 
       {/* Word list */}
-      <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-2.5 pr-0.5">
+      <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-2.5 -mr-4 pr-4">
         {filteredWords.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full px-4 text-center">
             <div className="size-12 rounded-full bg-surface-inset border border-border-subtle flex items-center justify-center mb-3">
