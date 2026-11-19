@@ -49,20 +49,85 @@ impl AiStreamChunk {
 
 const LOOKUP_TRANSLATION_MARKER: &str = "[[QUILL_TRANSLATION]]";
 
-/// Effort-tier setting key governing each AI entry point (spec 294):
-/// quick = lookup + title generation, deep = chat + explain + translate.
-pub(crate) fn effort_tier_key(call: &str) -> &'static str {
-    match call {
-        "lookup" | "generate_title" => "ai_effort_quick",
-        _ => "ai_effort_deep",
+/// AI feature owning per-feature Codex model and reasoning settings (spec 358).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AiFeature {
+    Lookup,
+    Explain,
+    Chat,
+    Translate,
+}
+
+impl AiFeature {
+    pub(crate) fn from_call(call: &str) -> Self {
+        match call {
+            "lookup" | "generate_title" => Self::Lookup,
+            "explain" => Self::Explain,
+            "translate" => Self::Translate,
+            "chat" => Self::Chat,
+            _ => Self::Chat,
+        }
+    }
+
+    pub(crate) fn model_key(self) -> &'static str {
+        match self {
+            Self::Lookup => "ai_codex_model_lookup",
+            Self::Explain => "ai_codex_model_explain",
+            Self::Chat => "ai_codex_model_chat",
+            Self::Translate => "ai_codex_model_translate",
+        }
+    }
+
+    pub(crate) fn effort_key(self) -> &'static str {
+        match self {
+            Self::Lookup => "ai_codex_effort_lookup",
+            Self::Explain => "ai_codex_effort_explain",
+            Self::Chat => "ai_codex_effort_chat",
+            Self::Translate => "ai_codex_effort_translate",
+        }
+    }
+
+    pub(crate) fn legacy_effort_key(self) -> &'static str {
+        match self {
+            Self::Lookup => "ai_effort_quick",
+            Self::Explain | Self::Chat | Self::Translate => "ai_effort_deep",
+        }
+    }
+
+    pub(crate) fn legacy_effort_fallback_key(self) -> Option<&'static str> {
+        match self {
+            Self::Lookup => None,
+            Self::Explain => Some("ai_codex_effort_fallback_explain"),
+            Self::Chat => Some("ai_codex_effort_fallback_chat"),
+            Self::Translate => Some("ai_codex_effort_fallback_translate"),
+        }
+    }
+
+    pub(crate) fn default_family(self) -> &'static str {
+        match self {
+            Self::Lookup => "luna",
+            Self::Explain => "terra",
+            Self::Chat => "sol",
+            Self::Translate => "terra",
+        }
+    }
+
+    pub(crate) fn default_effort(self) -> &'static str {
+        match self {
+            Self::Lookup => "low",
+            Self::Explain => "high",
+            Self::Chat => "high",
+            Self::Translate => "medium",
+        }
     }
 }
 
-/// Map a stored effort setting to a request value. Missing key, empty
-/// string, or "default" is the inherit-server-default sentinel → `None`,
-/// which keeps the `reasoning` key out of the request body entirely.
-pub(crate) fn effort_from_setting(value: Option<String>) -> Option<String> {
-    value.filter(|v| !v.is_empty() && v != "default")
+/// Map a stored model or effort setting to an explicit choice. Missing key,
+/// empty/whitespace string, or `"default"` means "not chosen" → `None`.
+pub(crate) fn setting_choice(value: Option<String>) -> Option<String> {
+    value
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty() && v != "default")
 }
 
 fn codex_path_override(core: &Core) -> Option<String> {
@@ -684,23 +749,47 @@ mod tests {
     }
 
     #[test]
-    fn effort_tier_mapping_matches_spec() {
-        // Quick tier: lookup + title generation
-        assert_eq!(effort_tier_key("lookup"), "ai_effort_quick");
-        assert_eq!(effort_tier_key("generate_title"), "ai_effort_quick");
-        // Deep tier: chat + explain + translate
-        assert_eq!(effort_tier_key("chat"), "ai_effort_deep");
-        assert_eq!(effort_tier_key("explain"), "ai_effort_deep");
-        assert_eq!(effort_tier_key("translate"), "ai_effort_deep");
+    fn call_to_feature_mapping_and_defaults_match_spec() {
+        assert_eq!(AiFeature::from_call("lookup"), AiFeature::Lookup);
+        assert_eq!(AiFeature::from_call("generate_title"), AiFeature::Lookup);
+        assert_eq!(AiFeature::from_call("explain"), AiFeature::Explain);
+        assert_eq!(AiFeature::from_call("chat"), AiFeature::Chat);
+        assert_eq!(AiFeature::from_call("translate"), AiFeature::Translate);
+
+        assert_eq!(AiFeature::Lookup.model_key(), "ai_codex_model_lookup");
+        assert_eq!(AiFeature::Lookup.effort_key(), "ai_codex_effort_lookup");
+        assert_eq!(AiFeature::Lookup.legacy_effort_key(), "ai_effort_quick");
+        assert_eq!(AiFeature::Lookup.default_family(), "luna");
+        assert_eq!(AiFeature::Lookup.default_effort(), "low");
+
+        assert_eq!(AiFeature::Explain.model_key(), "ai_codex_model_explain");
+        assert_eq!(AiFeature::Explain.effort_key(), "ai_codex_effort_explain");
+        assert_eq!(AiFeature::Explain.legacy_effort_key(), "ai_effort_deep");
+        assert_eq!(AiFeature::Explain.default_family(), "terra");
+        assert_eq!(AiFeature::Explain.default_effort(), "high");
+
+        assert_eq!(AiFeature::Chat.model_key(), "ai_codex_model_chat");
+        assert_eq!(AiFeature::Chat.effort_key(), "ai_codex_effort_chat");
+        assert_eq!(AiFeature::Chat.legacy_effort_key(), "ai_effort_deep");
+        assert_eq!(AiFeature::Chat.default_family(), "sol");
+        assert_eq!(AiFeature::Chat.default_effort(), "high");
+
+        assert_eq!(AiFeature::Translate.model_key(), "ai_codex_model_translate");
+        assert_eq!(AiFeature::Translate.effort_key(), "ai_codex_effort_translate");
+        assert_eq!(AiFeature::Translate.legacy_effort_key(), "ai_effort_deep");
+        assert_eq!(AiFeature::Translate.default_family(), "terra");
+        assert_eq!(AiFeature::Translate.default_effort(), "medium");
     }
 
     #[test]
-    fn effort_setting_sentinel_yields_none() {
-        assert_eq!(effort_from_setting(None), None);
-        assert_eq!(effort_from_setting(Some(String::new())), None);
-        assert_eq!(effort_from_setting(Some("default".to_string())), None);
+    fn setting_choice_sentinel_yields_none() {
+        assert_eq!(setting_choice(None), None);
+        assert_eq!(setting_choice(Some(String::new())), None);
+        assert_eq!(setting_choice(Some("   ".to_string())), None);
+        assert_eq!(setting_choice(Some("default".to_string())), None);
+        assert_eq!(setting_choice(Some(" default ".to_string())), None);
         assert_eq!(
-            effort_from_setting(Some("xhigh".to_string())),
+            setting_choice(Some(" xhigh ".to_string())),
             Some("xhigh".to_string())
         );
     }

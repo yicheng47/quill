@@ -1,3 +1,5 @@
+import { chosenCodexSetting } from "../lib/codexFeatures";
+
 export function parseAiErrorMessage(content: string): string | null {
   const trimmed = content.trim();
   if (!trimmed.startsWith("Error:")) return null;
@@ -10,9 +12,14 @@ export function formatAiModelFooter(
   formatEffort?: (effort: string) => string,
 ): string | null {
   if (settings.ai_auth_mode === "codex") {
-    const model = settings.ai_model?.trim() || "Codex";
-    const effort = settings.ai_effort_deep?.trim();
-    if (effort && effort !== "default") {
+    const model =
+      chosenCodexSetting(settings.ai_codex_model_chat) ??
+      chosenCodexSetting(settings.ai_model) ??
+      "Codex";
+    const effort =
+      chosenCodexSetting(settings.ai_codex_effort_chat) ??
+      chosenCodexSetting(settings.ai_effort_deep);
+    if (effort) {
       const label = formatEffort ? formatEffort(effort) : effort;
       return `${model} · ${label}`;
     }

@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../../platform", () => ({
   invoke: (command: string, args?: Record<string, unknown>) =>
     args !== undefined ? mocks.invoke(command, args) : mocks.invoke(command),
+  listen: vi.fn(async () => () => {}),
   openFileDialog: () => mocks.openFileDialog(),
   openUrl: (url: string) => mocks.openUrl(url),
 }));
@@ -26,6 +27,7 @@ vi.mock("react-i18next", () => ({
 }));
 
 import AiSettings from "./AiSettings";
+import { resetCodexModelsCacheForTests } from "../../hooks/useCodexModels";
 
 const READY_STATUS: CodexStatus = {
   state: "ready",
@@ -48,8 +50,16 @@ const SAMPLE_CODEX_MODELS: CodexModel[] = [
     is_default: true,
   },
   {
+    slug: "gpt-6.1-terra",
+    display_name: "GPT-6.1 Terra",
+    description: "Mid-size reasoning model",
+    supported_reasoning_levels: ["low", "medium", "high", "xhigh"],
+    default_reasoning_level: "medium",
+    is_default: false,
+  },
+  {
     slug: "gpt-6-luna",
-    display_name: "GPT-6-Luna",
+    display_name: "GPT-6 Luna",
     description: "Fast lightweight Codex model",
     supported_reasoning_levels: ["low", "medium", "high", "xhigh", "max"],
     default_reasoning_level: "medium",
@@ -81,6 +91,7 @@ describe("AiSettings (#326 Agent/API connections)", () => {
 
   beforeEach(() => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    resetCodexModelsCacheForTests();
     mocks.invoke.mockReset();
     mocks.openFileDialog.mockReset();
     mocks.openUrl.mockReset().mockResolvedValue(undefined);
@@ -128,18 +139,15 @@ describe("AiSettings (#326 Agent/API connections)", () => {
     return { save, saveBulk, showSavedToast };
   }
 
-  it("shows Codex ready state, live models, effort tiers, and hides Temperature on Agent", async () => {
+  it("shows Codex ready state, four per-feature family defaults, and hides Temperature on Agent", async () => {
     mocks.invoke.mockImplementation(async (cmd) => {
       if (cmd === "codex_status") return READY_STATUS;
       if (cmd === "list_codex_models") return { models: SAMPLE_CODEX_MODELS };
       return undefined;
     });
 
-    const { saveBulk } = await render({
+    const { save } = await render({
       ai_auth_mode: "codex",
-      ai_model: "gpt-6.2-sol",
-      ai_effort_quick: "low",
-      ai_effort_deep: "medium",
     });
 
     const agentRadio = container.querySelector('[data-testid="connection-option-agent"]');
@@ -155,25 +163,79 @@ describe("AiSettings (#326 Agent/API connections)", () => {
     // Temperature is API-only and must not appear under Agent.
     expect(container.textContent).not.toContain("settings.ai.temperature");
 
-    // Live model catalog populates the Model picker.
-    const modelBtn = container.querySelector<HTMLButtonElement>(
-      'button[aria-label="settings.ai.model"]',
+    // Four feature rows show family defaults resolved from the live catalog.
+    const lookupBtn = container.querySelector<HTMLButtonElement>(
+      '[data-testid="codex-feature-picker-lookup"]',
     )!;
-    expect(modelBtn.textContent).toContain("GPT-6.2 Sol");
+    const explainBtn = container.querySelector<HTMLButtonElement>(
+      '[data-testid="codex-feature-picker-explain"]',
+    )!;
+    const chatBtn = container.querySelector<HTMLButtonElement>(
+      '[data-testid="codex-feature-picker-chat"]',
+    )!;
+    const translateBtn = container.querySelector<HTMLButtonElement>(
+      '[data-testid="codex-feature-picker-translate"]',
+    )!;
+    expect(lookupBtn.textContent).toBe("GPT-6 Luna · low");
+    expect(explainBtn.textContent).toBe("GPT-6.1 Terra · high");
+    expect(chatBtn.textContent).toBe("GPT-6.2 Sol · high");
+    expect(translateBtn.textContent).toBe("GPT-6.1 Terra · medium");
+
+    // Open Explain's menu: Default model and Default (High) reasoning are marked checked.
+    await act(async () => {
+      explainBtn.click();
+    });
+    const explainMenu = document.querySelector('[data-testid="codex-feature-menu-explain"]')!;
+    expect(explainMenu).not.toBeNull();
+    expect(
+      explainMenu.querySelector('[data-testid="codex-model-option-default"]')?.getAttribute("aria-checked"),
+    ).toBe("true");
+    expect(
+      explainMenu.querySelector('[data-testid="codex-effort-option-default"]')?.getAttribute("aria-checked"),
+    ).toBe("true");
+
+    // Save a model on Explain -> writes only ai_codex_model_explain, leaving other rows untouched.
+    const lunaOption = explainMenu.querySelector<HTMLButtonElement>(
+      '[data-testid="codex-model-option-gpt-6-luna"]',
+    )!;
+    await act(async () => {
+      lunaOption.click();
+    });
+    expect(save).toHaveBeenCalledWith("ai_codex_model_explain", "gpt-6-luna");
+    expect(explainBtn.textContent).toBe("GPT-6 Luna · high");
+    expect(chatBtn.textContent).toBe("GPT-6.2 Sol · high");
+
+    // Save a reasoning level on Explain -> writes only ai_codex_effort_explain.
+    await act(async () => {
+      explainBtn.click();
+    });
+    const xhighOption = document.querySelector<HTMLButtonElement>(
+      '[data-testid="codex-effort-option-xhigh"]',
+    )!;
+    await act(async () => {
+      xhighOption.click();
+    });
+    expect(save).toHaveBeenCalledWith("ai_codex_effort_explain", "xhigh");
+    expect(explainBtn.textContent).toBe("GPT-6 Luna · xhigh");
+
+    // Clearing model and reasoning to Default clears each key to "".
+    await act(async () => {
+      explainBtn.click();
+    });
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('[data-testid="codex-model-option-default"]')!.click();
+    });
+    expect(save).toHaveBeenCalledWith("ai_codex_model_explain", "");
+    expect(explainBtn.textContent).toBe("GPT-6.1 Terra · xhigh");
 
     await act(async () => {
-      modelBtn.click();
+      explainBtn.click();
     });
-    const lunaOption = buttonContaining("GPT-6-Luna");
-    expect(lunaOption).toBeDefined();
     await act(async () => {
-      lunaOption!.click();
+      document.querySelector<HTMLButtonElement>('[data-testid="codex-effort-option-default"]')!.click();
     });
-    expect(saveBulk).toHaveBeenCalledWith({
-      ai_auth_mode: "codex",
-      ai_model: "gpt-6-luna",
-      ai_setup_seen: "true",
-    });
+    expect(save).toHaveBeenCalledWith("ai_codex_effort_explain", "");
+    expect(explainBtn.textContent).toBe("GPT-6.1 Terra · high");
   });
 
   it("renders all Codex status states: checking, not_signed_in, signing_in, not_installed, too_old, failed", async () => {
@@ -502,71 +564,381 @@ describe("AiSettings (#326 Agent/API connections)", () => {
     expect(container.textContent).not.toContain("stale-model-from-cleared-key");
   });
 
-  it("resets unsupported Codex effort tiers when switching models and hides unsupported tiers", async () => {
+  it("resets unsupported per-feature effort on model switch, hides unsupported levels, and supports custom model IDs", async () => {
     mocks.invoke.mockImplementation(async (cmd) => {
       if (cmd === "codex_status") return READY_STATUS;
       if (cmd === "list_codex_models") return { models: SAMPLE_CODEX_MODELS };
       return undefined;
     });
 
-    const { saveBulk } = await render({
+    const { save, saveBulk } = await render({
+      ai_auth_mode: "codex",
+      ai_codex_model_explain: "gpt-6-luna",
+      ai_codex_effort_explain: "max",
+    });
+
+    // Switch Explain from gpt-6-luna (supports max) to gpt-6.2-sol (supports low/medium/high).
+    const explainBtn = container.querySelector<HTMLButtonElement>(
+      '[data-testid="codex-feature-picker-explain"]',
+    )!;
+    expect(explainBtn.textContent).toBe("GPT-6 Luna · max");
+
+    await act(async () => {
+      explainBtn.click();
+    });
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('[data-testid="codex-model-option-gpt-6.2-sol"]')!.click();
+    });
+    await flush();
+
+    expect(save).toHaveBeenCalledWith("ai_codex_model_explain", "gpt-6.2-sol");
+    expect(saveBulk).not.toHaveBeenCalled();
+    expect(explainBtn.textContent).toBe("GPT-6.2 Sol · high");
+
+    // Explain's menu now marks Default (High) and hides unsupported tiers (xhigh/max).
+    await act(async () => {
+      explainBtn.click();
+    });
+    expect(
+      document.querySelector('[data-testid="codex-effort-option-default"]')?.getAttribute("aria-checked"),
+    ).toBe("true");
+    expect(document.querySelector('[data-testid="codex-effort-option-max"]')).toBeNull();
+    expect(document.querySelector('[data-testid="codex-effort-option-xhigh"]')).toBeNull();
+    expect(document.querySelector('[data-testid="codex-effort-option-high"]')).not.toBeNull();
+
+    // Switching straight back to gpt-6-luna preserves the explicit max choice.
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('[data-testid="codex-model-option-gpt-6-luna"]')!.click();
+    });
+    await flush();
+    expect(save).toHaveBeenCalledWith("ai_codex_model_explain", "gpt-6-luna");
+    expect(explainBtn.textContent).toBe("GPT-6 Luna · max");
+
+    // Pick Custom… -> reveals per-feature custom input, saves custom slug on blur, and keeps fallback effort levels including max.
+    await act(async () => {
+      explainBtn.click();
+    });
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('[data-testid="codex-model-option-custom"]')!.click();
+    });
+    const customInput = container.querySelector<HTMLInputElement>(
+      '[data-testid="codex-custom-model-input-explain"]',
+    )!;
+    expect(customInput).not.toBeNull();
+
+    await act(async () => {
+      setInputValue(customInput, "my-custom-codex");
+      customInput.focus();
+      customInput.blur();
+    });
+    await flush();
+
+    expect(save).toHaveBeenCalledWith("ai_codex_model_explain", "my-custom-codex");
+    expect(explainBtn.textContent).toBe("my-custom-codex · max");
+
+    await act(async () => {
+      explainBtn.click();
+    });
+    expect(
+      document.querySelector('[data-testid="codex-model-option-custom"]')?.getAttribute("aria-checked"),
+    ).toBe("true");
+    expect(document.querySelector('[data-testid="codex-effort-option-max"]')).not.toBeNull();
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('[data-testid="codex-effort-option-low"]')!.click();
+    });
+    expect(save).toHaveBeenCalledWith("ai_codex_effort_explain", "low");
+    expect(explainBtn.textContent).toBe("my-custom-codex · low");
+  });
+
+  it("sends minimal Default clear without sibling writes and preserves legacy Luna across an API round-trip", async () => {
+    mocks.invoke.mockImplementation(async (cmd) => {
+      if (cmd === "codex_status") return READY_STATUS;
+      if (cmd === "list_codex_models") return { models: SAMPLE_CODEX_MODELS };
+      return undefined;
+    });
+
+    const { save, saveBulk } = await render({
       ai_auth_mode: "codex",
       ai_model: "gpt-6-luna",
-      ai_effort_quick: "low",
-      ai_effort_deep: "max",
+      ai_effort_deep: "medium",
     });
 
-    // Switch from gpt-6-luna (supports max) to gpt-6.2-sol (supports only low/medium/high).
-    const modelBtn = container.querySelector<HTMLButtonElement>(
-      'button[aria-label="settings.ai.model"]',
+    const explainBtn = container.querySelector<HTMLButtonElement>(
+      '[data-testid="codex-feature-picker-explain"]',
     )!;
-    await act(async () => {
-      modelBtn.click();
-    });
-    const solOption = buttonContaining("GPT-6.2 Sol");
-    expect(solOption).toBeDefined();
-    await act(async () => {
-      solOption!.click();
-    });
-    await flush();
-
-    expect(saveBulk).toHaveBeenCalledWith({
-      ai_auth_mode: "codex",
-      ai_model: "gpt-6.2-sol",
-      ai_setup_seen: "true",
-      ai_effort_deep: "default",
-    });
-
-    // Deep effort picker now displays default and hides unsupported tiers (xhigh/max).
-    const deepBtn = container.querySelector<HTMLButtonElement>(
-      'button[aria-label="settings.ai.effortDeep"]',
+    const chatBtn = container.querySelector<HTMLButtonElement>(
+      '[data-testid="codex-feature-picker-chat"]',
     )!;
-    expect(deepBtn.textContent).toContain("settings.ai.effortDefaultWithLevel");
-    await act(async () => {
-      deepBtn.click();
-    });
-    const optionButtons = () =>
-      [...document.querySelectorAll("button")].map((b) => b.textContent?.trim() ?? "");
-    expect(optionButtons()).not.toContain("max");
-    expect(optionButtons()).not.toContain("xhigh");
-    expect(optionButtons()).toContain("high");
+    expect(explainBtn.textContent).toBe("GPT-6 Luna · medium");
+    expect(chatBtn.textContent).toBe("GPT-6 Luna · medium");
 
-    // Close Deep picker, then switch to Custom model -> fallback effort options (including max) remain available.
+    // Switching Codex -> API -> Codex preserves carried-over Luna on untouched rows.
+    const apiRadio = container.querySelector<HTMLButtonElement>('[data-testid="connection-option-api"]')!;
+    const agentRadio = container.querySelector<HTMLButtonElement>('[data-testid="connection-option-agent"]')!;
     await act(async () => {
-      deepBtn.click();
-    });
-    await act(async () => {
-      modelBtn.click();
-    });
-    const customOption = buttonContaining("settings.ai.modelCustom");
-    expect(customOption).toBeDefined();
-    await act(async () => {
-      customOption!.click();
+      apiRadio.click();
     });
     await flush();
     await act(async () => {
-      deepBtn.click();
+      agentRadio.click();
     });
-    expect(optionButtons()).toContain("max");
+    await flush();
+
+    const explainAfter = container.querySelector<HTMLButtonElement>(
+      '[data-testid="codex-feature-picker-explain"]',
+    )!;
+    const chatAfter = container.querySelector<HTMLButtonElement>(
+      '[data-testid="codex-feature-picker-chat"]',
+    )!;
+    expect(explainAfter.textContent).toBe("GPT-6 Luna · medium");
+    expect(chatAfter.textContent).toBe("GPT-6 Luna · medium");
+    expect(saveBulk).toHaveBeenCalledWith(
+      expect.objectContaining({ ai_auth_mode: "api_key", ai_model: "gpt-4o" }),
+    );
+    expect(saveBulk).toHaveBeenCalledWith(
+      expect.objectContaining({ ai_auth_mode: "codex", ai_model: "" }),
+    );
+
+    // Clearing Explain to Default sends ONLY ai_codex_model_explain="" (no stale sibling writes).
+    await act(async () => {
+      explainAfter.click();
+    });
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('[data-testid="codex-model-option-default"]')!.click();
+    });
+    expect(save).toHaveBeenCalledWith("ai_codex_model_explain", "");
+    expect(explainAfter.textContent).toBe("GPT-6.1 Terra · medium");
+    expect(chatAfter.textContent).toBe("GPT-6 Luna · medium");
+  });
+
+  it("clears settled custom model UI when a remote composer changes Chat to a catalog model", async () => {
+    mocks.invoke.mockImplementation(async (cmd) => {
+      if (cmd === "codex_status") return READY_STATUS;
+      if (cmd === "list_codex_models") return { models: SAMPLE_CODEX_MODELS };
+      return undefined;
+    });
+
+    const save = vi.fn().mockResolvedValue(undefined);
+    const saveBulk = vi.fn().mockResolvedValue(undefined);
+    const showSavedToast = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <AiSettings
+          settings={{ ai_auth_mode: "codex" }}
+          loading={false}
+          save={save}
+          saveBulk={saveBulk}
+          showSavedToast={showSavedToast}
+        />,
+      );
+      await Promise.resolve();
+    });
+    await flush();
+
+    // Save a custom Chat model in Settings.
+    const chatBtn = container.querySelector<HTMLButtonElement>(
+      '[data-testid="codex-feature-picker-chat"]',
+    )!;
+    await act(async () => {
+      chatBtn.click();
+    });
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('[data-testid="codex-model-option-custom"]')!.click();
+    });
+    const customInput = container.querySelector<HTMLInputElement>(
+      '[data-testid="codex-custom-model-input-chat"]',
+    )!;
+    await act(async () => {
+      setInputValue(customInput, "my-custom-chat");
+      customInput.focus();
+      customInput.blur();
+    });
+    await flush();
+    expect(save).toHaveBeenCalledWith("ai_codex_model_chat", "my-custom-chat");
+    expect(
+      container.querySelector('[data-testid="codex-custom-model-input-chat"]'),
+    ).not.toBeNull();
+
+    // Leave Settings mounted; reader composer saves Chat = gpt-6-luna.
+    await act(async () => {
+      root.render(
+        <AiSettings
+          settings={{ ai_auth_mode: "codex", ai_codex_model_chat: "gpt-6-luna" }}
+          loading={false}
+          save={save}
+          saveBulk={saveBulk}
+          showSavedToast={showSavedToast}
+        />,
+      );
+      await Promise.resolve();
+    });
+    await flush();
+
+    expect(chatBtn.textContent).toBe("GPT-6 Luna · high");
+    expect(container.querySelector('[data-testid="codex-custom-model-input-chat"]')).toBeNull();
+    await act(async () => {
+      chatBtn.click();
+    });
+    expect(
+      document.querySelector('[data-testid="codex-model-option-gpt-6-luna"]')?.getAttribute("aria-checked"),
+    ).toBe("true");
+    expect(
+      document.querySelector('[data-testid="codex-model-option-custom"]')?.getAttribute("aria-checked"),
+    ).toBe("false");
+  });
+
+  it("refetches the Codex catalog once per active account on a same-path sign-in switch", async () => {
+    let activeAccount: "a" | "signed_out" | "b" = "a";
+    let listCalls = 0;
+
+    mocks.invoke.mockImplementation(async (cmd) => {
+      if (cmd === "codex_status") {
+        if (activeAccount === "a") {
+          return { ...READY_STATUS, email: "a@example.com", plan: "pro" };
+        }
+        if (activeAccount === "signed_out") {
+          return { ...READY_STATUS, state: "not_signed_in", email: null, plan: null };
+        }
+        return { ...READY_STATUS, email: "b@example.com", plan: "plus" };
+      }
+      if (cmd === "codex_login") {
+        activeAccount = "b";
+        return { success: true, error: null };
+      }
+      if (cmd === "list_codex_models") {
+        listCalls += 1;
+        if (activeAccount === "b") {
+          return { models: [SAMPLE_CODEX_MODELS[0]] }; // Account B has no Luna
+        }
+        return { models: SAMPLE_CODEX_MODELS };
+      }
+      return undefined;
+    });
+
+    // Account A ready -> 1 catalog fetch, Luna is listed.
+    await render({ ai_auth_mode: "codex" }, { refreshNonce: 0 });
+    expect(listCalls).toBe(1);
+    const lookupBtn = container.querySelector<HTMLButtonElement>(
+      '[data-testid="codex-feature-picker-lookup"]',
+    )!;
+    expect(lookupBtn.textContent).toBe("GPT-6 Luna · low");
+
+    // Re-probe while signed out (enabled becomes false).
+    activeAccount = "signed_out";
+    await render({ ai_auth_mode: "codex" }, { refreshNonce: 1 });
+    expect(listCalls).toBe(1);
+
+    // Sign in as Account B at the same executable path -> cache invalidated, 1 fetch for B, Luna gone.
+    const signInBtn = buttonContaining("settings.ai.signInWithChatGpt")!;
+    await act(async () => {
+      signInBtn.click();
+    });
+    await flush();
+
+    expect(listCalls).toBe(2);
+    expect(lookupBtn.textContent).toBe("GPT-6.2 Sol · low");
+    await act(async () => {
+      lookupBtn.click();
+    });
+    expect(document.querySelector('[data-testid="codex-model-option-gpt-6-luna"]')).toBeNull();
+    expect(document.querySelector('[data-testid="codex-model-option-gpt-6.2-sol"]')).not.toBeNull();
+  });
+
+  it("keeps the custom model input focused through debounce when the catalog is empty and settles on Enter/blur", async () => {
+    vi.useFakeTimers();
+    try {
+      mocks.invoke.mockImplementation(async (cmd) => {
+        if (cmd === "codex_status") {
+          return { ...READY_STATUS, state: "not_signed_in", email: null, plan: null };
+        }
+        if (cmd === "list_codex_models") {
+          return { models: [] };
+        }
+        return undefined;
+      });
+
+      const { save } = await render({ ai_auth_mode: "codex" });
+
+      const explainBtn = container.querySelector<HTMLButtonElement>(
+        '[data-testid="codex-feature-picker-explain"]',
+      )!;
+      await act(async () => {
+        explainBtn.click();
+      });
+      await act(async () => {
+        document.querySelector<HTMLButtonElement>('[data-testid="codex-model-option-custom"]')!.click();
+      });
+
+      const customInput = container.querySelector<HTMLInputElement>(
+        '[data-testid="codex-custom-model-input-explain"]',
+      )!;
+      expect(customInput).not.toBeNull();
+      customInput.focus();
+
+      // Type part of a model ID and pause past the 450ms debounce autosave.
+      await act(async () => {
+        setInputValue(customInput, "my-mo");
+      });
+      await act(async () => {
+        vi.advanceTimersByTime(500);
+      });
+
+      expect(save).toHaveBeenCalledWith("ai_codex_model_explain", "my-mo");
+      // Input must remain mounted and focused with the user's draft intact.
+      const stillOpen = container.querySelector<HTMLInputElement>(
+        '[data-testid="codex-custom-model-input-explain"]',
+      );
+      expect(stillOpen).toBe(customInput);
+      expect(document.activeElement).toBe(customInput);
+      expect(stillOpen?.value).toBe("my-mo");
+
+      // Continue typing and press Enter -> commits final value and settles the editor.
+      await act(async () => {
+        setInputValue(customInput, "my-model");
+      });
+      await act(async () => {
+        customInput.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      });
+
+      expect(save).toHaveBeenCalledWith("ai_codex_model_explain", "my-model");
+      expect(explainBtn.textContent).toBe("my-model · high");
+      expect(
+        container.querySelector('[data-testid="codex-custom-model-input-explain"]'),
+      ).toBeNull();
+
+      // Re-opening Custom… while catalog is still empty pre-fills the saved model ID,
+      // and blurring after debounce settles the editor cleanly.
+      await act(async () => {
+        explainBtn.click();
+      });
+      await act(async () => {
+        document.querySelector<HTMLButtonElement>('[data-testid="codex-model-option-custom"]')!.click();
+      });
+      const reopenedInput = container.querySelector<HTMLInputElement>(
+        '[data-testid="codex-custom-model-input-explain"]',
+      )!;
+      expect(reopenedInput.value).toBe("my-model");
+      reopenedInput.focus();
+      await act(async () => {
+        setInputValue(reopenedInput, "my-model-v2");
+      });
+      await act(async () => {
+        vi.advanceTimersByTime(500);
+      });
+      expect(save).toHaveBeenCalledWith("ai_codex_model_explain", "my-model-v2");
+      expect(
+        container.querySelector('[data-testid="codex-custom-model-input-explain"]'),
+      ).toBe(reopenedInput);
+      await act(async () => {
+        reopenedInput.blur();
+      });
+      expect(
+        container.querySelector('[data-testid="codex-custom-model-input-explain"]'),
+      ).toBeNull();
+      expect(explainBtn.textContent).toBe("my-model-v2 · high");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

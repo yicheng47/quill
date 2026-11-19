@@ -247,7 +247,11 @@ fn spec(event: &str, messages: Vec<ChatMessage>, chat_id: Option<&str>) -> TurnS
         messages,
         chat_id: chat_id.map(str::to_string),
         model_setting: Some("gpt-6-luna".to_string()),
+        legacy_model_setting: None,
+        default_family: Some("luna"),
         effort_setting: Some("low".to_string()),
+        legacy_effort_setting: None,
+        default_effort: Some("low"),
         event_name: event.to_string(),
     }
 }
@@ -348,28 +352,260 @@ fn isolation_overrides_cover_every_listed_server_plugin_and_builtin_tool() {
     );
 }
 
+fn sample_model(slug: &str, efforts: &[&str], default_effort: &str, is_default: bool) -> CodexModel {
+    CodexModel {
+        slug: slug.into(),
+        display_name: slug.into(),
+        description: String::new(),
+        supported_reasoning_levels: efforts.iter().map(|s| (*s).to_string()).collect(),
+        default_reasoning_level: default_effort.into(),
+        is_default,
+    }
+}
+
 #[test]
-fn model_and_effort_are_always_explicit() {
-    let models = parse_models(&fixture("model_list"));
-    assert_eq!(resolve_model_and_effort(&models, Some("gpt-6-luna"), Some("high")), ("gpt-6-luna".into(), "high".into()));
-    assert_eq!(resolve_model_and_effort(&models, Some("gpt-6-luna"), Some("default")), ("gpt-6-luna".into(), "medium".into()));
+fn model_and_effort_precedence_and_family_defaults() {
+    // Newest models appear first in the catalog, matching codex model/list.
+    let catalog = vec![
+        sample_model("gpt-6.3-sol", &["low", "medium", "high", "xhigh"], "low", true),
+        sample_model("gpt-6.2-sol", &["low", "medium", "high", "ultra"], "low", false),
+        sample_model("gpt-6.2-terra", &["low", "medium", "high", "xhigh"], "medium", false),
+        sample_model("gpt-6.1-terra", &["low", "medium", "high"], "medium", false),
+        sample_model("gpt-6.1-luna", &["low", "medium", "high"], "medium", false),
+        sample_model("gpt-6-luna", &["low", "medium"], "low", false),
+    ];
+
+    // 1. Model precedence: feature > legacy > family default (newest first) > catalog default.
     assert_eq!(
-        resolve_model_and_effort(&models, Some("gpt-6-luna"), Some("ultra")),
+        resolve_model_and_effort(
+            &catalog,
+            &ModelResolutionInput {
+                feature_model: Some("gpt-6-luna"),
+                legacy_model: Some("gpt-6.1-terra"),
+                default_family: Some("sol"),
+                feature_effort: Some("medium"),
+                legacy_effort: Some("low"),
+                default_effort: Some("high"),
+            },
+        ),
         ("gpt-6-luna".into(), "medium".into()),
-        "unsupported tier for a known model falls back to that model's default"
+        "explicit per-feature model and effort win over legacy and defaults"
+    );
+
+    assert_eq!(
+        resolve_model_and_effort(
+            &catalog,
+            &ModelResolutionInput {
+                feature_model: Some("default"),
+                legacy_model: Some("gpt-6.1-terra"),
+                default_family: Some("luna"),
+                feature_effort: Some(""),
+                legacy_effort: Some("high"),
+                default_effort: Some("low"),
+            },
+        ),
+        ("gpt-6.1-terra".into(), "high".into()),
+        "empty/'default' per-feature values fall through to legacy ai_model and legacy tier effort"
+    );
+
+    assert_eq!(
+        resolve_model_and_effort(
+            &catalog,
+            &ModelResolutionInput {
+                feature_model: None,
+                legacy_model: Some(""),
+                default_family: Some("luna"),
+                feature_effort: None,
+                legacy_effort: Some("default"),
+                default_effort: Some("low"),
+            },
+        ),
+        ("gpt-6.1-luna".into(), "low".into()),
+        "family resolves to the first (newest) matching catalog model and feature default effort"
+    );
+
+    assert_eq!(
+        resolve_model_and_effort(
+            &catalog,
+            &ModelResolutionInput {
+                default_family: Some("terra"),
+                default_effort: Some("high"),
+                ..Default::default()
+            },
+        ),
+        ("gpt-6.2-terra".into(), "high".into()),
+        "newest terra wins over older terra"
+    );
+
+    assert_eq!(
+        resolve_model_and_effort(
+            &catalog,
+            &ModelResolutionInput {
+                default_family: Some("sol"),
+                default_effort: Some("high"),
+                ..Default::default()
+            },
+        ),
+        ("gpt-6.3-sol".into(), "high".into()),
+        "newest sol wins over older sol"
+    );
+
+    // Missing family falls back to catalog default.
+    let no_terra = vec![
+        sample_model("gpt-6.2-sol", &["low", "medium", "high"], "low", true),
+        sample_model("gpt-6-luna", &["low", "medium"], "medium", false),
+    ];
+    assert_eq!(
+        resolve_model_and_effort(
+            &no_terra,
+            &ModelResolutionInput {
+                default_family: Some("terra"),
+                default_effort: Some("high"),
+                ..Default::default()
+            },
+        ),
+        ("gpt-6.2-sol".into(), "high".into()),
+        "missing family falls back to catalog default"
+    );
+
+    // 2. Unsupported effort falls through to the next step in the precedence order.
+    assert_eq!(
+        resolve_model_and_effort(
+            &catalog,
+            &ModelResolutionInput {
+                feature_model: Some("gpt-6-luna"), // supports only low, medium (default low)
+                feature_effort: Some("ultra"),
+                legacy_effort: Some("medium"),
+                default_effort: Some("low"),
+                ..Default::default()
+            },
+        ),
+        ("gpt-6-luna".into(), "medium".into()),
+        "unsupported feature effort falls through to supported legacy effort"
+    );
+
+    assert_eq!(
+        resolve_model_and_effort(
+            &catalog,
+            &ModelResolutionInput {
+                feature_model: Some("gpt-6-luna"), // supports only low, medium (default low)
+                feature_effort: Some("ultra"),
+                legacy_effort: Some("xhigh"),
+                default_effort: Some("medium"),
+                ..Default::default()
+            },
+        ),
+        ("gpt-6-luna".into(), "medium".into()),
+        "unsupported feature and legacy efforts fall through to supported feature default effort"
+    );
+
+    assert_eq!(
+        resolve_model_and_effort(
+            &catalog,
+            &ModelResolutionInput {
+                feature_model: Some("gpt-6-luna"), // supports only low, medium (default low)
+                feature_effort: Some("ultra"),
+                legacy_effort: Some("xhigh"),
+                default_effort: Some("high"),
+                ..Default::default()
+            },
+        ),
+        ("gpt-6-luna".into(), "low".into()),
+        "when feature default effort is also unsupported, falls back to the model's own default effort"
+    );
+
+    // 3. Custom model outside the catalog passes the chosen effort verbatim.
+    assert_eq!(
+        resolve_model_and_effort(
+            &catalog,
+            &ModelResolutionInput {
+                feature_model: Some("my-custom-model"),
+                feature_effort: Some("ultra"),
+                default_effort: Some("high"),
+                ..Default::default()
+            },
+        ),
+        ("my-custom-model".into(), "ultra".into()),
+        "custom model passes explicit effort through unchanged"
+    );
+
+    assert_eq!(
+        resolve_model_and_effort(
+            &catalog,
+            &ModelResolutionInput {
+                feature_model: Some("my-custom-model"),
+                legacy_effort: Some("max"),
+                default_effort: Some("high"),
+                ..Default::default()
+            },
+        ),
+        ("my-custom-model".into(), "max".into()),
+        "custom model passes carried-over legacy effort through unchanged"
+    );
+
+    assert_eq!(
+        resolve_model_and_effort(
+            &catalog,
+            &ModelResolutionInput {
+                feature_model: Some("my-custom-model"),
+                default_effort: Some("high"),
+                ..Default::default()
+            },
+        ),
+        ("my-custom-model".into(), "high".into()),
+        "custom model with no chosen effort uses the feature default effort"
+    );
+
+    assert_eq!(
+        resolve_model_and_effort(
+            &[],
+            &ModelResolutionInput {
+                default_family: Some("luna"),
+                default_effort: Some("low"),
+                ..Default::default()
+            },
+        ),
+        ("".into(), "low".into()),
+        "empty catalog returns empty model slug"
+    );
+}
+
+#[test]
+fn recorded_fixture_resolution_matches_catalog() {
+    let models = parse_models(&fixture("model_list"));
+    assert_eq!(
+        resolve_model_and_effort(
+            &models,
+            &ModelResolutionInput {
+                feature_model: Some("gpt-6-luna"),
+                feature_effort: Some("high"),
+                ..Default::default()
+            },
+        ),
+        ("gpt-6-luna".into(), "high".into())
     );
     assert_eq!(
-        resolve_model_and_effort(&models, Some("gpt-6.2-sol"), Some("ultra")),
+        resolve_model_and_effort(
+            &models,
+            &ModelResolutionInput {
+                feature_model: Some("gpt-6-luna"),
+                feature_effort: Some("ultra"),
+                ..Default::default()
+            },
+        ),
+        ("gpt-6-luna".into(), "medium".into())
+    );
+    assert_eq!(
+        resolve_model_and_effort(
+            &models,
+            &ModelResolutionInput {
+                feature_model: Some("gpt-6.2-sol"),
+                feature_effort: Some("ultra"),
+                ..Default::default()
+            },
+        ),
         ("gpt-6.2-sol".into(), "ultra".into())
     );
-    assert_eq!(resolve_model_and_effort(&models, Some(""), None), ("gpt-6.2-sol".into(), "low".into()));
-    assert_eq!(resolve_model_and_effort(&models, Some("my-custom"), None), ("my-custom".into(), "low".into()));
-    assert_eq!(
-        resolve_model_and_effort(&models, Some("my-custom"), Some("ultra")),
-        ("my-custom".into(), "ultra".into()),
-        "custom models pass the chosen effort tier verbatim"
-    );
-    assert_eq!(resolve_model_and_effort(&[], None, None), ("".into(), "low".into()));
 }
 
 #[tokio::test]
@@ -413,11 +649,24 @@ async fn every_turn_sends_model_and_effort_even_when_unset() {
     let host = Arc::new(Recorder::default());
     let mut s = spec("e", vec![msg("user", "hi")], None);
     s.model_setting = None;
+    s.default_family = Some("sol");
     s.effort_setting = Some("default".into());
+    s.default_effort = Some("high");
     run(&codex, &host, s).await;
     let turn = &state.requests("turn/start")[0];
     assert_eq!(turn["model"], "gpt-6.2-sol");
-    assert_eq!(turn["effort"], "low");
+    assert_eq!(turn["effort"], "high");
+
+    // Lookup with no saved keys resolves its family (luna) and default effort (low).
+    let mut lookup = spec("e2", vec![msg("user", "define wit")], None);
+    lookup.model_setting = None;
+    lookup.default_family = Some("luna");
+    lookup.effort_setting = None;
+    lookup.default_effort = Some("low");
+    run(&codex, &host, lookup).await;
+    let lookup_turn = &state.requests("turn/start")[1];
+    assert_eq!(lookup_turn["model"], "gpt-6-luna");
+    assert_eq!(lookup_turn["effort"], "low");
 }
 
 #[tokio::test]
@@ -589,6 +838,52 @@ async fn status_reports_ready_account_and_version() {
     assert_eq!(status.version.as_deref(), Some("0.170.0"));
     assert_eq!(status.path.as_deref(), Some("/usr/local/bin/codex"));
     assert_eq!(status.min_version, "0.170.0");
+}
+
+#[tokio::test]
+async fn account_change_on_same_path_invalidates_model_cache_and_notifies_host() {
+    let account_b = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let account_b_script = Arc::clone(&account_b);
+    let (codex, state) = codex_with(move |method, _, _| {
+        let is_b = account_b_script.load(Ordering::SeqCst);
+        match method {
+            "account/read" => Some(Reply::Result(if is_b {
+                json!({"account": {"type": "chatgpt", "email": "b@example.com", "planType": "plus"}, "requiresOpenaiAuth": true})
+            } else {
+                json!({"account": {"type": "chatgpt", "email": "a@example.com", "planType": "pro"}, "requiresOpenaiAuth": true})
+            })),
+            "model/list" => Some(Reply::Result(if is_b {
+                json!({"data": [{"id": "gpt-6.2-sol", "displayName": "GPT-6.2 Sol", "description": "", "hidden": false, "supportedReasoningEfforts": [{"reasoningEffort": "low"}], "defaultReasoningEffort": "low", "isDefault": true}], "nextCursor": null})
+            } else {
+                fixture("model_list")
+            })),
+            _ => None,
+        }
+    });
+    let host = Arc::new(Recorder::default());
+    codex.set_host(host.clone());
+
+    assert_eq!(codex.status(None).await.email.as_deref(), Some("a@example.com"));
+    let models_a = codex.models(None).await.unwrap();
+    assert!(models_a.models.iter().any(|m| m.slug == "gpt-6-luna"));
+    assert_eq!(state.requests("model/list").len(), 1);
+
+    // Account changes externally on the same executable path.
+    account_b.store(true, Ordering::SeqCst);
+    assert_eq!(codex.status(None).await.email.as_deref(), Some("b@example.com"));
+
+    assert!(
+        host.events
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(e, _)| e == "codex-catalog-invalidated"),
+        "expected codex-catalog-invalidated broadcast on account switch"
+    );
+
+    let models_b = codex.models(None).await.unwrap();
+    assert_eq!(models_b.models.iter().map(|m| m.slug.as_str()).collect::<Vec<_>>(), ["gpt-6.2-sol"]);
+    assert_eq!(state.requests("model/list").len(), 2);
 }
 
 #[tokio::test]

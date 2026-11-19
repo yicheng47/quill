@@ -287,39 +287,80 @@ pub fn isolation_overrides(config_read: &Value) -> Value {
     Value::Object(overrides)
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ModelResolutionInput<'a> {
+    pub feature_model: Option<&'a str>,
+    pub legacy_model: Option<&'a str>,
+    pub default_family: Option<&'a str>,
+    pub feature_effort: Option<&'a str>,
+    pub legacy_effort: Option<&'a str>,
+    pub default_effort: Option<&'a str>,
+}
+
+fn chosen_setting(value: Option<&str>) -> Option<&str> {
+    value
+        .map(str::trim)
+        .filter(|v| !v.is_empty() && *v != "default")
+}
+
 /// The model and effort every turn sends, so a turn never inherits the
-/// user's Codex defaults. An empty model means the catalog's default model;
-/// an unset or unsupported effort for a known catalog model falls back to
-/// that model's default effort (unknown/custom models pass the chosen tier through).
+/// user's Codex defaults (spec 358):
+/// - Model: `ai_codex_model_<feature>`, then non-empty legacy `ai_model`,
+///   then the first catalog model whose slug ends in `-<default_family>`,
+///   then the catalog default.
+/// - Effort: `ai_codex_effort_<feature>`, then legacy tier effort, then
+///   the feature's default effort, then the resolved model's default effort.
+///   Unsupported efforts for a known catalog model fall through to the next
+///   step; custom models outside the catalog pass the chosen effort through.
 pub fn resolve_model_and_effort(
     models: &[CodexModel],
-    model_setting: Option<&str>,
-    effort_setting: Option<&str>,
+    input: &ModelResolutionInput<'_>,
 ) -> (String, String) {
     let catalog_default = models.iter().find(|m| m.is_default).or_else(|| models.first());
-    let model = model_setting
+    let family_default = input
+        .default_family
         .map(str::trim)
-        .filter(|m| !m.is_empty())
+        .filter(|f| !f.is_empty())
+        .and_then(|family| {
+            let suffix = format!("-{}", family.to_ascii_lowercase());
+            models
+                .iter()
+                .find(|m| m.slug.to_ascii_lowercase().ends_with(&suffix))
+        });
+
+    let model = chosen_setting(input.feature_model)
+        .or_else(|| chosen_setting(input.legacy_model))
         .map(str::to_string)
+        .or_else(|| family_default.map(|m| m.slug.clone()))
         .or_else(|| catalog_default.map(|m| m.slug.clone()))
         .unwrap_or_default();
+
     let known_model = models.iter().find(|m| m.slug == model);
-    let effort = effort_setting
-        .map(str::trim)
-        .filter(|e| !e.is_empty() && *e != "default")
-        .filter(|e| match known_model {
+    let supports_effort = |candidate: &str| -> bool {
+        match known_model {
             Some(m) if !m.supported_reasoning_levels.is_empty() => {
-                m.supported_reasoning_levels.iter().any(|lvl| lvl == e)
+                m.supported_reasoning_levels.iter().any(|lvl| lvl == candidate)
             }
             _ => true,
-        })
-        .map(str::to_string)
-        .or_else(|| {
-            known_model
-                .or(catalog_default)
-                .map(|m| m.default_reasoning_level.clone())
-        })
-        .unwrap_or_else(|| "low".to_string());
+        }
+    };
+
+    let effort = [
+        chosen_setting(input.feature_effort),
+        chosen_setting(input.legacy_effort),
+        chosen_setting(input.default_effort),
+    ]
+    .into_iter()
+    .flatten()
+    .find(|candidate| supports_effort(candidate))
+    .map(str::to_string)
+    .or_else(|| {
+        known_model
+            .or(catalog_default)
+            .map(|m| m.default_reasoning_level.clone())
+    })
+    .unwrap_or_else(|| "low".to_string());
+
     (model, effort)
 }
 
@@ -568,6 +609,16 @@ fn last_stderr_line(tail: &Mutex<String>) -> Option<String> {
         .map(str::to_string)
 }
 
+fn emit_catalog_invalidated(
+    catalog_epoch: &AtomicU64,
+    host: &Mutex<Option<Arc<dyn ShellHost>>>,
+) {
+    let epoch = catalog_epoch.fetch_add(1, Ordering::SeqCst) + 1;
+    if let Some(host) = host.lock().unwrap().as_ref() {
+        host.emit("codex-catalog-invalidated", json!({ "epoch": epoch }));
+    }
+}
+
 struct Session {
     rpc: Arc<RpcClient>,
     generation: u64,
@@ -577,6 +628,8 @@ struct Session {
     overrides: Value,
     account: Arc<Mutex<Option<Account>>>,
     models: Arc<tokio::sync::Mutex<Option<Vec<CodexModel>>>>,
+    catalog_epoch: Arc<AtomicU64>,
+    host: Arc<Mutex<Option<Arc<dyn ShellHost>>>>,
     /// Cleared when the child's notification stream closes so login waiters wake
     /// immediately with `RecvError::Closed` instead of waiting for `LOGIN_TIMEOUT`.
     logins: Arc<Mutex<Option<broadcast::Sender<Value>>>>,
@@ -604,7 +657,16 @@ impl Session {
             }
         }
         let account = parse_account(&self.request("account/read", json!({ "refreshToken": false })).await?);
-        *self.account.lock().unwrap() = Some(account.clone());
+        let changed = {
+            let mut slot = self.account.lock().unwrap();
+            let changed = slot.as_ref().is_some_and(|prev| prev != &account);
+            *slot = Some(account.clone());
+            changed
+        };
+        if changed {
+            *self.models.lock().await = None;
+            emit_catalog_invalidated(&self.catalog_epoch, &self.host);
+        }
         Ok(account)
     }
 
@@ -707,7 +769,11 @@ pub struct TurnSpec {
     pub messages: Vec<ChatMessage>,
     pub chat_id: Option<String>,
     pub model_setting: Option<String>,
+    pub legacy_model_setting: Option<String>,
+    pub default_family: Option<&'static str>,
     pub effort_setting: Option<String>,
+    pub legacy_effort_setting: Option<String>,
+    pub default_effort: Option<&'static str>,
     pub event_name: String,
 }
 
@@ -763,10 +829,12 @@ enum TurnEnd {
 pub struct Codex {
     launcher: Launcher,
     cwd: PathBuf,
+    host: Arc<Mutex<Option<Arc<dyn ShellHost>>>>,
     session: tokio::sync::Mutex<Option<Arc<Session>>>,
     active_session: Mutex<Option<Weak<Session>>>,
     child: Mutex<ChildSlot>,
     generation: AtomicU64,
+    catalog_epoch: Arc<AtomicU64>,
     next_token: AtomicU64,
     chats: Mutex<ChatThreads>,
     turns: Mutex<HashMap<String, TurnEntry>>,
@@ -783,15 +851,21 @@ impl Codex {
         Self {
             launcher,
             cwd,
+            host: Arc::new(Mutex::new(None)),
             session: tokio::sync::Mutex::new(None),
             active_session: Mutex::new(None),
             child: Mutex::new(ChildSlot::default()),
             generation: AtomicU64::new(0),
+            catalog_epoch: Arc::new(AtomicU64::new(0)),
             next_token: AtomicU64::new(1),
             chats: Mutex::new(ChatThreads::default()),
             turns: Mutex::new(HashMap::new()),
             login: Mutex::new(None),
         }
+    }
+
+    pub fn set_host(&self, host: Arc<dyn ShellHost>) {
+        *self.host.lock().unwrap() = Some(host);
     }
 
     fn kill_active_child(&self) {
@@ -904,16 +978,20 @@ impl Codex {
             let account = Arc::clone(&account);
             let models = Arc::clone(&models);
             let logins = Arc::clone(&logins);
+            let catalog_epoch = Arc::clone(&self.catalog_epoch);
+            let host = Arc::clone(&self.host);
             tokio::spawn(async move {
                 while let Some(note) = global_rx.recv().await {
                     match note.method.as_str() {
                         "account/updated" => {
                             *account.lock().unwrap() = None;
                             *models.lock().await = None;
+                            emit_catalog_invalidated(&catalog_epoch, &host);
                         }
                         "account/login/completed" => {
                             *account.lock().unwrap() = None;
                             *models.lock().await = None;
+                            emit_catalog_invalidated(&catalog_epoch, &host);
                             if let Some(tx) = logins.lock().unwrap().as_ref() {
                                 let _ = tx.send(note.params);
                             }
@@ -964,10 +1042,15 @@ impl Codex {
             overrides: isolation_overrides(&config),
             account,
             models,
+            catalog_epoch: Arc::clone(&self.catalog_epoch),
+            host: Arc::clone(&self.host),
             logins,
         });
         *self.active_session.lock().unwrap() = Some(Arc::downgrade(&session));
         *slot = Some(Arc::clone(&session));
+        if generation > 1 {
+            emit_catalog_invalidated(&self.catalog_epoch, &self.host);
+        }
         Ok(session)
     }
 
@@ -1091,6 +1174,7 @@ impl Codex {
             });
         }
 
+        let epoch_before_wait = self.catalog_epoch.load(Ordering::SeqCst);
         let outcome = tokio::time::timeout(LOGIN_TIMEOUT, async {
             loop {
                 match completions.recv().await {
@@ -1118,6 +1202,9 @@ impl Codex {
         self.clear_login(token);
         *session.account.lock().unwrap() = None;
         *session.models.lock().await = None;
+        if outcome.success && self.catalog_epoch.load(Ordering::SeqCst) == epoch_before_wait {
+            emit_catalog_invalidated(&self.catalog_epoch, &self.host);
+        }
         Ok(outcome)
     }
 
@@ -1265,8 +1352,17 @@ impl Codex {
                 return Err(AppError::Ai(e.to_string()));
             }
         };
-        let (model, effort) =
-            resolve_model_and_effort(&models, spec.model_setting.as_deref(), spec.effort_setting.as_deref());
+        let (model, effort) = resolve_model_and_effort(
+            &models,
+            &ModelResolutionInput {
+                feature_model: spec.model_setting.as_deref(),
+                legacy_model: spec.legacy_model_setting.as_deref(),
+                default_family: spec.default_family,
+                feature_effort: spec.effort_setting.as_deref(),
+                legacy_effort: spec.legacy_effort_setting.as_deref(),
+                default_effort: spec.default_effort,
+            },
+        );
         if model.is_empty() {
             self.clear_turn(&event_name, token);
             return Err(AppError::Ai("No Codex models are available for this account.".to_string()));

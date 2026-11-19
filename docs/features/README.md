@@ -20,3 +20,4 @@ Specs of features in development. A feature is filed as a GitHub issue only; its
 - [331 — Desktop Rebrand (Dawn & Nocturne Design System & Shell)](331-rebrand.md)
 - [347 — Windows Title Bar (Quill-Drawn Window Controls)](347-windows-titlebar.md)
 - [355 — Ember Dark Palette](355-ember-dark-theme.md)
+- [358 — Codex Model and Effort per AI Feature](358-per-feature-ai-models.md)

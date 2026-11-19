@@ -14,11 +14,14 @@ import {
   X,
 } from "lucide-react";
 import { useAiChat } from "../hooks/useAiChat";
+import { useCodexModels } from "../hooks/useCodexModels";
 import { invoke } from "../platform";
-import { getAllSettings } from "../hooks/useSettings";
+import { useSettings } from "../hooks/useSettings";
+import { buildCodexEffortSave, buildCodexModelSave } from "../lib/codexFeatures";
 import { formatAiModelFooter, parseAiErrorMessage } from "../utils/aiStream";
 import { isExactAiSentinel } from "../lib/aiConnections";
 import { timeAgo } from "../utils/timeAgo";
+import CodexFeaturePicker from "./CodexFeaturePicker";
 import MessageBubble from "./MessageBubble";
 import QuillLogo from "./QuillLogo";
 
@@ -36,6 +39,7 @@ interface AiPanelProps {
   context?: AiQuoteContext;
   initialChatId?: string;
   initialChatSeq?: number;
+  visible?: boolean;
   onContextConsumed?: () => void;
   onNavigateToCfi?: (cfi: string) => void;
   onClose?: () => void;
@@ -49,6 +53,7 @@ export default function AiPanel({
   context,
   initialChatId,
   initialChatSeq,
+  visible = true,
   onContextConsumed,
   onNavigateToCfi,
   onClose,
@@ -87,12 +92,68 @@ export default function AiPanel({
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
   const [newChatFlash, setNewChatFlash] = useState(false);
-  const [modelFooter, setModelFooter] = useState<string | null>(null);
   const [messageCountsById, setMessageCountsById] = useState<Record<string, number>>({});
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const titleInputRef = useRef<HTMLInputElement>(null);
   const pickerRef = useRef<HTMLDivElement>(null);
   const appliedChatSeqRef = useRef<number | null>(null);
+
+  const {
+    settings,
+    loading: settingsLoading,
+    reloadSilent: reloadSettings,
+    save: saveSetting,
+    saveBulk: saveSettingsBulk,
+  } = useSettings();
+  const isCodexConnection = settings.ai_auth_mode === "codex";
+  const { models: codexModels } = useCodexModels({
+    enabled: visible && !settingsLoading && isCodexConnection,
+    codexPath: settings.ai_codex_path,
+  });
+
+  useEffect(() => {
+    const onFocus = () => {
+      void reloadSettings();
+    };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [reloadSettings]);
+
+  const persistChatUpdates = useCallback(
+    (updates: Record<string, string>) => {
+      const entries = Object.entries(updates);
+      if (entries.length === 1) {
+        const [k, v] = entries[0];
+        void saveSetting(k, v).catch((err) => console.error("Failed to save chat setting:", err));
+      } else if (entries.length > 1) {
+        void saveSettingsBulk(updates).catch((err) =>
+          console.error("Failed to save chat settings:", err),
+        );
+      }
+    },
+    [saveSetting, saveSettingsBulk],
+  );
+
+  const handleSelectChatModel = useCallback(
+    (slug: string) => {
+      persistChatUpdates(buildCodexModelSave("chat", slug));
+    },
+    [persistChatUpdates],
+  );
+
+  const handleSelectChatEffort = useCallback(
+    (effort: string) => {
+      persistChatUpdates(buildCodexEffortSave("chat", effort));
+    },
+    [persistChatUpdates],
+  );
+
+  const modelFooter =
+    !settingsLoading && !isCodexConnection
+      ? formatAiModelFooter(settings, (effort) =>
+          t(`settings.ai.effort.${effort}`, { defaultValue: effort }).toLowerCase(),
+        )
+      : null;
 
   useEffect(() => {
     setMessageCountsById({});
@@ -142,23 +203,6 @@ export default function AiPanel({
   }, [pickerOpen, bookId, chats.length, savedMessageSeq]);
 
   const currentChat = chats.find((c) => c.id === chatId);
-
-  const refreshModelFooter = useCallback(() => {
-    getAllSettings()
-      .then((settings) => {
-        const label = formatAiModelFooter(settings, (effort) =>
-          t(`settings.ai.effort.${effort}`, { defaultValue: effort }).toLowerCase(),
-        );
-        setModelFooter(label);
-      })
-      .catch(() => {});
-  }, [t]);
-
-  useEffect(() => {
-    refreshModelFooter();
-    window.addEventListener("focus", refreshModelFooter);
-    return () => window.removeEventListener("focus", refreshModelFooter);
-  }, [refreshModelFooter]);
 
   useEffect(() => {
     initialize();
@@ -543,11 +587,24 @@ export default function AiPanel({
           </button>
         </div>
 
-        {modelFooter && (
-          <div className="flex items-center gap-1.5 text-text-tertiary px-0.5">
-            <Cpu size={12} className="shrink-0" />
-            <span className="font-mono text-[11px] truncate">{modelFooter}</span>
+        {!settingsLoading && isCodexConnection ? (
+          <div className="flex items-center">
+            <CodexFeaturePicker
+              feature="chat"
+              settings={settings}
+              models={codexModels}
+              variant="composer"
+              onSelectModel={handleSelectChatModel}
+              onSelectEffort={handleSelectChatEffort}
+            />
           </div>
+        ) : (
+          modelFooter && (
+            <div className="flex items-center gap-1.5 text-text-tertiary px-0.5">
+              <Cpu size={12} className="shrink-0" />
+              <span className="font-mono text-[11px] truncate">{modelFooter}</span>
+            </div>
+          )
         )}
       </div>
     </div>

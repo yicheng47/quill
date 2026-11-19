@@ -73,6 +73,7 @@ vi.mock("../components/AiPanel", () => ({
     context?: { text: string; cfi?: string };
     initialChatId?: string;
     initialChatSeq?: number;
+    visible?: boolean;
   }) => (
     <div
       data-testid="ai-panel-stub"
@@ -80,6 +81,7 @@ vi.mock("../components/AiPanel", () => ({
       data-quote-cfi={props.context?.cfi ?? ""}
       data-chat-id={props.initialChatId ?? ""}
       data-chat-seq={String(props.initialChatSeq ?? 0)}
+      data-visible={String(props.visible ?? true)}
     >
       AI Panel
     </div>
@@ -759,6 +761,40 @@ describe("Reader shell themes, cascade, and startup navigation", () => {
         configurable: true,
       });
     }
+  });
+  it("passes visible=false to mounted AiPanel on ordinary book open and visible=true when Ask Quill opens (#358)", async () => {
+    testState.getBook.mockResolvedValue({
+      id: "book-1",
+      title: "Dune",
+      author: "Frank Herbert",
+      format: "epub",
+      file_path: "/tmp/dune.epub",
+      current_cfi: null,
+      progress: 0,
+      status: "reading",
+    });
+    testState.getAllSettings.mockResolvedValue({
+      theme: "light",
+      reader_theme: "original",
+      ai_auth_mode: "codex",
+    });
+
+    await renderReader("/reader/book-1");
+    await flushAsync();
+
+    const aiStub = container.querySelector('[data-testid="ai-panel-stub"]');
+    expect(aiStub?.getAttribute("data-visible")).toBe("false");
+
+    const askBtn = container.querySelector<HTMLButtonElement>('button[aria-label="AI Assistant"]');
+    expect(askBtn).not.toBeNull();
+    await act(async () => {
+      askBtn!.click();
+    });
+    await flushAsync();
+
+    expect(container.querySelector('[data-testid="ai-panel-stub"]')?.getAttribute("data-visible")).toBe(
+      "true",
+    );
   });
 });
 

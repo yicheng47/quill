@@ -18,12 +18,16 @@ import remarkGfm from "remark-gfm";
 import type { Book } from "../hooks/useBooks";
 import { useAiChat } from "../hooks/useAiChat";
 import { useAllChats, useChatCounts, type ChatSummary } from "../hooks/useChats";
+import { useCodexModels } from "../hooks/useCodexModels";
+import { useSettings } from "../hooks/useSettings";
+import { buildCodexEffortSave, buildCodexModelSave } from "../lib/codexFeatures";
 import { invoke } from "../platform";
 import { parseAiErrorMessage } from "../utils/aiStream";
 import { openReaderWindow } from "../utils/openReaderWindow";
 import { formatMonthHeading, formatShortDate } from "../utils/vocabParse";
 import AiAuthPromptCard from "./AiAuthPromptCard";
-import { isExactAiSentinel } from "../lib/aiConnections";
+import CodexFeaturePicker from "./CodexFeaturePicker";
+import { isExactAiSentinel, type CodexModel } from "../lib/aiConnections";
 import type { SettingsSection } from "./settings/types";
 import BookCover from "./ui/BookCover";
 import { Menu, MenuDivider, MenuItem } from "./ui/Menu";
@@ -85,6 +89,56 @@ export default function ChatsView({
     initialBookId !== undefined || initialChatId !== undefined || navigationSeq !== undefined
       ? `${initialBookId ?? ""}:${initialChatId ?? ""}:${navigationSeq ?? ""}`
       : null,
+  );
+
+  const {
+    settings,
+    loading: settingsLoading,
+    reloadSilent: reloadSettings,
+    save: saveSetting,
+    saveBulk: saveSettingsBulk,
+  } = useSettings();
+  const isCodexConnection = settings.ai_auth_mode === "codex";
+  const { models: codexModels } = useCodexModels({
+    enabled: !settingsLoading && isCodexConnection,
+    codexPath: settings.ai_codex_path,
+  });
+
+  useEffect(() => {
+    const onFocus = () => {
+      void reloadSettings();
+    };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [reloadSettings]);
+
+  const persistChatUpdates = useCallback(
+    (updates: Record<string, string>) => {
+      const entries = Object.entries(updates);
+      if (entries.length === 1) {
+        const [k, v] = entries[0];
+        void saveSetting(k, v).catch((err) => console.error("Failed to save chat setting:", err));
+      } else if (entries.length > 1) {
+        void saveSettingsBulk(updates).catch((err) =>
+          console.error("Failed to save chat settings:", err),
+        );
+      }
+    },
+    [saveSetting, saveSettingsBulk],
+  );
+
+  const handleSelectChatModel = useCallback(
+    (slug: string) => {
+      persistChatUpdates(buildCodexModelSave("chat", slug));
+    },
+    [persistChatUpdates],
+  );
+
+  const handleSelectChatEffort = useCallback(
+    (effort: string) => {
+      persistChatUpdates(buildCodexEffortSave("chat", effort));
+    },
+    [persistChatUpdates],
   );
 
   const {
@@ -486,6 +540,11 @@ export default function ChatsView({
                 key={activeChat.id}
                 chat={activeChat}
                 book={booksById.get(activeChat.book_id) ?? null}
+                showCodexPicker={!settingsLoading && isCodexConnection}
+                settings={settings}
+                codexModels={codexModels}
+                onSelectChatModel={handleSelectChatModel}
+                onSelectChatEffort={handleSelectChatEffort}
                 onOpenSettings={onOpenSettings}
                 onChatDeleted={handleDeleted}
                 onChatRenamed={handleRenamed}
@@ -505,6 +564,11 @@ export default function ChatsView({
 interface ChatConversationPaneProps {
   chat: ChatSummary;
   book: Book | null;
+  showCodexPicker: boolean;
+  settings: Record<string, string>;
+  codexModels: readonly CodexModel[];
+  onSelectChatModel: (slug: string) => void;
+  onSelectChatEffort: (effort: string) => void;
   onOpenSettings: (section?: SettingsSection) => void;
   onChatDeleted: (id: string) => void;
   onChatRenamed: (id: string, title: string) => void;
@@ -513,6 +577,11 @@ interface ChatConversationPaneProps {
 function ChatConversationPane({
   chat,
   book,
+  showCodexPicker,
+  settings,
+  codexModels,
+  onSelectChatModel,
+  onSelectChatEffort,
   onOpenSettings,
   onChatDeleted,
   onChatRenamed,
@@ -944,31 +1013,46 @@ function ChatConversationPane({
 
       {/* Bottom Composer */}
       <div className="px-6 pb-5 pt-2 shrink-0">
-        <div className="max-w-[640px] mx-auto bg-surface-solid border border-border-default focus-within:border-accent focus-within:ring-[3px] focus-within:ring-focus-ring rounded-[6px] px-4 py-2.5 flex items-center gap-2.5 shadow-sm transition-shadow">
-          <textarea
-            rows={1}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-                e.preventDefault();
-                handleSend();
-              }
-            }}
-            placeholder={t("chats.composerPlaceholder")}
-            aria-label={t("chats.composerPlaceholder")}
-            disabled={streaming || initializing}
-            className="flex-1 min-w-0 resize-none bg-transparent text-[15px] leading-[1.45] text-text-primary placeholder:text-text-tertiary outline-none max-h-32 py-1"
-          />
-          <button
-            type="button"
-            onClick={handleSend}
-            disabled={!input.trim() || streaming || initializing}
-            aria-label={t("chats.send")}
-            className="size-8 rounded-control flex items-center justify-center shrink-0 transition-colors cursor-pointer bg-accent hover:bg-accent-hover text-text-on-accent disabled:bg-transparent disabled:text-text-tertiary disabled:cursor-default"
-          >
-            {streaming ? <Loader2 size={14} className="animate-spin" /> : <ArrowUp size={15} />}
-          </button>
+        <div className="max-w-[640px] mx-auto flex flex-col gap-2">
+          <div className="bg-surface-solid border border-border-default focus-within:border-accent focus-within:ring-[3px] focus-within:ring-focus-ring rounded-[6px] px-4 py-2.5 flex items-center gap-2.5 shadow-sm transition-shadow">
+            <textarea
+              rows={1}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                  e.preventDefault();
+                  handleSend();
+                }
+              }}
+              placeholder={t("chats.composerPlaceholder")}
+              aria-label={t("chats.composerPlaceholder")}
+              disabled={streaming || initializing}
+              className="flex-1 min-w-0 resize-none bg-transparent text-[15px] leading-[1.45] text-text-primary placeholder:text-text-tertiary outline-none max-h-32 py-1"
+            />
+            <button
+              type="button"
+              onClick={handleSend}
+              disabled={!input.trim() || streaming || initializing}
+              aria-label={t("chats.send")}
+              className="size-8 rounded-control flex items-center justify-center shrink-0 transition-colors cursor-pointer bg-accent hover:bg-accent-hover text-text-on-accent disabled:bg-transparent disabled:text-text-tertiary disabled:cursor-default"
+            >
+              {streaming ? <Loader2 size={14} className="animate-spin" /> : <ArrowUp size={15} />}
+            </button>
+          </div>
+
+          {showCodexPicker && (
+            <div className="flex items-center">
+              <CodexFeaturePicker
+                feature="chat"
+                settings={settings}
+                models={codexModels}
+                variant="composer"
+                onSelectModel={onSelectChatModel}
+                onSelectEffort={onSelectChatEffort}
+              />
+            </div>
+          )}
         </div>
       </div>
 
