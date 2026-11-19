@@ -52,7 +52,8 @@ pub struct Core {
     pub device: DeviceIdentity,
     pub sync_writer: SyncWriter,
     pub sync_state: SyncState,
-    pub oauth_pending: crate::ai::oauth::OAuthPendingLogin,
+    pub codex: Arc<crate::ai::codex::Codex>,
+    pub api_streams: crate::ai::dispatch::ApiStreams,
     pub host: Arc<dyn ShellHost>,
 }
 
@@ -126,6 +127,7 @@ pub fn boot(config: BootConfig, host: Arc<dyn ShellHost>) -> AppResult<Arc<Core>
 
     let secrets = Secrets::init(&local_dir)?;
     secrets.migrate_from_settings(&db)?;
+    crate::ai::migrate_startup(&db, &secrets)?;
 
     let sync_writer = SyncWriter::new(device.device_uuid.clone());
     if sync::migration::is_sync_enabled(&local_dir) {
@@ -146,7 +148,8 @@ pub fn boot(config: BootConfig, host: Arc<dyn ShellHost>) -> AppResult<Arc<Core>
         device,
         sync_writer,
         sync_state: SyncState::new(None, None),
-        oauth_pending: Default::default(),
+        codex: Arc::new(crate::ai::codex::Codex::new(local_dir.join("codex-workspace"))),
+        api_streams: Default::default(),
         host,
     });
 

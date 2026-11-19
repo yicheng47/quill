@@ -3,58 +3,82 @@ import {
   useEffect,
   useRef,
   useCallback,
+  useMemo,
   type ChangeEvent,
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
-import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import {
-  AlertCircle,
+  Check,
   Clock,
+  Copy,
   Cpu,
   ExternalLink,
   Eye,
   EyeOff,
-  KeyRound,
+  FolderOpen,
   Loader2,
-  LogOut,
+  LogIn,
   RefreshCw,
-  ShieldCheck,
+  Search,
+  Terminal,
+  X,
 } from "lucide-react";
-import { invoke, listenCurrentWindow } from "../../platform";
-import { isMacOS } from "../../lib/platformEnv";
+import { invoke, openFileDialog, openUrl } from "../../platform";
+import {
+  API_SERVICES,
+  CODEX_FALLBACK_EFFORT_LEVELS,
+  CODEX_INSTALL_COMMAND,
+  CODEX_INSTALL_GUIDE_URL,
+  formatCodexAccountLine,
+  getApiServicePreset,
+  normalizeApiProvider,
+  resolveConnectionKind,
+  type ApiModelList,
+  type ApiProvider,
+  type CodexModel,
+  type CodexModelList,
+  type CodexStatus,
+  type ConnectionKind,
+  type LoginOutcome,
+  type OllamaStatus,
+} from "../../lib/aiConnections";
 import Button from "../ui/Button";
 import Select from "../ui/Select";
-import { SegmentedControl } from "../ui/Segment";
 import { StatusBadge } from "../ui/Badge";
 import Stepper from "../ui/Stepper";
 import { SettingsGroup, SettingsOverline, SettingsRow } from "../ui/SettingsRow";
-import { CODEX_EFFORT_LEVELS, CURATED_CODEX_MODELS, type CodexModel } from "./codexModels";
 import type { SettingsProps } from "./types";
 
-type AiProvider = "openai" | "anthropic" | "ollama";
-type OpenAiAuthMode = "oauth" | "api_key";
 type TextFieldKey = "ai_api_key" | "ai_base_url" | "ai_model";
 
-interface OAuthStatus {
-  connected: boolean;
-  account_id: string | null;
-  email?: string | null;
+function urlOrigin(raw: string): string | null {
+  try {
+    const parsed = new URL(raw.trim());
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+    return parsed.origin && parsed.origin !== "null" ? parsed.origin : null;
+  } catch {
+    return null;
+  }
 }
 
-interface CodexModelList {
-  models: CodexModel[];
-  from_fallback: boolean;
+function effectiveApiUrl(provider: ApiProvider, rawUrl: string): string {
+  return rawUrl.trim() || getApiServicePreset(provider).defaultUrl;
 }
 
-interface OllamaStatus {
-  running: boolean;
+function sameUrlOrigin(a: string, b: string): boolean {
+  const oa = urlOrigin(a);
+  const ob = urlOrigin(b);
+  return oa !== null && oa === ob;
+}
+
+function didApiOriginChange(provider: ApiProvider, previousUrl: string, nextUrl: string): boolean {
+  const previousEffective = effectiveApiUrl(provider, previousUrl);
+  const nextEffective = effectiveApiUrl(provider, nextUrl);
+  return Boolean(previousEffective) && (!nextEffective || !sameUrlOrigin(previousEffective, nextEffective));
 }
 
 const CUSTOM_MODEL = "__custom__";
-const DEFAULT_OPENAI_URL = "https://api.openai.com";
-const DEFAULT_ANTHROPIC_URL = "https://api.anthropic.com";
-const DEFAULT_OLLAMA_URL = "http://localhost:11434";
 const TEXT_SAVE_DEBOUNCE_MS = 450;
 
 const KEEP_ALIVE_PRESETS = [
@@ -65,27 +89,6 @@ const KEEP_ALIVE_PRESETS = [
   { value: "-1", labelKey: "settings.ai.keepAliveForever" },
   { value: "0", labelKey: "settings.ai.keepAliveUnload" },
 ] as const;
-
-const DISCONNECTED_OAUTH: OAuthStatus = {
-  connected: false,
-  account_id: null,
-  email: null,
-};
-
-function normalizeProvider(raw?: string): AiProvider {
-  if (raw === "anthropic" || raw === "ollama" || raw === "openai") return raw;
-  return "openai";
-}
-
-function normalizeAuthMode(raw?: string): OpenAiAuthMode {
-  return raw === "api_key" ? "api_key" : "oauth";
-}
-
-function defaultModelFor(provider: AiProvider, authMode: OpenAiAuthMode): string {
-  if (provider === "ollama") return "qwen3.5";
-  if (provider === "anthropic") return "claude-sonnet-4-20250514";
-  return authMode === "api_key" ? "gpt-4o" : "gpt-5.6-sol";
-}
 
 function clampTemperature(raw?: string): number {
   if (!raw) return 0.3;
@@ -101,106 +104,9 @@ function stepTemperatureValue(current: number, delta: number): number {
 const monoInputClass =
   "h-9 px-3 rounded-[6px] bg-surface-solid border border-border-default font-mono text-[12.5px] text-text-primary placeholder:text-text-disabled focus:outline-none focus:border-accent focus:ring-[3px] focus:ring-focus-ring transition-colors";
 
-interface SignOutConfirmModalProps {
-  open: boolean;
-  email?: string | null;
-  isMac: boolean;
-  signingOut: boolean;
-  onCancel: () => void;
-  onConfirm: () => void;
-}
-
-function SignOutConfirmModal({
-  open,
-  email,
-  isMac,
-  signingOut,
-  onCancel,
-  onConfirm,
-}: SignOutConfirmModalProps) {
-  const { t } = useTranslation();
-
-  useEffect(() => {
-    if (!open) return;
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
-      e.preventDefault();
-      e.stopPropagation();
-      if (!signingOut) onCancel();
-    };
-    window.addEventListener("keydown", handleKeyDown, true);
-    return () => window.removeEventListener("keydown", handleKeyDown, true);
-  }, [open, signingOut, onCancel]);
-
-  if (!open) return null;
-
-  const trimmedEmail = email?.trim();
-  const body = trimmedEmail
-    ? isMac
-      ? t("settings.ai.signOutConfirmBodyWithEmailMac", { email: trimmedEmail })
-      : t("settings.ai.signOutConfirmBodyWithEmailOther", { email: trimmedEmail })
-    : isMac
-      ? t("settings.ai.signOutConfirmBodyMac")
-      : t("settings.ai.signOutConfirmBodyOther");
-
-  return createPortal(
-    <div
-      className="fixed inset-0 z-50 bg-scrim backdrop-blur-[6px] flex items-center justify-center p-4"
-      onClick={() => {
-        if (!signingOut) onCancel();
-      }}
-    >
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="signout-dialog-title"
-        data-testid="oauth-signout-dialog"
-        className="w-full max-w-[420px] bg-surface-solid border border-border-subtle rounded-surface p-6 shadow-xl flex flex-col gap-[18px]"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center gap-3">
-          <div className="size-8 rounded-[10px] bg-danger-tint text-danger flex items-center justify-center shrink-0">
-            <LogOut size={15} />
-          </div>
-          <h3 id="signout-dialog-title" className="text-[16px] font-semibold text-text-primary leading-snug">
-            {t("settings.ai.signOutConfirmTitle")}
-          </h3>
-        </div>
-
-        <p className="text-[13.5px] text-text-secondary leading-[1.5]">{body}</p>
-
-        <div className="flex items-center justify-end gap-2.5 pt-1">
-          <Button
-            type="button"
-            appearance="dawn"
-            variant="secondary"
-            size="sm"
-            disabled={signingOut}
-            onClick={onCancel}
-          >
-            {t("common.cancel")}
-          </Button>
-          <Button
-            type="button"
-            appearance="dawn"
-            variant="primary"
-            size="sm"
-            disabled={signingOut}
-            onClick={onConfirm}
-            className="!bg-danger hover:!bg-danger-hover !text-text-on-accent"
-          >
-            <LogOut size={13.5} />
-            <span>{t("settings.ai.signOut")}</span>
-          </Button>
-        </div>
-      </div>
-    </div>,
-    document.body,
-  );
-}
-
 interface AiSettingsProps extends SettingsProps {
   refreshNonce?: number;
+  initialConnection?: ConnectionKind;
 }
 
 export default function AiSettings({
@@ -210,44 +116,46 @@ export default function AiSettings({
   saveBulk,
   showSavedToast,
   refreshNonce = 0,
+  initialConnection,
 }: AiSettingsProps) {
   const { t } = useTranslation();
-  const isMac = isMacOS();
 
-  const [provider, setProvider] = useState<AiProvider>(() => normalizeProvider(settings.ai_provider));
-  const [authMode, setAuthMode] = useState<OpenAiAuthMode>(() => normalizeAuthMode(settings.ai_auth_mode));
-  const [apiKey, setApiKey] = useState(() => settings.ai_api_key ?? "");
-  const [persistedApiKey, setPersistedApiKey] = useState(() => settings.ai_api_key ?? "");
-  const [showApiKey, setShowApiKey] = useState(false);
-  const [model, setModel] = useState(
-    () =>
-      settings.ai_model ??
-      defaultModelFor(normalizeProvider(settings.ai_provider), normalizeAuthMode(settings.ai_auth_mode)),
+  const [connectionKind, setConnectionKind] = useState<ConnectionKind>(() =>
+    initialConnection ?? resolveConnectionKind(settings),
   );
-  const [baseUrl, setBaseUrl] = useState(() => settings.ai_base_url ?? DEFAULT_OPENAI_URL);
+  const [apiProvider, setApiProvider] = useState<ApiProvider>(() =>
+    normalizeApiProvider(settings.ai_provider),
+  );
+  const [apiKey, setApiKey] = useState(() => settings.ai_api_key ?? "");
+  const [committedApiKey, setCommittedApiKey] = useState(() => settings.ai_api_key ?? "");
+  const [showApiKey, setShowApiKey] = useState(false);
+  const [baseUrl, setBaseUrl] = useState(
+    () => settings.ai_base_url ?? getApiServicePreset(normalizeApiProvider(settings.ai_provider)).defaultUrl,
+  );
+  const [committedBaseUrl, setCommittedBaseUrl] = useState(
+    () => settings.ai_base_url ?? getApiServicePreset(normalizeApiProvider(settings.ai_provider)).defaultUrl,
+  );
+  const [model, setModel] = useState(() => settings.ai_model ?? "");
   const [temperature, setTemperature] = useState(() => clampTemperature(settings.ai_temperature));
   const [keepAlive, setKeepAlive] = useState(() => settings.ai_keep_alive ?? "30m");
-
-  const [oauthStatus, setOauthStatus] = useState<OAuthStatus>(DISCONNECTED_OAUTH);
-  const [oauthLoading, setOauthLoading] = useState(false);
-  const [oauthError, setOauthError] = useState<string | null>(null);
-  const [signOutConfirmOpen, setSignOutConfirmOpen] = useState(false);
-  const [signingOut, setSigningOut] = useState(false);
-
-  const [codexModels, setCodexModels] = useState<CodexModel[]>(CURATED_CODEX_MODELS);
-  const [modelsFromFallback, setModelsFromFallback] = useState(false);
-  const [customModel, setCustomModel] = useState(false);
   const [effortQuick, setEffortQuick] = useState(() => settings.ai_effort_quick ?? "default");
   const [effortDeep, setEffortDeep] = useState(() => settings.ai_effort_deep ?? "default");
+  const [codexPath, setCodexPath] = useState(() => settings.ai_codex_path ?? "");
 
-  const [ollamaRunning, setOllamaRunning] = useState<boolean | null>(null);
+  const [codexStatus, setCodexStatus] = useState<CodexStatus | null>(null);
+  const [codexChecking, setCodexChecking] = useState(true);
+  const [codexModels, setCodexModels] = useState<CodexModel[]>([]);
+  const [customCodexModel, setCustomCodexModel] = useState(false);
+  const [signingIn, setSigningIn] = useState(false);
+  const [loginError, setLoginError] = useState<string | null>(null);
+  const [copiedCmd, setCopiedCmd] = useState(false);
+
+  const [apiModels, setApiModels] = useState<string[]>([]);
+  const [customApiModel, setCustomApiModel] = useState(false);
+  const [apiModelFilter, setApiModelFilter] = useState("");
+  const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus | null>(null);
   const [refreshTick, setRefreshTick] = useState(0);
 
-  const isCodexPath = provider === "openai" && authMode === "oauth";
-  const isApiKeyPath = provider === "anthropic" || (provider === "openai" && authMode === "api_key");
-
-  // Track uncommitted text drafts so unrelated settings updates don't stomp
-  // active edits and unmounting flushes pending drafts.
   const dirtyTextRef = useRef<Record<TextFieldKey, boolean>>({
     ai_api_key: false,
     ai_base_url: false,
@@ -255,50 +163,33 @@ export default function AiSettings({
   });
   const textTimersRef = useRef<Partial<Record<TextFieldKey, number>>>({});
   const pendingTextRef = useRef<Partial<Record<TextFieldKey, string>>>({});
+  const pendingUnboundApiKeyRef = useRef<string | null>(null);
   const saveFnRef = useRef(save);
   saveFnRef.current = save;
   const saveBulkRef = useRef(saveBulk);
   saveBulkRef.current = saveBulk;
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
-  const providerRef = useRef(provider);
-  providerRef.current = provider;
-  const authModeRef = useRef(authMode);
-  authModeRef.current = authMode;
+  const connectionKindRef = useRef(connectionKind);
+  connectionKindRef.current = connectionKind;
+  const apiProviderRef = useRef(apiProvider);
+  apiProviderRef.current = apiProvider;
   const modelRef = useRef(model);
   modelRef.current = model;
   const baseUrlRef = useRef(baseUrl);
   baseUrlRef.current = baseUrl;
+  const committedBaseUrlRef = useRef(committedBaseUrl);
+  committedBaseUrlRef.current = committedBaseUrl;
+  const signingInRef = useRef(signingIn);
+  signingInRef.current = signingIn;
 
+  const appliedInitialRef = useRef(false);
+  const autoActivatedCodexRef = useRef(false);
+  const codexProbeSeqRef = useRef(0);
   const loginAttemptRef = useRef(0);
   const ollamaProbeSeqRef = useRef(0);
-
-  const persistSingleOrBaseline = useCallback(async (key: string, value: string) => {
-    const s = settingsRef.current;
-    const curProvider = providerRef.current;
-    const curAuthMode = authModeRef.current;
-    const curModel = key === "ai_model" ? value : modelRef.current;
-    const curBaseUrl = key === "ai_base_url" ? value : baseUrlRef.current;
-    const missingProvider = !s.ai_provider;
-    const missingModel = !s.ai_model;
-    const missingAuthMode = curProvider === "openai" && !s.ai_auth_mode;
-    const missingOllamaUrl = curProvider === "ollama" && !s.ai_base_url;
-
-    if (missingProvider || missingModel || missingAuthMode || missingOllamaUrl) {
-      const payload: Record<string, string> = {
-        ai_provider: curProvider,
-        ai_model: curModel,
-        ai_base_url: curBaseUrl,
-      };
-      if (curProvider === "openai") {
-        payload.ai_auth_mode = curAuthMode;
-      }
-      payload[key] = value;
-      await saveBulkRef.current(payload);
-      return;
-    }
-    await saveFnRef.current(key, value);
-  }, []);
+  const apiModelsSeqRef = useRef(0);
+  const copyTimerRef = useRef<number | null>(null);
 
   const clearPendingTextSaves = useCallback(() => {
     for (const key of Object.keys(textTimersRef.current) as TextFieldKey[]) {
@@ -310,37 +201,209 @@ export default function AiSettings({
       delete pendingTextRef.current[key];
       dirtyTextRef.current[key] = false;
     }
+    pendingUnboundApiKeyRef.current = null;
+  }, []);
+
+  const persistSingleOrBaseline = useCallback(async (key: string, value: string) => {
+    const s = settingsRef.current;
+    const kind = connectionKindRef.current;
+    if (kind === "agent") {
+      if (s.ai_auth_mode !== "codex") {
+        await saveBulkRef.current({
+          ai_auth_mode: "codex",
+          ai_setup_seen: "true",
+          [key]: value,
+        });
+        return;
+      }
+      await saveFnRef.current(key, value);
+      return;
+    }
+
+    const curProvider = apiProviderRef.current;
+    const curModel = key === "ai_model" ? value : modelRef.current;
+    const curBaseUrl = key === "ai_base_url" ? value : baseUrlRef.current;
+    const needsBaseline =
+      s.ai_auth_mode !== "api_key" ||
+      !s.ai_provider ||
+      (!s.ai_base_url && curBaseUrl.length > 0);
+
+    if (needsBaseline) {
+      await saveBulkRef.current({
+        ai_auth_mode: "api_key",
+        ai_provider: curProvider,
+        ai_base_url: curBaseUrl,
+        ai_model: curModel,
+        ai_setup_seen: "true",
+        [key]: value,
+      });
+      return;
+    }
+    await saveFnRef.current(key, value);
   }, []);
 
   const probeOllama = useCallback(async (rawUrl: string) => {
     const probeId = ++ollamaProbeSeqRef.current;
-    const targetUrl = rawUrl.trim() || DEFAULT_OLLAMA_URL;
+    const targetUrl = rawUrl.trim() || getApiServicePreset("ollama").defaultUrl;
     try {
       const status = await invoke<OllamaStatus>("check_ollama_status", { baseUrl: targetUrl });
-      if (ollamaProbeSeqRef.current !== probeId || providerRef.current !== "ollama") return;
-      setOllamaRunning(Boolean(status?.running));
+      if (ollamaProbeSeqRef.current !== probeId) return;
+      setOllamaStatus(
+        status
+          ? { running: Boolean(status.running), models: status.models ?? null }
+          : { running: false, models: null },
+      );
     } catch {
-      if (ollamaProbeSeqRef.current !== probeId || providerRef.current !== "ollama") return;
-      setOllamaRunning(false);
+      if (ollamaProbeSeqRef.current !== probeId) return;
+      setOllamaStatus({ running: false, models: null });
+    }
+  }, []);
+
+  const probeCodex = useCallback(async () => {
+    const seq = ++codexProbeSeqRef.current;
+    setCodexChecking(true);
+    try {
+      const status = await invoke<CodexStatus>("codex_status");
+      if (codexProbeSeqRef.current !== seq) return;
+      if (status) {
+        setCodexStatus(status);
+        if (status.state === "ready") {
+          setLoginError(null);
+        }
+      }
+    } catch (err) {
+      if (codexProbeSeqRef.current !== seq) return;
+      setCodexStatus({
+        state: "failed",
+        version: null,
+        min_version: "0.170.0",
+        path: null,
+        from_override: false,
+        email: null,
+        plan: null,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      if (codexProbeSeqRef.current === seq) {
+        setCodexChecking(false);
+      }
     }
   }, []);
 
   const commitTextField = useCallback(
-    async (key: TextFieldKey, value: string) => {
+    async (key: TextFieldKey, value: string, reason: "debounce" | "explicit" = "explicit") => {
       const timer = textTimersRef.current[key];
       if (timer !== undefined) {
         window.clearTimeout(timer);
         delete textTimersRef.current[key];
       }
+      if (
+        reason === "debounce" &&
+        key === "ai_base_url" &&
+        connectionKindRef.current === "api" &&
+        pendingUnboundApiKeyRef.current?.trim()
+      ) {
+        // Keep the key-first draft unbound while the user is still typing the
+        // Base URL so an intermediate valid host/port cannot capture the key.
+        pendingTextRef.current[key] = value;
+        dirtyTextRef.current[key] = true;
+        return;
+      }
       delete pendingTextRef.current[key];
       dirtyTextRef.current[key] = false;
       try {
+        if (key === "ai_api_key" && connectionKindRef.current === "api") {
+          if (!value.trim()) {
+            pendingUnboundApiKeyRef.current = null;
+          } else if (
+            urlOrigin(effectiveApiUrl(apiProviderRef.current, committedBaseUrlRef.current)) === null
+          ) {
+            // Keep an API key entered before a valid HTTP(S) URL (e.g., Custom
+            // setup) as a local draft so it commits atomically when the user
+            // finishes entering a valid Base URL with blur or Enter.
+            pendingUnboundApiKeyRef.current = value;
+            dirtyTextRef.current.ai_api_key = true;
+            return;
+          }
+          pendingUnboundApiKeyRef.current = null;
+          await persistSingleOrBaseline(key, value);
+          setCommittedApiKey(value);
+          return;
+        }
+        if (key === "ai_base_url" && connectionKindRef.current === "api") {
+          const prevValid =
+            urlOrigin(effectiveApiUrl(apiProviderRef.current, committedBaseUrlRef.current)) !== null;
+          const nextValid = urlOrigin(effectiveApiUrl(apiProviderRef.current, value)) !== null;
+          const draftKey = pendingTextRef.current.ai_api_key ?? pendingUnboundApiKeyRef.current;
+          if (reason === "explicit" && !prevValid && nextValid && draftKey && draftKey.trim()) {
+            const keyTimer = textTimersRef.current.ai_api_key;
+            if (keyTimer !== undefined) {
+              window.clearTimeout(keyTimer);
+              delete textTimersRef.current.ai_api_key;
+            }
+            delete pendingTextRef.current.ai_api_key;
+            await saveBulkRef.current({
+              ai_auth_mode: "api_key",
+              ai_provider: apiProviderRef.current,
+              ai_base_url: value,
+              ai_api_key: draftKey,
+              ai_model: modelRef.current,
+              ai_setup_seen: "true",
+            });
+            dirtyTextRef.current.ai_api_key = false;
+            pendingUnboundApiKeyRef.current = null;
+            committedBaseUrlRef.current = value;
+            setCommittedBaseUrl(value);
+            setCommittedApiKey(draftKey);
+            return;
+          }
+          const originChanged = didApiOriginChange(
+            apiProviderRef.current,
+            committedBaseUrlRef.current,
+            value,
+          );
+          if (originChanged && !dirtyTextRef.current.ai_api_key) {
+            const keyTimer = textTimersRef.current.ai_api_key;
+            if (keyTimer !== undefined) {
+              window.clearTimeout(keyTimer);
+              delete textTimersRef.current.ai_api_key;
+            }
+            delete pendingTextRef.current.ai_api_key;
+            dirtyTextRef.current.ai_api_key = false;
+            pendingUnboundApiKeyRef.current = null;
+            apiModelsSeqRef.current += 1;
+            setApiKey("");
+            setCommittedApiKey("");
+            setShowApiKey(false);
+            setApiModels([]);
+            await saveBulkRef.current({
+              ai_auth_mode: "api_key",
+              ai_provider: apiProviderRef.current,
+              ai_base_url: value,
+              ai_api_key: "",
+              ai_model: modelRef.current,
+              ai_setup_seen: "true",
+            });
+          } else {
+            await persistSingleOrBaseline(key, value);
+          }
+          committedBaseUrlRef.current = value;
+          setCommittedBaseUrl(value);
+          if (apiProviderRef.current === "ollama") {
+            void probeOllama(value);
+          }
+          return;
+        }
         await persistSingleOrBaseline(key, value);
         if (key === "ai_api_key") {
-          setPersistedApiKey(value);
+          setCommittedApiKey(value);
         }
-        if (key === "ai_base_url" && providerRef.current === "ollama") {
-          void probeOllama(value);
+        if (key === "ai_base_url") {
+          committedBaseUrlRef.current = value;
+          setCommittedBaseUrl(value);
+          if (connectionKindRef.current === "api" && apiProviderRef.current === "ollama") {
+            void probeOllama(value);
+          }
         }
       } catch (err) {
         console.error(`Failed to save ${key}:`, err);
@@ -358,7 +421,7 @@ export default function AiSettings({
         window.clearTimeout(existing);
       }
       textTimersRef.current[key] = window.setTimeout(() => {
-        void commitTextField(key, value);
+        void commitTextField(key, value, "debounce");
       }, TEXT_SAVE_DEBOUNCE_MS);
     },
     [commitTextField],
@@ -372,295 +435,460 @@ export default function AiSettings({
     value,
     onChange: (e: ChangeEvent<HTMLInputElement>) => {
       const next = e.target.value;
+      if (key === "ai_api_key" && !next.trim()) {
+        pendingUnboundApiKeyRef.current = null;
+      }
       setValue(next);
       scheduleTextSave(key, next);
     },
     onBlur: () => {
       if (dirtyTextRef.current[key]) {
-        void commitTextField(key, value);
+        void commitTextField(key, value, "explicit");
       }
     },
     onKeyDown: (e: ReactKeyboardEvent<HTMLInputElement>) => {
       if (e.key !== "Enter") return;
       e.currentTarget.blur();
       if (dirtyTextRef.current[key]) {
-        void commitTextField(key, value);
+        void commitTextField(key, value, "explicit");
       }
     },
   });
 
+  // Flush pending debounced edits on unmount and clean timers.
   useEffect(() => {
     const timers = textTimersRef.current;
     const pending = pendingTextRef.current;
     return () => {
+      if (signingInRef.current) {
+        void invoke("codex_login_cancel").catch(() => {});
+      }
+      if (copyTimerRef.current !== null) {
+        window.clearTimeout(copyTimerRef.current);
+      }
       const entries = Object.entries(pending) as [TextFieldKey, string][];
-      for (const [key, value] of entries) {
+      for (const [key] of entries) {
         const timer = timers[key];
         if (timer !== undefined) {
           window.clearTimeout(timer);
           delete timers[key];
         }
         delete pending[key];
-        void persistSingleOrBaseline(key, value).catch(() => {});
+      }
+      if (entries.length > 0) {
+        const pendingMap = Object.fromEntries(entries) as Partial<Record<TextFieldKey, string>>;
+        const hadUnboundKey = Boolean(pendingUnboundApiKeyRef.current?.trim());
+        pendingUnboundApiKeyRef.current = null;
+
+        if (connectionKindRef.current === "api") {
+          const prevValid =
+            urlOrigin(effectiveApiUrl(apiProviderRef.current, committedBaseUrlRef.current)) !== null;
+
+          // Passive unmount must never bind a fresh key to an unfinished/uncommitted URL.
+          if (pendingMap.ai_api_key?.trim() && (!prevValid || pendingMap.ai_base_url !== undefined)) {
+            delete pendingMap.ai_api_key;
+          }
+          if (hadUnboundKey && pendingMap.ai_base_url !== undefined && !prevValid) {
+            delete pendingMap.ai_base_url;
+          }
+
+          const baseUrlChangedOrigin =
+            pendingMap.ai_base_url !== undefined &&
+            pendingMap.ai_api_key === undefined &&
+            didApiOriginChange(
+              apiProviderRef.current,
+              committedBaseUrlRef.current,
+              pendingMap.ai_base_url,
+            );
+          if (baseUrlChangedOrigin) {
+            void saveBulkRef
+              .current({
+                ai_auth_mode: "api_key",
+                ai_provider: apiProviderRef.current,
+                ai_base_url: pendingMap.ai_base_url!,
+                ai_api_key: "",
+                ai_model: pendingMap.ai_model ?? modelRef.current,
+                ai_setup_seen: "true",
+              })
+              .catch(() => {});
+            return;
+          }
+        }
+
+        const remaining = Object.entries(pendingMap) as [TextFieldKey, string][];
+        if (remaining.length === 1) {
+          const [key, value] = remaining[0];
+          void persistSingleOrBaseline(key, value).catch(() => {});
+        } else if (remaining.length > 1) {
+          const bulk: Record<string, string> = {};
+          for (const [key, value] of remaining) {
+            bulk[key] = value;
+          }
+          void saveBulkRef.current(bulk).catch(() => {});
+        }
       }
     };
   }, [persistSingleOrBaseline]);
 
+  // Hydrate local form state when saved settings load or update.
   useEffect(() => {
     if (loading) return;
-    const nextProvider = normalizeProvider(settings.ai_provider);
-    const nextAuthMode = normalizeAuthMode(settings.ai_auth_mode);
-    setProvider(nextProvider);
-    setAuthMode(nextAuthMode);
+    const resolvedKind =
+      initialConnection && !appliedInitialRef.current
+        ? initialConnection
+        : resolveConnectionKind(settings);
+    appliedInitialRef.current = true;
+    const nextProvider = normalizeApiProvider(settings.ai_provider);
+    const preset = getApiServicePreset(nextProvider);
+
+    setConnectionKind(resolvedKind);
+    setApiProvider(nextProvider);
     if (!dirtyTextRef.current.ai_api_key) {
       const savedKey = settings.ai_api_key ?? "";
       setApiKey(savedKey);
-      setPersistedApiKey(savedKey);
-    }
-    if (!dirtyTextRef.current.ai_model) {
-      setModel(settings.ai_model ?? defaultModelFor(nextProvider, nextAuthMode));
+      setCommittedApiKey(savedKey);
     }
     if (!dirtyTextRef.current.ai_base_url) {
-      setBaseUrl(
-        settings.ai_base_url ??
-          (nextProvider === "ollama"
-            ? DEFAULT_OLLAMA_URL
-            : nextProvider === "openai"
-              ? DEFAULT_OPENAI_URL
-              : ""),
-      );
+      const savedUrl =
+        settings.ai_base_url !== undefined ? settings.ai_base_url : preset.defaultUrl;
+      baseUrlRef.current = savedUrl;
+      committedBaseUrlRef.current = savedUrl;
+      setBaseUrl(savedUrl);
+      setCommittedBaseUrl(savedUrl);
+    }
+    if (!dirtyTextRef.current.ai_model) {
+      setModel(settings.ai_model ?? (resolvedKind === "api" ? preset.defaultModel : ""));
     }
     setTemperature(clampTemperature(settings.ai_temperature));
     if (settings.ai_keep_alive) setKeepAlive(settings.ai_keep_alive);
     if (settings.ai_effort_quick) setEffortQuick(settings.ai_effort_quick);
     if (settings.ai_effort_deep) setEffortDeep(settings.ai_effort_deep);
-  }, [settings, loading]);
+    setCodexPath(settings.ai_codex_path ?? "");
+  }, [settings, loading, initialConnection]);
 
-  const fetchOAuthStatus = useCallback(async (): Promise<OAuthStatus> => {
-    try {
-      const status = await invoke<OAuthStatus>("openai_oauth_status");
-      return status ?? DISCONNECTED_OAUTH;
-    } catch {
-      return DISCONNECTED_OAUTH;
-    }
-  }, []);
-
+  // Re-check Codex when the window regains focus (e.g., user installed or signed in via CLI).
   useEffect(() => {
-    if (provider !== "openai") return;
     let disposed = false;
-    let unlistenOAuth: (() => void) | null = null;
     const bump = () => {
-      if (!disposed) setRefreshTick((tick) => tick + 1);
+      if (!disposed && !signingInRef.current) {
+        setRefreshTick((tick) => tick + 1);
+      }
     };
     const onVisibilityChange = () => {
       if (!document.hidden) bump();
     };
     window.addEventListener("focus", bump);
     document.addEventListener("visibilitychange", onVisibilityChange);
-    void listenCurrentWindow("openai-oauth-changed", bump)
-      .then((fn) => {
-        if (disposed) {
-          fn();
-        } else {
-          unlistenOAuth = fn;
-        }
-      })
-      .catch(() => {});
     return () => {
       disposed = true;
       window.removeEventListener("focus", bump);
       document.removeEventListener("visibilitychange", onVisibilityChange);
-      unlistenOAuth?.();
     };
-  }, [provider]);
+  }, []);
 
+  // Probe Codex status (also shown as a badge on the collapsed Agent row when API is selected).
   useEffect(() => {
-    if (provider !== "openai") return;
-    let stale = false;
-    void fetchOAuthStatus().then((status) => {
-      if (stale) return;
-      setOauthStatus(status);
-      if (status.connected) {
-        setOauthError(null);
-      } else {
-        setSignOutConfirmOpen(false);
-      }
-    });
-    return () => {
-      stale = true;
-    };
-  }, [provider, refreshNonce, refreshTick, fetchOAuthStatus]);
+    if (loading) return;
+    void probeCodex();
+  }, [loading, codexPath, refreshNonce, refreshTick, probeCodex]);
 
+  // If a fresh/skipped profile opens Settings -> AI (not specifically on API)
+  // and Codex is already ready, commit ai_auth_mode = codex so the checked
+  // Agent radio and Ready badge match active runtime behavior.
   useEffect(() => {
-    if (!isCodexPath) return;
+    if (
+      loading ||
+      initialConnection === "api" ||
+      autoActivatedCodexRef.current ||
+      connectionKind !== "agent" ||
+      settings.ai_auth_mode ||
+      settings.ai_provider ||
+      codexStatus?.state !== "ready"
+    ) {
+      return;
+    }
+    autoActivatedCodexRef.current = true;
+    void saveBulkRef.current({ ai_auth_mode: "codex", ai_setup_seen: "true" }).catch(() => {});
+  }, [loading, initialConnection, connectionKind, settings.ai_auth_mode, settings.ai_provider, codexStatus]);
+
+  // Load Codex models when Agent is selected and Codex is ready.
+  useEffect(() => {
+    if (loading || connectionKind !== "agent" || codexStatus?.state !== "ready") {
+      return;
+    }
     let stale = false;
     invoke<CodexModelList>("list_codex_models")
       .then((list) => {
         if (stale) return;
-        setModelsFromFallback(list.from_fallback);
-        setCodexModels(list.models);
-        // If tokens just expired during remote model fetch, sync UI to signed-out.
-        if (list.from_fallback && oauthStatus.connected) {
-          void fetchOAuthStatus().then((status) => {
-            if (!stale) setOauthStatus(status);
-          });
-        }
+        setCodexModels(Array.isArray(list?.models) ? list.models : []);
       })
       .catch(() => {
         if (stale) return;
-        setCodexModels(CURATED_CODEX_MODELS);
-        setModelsFromFallback(true);
+        setCodexModels([]);
       });
     return () => {
       stale = true;
     };
-  }, [isCodexPath, oauthStatus.connected, refreshNonce, fetchOAuthStatus]);
+  }, [loading, connectionKind, codexStatus?.state, codexPath, refreshNonce]);
 
+  // Probe Ollama server when API + Ollama is selected.
   useEffect(() => {
-    if (loading || provider !== "ollama") {
-      setOllamaRunning(null);
+    if (loading || connectionKind !== "api" || apiProvider !== "ollama") {
+      setOllamaStatus(null);
       return;
     }
-    void probeOllama(baseUrlRef.current);
-  }, [provider, loading, probeOllama]);
+    void probeOllama(committedBaseUrl);
+  }, [loading, connectionKind, apiProvider, committedBaseUrl, refreshNonce, probeOllama]);
 
-  const handleOAuthCancel = useCallback(() => {
+  // Fetch API service's /models list when API is selected and endpoint/credentials are present.
+  useEffect(() => {
+    const seq = ++apiModelsSeqRef.current;
+    if (loading || connectionKind !== "api") {
+      setApiModels([]);
+      return () => {
+        apiModelsSeqRef.current += 1;
+      };
+    }
+    const preset = getApiServicePreset(apiProvider);
+    const effectiveUrl = committedBaseUrl.trim() || preset.defaultUrl;
+    if (!effectiveUrl || (preset.requiresKey && !committedApiKey.trim())) {
+      setApiModels([]);
+      return () => {
+        apiModelsSeqRef.current += 1;
+      };
+    }
+    // Automatic listing omits `apiKey` so the backend resolves only the committed,
+    // origin-bound credential from secrets.db and a cached UI value cannot authorize
+    // a cross-origin request.
+    invoke<ApiModelList>("list_api_models", {
+      provider: apiProvider,
+      baseUrl: effectiveUrl,
+    })
+      .then((res) => {
+        if (apiModelsSeqRef.current !== seq) return;
+        setApiModels(Array.isArray(res?.models) ? res.models : []);
+      })
+      .catch(() => {
+        if (apiModelsSeqRef.current !== seq) return;
+        setApiModels([]);
+      });
+    return () => {
+      apiModelsSeqRef.current += 1;
+    };
+  }, [loading, connectionKind, apiProvider, committedBaseUrl, committedApiKey, refreshNonce]);
+
+  const handleCancelLogin = useCallback(() => {
     loginAttemptRef.current += 1;
-    setOauthLoading(false);
-    setOauthError(null);
-    void invoke("openai_oauth_cancel").catch(() => {});
+    setSigningIn(false);
+    setLoginError(null);
+    void invoke("codex_login_cancel").catch(() => {});
   }, []);
 
-  const handleProviderChange = async (nextProvider: AiProvider) => {
-    if (nextProvider === provider) return;
-    if (oauthLoading) handleOAuthCancel();
-    clearPendingTextSaves();
-
-    const nextAuthMode: OpenAiAuthMode = nextProvider === "openai" ? "oauth" : authMode;
-    const nextModel = defaultModelFor(nextProvider, nextAuthMode);
-    const nextBaseUrl =
-      nextProvider === "ollama"
-        ? DEFAULT_OLLAMA_URL
-        : nextProvider === "openai"
-          ? DEFAULT_OPENAI_URL
-          : "";
-
-    providerRef.current = nextProvider;
-    authModeRef.current = nextAuthMode;
-    modelRef.current = nextModel;
-    baseUrlRef.current = nextBaseUrl;
-    setProvider(nextProvider);
-    setApiKey("");
-    setPersistedApiKey("");
-    setShowApiKey(false);
-    setCustomModel(false);
-    setOauthError(null);
-    setModel(nextModel);
-    setBaseUrl(nextBaseUrl);
-    if (nextProvider === "openai") setAuthMode("oauth");
-
-    const updates: Record<string, string> = {
-      ai_provider: nextProvider,
-      ai_api_key: "",
-      ai_model: nextModel,
-      ai_base_url: nextBaseUrl,
-    };
-    if (nextProvider === "openai") updates.ai_auth_mode = "oauth";
-
-    try {
-      await saveBulk(updates);
-    } catch (err) {
-      console.error("Failed to save AI provider change:", err);
-    }
-  };
-
-  const handleAuthModeChange = async (nextMode: OpenAiAuthMode) => {
-    if (nextMode === authMode) return;
-    if (oauthLoading && nextMode !== "oauth") handleOAuthCancel();
-    clearPendingTextSaves();
-
-    const nextModel = defaultModelFor("openai", nextMode);
-    authModeRef.current = nextMode;
-    modelRef.current = nextModel;
-    setAuthMode(nextMode);
-    setModel(nextModel);
-    setCustomModel(false);
-    setOauthError(null);
-
-    try {
-      await saveBulk({
-        ai_provider: "openai",
-        ai_auth_mode: nextMode,
-        ai_model: nextModel,
-        ...(settingsRef.current.ai_base_url === undefined
-          ? { ai_base_url: baseUrlRef.current }
-          : {}),
-      });
-    } catch (err) {
-      console.error("Failed to save OpenAI auth mode:", err);
-    }
-  };
-
-  const handleOAuthLogin = async () => {
+  const handleCodexLogin = async () => {
     const attemptId = ++loginAttemptRef.current;
-    setOauthLoading(true);
-    setOauthError(null);
+    setSigningIn(true);
+    setLoginError(null);
     try {
-      const result = await invoke<OAuthStatus>("openai_oauth_login");
+      const outcome = await invoke<LoginOutcome>("codex_login");
       if (loginAttemptRef.current !== attemptId) return;
-      setOauthStatus(result ?? DISCONNECTED_OAUTH);
-      await saveBulk({
-        ai_provider: provider,
-        ai_api_key: apiKey,
-        ai_model: model,
-        ai_base_url: baseUrl,
-        ai_temperature: String(temperature),
-        ai_keep_alive: keepAlive,
-        ai_auth_mode: authMode,
-        ai_effort_quick: effortQuick,
-        ai_effort_deep: effortDeep,
-      });
-      setPersistedApiKey(apiKey);
-      showSavedToast(t("settings.ai.oauthSuccess"));
+      if (outcome?.success) {
+        await saveBulk({
+          ai_auth_mode: "codex",
+          ai_setup_seen: "true",
+          ai_codex_migration_pending: "false",
+        });
+        showSavedToast(t("settings.ai.codex.signedInToast"));
+        await probeCodex();
+      } else if (outcome?.error) {
+        setLoginError(outcome.error);
+      }
     } catch (err) {
       if (loginAttemptRef.current !== attemptId) return;
-      const msg = err instanceof Error ? err.message : String(err);
-      if (!msg.includes("OAUTH_CANCELLED")) {
-        setOauthError(msg);
-      }
+      setLoginError(err instanceof Error ? err.message : String(err));
     } finally {
       if (loginAttemptRef.current === attemptId) {
-        setOauthLoading(false);
+        setSigningIn(false);
       }
     }
   };
 
-  const handleConfirmSignOut = async () => {
-    setSigningOut(true);
+  const handleSelectConnection = async (next: ConnectionKind) => {
+    if (next === connectionKind) {
+      if (next === "agent" && settingsRef.current.ai_auth_mode !== "codex") {
+        await saveBulk({ ai_auth_mode: "codex", ai_setup_seen: "true" });
+      }
+      return;
+    }
+    if (signingIn && next !== "agent") {
+      handleCancelLogin();
+    }
+    clearPendingTextSaves();
+
+    connectionKindRef.current = next;
+    setConnectionKind(next);
+    setCustomCodexModel(false);
+    setCustomApiModel(false);
+    setApiModelFilter("");
+
+    if (next === "agent") {
+      const currentIsCodexModel =
+        modelRef.current !== "" && codexModels.some((m) => m.slug === modelRef.current);
+      const defaultCodexSlug =
+        codexModels.find((m) => m.is_default)?.slug ?? codexModels[0]?.slug ?? "";
+      const nextModel = currentIsCodexModel ? modelRef.current : defaultCodexSlug;
+      modelRef.current = nextModel;
+      setModel(nextModel);
+      try {
+        await saveBulk({
+          ai_auth_mode: "codex",
+          ai_model: nextModel,
+          ai_setup_seen: "true",
+        });
+      } catch (err) {
+        console.error("Failed to switch to Agent connection:", err);
+      }
+    } else {
+      const preset = getApiServicePreset(apiProviderRef.current);
+      const nextBaseUrl = baseUrlRef.current || preset.defaultUrl;
+      const isCodexSlug = codexModels.some((m) => m.slug === modelRef.current);
+      const nextModel =
+        !modelRef.current || isCodexSlug ? preset.defaultModel : modelRef.current;
+      baseUrlRef.current = nextBaseUrl;
+      committedBaseUrlRef.current = nextBaseUrl;
+      modelRef.current = nextModel;
+      setBaseUrl(nextBaseUrl);
+      setCommittedBaseUrl(nextBaseUrl);
+      setModel(nextModel);
+      try {
+        await saveBulk({
+          ai_auth_mode: "api_key",
+          ai_provider: apiProviderRef.current,
+          ai_base_url: nextBaseUrl,
+          ai_model: nextModel,
+          ai_setup_seen: "true",
+        });
+      } catch (err) {
+        console.error("Failed to switch to API connection:", err);
+      }
+    }
+  };
+
+  const handleApiServiceChange = async (nextRaw: string) => {
+    const nextProvider = normalizeApiProvider(nextRaw);
+    if (nextProvider === apiProvider) return;
+    clearPendingTextSaves();
+
+    const preset = getApiServicePreset(nextProvider);
+    apiProviderRef.current = nextProvider;
+    baseUrlRef.current = preset.defaultUrl;
+    committedBaseUrlRef.current = preset.defaultUrl;
+    modelRef.current = preset.defaultModel;
+
+    setApiProvider(nextProvider);
+    setBaseUrl(preset.defaultUrl);
+    setCommittedBaseUrl(preset.defaultUrl);
+    setApiKey("");
+    setCommittedApiKey("");
+    setShowApiKey(false);
+    setModel(preset.defaultModel);
+    setApiModels([]);
+    setCustomApiModel(false);
+    setApiModelFilter("");
+
     try {
-      await invoke("openai_oauth_logout");
-      setOauthStatus(DISCONNECTED_OAUTH);
-      setSignOutConfirmOpen(false);
+      await saveBulk({
+        ai_auth_mode: "api_key",
+        ai_provider: nextProvider,
+        ai_base_url: preset.defaultUrl,
+        ai_api_key: "",
+        ai_model: preset.defaultModel,
+        ai_setup_seen: "true",
+      });
     } catch (err) {
-      console.error("Failed to sign out:", err);
-    } finally {
-      setSigningOut(false);
+      console.error("Failed to save API service:", err);
     }
   };
 
   const handleClearApiKey = () => {
+    pendingUnboundApiKeyRef.current = null;
     setApiKey("");
     setShowApiKey(false);
     void commitTextField("ai_api_key", "");
   };
 
+  const handleChooseCodexPath = async () => {
+    try {
+      const selected = await openFileDialog({ multiple: false });
+      if (!selected) return;
+      await persistSingleOrBaseline("ai_codex_path", selected);
+      setCodexPath(selected);
+    } catch (err) {
+      console.error("Failed to pick Codex location:", err);
+    }
+  };
+
+  const handleResetCodexPath = async () => {
+    try {
+      await persistSingleOrBaseline("ai_codex_path", "");
+      setCodexPath("");
+    } catch (err) {
+      console.error("Failed to reset Codex location:", err);
+    }
+  };
+
+  const handleCopyInstallCommand = () => {
+    void navigator.clipboard?.writeText(CODEX_INSTALL_COMMAND);
+    setCopiedCmd(true);
+    if (copyTimerRef.current !== null) {
+      window.clearTimeout(copyTimerRef.current);
+    }
+    copyTimerRef.current = window.setTimeout(() => {
+      setCopiedCmd(false);
+      copyTimerRef.current = null;
+    }, 2000);
+  };
+
   const handleCodexModelSelect = (nextValue: string) => {
     if (nextValue === CUSTOM_MODEL) {
-      setCustomModel(true);
+      setCustomCodexModel(true);
       return;
     }
-    setCustomModel(false);
+    setCustomCodexModel(false);
     setModel(nextValue);
+    modelRef.current = nextValue;
+    const nextModel = codexModels.find((m) => m.slug === nextValue);
+    const supported = nextModel?.supported_reasoning_levels ?? [];
+    const updates: Record<string, string> = {
+      ai_auth_mode: "codex",
+      ai_model: nextValue,
+      ai_setup_seen: "true",
+    };
+    if (supported.length > 0) {
+      if (effortQuick !== "default" && !supported.includes(effortQuick)) {
+        setEffortQuick("default");
+        updates.ai_effort_quick = "default";
+      }
+      if (effortDeep !== "default" && !supported.includes(effortDeep)) {
+        setEffortDeep("default");
+        updates.ai_effort_deep = "default";
+      }
+    }
+    clearPendingTextSaves();
+    void saveBulkRef.current(updates).catch((err) => {
+      console.error("Failed to save Codex model:", err);
+    });
+  };
+
+  const handleApiModelSelect = (nextValue: string) => {
+    if (nextValue === CUSTOM_MODEL) {
+      setCustomApiModel(true);
+      setApiModelFilter("");
+      return;
+    }
+    setCustomApiModel(false);
+    setApiModelFilter("");
+    setModel(nextValue);
+    modelRef.current = nextValue;
     void commitTextField("ai_model", nextValue);
   };
 
@@ -686,13 +914,21 @@ export default function AiSettings({
     void persistSingleOrBaseline("ai_keep_alive", next);
   };
 
-  const modelInList = codexModels.some((m) => m.slug === model);
-  const isCustomModel = customModel || !modelInList;
+  // Codex model & effort options
+  const catalogDefaultModel = useMemo(
+    () => codexModels.find((m) => m.is_default) ?? codexModels[0] ?? null,
+    [codexModels],
+  );
+  const effectiveCodexModel = model.trim() || catalogDefaultModel?.slug || "";
+  const codexModelInList =
+    effectiveCodexModel !== "" && codexModels.some((m) => m.slug === effectiveCodexModel);
+  const isCustomCodexModel =
+    customCodexModel || (model.trim() !== "" && codexModels.length > 0 && !codexModelInList);
 
-  const modelOptions = [
+  const codexModelOptions = [
     ...codexModels.map((m) => ({
       value: m.slug,
-      label: m.display_name,
+      label: m.display_name || m.slug,
       description: m.description || undefined,
     })),
     { value: CUSTOM_MODEL, label: t("settings.ai.modelCustom") },
@@ -704,22 +940,59 @@ export default function AiSettings({
     return label === key ? level : label;
   };
 
-  const selectedCodexModel = codexModels.find((m) => m.slug === model);
-  const effortLevels =
-    selectedCodexModel && selectedCodexModel.supported_reasoning_levels.length > 0
-      ? selectedCodexModel.supported_reasoning_levels
-      : CODEX_EFFORT_LEVELS;
+  const knownCodexModel = !isCustomCodexModel
+    ? (codexModels.find((m) => m.slug === effectiveCodexModel) ?? catalogDefaultModel)
+    : null;
+  const hasKnownSupportedEfforts = Boolean(
+    knownCodexModel && knownCodexModel.supported_reasoning_levels.length > 0,
+  );
+  const effortLevels = hasKnownSupportedEfforts
+    ? knownCodexModel!.supported_reasoning_levels
+    : [...CODEX_FALLBACK_EFFORT_LEVELS];
+  const defaultEffortModel = knownCodexModel ?? catalogDefaultModel;
+  const defaultEffortDisplay = defaultEffortModel?.default_reasoning_level
+    ? t("settings.ai.effortDefaultWithLevel", {
+        level: effortLabel(defaultEffortModel.default_reasoning_level),
+      })
+    : t("settings.ai.effortDefault");
+
+  const displayedEffort = (saved: string) => {
+    if (!hasKnownSupportedEfforts || saved === "default") return saved;
+    return effortLevels.includes(saved) ? saved : "default";
+  };
 
   const effortOptions = (saved: string) => {
     const options = [
-      { value: "default", label: t("settings.ai.effortDefault") },
+      { value: "default", label: defaultEffortDisplay },
       ...effortLevels.map((level) => ({ value: level, label: effortLabel(level) })),
     ];
-    if (saved !== "default" && !options.some((o) => o.value === saved)) {
+    if (!hasKnownSupportedEfforts && saved !== "default" && !options.some((o) => o.value === saved)) {
       options.push({ value: saved, label: effortLabel(saved) });
     }
     return options;
   };
+
+  // API service & model options
+  const activePreset = getApiServicePreset(apiProvider);
+  const serviceOptions = API_SERVICES.map((svc) => ({
+    value: svc.id,
+    label: t(svc.labelKey),
+    description: svc.menuDescriptionKey ? t(svc.menuDescriptionKey) : svc.menuUrl,
+  }));
+
+  const filteredApiModels = useMemo(() => {
+    const q = apiModelFilter.trim().toLowerCase();
+    if (!q) return apiModels;
+    return apiModels.filter((id) => id.toLowerCase().includes(q));
+  }, [apiModels, apiModelFilter]);
+
+  const apiModelInList = model.trim() !== "" && apiModels.includes(model.trim());
+  const showApiModelPicker = apiModels.length > 0 && !customApiModel;
+  const apiModelOptions = [
+    ...(model.trim() && !apiModelInList ? [{ value: model.trim(), label: model.trim() }] : []),
+    ...filteredApiModels.map((id) => ({ value: id, label: id })),
+    { value: CUSTOM_MODEL, label: t("settings.ai.modelCustom") },
+  ];
 
   const keepAliveOptions = [
     ...KEEP_ALIVE_PRESETS.map((preset) => ({
@@ -731,368 +1004,640 @@ export default function AiSettings({
       : []),
   ];
 
-  const email = oauthStatus.email?.trim() || null;
-  const hasSavedApiKey = Boolean(persistedApiKey.trim());
-  const textModelPlaceholder =
-    provider === "ollama"
-      ? "qwen3.5"
-      : provider === "anthropic"
-        ? "claude-sonnet-4-20250514"
-        : "gpt-4o";
+  // Collapsed Agent badge when API is selected
+  const renderCollapsedAgentBadge = () => {
+    if (codexChecking && !codexStatus) return null;
+    if (!codexStatus) return null;
+    switch (codexStatus.state) {
+      case "ready":
+        return <StatusBadge tone="success" label={t("settings.ai.codex.ready")} />;
+      case "not_signed_in":
+        return <StatusBadge tone="warning" label={t("settings.ai.codex.signInNeeded")} />;
+      case "too_old":
+        return <StatusBadge tone="warning" label={t("settings.ai.codex.updateNeeded")} />;
+      case "failed":
+        return <StatusBadge tone="danger" label={t("settings.ai.codex.errorBadge")} />;
+      default:
+        return null;
+    }
+  };
 
-  return (
-    <div className="flex flex-col gap-7 pb-6">
-      {/* Section 1: Provider & Credentials / Auth */}
-      <section className="flex flex-col gap-3">
-        <SettingsOverline>
-          {isApiKeyPath ? t("settings.ai.providerCredentialsOverline") : t("settings.ai.providerOverline")}
-        </SettingsOverline>
+  // Expanded Codex status row (matches Pencil frame xUV03)
+  const renderCodexStatusRow = () => {
+    if (signingIn) {
+      return (
+        <SettingsRow
+          className="pl-[46px]"
+          title={t("settings.ai.codex.title")}
+          hint={t("settings.ai.codex.signingInHint")}
+        >
+          <span className="inline-flex items-center gap-1.5 text-[12.5px] text-text-secondary">
+            <Loader2 size={14} className="animate-spin text-accent-fg" />
+            <span>{t("settings.ai.codex.waitingForBrowser")}</span>
+          </span>
+          <Button
+            type="button"
+            appearance="dawn"
+            variant="ghost"
+            size="sm"
+            onClick={handleCancelLogin}
+          >
+            <X size={13.5} />
+            <span>{t("common.cancel")}</span>
+          </Button>
+        </SettingsRow>
+      );
+    }
 
-        <SettingsGroup>
-          <SettingsRow title={t("settings.ai.provider")}>
-            <SegmentedControl
-              surface="inset"
-              variant="solid"
-              value={provider}
-              onChange={(next) => void handleProviderChange(next)}
-              options={[
-                { value: "openai", label: t("settings.ai.providers.openai") },
-                { value: "anthropic", label: t("settings.ai.providers.anthropic") },
-                { value: "ollama", label: t("settings.ai.providers.ollama") },
-              ]}
-            />
+    if (codexChecking || !codexStatus) {
+      return (
+        <SettingsRow
+          className="pl-[46px]"
+          title={t("settings.ai.codex.title")}
+          hint={t("settings.ai.codex.checkingHint")}
+        >
+          <span className="inline-flex items-center gap-1.5 text-[12.5px] text-text-tertiary">
+            <Loader2 size={14} className="animate-spin" />
+            <span>{t("settings.ai.codex.checking")}</span>
+          </span>
+        </SettingsRow>
+      );
+    }
+
+    switch (codexStatus.state) {
+      case "ready": {
+        const accountLine = formatCodexAccountLine(codexStatus, true);
+        return (
+          <SettingsRow
+            className="pl-[46px]"
+            title={t("settings.ai.codex.title")}
+            hint={
+              accountLine ||
+              t("settings.ai.codex.readyFallback", { version: codexStatus.version ?? "" })
+            }
+          >
+            <StatusBadge tone="success" label={t("settings.ai.codex.ready")} />
           </SettingsRow>
+        );
+      }
 
-          {provider === "openai" && (
-            <SettingsRow title={t("settings.ai.signInWith")}>
-              <SegmentedControl
-                surface="inset"
-                variant="solid"
-                value={authMode}
-                onChange={(next) => void handleAuthModeChange(next)}
-                options={[
-                  { value: "oauth", label: t("settings.ai.chatgptAccount") },
-                  { value: "api_key", label: t("settings.ai.apiKeyOption") },
-                ]}
-              />
-            </SettingsRow>
-          )}
-
-          {isCodexPath && !oauthLoading && oauthStatus.connected && (
-            <SettingsRow
-              title={t("settings.ai.chatgptAccount")}
-              hint={
-                email
-                  ? t("settings.ai.signedInViaBrowserWithEmail", { email })
-                  : t("settings.ai.signedInViaBrowser")
-              }
-            >
-              <StatusBadge tone="success" label={t("settings.ai.connectedBadge")} />
-              <Button
-                type="button"
-                appearance="dawn"
-                variant="secondary"
-                size="sm"
-                onClick={() => setSignOutConfirmOpen(true)}
-              >
-                <LogOut size={13.5} />
-                <span>{t("settings.ai.signOut")}</span>
-              </Button>
-            </SettingsRow>
-          )}
-
-          {isCodexPath && !oauthLoading && !oauthStatus.connected && !oauthError && (
-            <div
-              data-testid="oauth-signed-out-row"
-              className="px-5 py-[18px] flex items-center justify-between gap-5"
-            >
-              <div className="flex items-start gap-3.5 min-w-0">
-                <div className="size-10 rounded-[12px] bg-accent-tint text-accent-on-tint flex items-center justify-center shrink-0">
-                  <ShieldCheck size={18} />
-                </div>
-                <div className="min-w-0">
-                  <p className="text-[14px] font-semibold text-text-primary leading-snug">
-                    {t("settings.ai.notSignedIn")}
-                  </p>
-                  <p className="text-[12.5px] text-text-tertiary leading-[1.4] mt-0.5">
-                    {t("settings.ai.notSignedInHint")}
-                  </p>
-                </div>
-              </div>
-              <Button
-                type="button"
-                appearance="dawn"
-                variant="primary"
-                size="sm"
-                onClick={() => void handleOAuthLogin()}
-              >
-                <ExternalLink size={14} />
-                <span>{t("settings.ai.signInWithChatGpt")}</span>
-              </Button>
-            </div>
-          )}
-
-          {isApiKeyPath && (
-            <>
-              <div className="px-5 py-4 flex flex-col gap-2.5">
-                <div className="flex items-center justify-between gap-4">
-                  <div className="min-w-0">
-                    <p className="text-[14px] font-medium text-text-primary leading-snug">
-                      {t("settings.ai.apiKey")}
-                    </p>
-                    <p className="text-[12.5px] text-text-tertiary mt-[3px] leading-snug">
-                      {t("settings.ai.apiKeyHint")}
-                    </p>
-                  </div>
-                  {hasSavedApiKey && (
-                    <StatusBadge tone="success" label={t("settings.ai.savedBadge")} />
-                  )}
-                </div>
-
-                <div className="flex items-center gap-2.5">
-                  <div className="flex-1 h-[38px] px-3 rounded-[6px] bg-surface-solid border border-border-default focus-within:border-accent focus-within:ring-[3px] focus-within:ring-focus-ring flex items-center gap-2 transition-colors">
-                    <KeyRound size={14} className="text-text-tertiary shrink-0" />
-                    <input
-                      type={showApiKey ? "text" : "password"}
-                      {...textFieldHandlers("ai_api_key", apiKey, setApiKey)}
-                      placeholder={provider === "anthropic" ? "sk-ant-..." : "sk-..."}
-                      aria-label={t("settings.ai.apiKey")}
-                      className="flex-1 min-w-0 bg-transparent border-0 outline-none font-mono text-[13px] text-text-primary placeholder:text-text-disabled"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowApiKey((v) => !v)}
-                      aria-label={showApiKey ? t("settings.ai.hideApiKey") : t("settings.ai.showApiKey")}
-                      className="p-1 rounded text-text-tertiary hover:text-text-primary cursor-pointer transition-colors"
-                    >
-                      {showApiKey ? <EyeOff size={15} /> : <Eye size={15} />}
-                    </button>
-                  </div>
-
-                  <Button
-                    type="button"
-                    appearance="dawn"
-                    variant="secondary"
-                    size="sm"
-                    disabled={!apiKey}
-                    onClick={handleClearApiKey}
-                  >
-                    {t("settings.ai.clear")}
-                  </Button>
-                </div>
-              </div>
-
-              <SettingsRow title={t("settings.ai.baseUrl")} hint={t("settings.ai.baseUrlHint")}>
-                <input
-                  type="text"
-                  {...textFieldHandlers("ai_base_url", baseUrl, setBaseUrl)}
-                  placeholder={provider === "anthropic" ? DEFAULT_ANTHROPIC_URL : DEFAULT_OPENAI_URL}
-                  aria-label={t("settings.ai.baseUrl")}
-                  className={`w-[280px] ${monoInputClass}`}
-                />
-              </SettingsRow>
-            </>
-          )}
-
-          {provider === "ollama" && (
-            <>
-              <SettingsRow
-                title={t("settings.ai.ollamaServer")}
-                hint={isMac ? t("settings.ai.ollamaServerHintMac") : t("settings.ai.ollamaServerHintOther")}
-              >
-                {ollamaRunning !== null && (
-                  <StatusBadge
-                    tone={ollamaRunning ? "success" : "neutral"}
-                    label={ollamaRunning ? t("settings.ai.ollamaRunning") : t("settings.ai.ollamaNotRunning")}
-                  />
-                )}
-                <input
-                  type="text"
-                  {...textFieldHandlers("ai_base_url", baseUrl, setBaseUrl)}
-                  placeholder={DEFAULT_OLLAMA_URL}
-                  aria-label={t("settings.ai.ollamaServer")}
-                  className={`w-[190px] !h-[34px] ${monoInputClass}`}
-                />
-              </SettingsRow>
-
-              <SettingsRow title={t("settings.ai.keepAlive")} hint={t("settings.ai.keepAliveHint")}>
-                <Select
-                  appearance="dawn"
-                  className="w-[155px]"
-                  icon={<Clock size={14} />}
-                  value={keepAlive}
-                  onChange={handleKeepAliveChange}
-                  options={keepAliveOptions}
-                />
-              </SettingsRow>
-            </>
-          )}
-        </SettingsGroup>
-
-        {isCodexPath && oauthLoading && (
-          <div
-            data-testid="oauth-waiting-card"
-            className="rounded-[6px] bg-surface-solid border border-accent/35 px-5 py-[18px] flex items-center justify-between gap-4"
+      case "not_signed_in":
+        return (
+          <SettingsRow
+            className="pl-[46px]"
+            title={t("settings.ai.codex.title")}
+            hint={
+              loginError ? (
+                <span className="text-danger">{loginError}</span>
+              ) : (
+                t("settings.ai.codex.notSignedInHint", {
+                  version: codexStatus.version ?? "",
+                })
+              )
+            }
           >
-            <div className="flex items-start gap-3.5 min-w-0">
-              <div className="size-10 rounded-[12px] bg-accent-tint text-accent-on-tint flex items-center justify-center shrink-0">
-                <Loader2 size={18} className="animate-spin" />
-              </div>
-              <div className="min-w-0">
-                <p className="text-[14px] font-semibold text-text-primary leading-snug">
-                  {t("settings.ai.waitingAuth")}
-                </p>
-                <p className="text-[12.5px] text-text-secondary leading-[1.4] mt-0.5">
-                  {t("settings.ai.waitingAuthHint")}
-                </p>
-              </div>
-            </div>
-            <Button
-              type="button"
-              appearance="dawn"
-              variant="secondary"
-              size="sm"
-              onClick={handleOAuthCancel}
-            >
-              {t("common.cancel")}
-            </Button>
-          </div>
-        )}
-
-        {isCodexPath && !oauthLoading && !oauthStatus.connected && oauthError && (
-          <div
-            data-testid="oauth-error-card"
-            className="rounded-[6px] bg-surface-solid border border-danger/25 px-5 py-[18px] flex items-center justify-between gap-4"
-          >
-            <div className="flex items-start gap-3.5 min-w-0">
-              <div className="size-10 rounded-[12px] bg-danger-tint text-danger flex items-center justify-center shrink-0">
-                <AlertCircle size={18} />
-              </div>
-              <div className="min-w-0">
-                <p className="text-[14px] font-semibold text-text-primary leading-snug">
-                  {t("settings.ai.authFailed")}
-                </p>
-                <p className="text-[12.5px] text-danger leading-[1.4] mt-0.5">
-                  {t("settings.ai.authFailedHint")}
-                </p>
-              </div>
-            </div>
             <Button
               type="button"
               appearance="dawn"
               variant="primary"
               size="sm"
-              onClick={() => void handleOAuthLogin()}
+              onClick={() => void handleCodexLogin()}
+            >
+              <LogIn size={13.5} />
+              <span>{t("settings.ai.signInWithChatGpt")}</span>
+            </Button>
+          </SettingsRow>
+        );
+
+      case "not_installed":
+        return (
+          <SettingsRow
+            className="pl-[46px]"
+            title={t("settings.ai.codex.title")}
+            hint={t("settings.ai.codex.notInstalledHint")}
+          >
+            <Button
+              type="button"
+              appearance="dawn"
+              variant="secondary"
+              size="sm"
+              onClick={handleCopyInstallCommand}
+            >
+              {copiedCmd ? <Check size={13.5} /> : <Copy size={13.5} />}
+              <span>
+                {copiedCmd ? t("common.copied") : t("settings.ai.codex.copyCommand")}
+              </span>
+            </Button>
+            <Button
+              type="button"
+              appearance="dawn"
+              variant="secondary"
+              size="sm"
+              onClick={() => void openUrl(CODEX_INSTALL_GUIDE_URL)}
+            >
+              <ExternalLink size={13.5} />
+              <span>{t("settings.ai.codex.installGuide")}</span>
+            </Button>
+            <Button
+              type="button"
+              appearance="dawn"
+              variant="ghost"
+              size="sm"
+              onClick={() => void probeCodex()}
             >
               <RefreshCw size={13.5} />
-              <span>{t("settings.ai.tryAgain")}</span>
+              <span>{t("settings.ai.codex.checkAgain")}</span>
             </Button>
-          </div>
-        )}
-      </section>
+          </SettingsRow>
+        );
 
-      {/* Section 2: Models & Generation */}
+      case "too_old":
+        return (
+          <SettingsRow
+            className="pl-[46px]"
+            title={t("settings.ai.codex.title")}
+            hint={t("settings.ai.codex.tooOldHint", {
+              version: codexStatus.version ?? "",
+              minVersion: codexStatus.min_version,
+            })}
+          >
+            <StatusBadge tone="warning" label={t("settings.ai.codex.updateNeeded")} />
+            <Button
+              type="button"
+              appearance="dawn"
+              variant="secondary"
+              size="sm"
+              onClick={() => void probeCodex()}
+            >
+              <RefreshCw size={13.5} />
+              <span>{t("settings.ai.codex.checkAgain")}</span>
+            </Button>
+          </SettingsRow>
+        );
+
+      case "failed":
+        return (
+          <SettingsRow
+            className="pl-[46px]"
+            title={t("settings.ai.codex.title")}
+            hint={codexStatus.error || t("settings.ai.codex.failedFallback")}
+          >
+            <StatusBadge tone="danger" label={t("settings.ai.codex.errorBadge")} />
+            <Button
+              type="button"
+              appearance="dawn"
+              variant="secondary"
+              size="sm"
+              onClick={() => void probeCodex()}
+            >
+              <RefreshCw size={13.5} />
+              <span>{t("settings.ai.retry")}</span>
+            </Button>
+          </SettingsRow>
+        );
+    }
+  };
+
+  const renderCodexLocationHint = () => {
+    if (codexPath.trim()) {
+      return (
+        <>
+          <span className="font-mono">{codexPath.trim()}</span>
+          {" · "}
+          {t("settings.ai.codex.customPath")}
+        </>
+      );
+    }
+    if (codexStatus?.path) {
+      return (
+        <>
+          <span className="font-mono">{codexStatus.path}</span>
+          {" · "}
+          {t("settings.ai.codex.foundAutomatically")}
+        </>
+      );
+    }
+    return t("settings.ai.codex.locationAutoHint");
+  };
+
+  const renderOllamaHint = () => {
+    if (ollamaStatus === null) return t("settings.ai.codex.checking");
+    if (!ollamaStatus.running) return t("settings.ai.ollamaNotReachable");
+    if (ollamaStatus.models != null) {
+      return t("settings.ai.ollamaReachableWithCount", { count: ollamaStatus.models });
+    }
+    return t("settings.ai.ollamaReachable");
+  };
+
+  return (
+    <div className="flex flex-col gap-7 pb-6">
+      {/* Section 1: Connection */}
       <section className="flex flex-col gap-3">
-        <SettingsOverline>
-          {isCodexPath ? t("settings.ai.modelsOverline") : t("settings.ai.modelGenerationOverline")}
-        </SettingsOverline>
+        <SettingsOverline>{t("settings.ai.connectionOverline")}</SettingsOverline>
 
         <SettingsGroup>
-          {isCodexPath ? (
+          {/* Option 1: Agent */}
+          <button
+            type="button"
+            role="radio"
+            aria-checked={connectionKind === "agent"}
+            data-testid="connection-option-agent"
+            onClick={() => void handleSelectConnection("agent")}
+            className="w-full min-h-[70px] px-5 py-3.5 flex items-center justify-between gap-4 text-left cursor-pointer hover:bg-surface-tint/40 transition-colors"
+          >
+            <div className="flex items-start gap-3 min-w-0 flex-1">
+              <span
+                aria-hidden="true"
+                className={`mt-0.5 size-[18px] rounded-full shrink-0 transition-colors ${
+                  connectionKind === "agent"
+                    ? "border-[5px] border-accent bg-surface-solid"
+                    : "border-[1.5px] border-border-strong bg-transparent"
+                }`}
+              />
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-[14px] font-medium text-text-primary leading-snug">
+                    {t("settings.ai.agentOption")}
+                  </span>
+                  <span className="px-2 py-[2px] rounded-full bg-accent-tint text-accent-on-tint text-[11px] font-semibold leading-tight">
+                    {t("settings.ai.recommendedBadge")}
+                  </span>
+                </div>
+                <p className="text-[12.5px] text-text-tertiary mt-[3px] leading-snug">
+                  {connectionKind === "agent"
+                    ? t("settings.ai.agentHintExpanded")
+                    : t("settings.ai.agentHintCollapsed")}
+                </p>
+              </div>
+            </div>
+            {connectionKind !== "agent" && (
+              <div className="shrink-0 flex items-center gap-2">{renderCollapsedAgentBadge()}</div>
+            )}
+          </button>
+
+          {/* Expanded Agent rows */}
+          {connectionKind === "agent" && (
+            <>
+              <SettingsRow
+                className="pl-[46px]"
+                title={t("settings.ai.agentOption")}
+                hint={t("settings.ai.agentPickerHint")}
+              >
+                <Select
+                  appearance="dawn"
+                  ariaLabel={t("settings.ai.agentOption")}
+                  className="w-[155px]"
+                  icon={<Terminal size={14} />}
+                  value="codex"
+                  onChange={() => {}}
+                  options={[{ value: "codex", label: t("settings.ai.codex.title") }]}
+                />
+              </SettingsRow>
+
+              <div data-testid="codex-status-row">{renderCodexStatusRow()}</div>
+
+              <div data-testid="codex-location-row">
+                <SettingsRow
+                  className="pl-[46px]"
+                  title={t("settings.ai.codex.locationTitle")}
+                  hint={renderCodexLocationHint()}
+                >
+                  {codexPath.trim() && (
+                    <Button
+                      type="button"
+                      appearance="dawn"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => void handleResetCodexPath()}
+                    >
+                      {t("settings.ai.codex.resetPath")}
+                    </Button>
+                  )}
+                  <Button
+                    type="button"
+                    appearance="dawn"
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => void handleChooseCodexPath()}
+                  >
+                    <FolderOpen size={13.5} />
+                    <span>{t("settings.ai.codex.changeLocation")}</span>
+                  </Button>
+                </SettingsRow>
+              </div>
+            </>
+          )}
+
+          {/* Option 2: API */}
+          <button
+            type="button"
+            role="radio"
+            aria-checked={connectionKind === "api"}
+            data-testid="connection-option-api"
+            onClick={() => void handleSelectConnection("api")}
+            className="w-full min-h-[70px] px-5 py-3.5 flex items-center justify-between gap-4 text-left cursor-pointer hover:bg-surface-tint/40 transition-colors"
+          >
+            <div className="flex items-start gap-3 min-w-0 flex-1">
+              <span
+                aria-hidden="true"
+                className={`mt-0.5 size-[18px] rounded-full shrink-0 transition-colors ${
+                  connectionKind === "api"
+                    ? "border-[5px] border-accent bg-surface-solid"
+                    : "border-[1.5px] border-border-strong bg-transparent"
+                }`}
+              />
+              <div className="min-w-0 flex-1">
+                <p className="text-[14px] font-medium text-text-primary leading-snug">
+                  {t("settings.ai.apiOption")}
+                </p>
+                <p className="text-[12.5px] text-text-tertiary mt-[3px] leading-snug">
+                  {connectionKind === "api"
+                    ? t("settings.ai.apiHintExpanded")
+                    : t("settings.ai.apiHintCollapsed")}
+                </p>
+              </div>
+            </div>
+          </button>
+
+          {/* Expanded API rows */}
+          {connectionKind === "api" && (
+            <>
+              <SettingsRow
+                className="pl-[46px]"
+                title={t("settings.ai.service")}
+                hint={
+                  apiProvider === "ollama"
+                    ? t("settings.ai.serviceOllamaHint")
+                    : t("settings.ai.serviceHint")
+                }
+              >
+                <Select
+                  appearance="dawn"
+                  ariaLabel={t("settings.ai.service")}
+                  className="w-[180px]"
+                  menuMinWidth={336}
+                  value={apiProvider}
+                  onChange={(next) => void handleApiServiceChange(next)}
+                  options={serviceOptions}
+                />
+              </SettingsRow>
+
+              <SettingsRow
+                className="pl-[46px]"
+                title={t("settings.ai.baseUrl")}
+                hint={
+                  apiProvider === "custom"
+                    ? t("settings.ai.baseUrlCustomHint")
+                    : t("settings.ai.baseUrlHint")
+                }
+              >
+                <input
+                  type="text"
+                  {...textFieldHandlers("ai_base_url", baseUrl, setBaseUrl)}
+                  placeholder={activePreset.defaultUrl || "https://example.com/v1"}
+                  aria-label={t("settings.ai.baseUrl")}
+                  className={`w-[290px] ${monoInputClass}`}
+                />
+              </SettingsRow>
+
+              {apiProvider === "ollama" ? (
+                <>
+                  <SettingsRow
+                    className="pl-[46px]"
+                    title={t("settings.ai.ollamaServer")}
+                    hint={renderOllamaHint()}
+                  >
+                    {ollamaStatus !== null && (
+                      <StatusBadge
+                        tone={ollamaStatus.running ? "success" : "neutral"}
+                        label={
+                          ollamaStatus.running
+                            ? t("settings.ai.connectedBadge")
+                            : t("settings.ai.ollamaNotRunning")
+                        }
+                      />
+                    )}
+                  </SettingsRow>
+
+                  <SettingsRow
+                    className="pl-[46px]"
+                    title={t("settings.ai.keepAlive")}
+                    hint={t("settings.ai.keepAliveHint")}
+                  >
+                    <Select
+                      appearance="dawn"
+                      ariaLabel={t("settings.ai.keepAlive")}
+                      className="w-[165px]"
+                      icon={<Clock size={14} />}
+                      value={keepAlive}
+                      onChange={handleKeepAliveChange}
+                      options={keepAliveOptions}
+                    />
+                  </SettingsRow>
+                </>
+              ) : (
+                <SettingsRow
+                  className="pl-[46px]"
+                  title={t("settings.ai.apiKey")}
+                  hint={
+                    apiProvider === "custom"
+                      ? t("settings.ai.apiKeyOptionalHint")
+                      : t("settings.ai.apiKeyHint")
+                  }
+                >
+                  <div className="w-[290px] h-9 px-3 rounded-[6px] bg-surface-solid border border-border-default focus-within:border-accent focus-within:ring-[3px] focus-within:ring-focus-ring flex items-center gap-1.5 transition-colors">
+                    <input
+                      type={showApiKey ? "text" : "password"}
+                      {...textFieldHandlers("ai_api_key", apiKey, setApiKey)}
+                      placeholder={activePreset.keyPlaceholder}
+                      aria-label={t("settings.ai.apiKey")}
+                      className="flex-1 min-w-0 bg-transparent border-0 outline-none font-mono text-[12.5px] text-text-primary placeholder:text-text-disabled"
+                    />
+                    {apiKey && (
+                      <button
+                        type="button"
+                        onClick={handleClearApiKey}
+                        aria-label={t("settings.ai.clear")}
+                        className="p-1 rounded text-text-tertiary hover:text-text-primary cursor-pointer transition-colors"
+                      >
+                        <X size={13.5} />
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setShowApiKey((v) => !v)}
+                      aria-label={
+                        showApiKey ? t("settings.ai.hideApiKey") : t("settings.ai.showApiKey")
+                      }
+                      className="p-1 rounded text-text-tertiary hover:text-text-primary cursor-pointer transition-colors"
+                    >
+                      {showApiKey ? <EyeOff size={14.5} /> : <Eye size={14.5} />}
+                    </button>
+                  </div>
+                </SettingsRow>
+              )}
+            </>
+          )}
+        </SettingsGroup>
+      </section>
+
+      {/* Section 2: Models */}
+      <section className="flex flex-col gap-3">
+        <SettingsOverline>{t("settings.ai.modelsOverline")}</SettingsOverline>
+
+        <SettingsGroup>
+          {connectionKind === "agent" ? (
             <>
               <div className="flex flex-col">
                 <SettingsRow
                   title={t("settings.ai.model")}
                   hint={
-                    isCustomModel
+                    isCustomCodexModel
                       ? t("settings.ai.modelHint")
-                      : modelsFromFallback
-                        ? t("settings.ai.modelListFallbackHint")
-                        : !oauthStatus.connected
-                          ? t("settings.ai.modelSignedOutHint")
-                          : t("settings.ai.modelPickerHint")
+                      : codexModels.length > 0
+                        ? t("settings.ai.codex.modelPickerHint")
+                        : t("settings.ai.codex.modelUnavailableHint")
                   }
                 >
                   <Select
                     appearance="dawn"
+                    ariaLabel={t("settings.ai.model")}
                     className="w-[220px]"
+                    menuMinWidth={320}
                     icon={<Cpu size={14} />}
-                    value={isCustomModel ? CUSTOM_MODEL : model}
+                    value={isCustomCodexModel ? CUSTOM_MODEL : effectiveCodexModel}
+                    placeholder={t("settings.ai.codex.modelDefaultPlaceholder")}
                     onChange={handleCodexModelSelect}
-                    options={modelOptions}
+                    options={codexModelOptions}
                   />
                 </SettingsRow>
-                {isCustomModel && (
+                {isCustomCodexModel && (
                   <div className="px-5 pb-4 -mt-1">
                     <input
                       type="text"
                       {...textFieldHandlers("ai_model", model, setModel)}
-                      placeholder="gpt-5.6-sol"
-                      aria-label={t("settings.ai.model")}
+                      placeholder={catalogDefaultModel?.slug || "gpt-6.2-sol"}
+                      aria-label={t("settings.ai.modelCustomInput")}
                       className={`w-full text-[13px] ${monoInputClass}`}
                     />
                   </div>
                 )}
               </div>
 
-              <SettingsRow title={t("settings.ai.effortQuick")} hint={t("settings.ai.effortQuickHint")}>
+              <SettingsRow
+                title={t("settings.ai.effortQuick")}
+                hint={t("settings.ai.effortQuickHint")}
+              >
                 <Select
                   appearance="dawn"
+                  ariaLabel={t("settings.ai.effortQuick")}
                   className="w-[175px]"
-                  value={effortQuick}
+                  value={displayedEffort(effortQuick)}
                   onChange={(value) => handleEffortChange("quick", value)}
                   options={effortOptions(effortQuick)}
                 />
               </SettingsRow>
 
-              <SettingsRow title={t("settings.ai.effortDeep")} hint={t("settings.ai.effortDeepHint")}>
+              <SettingsRow
+                title={t("settings.ai.effortDeep")}
+                hint={t("settings.ai.effortDeepHint")}
+              >
                 <Select
                   appearance="dawn"
+                  ariaLabel={t("settings.ai.effortDeep")}
                   className="w-[175px]"
-                  value={effortDeep}
+                  value={displayedEffort(effortDeep)}
                   onChange={(value) => handleEffortChange("deep", value)}
                   options={effortOptions(effortDeep)}
                 />
               </SettingsRow>
             </>
           ) : (
-            <SettingsRow title={t("settings.ai.model")} hint={t("settings.ai.modelGenerationHint")}>
-              <input
-                type="text"
-                {...textFieldHandlers("ai_model", model, setModel)}
-                placeholder={textModelPlaceholder}
-                aria-label={t("settings.ai.model")}
-                className={`w-[240px] text-[13px] ${monoInputClass}`}
-              />
-            </SettingsRow>
-          )}
+            <>
+              <div className="flex flex-col">
+                <SettingsRow
+                  title={t("settings.ai.model")}
+                  hint={
+                    apiModels.length > 0
+                      ? t("settings.ai.apiModelPickerHint")
+                      : t("settings.ai.modelGenerationHint")
+                  }
+                >
+                  {showApiModelPicker ? (
+                    <Select
+                      appearance="dawn"
+                      ariaLabel={t("settings.ai.model")}
+                      className="w-[240px]"
+                      menuMinWidth={300}
+                      icon={<Cpu size={14} />}
+                      value={model.trim()}
+                      placeholder={activePreset.defaultModel || t("settings.ai.modelPlaceholder")}
+                      onChange={handleApiModelSelect}
+                      options={apiModelOptions}
+                      menuHeader={
+                        apiModels.length > 15 ? (
+                          <div className="p-1.5 border-b border-border-subtle mb-1">
+                            <div className="h-8 px-2.5 rounded-[6px] bg-surface-inset flex items-center gap-2">
+                              <Search size={13} className="text-text-tertiary shrink-0" />
+                              <input
+                                type="text"
+                                value={apiModelFilter}
+                                onChange={(e) => setApiModelFilter(e.target.value)}
+                                placeholder={t("settings.ai.filterModels")}
+                                className="flex-1 min-w-0 bg-transparent border-0 outline-none text-[12.5px] text-text-primary placeholder:text-text-disabled"
+                              />
+                            </div>
+                          </div>
+                        ) : undefined
+                      }
+                    />
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        {...textFieldHandlers("ai_model", model, setModel)}
+                        placeholder={activePreset.defaultModel || t("settings.ai.modelPlaceholder")}
+                        aria-label={t("settings.ai.model")}
+                        className={`w-[240px] text-[13px] ${monoInputClass}`}
+                      />
+                      {apiModels.length > 0 && customApiModel && (
+                        <Button
+                          type="button"
+                          appearance="dawn"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setCustomApiModel(false)}
+                        >
+                          {t("settings.ai.backToList")}
+                        </Button>
+                      )}
+                    </div>
+                  )}
+                </SettingsRow>
+              </div>
 
-          <SettingsRow title={t("settings.ai.temperature")} hint={t("settings.ai.temperatureHint")}>
-            <Stepper
-              valueLabel={temperature.toFixed(1)}
-              onDecrement={() => handleTemperatureStep(-0.1)}
-              onIncrement={() => handleTemperatureStep(0.1)}
-              disableDecrement={temperature <= 0}
-              disableIncrement={temperature >= 1}
-              decrementLabel={t("settings.ai.temperatureDecrease")}
-              incrementLabel={t("settings.ai.temperatureIncrease")}
-            />
-          </SettingsRow>
+              <SettingsRow
+                title={t("settings.ai.temperature")}
+                hint={t("settings.ai.temperatureHint")}
+              >
+                <Stepper
+                  valueLabel={temperature.toFixed(1)}
+                  onDecrement={() => handleTemperatureStep(-0.1)}
+                  onIncrement={() => handleTemperatureStep(0.1)}
+                  disableDecrement={temperature <= 0}
+                  disableIncrement={temperature >= 1}
+                  decrementLabel={t("settings.ai.temperatureDecrease")}
+                  incrementLabel={t("settings.ai.temperatureIncrease")}
+                />
+              </SettingsRow>
+            </>
+          )}
         </SettingsGroup>
 
         <p className="text-[12.5px] leading-[1.45] text-text-tertiary px-1 pt-0.5">
-          {isMac ? t("settings.ai.footerNoteMac") : t("settings.ai.footerNoteOther")}
+          {t("settings.ai.footerNote")}
         </p>
       </section>
-
-      <SignOutConfirmModal
-        open={signOutConfirmOpen}
-        email={email}
-        isMac={isMac}
-        signingOut={signingOut}
-        onCancel={() => setSignOutConfirmOpen(false)}
-        onConfirm={() => void handleConfirmSignOut()}
-      />
     </div>
   );
 }

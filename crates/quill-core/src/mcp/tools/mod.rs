@@ -11,7 +11,7 @@
 //!   (`commands/settings.rs:18-20`). Wrapping it as an MCP tool would
 //!   leak the API key. Future partial settings exposure must filter
 //!   against `Secrets::SENSITIVE_KEYS` (`secrets.rs:15-21`).
-//! - `oauth` / OAuth tokens — `commands::oauth::*`.
+//! - `secrets.db` — API keys stay local to the desktop host.
 //! - Secrets store — separate `Mutex<Connection>`; never add a
 //!   `Secrets` clone to `McpState`.
 //! - Sync infra tables — `_replay_state`, `_tombstones`,

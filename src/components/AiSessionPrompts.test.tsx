@@ -88,22 +88,31 @@ describe("AI session-expired and not-configured prompt cards across surfaces", (
     }
   }
 
-  it("renders reauth and not-configured cards in MessageBubble and opens AI settings on main", async () => {
+  it("renders Codex sentinel and not-configured cards in MessageBubble and opens AI settings on main", async () => {
     mocks.invoke.mockResolvedValue(undefined);
-    const reauthMsg = { id: "m1", role: "assistant" as const, content: "AI_REAUTH_REQUIRED" };
+    for (const [sentinel, testId, expectedText] of [
+      ["CODEX_NOT_SIGNED_IN", "ai-codex-not-signed-in-card", "Sign in to Codex"],
+      ["CODEX_NOT_INSTALLED", "ai-codex-not-installed-card", "Codex not found"],
+      ["CODEX_TOO_OLD", "ai-codex-too-old-card", "Update Codex"],
+      ["CODEX_FAILED", "ai-codex-failed-card", "Codex couldn't start"],
+    ] as const) {
+      const msg = { id: sentinel, role: "assistant" as const, content: sentinel };
+      await act(async () => {
+        root.render(<MessageBubble msg={msg} messages={[msg]} streaming={false} />);
+      });
+      const card = container.querySelector(`[data-testid="${testId}"]`);
+      expect(card).not.toBeNull();
+      expect(card?.textContent).toContain(expectedText);
+      expect(card?.textContent).not.toContain(sentinel);
+    }
+
+    const signInMsg = { id: "m1", role: "assistant" as const, content: "CODEX_NOT_SIGNED_IN" };
     await act(async () => {
-      root.render(<MessageBubble msg={reauthMsg} messages={[reauthMsg]} streaming={false} />);
+      root.render(<MessageBubble msg={signInMsg} messages={[signInMsg]} streaming={false} />);
     });
-
-    const reauthCard = container.querySelector('[data-testid="ai-reauth-card"]');
-    expect(reauthCard).not.toBeNull();
-    expect(reauthCard?.textContent).toContain("Your OpenAI session has expired");
-    expect(reauthCard?.textContent).not.toContain("AI_REAUTH_REQUIRED");
-
-    const signInAgainBtn = reauthCard?.querySelector("button");
-    expect(signInAgainBtn?.textContent).toContain("Sign in again");
+    const signInCard = container.querySelector('[data-testid="ai-codex-not-signed-in-card"]');
     await act(async () => {
-      signInAgainBtn?.click();
+      signInCard?.querySelector("button")?.click();
       await Promise.resolve();
     });
     expect(mocks.invoke).toHaveBeenCalledWith("open_settings_on_main", { section: "ai" });
@@ -119,7 +128,7 @@ describe("AI session-expired and not-configured prompt cards across surfaces", (
 
     const notConfigCard = container.querySelector('[data-testid="ai-not-configured-card"]');
     expect(notConfigCard).not.toBeNull();
-    expect(notConfigCard?.textContent).toContain("Set up an AI provider");
+    expect(notConfigCard?.textContent).toContain("Set up AI for reading");
     const openSettingsBtn = notConfigCard?.querySelector("button");
     expect(openSettingsBtn?.textContent).toContain("Open AI Settings");
     await act(async () => {
@@ -130,10 +139,10 @@ describe("AI session-expired and not-configured prompt cards across surfaces", (
     expect(mocks.focusWindow).toHaveBeenCalledWith("main");
   });
 
-  it("renders LookupPopover reauth and not-configured cards cleanly via rejection and stream", async () => {
+  it("renders LookupPopover Codex and not-configured cards cleanly via rejection and stream", async () => {
     mocks.invoke.mockImplementation(async (cmd) => {
       if (cmd === "is_word_in_dictionary") return false;
-      if (cmd === "ai_lookup") return Promise.reject(new Error("AI_REAUTH_REQUIRED"));
+      if (cmd === "ai_lookup") return Promise.reject(new Error("CODEX_NOT_SIGNED_IN"));
       return undefined;
     });
 
@@ -144,9 +153,9 @@ describe("AI session-expired and not-configured prompt cards across surfaces", (
     });
     await flush();
 
-    const card = container.querySelector('[data-testid="ai-reauth-card"]');
+    const card = container.querySelector('[data-testid="ai-codex-not-signed-in-card"]');
     expect(card).not.toBeNull();
-    expect(container.textContent).not.toContain("AI_REAUTH_REQUIRED");
+    expect(container.textContent).not.toContain("CODEX_NOT_SIGNED_IN");
 
     await act(async () => {
       card?.querySelector("button")?.click();
@@ -178,7 +187,7 @@ describe("AI session-expired and not-configured prompt cards across surfaces", (
     expect(container.textContent).not.toContain("AI_NOT_CONFIGURED");
   });
 
-  it("renders ExplainPopover reauth (via stream) and not-configured (via rejection) cards", async () => {
+  it("renders ExplainPopover Codex (via stream) and not-configured (via rejection) cards", async () => {
     mocks.invoke.mockResolvedValue(undefined);
     await act(async () => {
       root.render(
@@ -188,16 +197,16 @@ describe("AI session-expired and not-configured prompt cards across surfaces", (
     await flush();
 
     await act(async () => {
-      emitPrefix("ai-lookup-chunk-", { delta: "AI_REAUTH_REQUIRED", done: false });
+      emitPrefix("ai-lookup-chunk-", { delta: "CODEX_NOT_SIGNED_IN", done: false });
       emitPrefix("ai-lookup-chunk-", { delta: "", done: true });
     });
 
-    const reauthCard = container.querySelector('[data-testid="ai-reauth-card"]');
-    expect(reauthCard).not.toBeNull();
-    expect(container.textContent).not.toContain("AI_REAUTH_REQUIRED");
+    const codexCard = container.querySelector('[data-testid="ai-codex-not-signed-in-card"]');
+    expect(codexCard).not.toBeNull();
+    expect(container.textContent).not.toContain("CODEX_NOT_SIGNED_IN");
 
     await act(async () => {
-      reauthCard?.querySelector("button")?.click();
+      codexCard?.querySelector("button")?.click();
       await Promise.resolve();
     });
     expect(mocks.invoke).toHaveBeenCalledWith("open_settings_on_main", { section: "ai" });
@@ -216,10 +225,10 @@ describe("AI session-expired and not-configured prompt cards across surfaces", (
     expect(container.querySelector('[data-testid="ai-not-configured-card"]')).not.toBeNull();
   });
 
-  it("renders TranslationPopover reauth and not-configured cards and routes to settings", async () => {
+  it("renders TranslationPopover Codex and not-configured cards and routes to settings", async () => {
     mocks.invoke.mockImplementation(async (cmd) => {
       if (cmd === "get_all_settings") return { translation_language: "zh" };
-      if (cmd === "ai_translate_passage") return Promise.reject(new Error("AI_REAUTH_REQUIRED"));
+      if (cmd === "ai_translate_passage") return Promise.reject(new Error("CODEX_NOT_INSTALLED"));
       return undefined;
     });
 
@@ -230,11 +239,11 @@ describe("AI session-expired and not-configured prompt cards across surfaces", (
     });
     await flush();
 
-    const reauthCard = container.querySelector('[data-testid="ai-reauth-card"]');
-    expect(reauthCard).not.toBeNull();
-    expect(container.textContent).not.toContain("AI_REAUTH_REQUIRED");
+    const codexCard = container.querySelector('[data-testid="ai-codex-not-installed-card"]');
+    expect(codexCard).not.toBeNull();
+    expect(container.textContent).not.toContain("CODEX_NOT_INSTALLED");
     await act(async () => {
-      reauthCard?.querySelector("button")?.click();
+      codexCard?.querySelector("button")?.click();
       await Promise.resolve();
     });
     expect(mocks.invoke).toHaveBeenCalledWith("open_settings_on_main", { section: "ai" });
@@ -260,16 +269,16 @@ describe("AI session-expired and not-configured prompt cards across surfaces", (
     expect(container.textContent).not.toContain("AI_NOT_CONFIGURED");
   });
 
-  it("renders reauth and not-configured cards inside ChatsView and routes to main ai settings", async () => {
+  it("renders Codex and not-configured cards inside ChatsView and routes to main ai settings", async () => {
     const onOpenSettings = vi.fn();
-    let mode: "reauth" | "not_configured" = "reauth";
+    let mode: "codex" | "not_configured" = "codex";
 
     const chatRecord = {
       id: "c1",
       book_id: "b1",
       book_title: "Frankenstein",
       title: "Theme discussion",
-      model: "gpt-5.6-sol",
+      model: "gpt-6.2-sol",
       pinned: false,
       metadata: null,
       created_at: 1000,
@@ -298,7 +307,7 @@ describe("AI session-expired and not-configured prompt cards across surfaces", (
           return { id: "m2", chat_id: "c1", role: "user", content: "Follow up", context: null, metadata: null, created_at: 2, updated_at: 2 };
         case "ai_chat":
           return Promise.reject(
-            new Error(mode === "reauth" ? "AI_REAUTH_REQUIRED" : "AI_NOT_CONFIGURED"),
+            new Error(mode === "codex" ? "CODEX_NOT_SIGNED_IN" : "AI_NOT_CONFIGURED"),
           );
         default:
           return undefined;
@@ -357,10 +366,10 @@ describe("AI session-expired and not-configured prompt cards across surfaces", (
     });
     await flush(6);
 
-    const reauthCard = container.querySelector('[data-testid="ai-reauth-card"]');
-    expect(reauthCard).not.toBeNull();
+    const codexCard = container.querySelector('[data-testid="ai-codex-not-signed-in-card"]');
+    expect(codexCard).not.toBeNull();
     await act(async () => {
-      reauthCard?.querySelector("button")?.click();
+      codexCard?.querySelector("button")?.click();
     });
     expect(onOpenSettings).toHaveBeenCalledWith("ai");
 
@@ -380,5 +389,149 @@ describe("AI session-expired and not-configured prompt cards across surfaces", (
       notConfigCard?.querySelector("button")?.click();
     });
     expect(onOpenSettings).toHaveBeenLastCalledWith("ai");
+  });
+
+  it("handles terminal stream errors separately from partial deltas in popovers", async () => {
+    mocks.invoke.mockImplementation(async (cmd) => {
+      if (cmd === "is_word_in_dictionary") return false;
+      if (cmd === "get_all_settings") return { translation_language: "zh" };
+      return undefined;
+    });
+
+    // LookupPopover: partial delta followed by terminal sentinel error clears partial text and renders card
+    await act(async () => {
+      root.render(
+        <LookupPopover x={100} y={100} word="lucid" sentence="A lucid dream." bookId="b1" onClose={vi.fn()} />,
+      );
+    });
+    await flush();
+    await act(async () => {
+      emitPrefix("ai-lookup-chunk-", { delta: "Clear and ", done: false });
+      emitPrefix("ai-lookup-chunk-", { delta: "", done: true, error: "CODEX_NOT_SIGNED_IN" });
+    });
+    expect(container.querySelector('[data-testid="ai-codex-not-signed-in-card"]')).not.toBeNull();
+    expect(container.textContent).not.toContain("Clear and ");
+    expect(container.textContent).not.toContain("CODEX_NOT_SIGNED_IN");
+
+    // ExplainPopover: partial delta followed by terminal sentinel error
+    listeners.clear();
+    await act(async () => {
+      root.render(
+        <ExplainPopover x={80} y={80} text="Partial explain." sentence="" bookId="b1" onClose={vi.fn()} />,
+      );
+    });
+    await flush();
+    await act(async () => {
+      emitPrefix("ai-lookup-chunk-", { delta: "Half explanation ", done: false });
+      emitPrefix("ai-lookup-chunk-", { delta: "", done: true, error: "CODEX_FAILED" });
+    });
+    expect(container.querySelector('[data-testid="ai-codex-failed-card"]')).not.toBeNull();
+    expect(container.textContent).not.toContain("Half explanation");
+
+    // TranslationPopover: partial delta followed by terminal generic error replaces partial text with error
+    listeners.clear();
+    await act(async () => {
+      root.render(
+        <TranslationPopover x={60} y={60} text="Partial translate" bookId="b1" onClose={vi.fn()} />,
+      );
+    });
+    await flush();
+    await act(async () => {
+      emitPrefix("ai-translate-chunk-", { delta: "部分翻译", done: false });
+      emitPrefix("ai-translate-chunk-", { delta: "", done: true, error: "AI error: Codex stopped" });
+    });
+    expect(container.textContent).toContain("AI error: Codex stopped");
+    expect(container.textContent).not.toContain("部分翻译");
+  });
+
+  it("disposes late listeners without invoking and cancels pending invokes immediately on unmount or replacement", async () => {
+    // 1) Delayed listen: unmount before listen resolves must dispose both definition & context
+    //    listeners and never call ai_lookup
+    const resolvers: Array<(unlisten: () => void) => void> = [];
+    const disposedUnlistens = [vi.fn(), vi.fn()];
+    const defaultListen = mocks.listen.getMockImplementation()!;
+    mocks.listen.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolvers.push(resolve);
+        }),
+    );
+    mocks.invoke.mockImplementation(async (cmd) => {
+      if (cmd === "is_word_in_dictionary") return false;
+      return undefined;
+    });
+
+    await act(async () => {
+      root.render(
+        <LookupPopover x={100} y={100} word="first" sentence="First." bookId="b1" onClose={vi.fn()} />,
+      );
+    });
+    expect(resolvers.length).toBe(2);
+    // Unmount before either listen settles
+    act(() => root.unmount());
+    await act(async () => {
+      resolvers.forEach((resolve, idx) => resolve(disposedUnlistens[idx]));
+      await Promise.resolve();
+    });
+    await flush();
+
+    expect(disposedUnlistens[0]).toHaveBeenCalledTimes(1);
+    expect(disposedUnlistens[1]).toHaveBeenCalledTimes(1);
+    expect(mocks.invoke.mock.calls.some(([cmd]) => cmd === "ai_lookup")).toBe(false);
+
+    // Restore default listen implementation for step 2
+    mocks.listen.mockImplementation(defaultListen);
+
+    // 2) Delayed invoke: replacing the word while ai_lookup is pending cancels the old channel
+    //    immediately and keeps the replacement's listener intact.
+    root = createRoot(container);
+    let resolveFirstInvoke!: () => void;
+    let lookupCalls = 0;
+    let firstChannel = "";
+    mocks.invoke.mockClear();
+    mocks.invoke.mockImplementation((cmd, args) => {
+      if (cmd === "is_word_in_dictionary") return Promise.resolve(false);
+      if (cmd === "ai_lookup") {
+        lookupCalls += 1;
+        if (lookupCalls === 1) {
+          firstChannel = `ai-lookup-chunk-${String(args?.requestId)}`;
+          return new Promise<void>((resolve) => {
+            resolveFirstInvoke = resolve;
+          });
+        }
+        return Promise.resolve(undefined);
+      }
+      return Promise.resolve(undefined);
+    });
+
+    await act(async () => {
+      root.render(
+        <LookupPopover x={100} y={100} word="alpha" sentence="Alpha." bookId="b1" onClose={vi.fn()} />,
+      );
+    });
+    await flush();
+    expect(firstChannel).toBeTruthy();
+
+    // Replace selection while first ai_lookup is still in flight
+    await act(async () => {
+      root.render(
+        <LookupPopover x={100} y={100} word="beta" sentence="Beta." bookId="b1" onClose={vi.fn()} />,
+      );
+    });
+    await flush();
+
+    // Old channel must already be cancelled before the first invoke settles!
+    expect(mocks.invoke).toHaveBeenCalledWith("ai_cancel", { channel: firstChannel });
+
+    // Even when the first invoke later resolves, the second listener must still receive deltas!
+    await act(async () => {
+      resolveFirstInvoke();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      emitPrefix("ai-lookup-chunk-", { delta: "Beta definition", done: false });
+      emitPrefix("ai-lookup-chunk-", { delta: "", done: true });
+    });
+    expect(container.textContent).toContain("Beta definition");
   });
 });

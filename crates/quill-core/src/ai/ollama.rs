@@ -2,11 +2,14 @@ use std::time::Duration;
 
 use serde::Serialize;
 
+const NOT_RUNNING: OllamaStatus = OllamaStatus { running: false, models: None };
 const OLLAMA_CHECK_TIMEOUT: Duration = Duration::from_millis(1200);
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct OllamaStatus {
     pub running: bool,
+    /// Installed models, when the server answered.
+    pub models: Option<usize>,
 }
 
 /// Probe a local Ollama server at `base_url` with a short timeout so the UI
@@ -17,23 +20,32 @@ pub async fn check_ollama_status(base_url: &str) -> OllamaStatus {
 
 async fn check_ollama_status_with_timeout(base_url: &str, timeout: Duration) -> OllamaStatus {
     let trimmed = base_url.trim().trim_end_matches('/');
+    // The connection's base URL ends in the OpenAI-compatible `/v1`; the
+    // native status endpoint sits beside it.
+    let trimmed = trimmed.strip_suffix("/v1").unwrap_or(trimmed);
     let Ok(parsed) = reqwest::Url::parse(trimmed) else {
-        return OllamaStatus { running: false };
+        return NOT_RUNNING;
     };
     if !matches!(parsed.scheme(), "http" | "https") {
-        return OllamaStatus { running: false };
+        return NOT_RUNNING;
     }
 
     let Ok(client) = reqwest::Client::builder().timeout(timeout).build() else {
-        return OllamaStatus { running: false };
+        return NOT_RUNNING;
     };
 
     let url = format!("{trimmed}/api/tags");
-    let running = match client.get(&url).send().await {
-        Ok(resp) => resp.status().is_success(),
-        Err(_) => false,
-    };
-    OllamaStatus { running }
+    match client.get(&url).send().await {
+        Ok(resp) if resp.status().is_success() => {
+            let models = resp
+                .json::<serde_json::Value>()
+                .await
+                .ok()
+                .and_then(|body| body["models"].as_array().map(Vec::len));
+            OllamaStatus { running: true, models }
+        }
+        _ => NOT_RUNNING,
+    }
 }
 
 #[cfg(test)]
@@ -65,16 +77,23 @@ mod tests {
 
     #[tokio::test]
     async fn reports_running_when_ollama_returns_200() {
-        let base_url = spawn_one_shot_server("200 OK", r#"{"models":[]}"#, Duration::ZERO).await;
+        let base_url = spawn_one_shot_server("200 OK", r#"{"models":[{"name":"a"},{"name":"b"}]}"#, Duration::ZERO).await;
         let status = check_ollama_status(&format!("{base_url}/")).await;
-        assert_eq!(status, OllamaStatus { running: true });
+        assert_eq!(status, OllamaStatus { running: true, models: Some(2) });
+    }
+
+    #[tokio::test]
+    async fn probes_beside_the_openai_compatible_v1_path() {
+        let base_url = spawn_one_shot_server("200 OK", r#"{"models":[]}"#, Duration::ZERO).await;
+        let status = check_ollama_status(&format!("{base_url}/v1")).await;
+        assert_eq!(status, OllamaStatus { running: true, models: Some(0) });
     }
 
     #[tokio::test]
     async fn reports_not_running_on_non_2xx() {
         let base_url = spawn_one_shot_server("500 Internal Server Error", "err", Duration::ZERO).await;
         let status = check_ollama_status(&base_url).await;
-        assert_eq!(status, OllamaStatus { running: false });
+        assert_eq!(status, NOT_RUNNING);
     }
 
     #[tokio::test]
@@ -84,7 +103,7 @@ mod tests {
         drop(listener);
 
         let status = check_ollama_status(&format!("http://127.0.0.1:{port}")).await;
-        assert_eq!(status, OllamaStatus { running: false });
+        assert_eq!(status, NOT_RUNNING);
     }
 
     #[tokio::test]
@@ -92,19 +111,19 @@ mod tests {
         let base_url =
             spawn_one_shot_server("200 OK", r#"{"models":[]}"#, Duration::from_millis(350)).await;
         let status = check_ollama_status_with_timeout(&base_url, Duration::from_millis(60)).await;
-        assert_eq!(status, OllamaStatus { running: false });
+        assert_eq!(status, NOT_RUNNING);
     }
 
     #[tokio::test]
     async fn reports_not_running_for_invalid_or_non_http_urls() {
-        assert_eq!(check_ollama_status("").await, OllamaStatus { running: false });
+        assert_eq!(check_ollama_status("").await, NOT_RUNNING);
         assert_eq!(
             check_ollama_status("not a url").await,
-            OllamaStatus { running: false }
+            NOT_RUNNING
         );
         assert_eq!(
             check_ollama_status("ftp://localhost:11434").await,
-            OllamaStatus { running: false }
+            NOT_RUNNING
         );
     }
 }

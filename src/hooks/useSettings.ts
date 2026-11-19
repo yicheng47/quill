@@ -23,11 +23,28 @@ export function useSettings() {
 
   const saveBulk = useCallback(async (newSettings: Record<string, string>) => {
     await invoke("set_settings_bulk", { settings: newSettings });
+    if (
+      ("ai_provider" in newSettings || "ai_base_url" in newSettings) &&
+      !("ai_api_key" in newSettings)
+    ) {
+      const fresh = await invoke<Record<string, string>>("get_all_settings");
+      if (fresh && typeof fresh === "object" && !Array.isArray(fresh)) {
+        setSettings(fresh);
+        return;
+      }
+    }
     setSettings((prev) => ({ ...prev, ...newSettings }));
   }, []);
 
   const save = useCallback(async (key: string, value: string) => {
     await invoke("set_setting", { key, value });
+    if (key === "ai_provider" || key === "ai_base_url") {
+      const fresh = await invoke<Record<string, string>>("get_all_settings");
+      if (fresh && typeof fresh === "object" && !Array.isArray(fresh)) {
+        setSettings(fresh);
+        return;
+      }
+    }
     setSettings((prev) => ({ ...prev, [key]: value }));
   }, []);
 

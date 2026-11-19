@@ -351,7 +351,9 @@ pub fn delete_chat(core: &Core, chat_id: String) -> AppResult<()> {
             id: chat_id.clone(),
         });
         Ok(())
-    })
+    })?;
+    core.codex.forget_chat(&chat_id);
+    Ok(())
 }
 
 pub fn rename_chat(core: &Core, chat_id: String, title: String) -> AppResult<()> {

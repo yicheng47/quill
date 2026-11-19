@@ -23,6 +23,7 @@ import { parseAiErrorMessage } from "../utils/aiStream";
 import { openReaderWindow } from "../utils/openReaderWindow";
 import { formatMonthHeading, formatShortDate } from "../utils/vocabParse";
 import AiAuthPromptCard from "./AiAuthPromptCard";
+import { isExactAiSentinel } from "../lib/aiConnections";
 import type { SettingsSection } from "./settings/types";
 import BookCover from "./ui/BookCover";
 import { Menu, MenuDivider, MenuItem } from "./ui/Menu";
@@ -856,14 +857,12 @@ function ChatConversationPane({
             messages.map((msg, idx) => {
               const isLast = idx === messages.length - 1;
               if (msg.role === "assistant") {
-                if (
-                  msg.content === "AI_NOT_CONFIGURED" ||
-                  msg.content === "AI_REAUTH_REQUIRED"
-                ) {
+                const trimmed = msg.content.trim();
+                if (isExactAiSentinel(trimmed)) {
                   return (
                     <AiAuthPromptCard
                       key={msg.id}
-                      variant={msg.content === "AI_REAUTH_REQUIRED" ? "reauth" : "notConfigured"}
+                      sentinel={trimmed}
                       onOpenSettings={() => onOpenSettings("ai")}
                     />
                   );

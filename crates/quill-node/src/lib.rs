@@ -187,6 +187,12 @@ impl QuillCore {
     pub fn log_dir(&self) -> String {
         self.inner.log_dir.to_string_lossy().into_owned()
     }
+
+    /// Stop the child processes Quill started, such as the Codex app server.
+    #[napi]
+    pub fn shutdown(&self) {
+        self.inner.codex.shutdown();
+    }
 }
 
 #[napi]

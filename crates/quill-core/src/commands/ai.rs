@@ -2,11 +2,12 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
+use crate::ai::dispatch::AiRequest;
 use crate::ai::AI_NOT_CONFIGURED;
 use crate::error::{AppError, AppResult};
 use crate::host::{Core, ShellHost};
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct ChatMessage {
     pub role: String,
     pub content: String,
@@ -16,6 +17,34 @@ pub struct ChatMessage {
 pub struct AiStreamChunk {
     pub delta: String,
     pub done: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+impl AiStreamChunk {
+    pub fn delta(delta: impl Into<String>) -> Self {
+        Self {
+            delta: delta.into(),
+            done: false,
+            error: None,
+        }
+    }
+
+    pub fn done() -> Self {
+        Self {
+            delta: String::new(),
+            done: true,
+            error: None,
+        }
+    }
+
+    pub fn error(error: impl Into<String>) -> Self {
+        Self {
+            delta: String::new(),
+            done: true,
+            error: Some(error.into()),
+        }
+    }
 }
 
 const LOOKUP_TRANSLATION_MARKER: &str = "[[QUILL_TRANSLATION]]";
@@ -36,32 +65,156 @@ pub(crate) fn effort_from_setting(value: Option<String>) -> Option<String> {
     value.filter(|v| !v.is_empty() && v != "default")
 }
 
-pub async fn list_codex_models(
-    core: &Core,
-) -> AppResult<crate::ai::codex_models::CodexModelList> {
-    Ok(crate::ai::codex_models::list_models(&core.secrets).await)
+fn codex_path_override(core: &Core) -> Option<String> {
+    non_empty_setting(
+        core.db
+            .reader()
+            .query_row("SELECT value FROM settings WHERE key = 'ai_codex_path'", [], |row| row.get(0))
+            .ok(),
+    )
+}
+
+pub async fn codex_status(core: &Core) -> AppResult<crate::ai::codex::CodexStatus> {
+    Ok(core.codex.status(codex_path_override(core)).await)
+}
+
+pub async fn list_codex_models(core: &Core) -> AppResult<crate::ai::codex::CodexModelList> {
+    core.codex.models(codex_path_override(core)).await
+}
+
+pub async fn codex_login(core: &Core) -> AppResult<crate::ai::codex::LoginOutcome> {
+    core.codex.login(core.host.as_ref(), codex_path_override(core)).await
+}
+
+pub async fn codex_login_cancel(core: &Core) -> AppResult<()> {
+    core.codex.cancel_login().await
+}
+
+pub async fn ai_cancel(core: &Core, channel: String) -> AppResult<()> {
+    crate::ai::dispatch::cancel(core, &channel).await;
+    Ok(())
 }
 
 pub async fn check_ollama_status(
     core: &Core,
     base_url: Option<String>,
 ) -> AppResult<crate::ai::ollama::OllamaStatus> {
-    let configured_url = base_url
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .or_else(|| {
+    let configured_url = match base_url {
+        Some(draft) => non_empty_setting(Some(draft)),
+        None => {
             let conn = core.db.reader();
-            conn.query_row(
-                "SELECT value FROM settings WHERE key = 'ai_base_url'",
-                [],
-                |row| row.get::<_, String>(0),
-            )
-            .ok()
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-        })
-        .unwrap_or_else(|| "http://localhost:11434".to_string());
+            let saved_provider: Option<String> = conn
+                .query_row("SELECT value FROM settings WHERE key = 'ai_provider'", [], |row| row.get(0))
+                .ok();
+            if saved_provider.as_deref() == Some("ollama") {
+                non_empty_setting(
+                    conn.query_row("SELECT value FROM settings WHERE key = 'ai_base_url'", [], |row| row.get(0))
+                        .ok(),
+                )
+            } else {
+                None
+            }
+        }
+    }
+    .unwrap_or_else(|| crate::ai::api::default_base_url("ollama").unwrap_or_default().to_string());
     Ok(crate::ai::ollama::check_ollama_status(&configured_url).await)
+}
+
+/// Only reuse the stored API key when the caller omitted a draft key AND the
+/// listing targets the exact saved provider and origin; an explicit draft key
+/// authorizes whatever provider/URL the caller passed.
+fn resolve_list_models_api_key(
+    core: &Core,
+    provider: &str,
+    target_url: &str,
+    draft_key: Option<String>,
+    saved_provider: Option<&str>,
+    saved_base_url: Option<String>,
+) -> String {
+    if provider == "ollama" {
+        return String::new();
+    }
+    if let Some(draft) = draft_key {
+        return draft;
+    }
+    let Some(saved_prov) = saved_provider else {
+        return String::new();
+    };
+    if saved_prov != provider {
+        return String::new();
+    }
+    let Ok(saved_effective_url) = crate::ai::api::base_url(saved_prov, saved_base_url) else {
+        return String::new();
+    };
+    if !crate::ai::api::same_origin(target_url, &saved_effective_url) {
+        return String::new();
+    }
+    core.secrets
+        .get_api_key_for_endpoint(provider, target_url)
+        .unwrap_or_default()
+}
+
+/// List a service's models for the model picker. Unsaved drafts from the
+/// settings screen take precedence over the saved values.
+pub async fn list_api_models(
+    core: &Core,
+    provider: String,
+    base_url: Option<String>,
+    api_key: Option<String>,
+) -> AppResult<crate::ai::api::ApiModelList> {
+    let (saved_provider, saved_base_url) = {
+        let conn = core.db.reader();
+        let mut stmt = conn.prepare(
+            "SELECT key, value FROM settings WHERE key IN ('ai_provider', 'ai_base_url')",
+        )?;
+        let mut saved_provider: Option<String> = None;
+        let mut saved_base_url: Option<String> = None;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        for row in rows {
+            let (k, v) = row?;
+            match k.as_str() {
+                "ai_provider" => saved_provider = Some(v),
+                "ai_base_url" => saved_base_url = Some(v),
+                _ => {}
+            }
+        }
+        (non_empty_setting(saved_provider), non_empty_setting(saved_base_url))
+    };
+    let url_override = match base_url {
+        Some(draft) => non_empty_setting(Some(draft)),
+        None if saved_provider.as_deref() == Some(provider.as_str()) => saved_base_url.clone(),
+        None => None,
+    };
+    let url = crate::ai::api::base_url(&provider, url_override)?;
+    let key = resolve_list_models_api_key(
+        core,
+        &provider,
+        &url,
+        api_key,
+        saved_provider.as_deref(),
+        saved_base_url,
+    );
+    crate::ai::api::list_models(&provider, &url, key.trim()).await
+}
+
+fn truncate_at_char_boundary(text: &str, max_bytes: usize) -> &str {
+    if text.len() <= max_bytes {
+        return text;
+    }
+    let mut end = max_bytes;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    &text[..end]
+}
+
+fn ui_language(core: &Core) -> String {
+    core.db
+        .reader()
+        .query_row("SELECT value FROM settings WHERE key = 'language'", [], |row| row.get(0))
+        .unwrap_or_else(|_| "en".to_string())
 }
 
 pub(crate) fn non_empty_setting(value: Option<String>) -> Option<String> {
@@ -74,33 +227,19 @@ pub(crate) fn configured_ai_provider(value: Option<String>) -> AppResult<String>
     non_empty_setting(value).ok_or_else(|| AppError::Other(AI_NOT_CONFIGURED.to_string()))
 }
 
-pub(crate) async fn resolve_ai_auth(
-    core: &Core,
-    provider: &str,
-    auth_mode: &str,
-) -> AppResult<(String, Option<String>)> {
-    if auth_mode == "oauth" && provider == "openai" {
-        match crate::ai::oauth::get_valid_token(&core.secrets).await {
-            Ok(pair) => Ok(pair),
-            Err(err) => {
-                if crate::ai::is_reauth_required(&err) {
-                    core.host.emit_to_json(
-                        "main",
-                        "openai-oauth-changed",
-                        &serde_json::json!({ "connected": false }),
-                    );
-                }
-                Err(err)
-            }
-        }
+pub(crate) fn resolve_api_key(core: &Core, provider: &str, url: &str) -> AppResult<String> {
+    let api_key = if provider == "ollama" {
+        String::new()
     } else {
-        let api_key = core.secrets.get("ai_api_key").unwrap_or_default();
-        if api_key.is_empty() && provider != "ollama" {
-            log::warn!("ai_auth: AI_NOT_CONFIGURED provider={provider}");
-            return Err(AppError::Other(AI_NOT_CONFIGURED.to_string()));
-        }
-        Ok((api_key, None))
+        core.secrets
+            .get_api_key_for_endpoint(provider, url)
+            .unwrap_or_default()
+    };
+    if api_key.is_empty() && crate::ai::api::requires_key(provider) {
+        log::warn!("ai_auth: AI_NOT_CONFIGURED provider={provider}");
+        return Err(AppError::Other(AI_NOT_CONFIGURED.to_string()));
     }
+    Ok(api_key)
 }
 
 pub(crate) fn stream_error_delta(err: &AppError) -> String {
@@ -112,27 +251,7 @@ pub(crate) fn stream_error_delta(err: &AppError) -> String {
 }
 
 pub(crate) fn emit_stream_error(host: &dyn ShellHost, event_name: &str, err: &AppError) {
-    if crate::ai::is_reauth_required(err) {
-        host.emit_to_json(
-            "main",
-            "openai-oauth-changed",
-            &serde_json::json!({ "connected": false }),
-        );
-    }
-    host.emit_json(
-        event_name,
-        &AiStreamChunk {
-            delta: stream_error_delta(err),
-            done: false,
-        },
-    );
-    host.emit_json(
-        event_name,
-        &AiStreamChunk {
-            delta: String::new(),
-            done: true,
-        },
-    );
+    host.emit_json(event_name, &AiStreamChunk::error(stream_error_delta(err)));
 }
 
 /// Sentinel `lookup_language` value: respond in whatever language the
@@ -210,8 +329,7 @@ pub async fn ai_lookup(
     request_id: String,
     kind: Option<String>,
 ) -> AppResult<()> {
-    // Read provider settings
-    let (provider, model, base_url, keep_alive, auth_mode, language, lookup_translation_language, show_translation, effort) = {
+    let (language, lookup_translation_language, show_translation) = {
         let conn = core.db.reader();
         let get = |key: &str| -> Option<String> {
             conn.query_row(
@@ -231,19 +349,11 @@ pub async fn ai_lookup(
             .filter(|lang| !lang.is_empty())
             .unwrap_or_else(|| sys_language.clone());
         (
-            configured_ai_provider(get("ai_provider"))?,
-            get("ai_model").unwrap_or_else(|| "llama3.2".to_string()),
-            non_empty_setting(get("ai_base_url")),
-            get("ai_keep_alive").unwrap_or_else(|| "30m".to_string()),
-            get("ai_auth_mode").unwrap_or_else(|| "api_key".to_string()),
             lookup_language,
             lookup_translation_language,
             get("show_translation").unwrap_or_else(|| "false".to_string()),
-            effort_from_setting(get(effort_tier_key("lookup"))),
         )
     };
-
-    let (api_key, oauth_account_id) = resolve_ai_auth(&core, &provider, &auth_mode).await?;
 
     let mut user_content = format!("Word/phrase: \"{}\"\nSurrounding text: \"{}\"", word, sentence);
     if let Some(ref title) = book_title {
@@ -279,37 +389,18 @@ pub async fn ai_lookup(
         },
     ];
 
-    let event_name = format!("ai-lookup-chunk-{}", request_id);
-
-    log::info!("ai_lookup: spawn provider={provider} model={model} kind={kind}");
-
-    let use_responses_api = auth_mode == "oauth" && provider == "openai";
-    let spawn_core = Arc::clone(&core);
-    let log_provider = provider.clone();
-    tokio::spawn(async move {
-        let result = match provider.as_str() {
-            "anthropic" => {
-                let url = base_url.unwrap_or_else(|| "https://api.anthropic.com".to_string());
-                crate::ai::anthropic::stream_chat(spawn_core.host.as_ref(), &url, &api_key, &model, 0.3, &messages, false, &event_name, max_tokens).await
-            }
-            _ if use_responses_api => {
-                let url = "https://chatgpt.com/backend-api/codex".to_string();
-                crate::ai::openai_responses::stream_chat(spawn_core.host.as_ref(), &spawn_core.secrets, &url, &api_key, &model, &messages, oauth_account_id.as_deref(), effort.as_deref(), &event_name).await
-            }
-            _ => {
-                let default_url = if provider == "ollama" { "http://localhost:11434" } else { "https://api.openai.com" };
-                let url = base_url.unwrap_or_else(|| default_url.to_string());
-                let ka = if provider == "ollama" { Some(keep_alive.clone()) } else { None };
-                crate::ai::openai_compat::stream_chat(spawn_core.host.as_ref(), &url, &api_key, &model, 0.3, &messages, ka.as_deref(), &event_name, max_tokens).await
-            }
-        };
-        if let Err(e) = result {
-            log::error!("ai_lookup: provider={log_provider} streaming failed: {e}");
-            emit_stream_error(spawn_core.host.as_ref(), &event_name, &e);
-        }
-    });
-
-    Ok(())
+    crate::ai::dispatch::start(
+        &core,
+        AiRequest {
+            call: "lookup",
+            messages,
+            event_name: format!("ai-lookup-chunk-{}", request_id),
+            max_tokens,
+            temperature: Some(0.3),
+            chat_id: None,
+        },
+    )
+    .await
 }
 
 /// Build the system prompt for sentence/passage explanation.
@@ -341,8 +432,7 @@ pub async fn ai_explain(
     chapter: Option<String>,
     request_id: String,
 ) -> AppResult<()> {
-    // Read provider settings
-    let (provider, model, base_url, keep_alive, auth_mode, language, effort) = {
+    let language = {
         let conn = core.db.reader();
         let get = |key: &str| -> Option<String> {
             conn.query_row(
@@ -357,22 +447,11 @@ pub async fn ai_explain(
         let explain_language = get("explain_language")
             .map(|lang| lang.trim().to_string())
             .filter(|lang| !lang.is_empty());
-        let language = match explain_language.as_deref() {
+        match explain_language.as_deref() {
             Some("lookup") | None => lookup_language,
             Some(lang) => lang.to_string(),
-        };
-        (
-            configured_ai_provider(get("ai_provider"))?,
-            get("ai_model").unwrap_or_else(|| "llama3.2".to_string()),
-            non_empty_setting(get("ai_base_url")),
-            get("ai_keep_alive").unwrap_or_else(|| "30m".to_string()),
-            get("ai_auth_mode").unwrap_or_else(|| "api_key".to_string()),
-            language,
-            effort_from_setting(get(effort_tier_key("explain"))),
-        )
+        }
     };
-
-    let (api_key, oauth_account_id) = resolve_ai_auth(&core, &provider, &auth_mode).await?;
 
     let mut user_content = format!("Passage: \"{}\"", passage);
     if let Some(ref ctx) = surrounding {
@@ -398,37 +477,18 @@ pub async fn ai_explain(
         },
     ];
 
-    let event_name = format!("ai-lookup-chunk-{}", request_id);
-
-    log::info!("ai_explain: spawn provider={provider} model={model}");
-
-    let use_responses_api = auth_mode == "oauth" && provider == "openai";
-    let spawn_core = Arc::clone(&core);
-    let log_provider = provider.clone();
-    tokio::spawn(async move {
-        let result = match provider.as_str() {
-            "anthropic" => {
-                let url = base_url.unwrap_or_else(|| "https://api.anthropic.com".to_string());
-                crate::ai::anthropic::stream_chat(spawn_core.host.as_ref(), &url, &api_key, &model, 0.3, &messages, false, &event_name, None).await
-            }
-            _ if use_responses_api => {
-                let url = "https://chatgpt.com/backend-api/codex".to_string();
-                crate::ai::openai_responses::stream_chat(spawn_core.host.as_ref(), &spawn_core.secrets, &url, &api_key, &model, &messages, oauth_account_id.as_deref(), effort.as_deref(), &event_name).await
-            }
-            _ => {
-                let default_url = if provider == "ollama" { "http://localhost:11434" } else { "https://api.openai.com" };
-                let url = base_url.unwrap_or_else(|| default_url.to_string());
-                let ka = if provider == "ollama" { Some(keep_alive.clone()) } else { None };
-                crate::ai::openai_compat::stream_chat(spawn_core.host.as_ref(), &url, &api_key, &model, 0.3, &messages, ka.as_deref(), &event_name, None).await
-            }
-        };
-        if let Err(e) = result {
-            log::error!("ai_explain: provider={log_provider} streaming failed: {e}");
-            emit_stream_error(spawn_core.host.as_ref(), &event_name, &e);
-        }
-    });
-
-    Ok(())
+    crate::ai::dispatch::start(
+        &core,
+        AiRequest {
+            call: "explain",
+            messages,
+            event_name: format!("ai-lookup-chunk-{}", request_id),
+            max_tokens: None,
+            temperature: Some(0.3),
+            chat_id: None,
+        },
+    )
+    .await
 }
 
 pub async fn ai_generate_title(
@@ -437,31 +497,10 @@ pub async fn ai_generate_title(
     assistant_message: String,
     request_id: String,
 ) -> AppResult<()> {
-    let (provider, model, base_url, keep_alive, auth_mode, language, effort) = {
-        let conn = core.db.reader();
-        let get = |key: &str| -> Option<String> {
-            conn.query_row(
-                "SELECT value FROM settings WHERE key = ?1",
-                rusqlite::params![key],
-                |row| row.get(0),
-            )
-            .ok()
-        };
-        (
-            configured_ai_provider(get("ai_provider"))?,
-            get("ai_model").unwrap_or_else(|| "llama3.2".to_string()),
-            non_empty_setting(get("ai_base_url")),
-            get("ai_keep_alive").unwrap_or_else(|| "30m".to_string()),
-            get("ai_auth_mode").unwrap_or_else(|| "api_key".to_string()),
-            get("language").unwrap_or_else(|| "en".to_string()),
-            effort_from_setting(get(effort_tier_key("generate_title"))),
-        )
-    };
+    let language = ui_language(&core);
 
-    let (api_key, oauth_account_id) = resolve_ai_auth(&core, &provider, &auth_mode).await?;
-
-    let user_snippet = if user_message.len() > 200 { &user_message[..200] } else { &user_message };
-    let ai_snippet = if assistant_message.len() > 200 { &assistant_message[..200] } else { &assistant_message };
+    let user_snippet = truncate_at_char_boundary(&user_message, 200);
+    let ai_snippet = truncate_at_char_boundary(&assistant_message, 200);
 
     let title_lang_hint = if language == "zh" { " Generate the title in Chinese." } else { "" };
 
@@ -476,67 +515,30 @@ pub async fn ai_generate_title(
         },
     ];
 
-    let event_name = format!("ai-title-chunk-{}", request_id);
-    let use_responses_api = auth_mode == "oauth" && provider == "openai";
-    let spawn_core = Arc::clone(&core);
-    tokio::spawn(async move {
-        let result = match provider.as_str() {
-            "anthropic" => {
-                let url = base_url.unwrap_or_else(|| "https://api.anthropic.com".to_string());
-                crate::ai::anthropic::stream_chat(spawn_core.host.as_ref(), &url, &api_key, &model, 0.3, &messages, false, &event_name, Some(32)).await
-            }
-            _ if use_responses_api => {
-                let url = "https://chatgpt.com/backend-api/codex".to_string();
-                crate::ai::openai_responses::stream_chat(spawn_core.host.as_ref(), &spawn_core.secrets, &url, &api_key, &model, &messages, oauth_account_id.as_deref(), effort.as_deref(), &event_name).await
-            }
-            _ => {
-                let default_url = if provider == "ollama" { "http://localhost:11434" } else { "https://api.openai.com" };
-                let url = base_url.unwrap_or_else(|| default_url.to_string());
-                let ka = if provider == "ollama" { Some(keep_alive.clone()) } else { None };
-                crate::ai::openai_compat::stream_chat(spawn_core.host.as_ref(), &url, &api_key, &model, 0.3, &messages, ka.as_deref(), &event_name, Some(32)).await
-            }
-        };
-        if let Err(e) = result {
-            emit_stream_error(spawn_core.host.as_ref(), &event_name, &e);
-        }
-    });
-
-    Ok(())
+    crate::ai::dispatch::start(
+        &core,
+        AiRequest {
+            call: "generate_title",
+            messages,
+            event_name: format!("ai-title-chunk-{}", request_id),
+            max_tokens: Some(32),
+            temperature: Some(0.3),
+            chat_id: None,
+        },
+    )
+    .await
 }
 
 pub async fn ai_chat(
     core: Arc<Core>,
+    chat_id: Option<String>,
     messages: Vec<ChatMessage>,
     book_title: Option<String>,
     book_author: Option<String>,
     current_chapter: Option<String>,
+    request_id: Option<String>,
 ) -> AppResult<()> {
-    // Read provider settings
-    let (provider, model, base_url, temperature, keep_alive, auth_mode, language, effort) = {
-        let conn = core.db.reader();
-        let get = |key: &str| -> Option<String> {
-            conn.query_row(
-                "SELECT value FROM settings WHERE key = ?1",
-                rusqlite::params![key],
-                |row| row.get(0),
-            )
-            .ok()
-        };
-        (
-            configured_ai_provider(get("ai_provider"))?,
-            get("ai_model").unwrap_or_else(|| "llama3.2".to_string()),
-            non_empty_setting(get("ai_base_url")),
-            get("ai_temperature")
-                .and_then(|v| v.parse::<f64>().ok())
-                .unwrap_or(0.3),
-            get("ai_keep_alive").unwrap_or_else(|| "30m".to_string()),
-            get("ai_auth_mode").unwrap_or_else(|| "api_key".to_string()),
-            get("language").unwrap_or_else(|| "en".to_string()),
-            effort_from_setting(get(effort_tier_key("chat"))),
-        )
-    };
-
-    let (api_key, oauth_account_id) = resolve_ai_auth(&core, &provider, &auth_mode).await?;
+    let language = ui_language(&core);
 
     // Build messages: system prompt + conversation history (context is inlined by frontend)
     let mut system_content = "You are a helpful reading assistant. Help the user understand and discuss the book they are reading.".to_string();
@@ -561,36 +563,23 @@ pub async fn ai_chat(
     });
     api_messages.extend(messages);
 
-    log::info!("ai_chat: spawn provider={provider} model={model} kind=chat");
+    let event_name = match request_id.as_deref().map(str::trim).filter(|id| !id.is_empty()) {
+        Some(id) => format!("ai-stream-chunk-{id}"),
+        None => "ai-stream-chunk".to_string(),
+    };
 
-    // Spawn streaming in a background task so events emit immediately
-    let use_responses_api = auth_mode == "oauth" && provider == "openai";
-    let spawn_core = Arc::clone(&core);
-    let log_provider = provider.clone();
-    tokio::spawn(async move {
-        let result = match provider.as_str() {
-            "anthropic" => {
-                let url = base_url.unwrap_or_else(|| "https://api.anthropic.com".to_string());
-                crate::ai::anthropic::stream_chat(spawn_core.host.as_ref(), &url, &api_key, &model, temperature, &api_messages, false, "ai-stream-chunk", None).await
-            }
-            _ if use_responses_api => {
-                let url = "https://chatgpt.com/backend-api/codex".to_string();
-                crate::ai::openai_responses::stream_chat(spawn_core.host.as_ref(), &spawn_core.secrets, &url, &api_key, &model, &api_messages, oauth_account_id.as_deref(), effort.as_deref(), "ai-stream-chunk").await
-            }
-            _ => {
-                let default_url = if provider == "ollama" { "http://localhost:11434" } else { "https://api.openai.com" };
-                let url = base_url.unwrap_or_else(|| default_url.to_string());
-                let ka = if provider == "ollama" { Some(keep_alive.clone()) } else { None };
-                crate::ai::openai_compat::stream_chat(spawn_core.host.as_ref(), &url, &api_key, &model, temperature, &api_messages, ka.as_deref(), "ai-stream-chunk", None).await
-            }
-        };
-        if let Err(e) = result {
-            log::error!("ai_chat: provider={log_provider} streaming failed: {e}");
-            emit_stream_error(spawn_core.host.as_ref(), "ai-stream-chunk", &e);
-        }
-    });
-
-    Ok(())
+    crate::ai::dispatch::start(
+        &core,
+        AiRequest {
+            call: "chat",
+            messages: api_messages,
+            event_name,
+            max_tokens: None,
+            temperature: None,
+            chat_id,
+        },
+    )
+    .await
 }
 
 #[cfg(test)]
@@ -719,8 +708,8 @@ mod tests {
     #[test]
     fn stream_error_delta_emits_bare_sentinels_and_prefixes_generic_errors() {
         assert_eq!(
-            stream_error_delta(&AppError::Other(crate::ai::AI_REAUTH_REQUIRED.to_string())),
-            "AI_REAUTH_REQUIRED"
+            stream_error_delta(&AppError::Other(crate::ai::codex::CODEX_NOT_SIGNED_IN.to_string())),
+            "CODEX_NOT_SIGNED_IN"
         );
         assert_eq!(
             stream_error_delta(&AppError::Other(crate::ai::AI_NOT_CONFIGURED.to_string())),
@@ -733,7 +722,7 @@ mod tests {
     }
 
     #[test]
-    fn emit_stream_error_sends_sentinel_then_done_chunk() {
+    fn emit_stream_error_sends_terminal_error_chunk_separate_from_deltas() {
         use std::sync::Mutex;
         struct RecordingHost(Mutex<Vec<(String, serde_json::Value)>>);
         impl ShellHost for RecordingHost {
@@ -753,24 +742,26 @@ mod tests {
         emit_stream_error(
             &host,
             "ai-lookup-chunk-1",
-            &AppError::Other(crate::ai::AI_REAUTH_REQUIRED.to_string()),
+            &AppError::Other(crate::ai::codex::CODEX_NOT_SIGNED_IN.to_string()),
         );
         let events = host.0.lock().unwrap();
-        assert_eq!(events.len(), 2);
+        assert_eq!(events.len(), 1);
         assert_eq!(
             events[0],
             (
                 "ai-lookup-chunk-1".to_string(),
-                serde_json::json!({"delta": "AI_REAUTH_REQUIRED", "done": false})
+                serde_json::json!({"delta": "", "done": true, "error": "CODEX_NOT_SIGNED_IN"})
             )
         );
-        assert_eq!(
-            events[1],
-            (
-                "ai-lookup-chunk-1".to_string(),
-                serde_json::json!({"delta": "", "done": true})
-            )
-        );
+    }
+
+    #[test]
+    fn truncate_at_char_boundary_never_splits_a_character() {
+        assert_eq!(truncate_at_char_boundary("hello", 200), "hello");
+        let chinese = "读".repeat(67);
+        assert_eq!(chinese.len(), 201);
+        assert_eq!(truncate_at_char_boundary(&chinese, 200), "读".repeat(66));
+        assert_eq!(truncate_at_char_boundary(&"a".repeat(201), 200), "a".repeat(200));
     }
 
     #[test]

@@ -20,10 +20,12 @@ import ImportOverlays from "../components/ImportOverlays";
 import CollectionsPopover from "../components/CollectionsPopover";
 import DeleteCollectionModal from "../components/DeleteCollectionModal";
 import AddBooksModal from "../components/AddBooksModal";
+import AiSetupDialog from "../components/AiSetupDialog";
 import BookGrid from "../components/BookGrid";
 import BookList from "../components/BookList";
 import SettingsView from "../components/settings/SettingsView";
 import { normalizeSettingsSection, type SettingsSection } from "../components/settings/types";
+import { shouldShowAiSetup, type ConnectionKind } from "../lib/aiConnections";
 import { SegmentedControl } from "../components/ui/Segment";
 import { useBooks, importBookDialog, type Book } from "../hooks/useBooks";
 import { useCollections, type Collection } from "../hooks/useCollections";
@@ -93,8 +95,15 @@ export default function Home() {
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("general");
+  const [initialAiConnection, setInitialAiConnection] = useState<ConnectionKind | undefined>(
+    undefined,
+  );
   const [settingsBlocking, setSettingsBlocking] = useState(false);
   const [settingsVisitSeq, setSettingsVisitSeq] = useState(0);
+  const [aiSetupState, setAiSetupState] = useState<{ open: boolean; isMigration: boolean }>({
+    open: false,
+    isMigration: false,
+  });
 
   const [collectionsOpen, setCollectionsOpen] = useState(false);
   const [deleteCollectionTarget, setDeleteCollectionTarget] = useState<Collection | null>(null);
@@ -289,12 +298,14 @@ export default function Home() {
   const closeSettings = useCallback(() => {
     if (settingsBlocking) return;
     setSettingsOpen(false);
+    setInitialAiConnection(undefined);
   }, [settingsBlocking]);
 
   const openSettings = useCallback(
     (section?: SettingsSection) => {
       if (settingsBlocking) return;
       setCollectionsOpen(false);
+      setInitialAiConnection(undefined);
       if (section === undefined) {
         setSettingsOpen((prev) => {
           if (prev) return false;
@@ -310,6 +321,31 @@ export default function Home() {
     },
     [settingsBlocking],
   );
+
+  const handleSetupUseApi = useCallback(() => {
+    setAiSetupState({ open: false, isMigration: false });
+    setInitialAiConnection("api");
+    setSettingsSection("ai");
+    setSettingsOpen(true);
+    setSettingsVisitSeq((n) => n + 1);
+  }, []);
+
+  // Evaluate first-launch AI setup dialog once on Home mount.
+  useEffect(() => {
+    let cancelled = false;
+    invoke<Record<string, string>>("get_all_settings")
+      .then((loaded) => {
+        if (cancelled || !loaded || typeof loaded !== "object" || Array.isArray(loaded)) return;
+        const decision = shouldShowAiSetup(loaded);
+        if (decision.show) {
+          setAiSetupState({ open: true, isMigration: decision.isMigration });
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const handleNavigate = useCallback(
     (route: MainRoute, options?: MainNavigateOptions) => {
@@ -405,11 +441,14 @@ export default function Home() {
 
   const settingsBlockingRef = useRef(settingsBlocking);
   settingsBlockingRef.current = settingsBlocking;
+  const aiSetupVisible = aiSetupState.open && !settingsOpen;
+  const aiSetupVisibleRef = useRef(aiSetupVisible);
+  aiSetupVisibleRef.current = aiSetupVisible;
 
   // Global keyboard shortcuts: Cmd+, Settings, Cmd+K Command Search, Cmd+O Import, Cmd+F View Filter / Books Search
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (settingsBlockingRef.current) return;
+      if (settingsBlockingRef.current || aiSetupVisibleRef.current) return;
       if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
       if (e.key === ",") {
         e.preventDefault();
@@ -689,7 +728,7 @@ export default function Home() {
   return (
     <div
       className="h-screen dawn-atmosphere flex flex-col overflow-hidden text-text-primary"
-      inert={settingsBlocking || undefined}
+      inert={settingsBlocking || aiSetupVisible || undefined}
     >
       <TopBar
         activeRoute={activeRoute}
@@ -714,10 +753,14 @@ export default function Home() {
         <SettingsView
           section={settingsSection}
           visitSeq={settingsVisitSeq}
-          onSelectSection={(next) => setSettingsSection(normalizeSettingsSection(next, isMacOS()))}
+          initialAiConnection={initialAiConnection}
+          onSelectSection={(next) => {
+            setInitialAiConnection(undefined);
+            setSettingsSection(normalizeSettingsSection(next, isMacOS()));
+          }}
           onClose={closeSettings}
           onBlockingChange={setSettingsBlocking}
-          suppressEscape={searchOpen || addBooksOpen || Boolean(deleteCollectionTarget)}
+          suppressEscape={searchOpen || addBooksOpen || Boolean(deleteCollectionTarget) || aiSetupVisible}
         />
       ) : (
         <>
@@ -1011,6 +1054,13 @@ export default function Home() {
         collection={activeCollection}
         onClose={() => setAddBooksOpen(false)}
         onConfirm={handleAddBooksConfirm}
+      />
+
+      <AiSetupDialog
+        open={aiSetupVisible}
+        isMigration={aiSetupState.isMigration}
+        onClose={() => setAiSetupState({ open: false, isMigration: false })}
+        onUseApi={handleSetupUseApi}
       />
     </div>
   );

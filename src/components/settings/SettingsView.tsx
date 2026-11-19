@@ -8,6 +8,7 @@ import {
   seedCommittedAppTheme,
 } from "../../lib/theme";
 import { isMacOS } from "../../lib/platformEnv";
+import type { ConnectionKind } from "../../lib/aiConnections";
 import Toast from "../ui/Toast";
 import SettingsNav from "./SettingsNav";
 import GeneralSettings from "./GeneralSettings";
@@ -24,6 +25,7 @@ import { normalizeSettingsSection, type SettingsSection } from "./types";
 interface SettingsViewProps {
   section: SettingsSection;
   visitSeq?: number;
+  initialAiConnection?: ConnectionKind;
   onSelectSection: (section: SettingsSection) => void;
   onClose: () => void;
   onBlockingChange?: (blocking: boolean) => void;
@@ -72,6 +74,7 @@ const SECTION_META: Record<SettingsSection, { titleKey: string; subtitleKey: str
 export default function SettingsView({
   section,
   visitSeq = 0,
+  initialAiConnection,
   onSelectSection,
   onClose,
   onBlockingChange,
@@ -199,7 +202,13 @@ export default function SettingsView({
             {activeSection === "general" && <GeneralSettings {...sectionProps} />}
             {activeSection === "appearance" && <AppearanceSettings {...sectionProps} />}
             {activeSection === "reading" && <ReadingSettings {...sectionProps} />}
-            {activeSection === "ai" && <AiSettings {...sectionProps} refreshNonce={visitSeq} />}
+            {activeSection === "ai" && (
+              <AiSettings
+                {...sectionProps}
+                refreshNonce={visitSeq}
+                initialConnection={initialAiConnection}
+              />
+            )}
             {activeSection === "tools" && <ToolsSettings {...sectionProps} />}
             {activeSection === "librarySync" && (
               <LibrarySyncSettings

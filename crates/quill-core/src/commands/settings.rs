@@ -3,24 +3,68 @@ use std::collections::HashMap;
 
 use crate::error::{AppError, AppResult};
 use crate::host::Core;
-use crate::secrets::Secrets;
+use crate::secrets::{ApiKeyBinding, Secrets, AI_API_KEY};
+
+fn non_empty(value: Option<String>) -> Option<String> {
+    value.map(|v| v.trim().to_string()).filter(|v| !v.is_empty())
+}
+
+fn read_endpoint_from_conn(conn: &rusqlite::Connection) -> AppResult<(String, Option<String>)> {
+    let mut stmt = conn.prepare(
+        "SELECT key, value FROM settings WHERE key IN ('ai_provider', 'ai_base_url')",
+    )?;
+    let mut provider: Option<String> = None;
+    let mut base_url: Option<String> = None;
+    let rows = stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+    for row in rows {
+        let (k, v) = row?;
+        match k.as_str() {
+            "ai_provider" => provider = Some(v),
+            "ai_base_url" => base_url = Some(v),
+            _ => {}
+        }
+    }
+    let effective_provider = non_empty(provider).unwrap_or_else(|| "openai".to_string());
+    Ok((effective_provider, non_empty(base_url)))
+}
 
 pub fn get_all_settings(core: &Core) -> AppResult<HashMap<String, String>> {
-    let conn = core.db.reader();
-    let mut stmt = conn.prepare("SELECT key, value FROM settings")?;
-    let mut settings = stmt
-        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?
-        .collect::<Result<HashMap<_, _>, _>>()?;
+    let mut settings = {
+        let conn = core.db.reader();
+        let mut stmt = conn.prepare("SELECT key, value FROM settings")?;
+        let rows = stmt
+            .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?
+            .collect::<Result<HashMap<_, _>, _>>()?;
+        rows
+    };
 
-    // Merge sensitive keys from secrets store
-    if let Some(value) = core.secrets.get("ai_api_key") {
-        settings.insert("ai_api_key".to_string(), value);
+    // Only expose `ai_api_key` when its persisted binding matches the current
+    // provider and effective origin in `settings`.
+    let provider =
+        non_empty(settings.get("ai_provider").cloned()).unwrap_or_else(|| "openai".to_string());
+    let base_url = non_empty(settings.get("ai_base_url").cloned());
+    if let Ok(url) = crate::ai::api::base_url(&provider, base_url) {
+        if let Some(value) = core.secrets.get_api_key_for_endpoint(&provider, &url) {
+            settings.insert(AI_API_KEY.to_string(), value);
+        }
     }
 
     Ok(settings)
 }
 
 pub fn get_setting(core: &Core, key: String) -> AppResult<Option<String>> {
+    if key == AI_API_KEY {
+        let (provider, base_url) = {
+            let conn = core.db.reader();
+            read_endpoint_from_conn(&conn)?
+        };
+        let Ok(url) = crate::ai::api::base_url(&provider, base_url) else {
+            return Ok(None);
+        };
+        return Ok(core.secrets.get_api_key_for_endpoint(&provider, &url));
+    }
     if Secrets::is_sensitive_key(&key) {
         return Ok(core.secrets.get(&key));
     }
@@ -39,30 +83,95 @@ pub fn get_setting(core: &Core, key: String) -> AppResult<Option<String>> {
 }
 
 pub fn set_setting(core: &Core, key: String, value: String) -> AppResult<()> {
+    let mut conn = core.db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
+    if key == AI_API_KEY {
+        let (provider, base_url) = read_endpoint_from_conn(&conn)?;
+        if provider == "ollama" {
+            return core.secrets.clear_api_key();
+        }
+        let binding = ApiKeyBinding::for_endpoint(&provider, base_url.as_deref());
+        return core.secrets.set_bound_api_key(&value, binding.as_ref());
+    }
     if Secrets::is_sensitive_key(&key) {
         return core.secrets.set(&key, &value);
     }
 
-    let conn = core.db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
-    conn.execute(
+    let endpoint_change = matches!(key.as_str(), "ai_provider" | "ai_base_url");
+    let tx = conn.transaction()?;
+    let old_binding = if endpoint_change {
+        let (old_provider, old_base_url) = read_endpoint_from_conn(&tx)?;
+        ApiKeyBinding::for_endpoint(&old_provider, old_base_url.as_deref())
+    } else {
+        None
+    };
+
+    tx.execute(
         "INSERT INTO settings (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = ?2",
         params![key, value],
     )?;
+
+    if endpoint_change {
+        let (new_provider, new_base_url) = read_endpoint_from_conn(&tx)?;
+        let new_binding = ApiKeyBinding::for_endpoint(&new_provider, new_base_url.as_deref());
+        if new_binding != old_binding {
+            // Clear the stored secret before committing `quill.db` so a failed
+            // secret write rolls back the endpoint change; even if a mismatch
+            // ever existed on disk, reads also verify the binding.
+            core.secrets.clear_api_key()?;
+        }
+    }
+    tx.commit()?;
     Ok(())
 }
 
-pub fn set_settings_bulk(core: &Core, settings: HashMap<String, String>) -> AppResult<()> {
-    let conn = core.db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
+pub fn set_settings_bulk(core: &Core, mut settings: HashMap<String, String>) -> AppResult<()> {
+    let mut conn = core.db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
+    let endpoint_change =
+        settings.contains_key("ai_provider") || settings.contains_key("ai_base_url");
+    let explicit_api_key = settings.remove(AI_API_KEY);
+    let mut other_secrets: Vec<(String, String)> = Vec::new();
+    let mut regular_settings: Vec<(String, String)> = Vec::with_capacity(settings.len());
     for (key, value) in settings {
         if Secrets::is_sensitive_key(&key) {
-            core.secrets.set(&key, &value)?;
+            other_secrets.push((key, value));
         } else {
-            conn.execute(
-                "INSERT INTO settings (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = ?2",
-                params![key, value],
-            )?;
+            regular_settings.push((key, value));
         }
     }
+
+    let tx = conn.transaction()?;
+    let old_binding = if endpoint_change {
+        let (old_provider, old_base_url) = read_endpoint_from_conn(&tx)?;
+        ApiKeyBinding::for_endpoint(&old_provider, old_base_url.as_deref())
+    } else {
+        None
+    };
+
+    for (key, value) in regular_settings {
+        tx.execute(
+            "INSERT INTO settings (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = ?2",
+            params![key, value],
+        )?;
+    }
+
+    let (new_provider, new_base_url) = read_endpoint_from_conn(&tx)?;
+    let new_binding = ApiKeyBinding::for_endpoint(&new_provider, new_base_url.as_deref());
+
+    for (key, value) in other_secrets {
+        core.secrets.set(&key, &value)?;
+    }
+    if let Some(api_key) = explicit_api_key {
+        if new_provider == "ollama" {
+            core.secrets.clear_api_key()?;
+        } else {
+            core.secrets
+                .set_bound_api_key(&api_key, new_binding.as_ref())?;
+        }
+    } else if endpoint_change && new_binding != old_binding {
+        core.secrets.clear_api_key()?;
+    }
+
+    tx.commit()?;
     Ok(())
 }
 

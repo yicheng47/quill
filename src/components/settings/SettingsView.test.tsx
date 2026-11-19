@@ -161,17 +161,36 @@ describe("SettingsView and redesigned sections", () => {
         Object.assign(mocks.settingsMap, args.entries);
         return null;
       }
+      if (cmd === "set_settings_bulk" && args && typeof args.settings === "object" && args.settings) {
+        Object.assign(mocks.settingsMap, args.settings);
+        return null;
+      }
       if (cmd === "mcp_integration_status") {
         return { claude_code: true, codex: false, write_enabled: false, binary_path: "/usr/local/bin/quill-mcp" };
       }
       if (cmd === "mcp_config_snippet") {
         return '{"mcpServers":{"quill":{"command":"/Applications/Quill.app/Contents/Resources/quill-mcp"}}}';
       }
-      if (cmd === "openai_oauth_status") {
-        return { connected: false, account_id: null, email: null };
+      if (cmd === "codex_status") {
+        return {
+          state: "not_signed_in",
+          version: "0.170.0",
+          min_version: "0.170.0",
+          path: "/opt/homebrew/bin/codex",
+          from_override: false,
+          email: null,
+          plan: null,
+          error: null,
+        };
+      }
+      if (cmd === "list_codex_models") {
+        return { models: [] };
+      }
+      if (cmd === "list_api_models") {
+        return { models: [] };
       }
       if (cmd === "check_ollama_status") {
-        return { running: false };
+        return { running: false, models: null };
       }
       if (cmd === "sync_status") {
         return {
@@ -709,5 +728,234 @@ describe("SettingsView and redesigned sections", () => {
     });
     expect(document.querySelector('[role="dialog"]')).toBeNull();
     expect(mocks.invoke).not.toHaveBeenCalledWith("sync_enable");
+  });
+
+  it("clears the saved API key on AI-pane unmount cross-origin Base URL edit and never passes cached key on remount", async () => {
+    mocks.settingsMap = {
+      ...mocks.settingsMap,
+      ai_auth_mode: "api_key",
+      ai_provider: "openai",
+      ai_base_url: "https://api.openai.com/v1",
+      ai_api_key: "sk-origin-a",
+      ai_model: "gpt-4o",
+    };
+
+    await renderView("ai");
+
+    const baseUrlInput = container.querySelector<HTMLInputElement>('input[aria-label="Base URL"]')!;
+    const apiKeyInput = container.querySelector<HTMLInputElement>('input[aria-label="API key"]')!;
+    expect(baseUrlInput.value).toBe("https://api.openai.com/v1");
+    expect(apiKeyInput.value).toBe("sk-origin-a");
+
+    // Edit Base URL to a different origin WITHOUT blurring, then immediately switch away
+    // from the AI tab so AiSettings flushes via its unmount cleanup through real useSettings.
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    mocks.invoke.mockClear();
+    await act(async () => {
+      setter.call(baseUrlInput, "https://evil.example/v1");
+      baseUrlInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await clickTab("general");
+
+    expect(mocks.settingsMap.ai_base_url).toBe("https://evil.example/v1");
+    expect(mocks.settingsMap.ai_api_key).toBe("");
+
+    // Remount the AI tab: parent useSettings must reflect the cleared key and never pass
+    // an explicit apiKey to list_api_models.
+    mocks.invoke.mockClear();
+    await clickTab("ai");
+
+    const remountedBaseUrl = container.querySelector<HTMLInputElement>('input[aria-label="Base URL"]')!;
+    const remountedApiKey = container.querySelector<HTMLInputElement>('input[aria-label="API key"]')!;
+    expect(remountedBaseUrl.value).toBe("https://evil.example/v1");
+    expect(remountedApiKey.value).toBe("");
+
+    const listCalls = mocks.invoke.mock.calls.filter(([cmd]) => cmd === "list_api_models");
+    expect(listCalls).toHaveLength(0);
+
+    // Even for an optional-key Custom provider where automatic listing runs on remount,
+    // automatic list_api_models must omit apiKey so Rust's origin-bound store governs.
+    mocks.settingsMap = {
+      ...mocks.settingsMap,
+      ai_auth_mode: "api_key",
+      ai_provider: "custom",
+      ai_base_url: "https://origin-a.example/v1",
+      ai_api_key: "sk-custom-a",
+      ai_model: "local-m",
+    };
+    await act(async () => {
+      root.unmount();
+    });
+    root = createRoot(container);
+    await renderView("ai");
+
+    const customUrlInput = container.querySelector<HTMLInputElement>('input[aria-label="Base URL"]')!;
+    mocks.invoke.mockClear();
+    await act(async () => {
+      setter.call(customUrlInput, "https://origin-b.example/v1");
+      customUrlInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await clickTab("general");
+    await clickTab("ai");
+
+    expect(mocks.settingsMap.ai_api_key).toBe("");
+    const customListCalls = mocks.invoke.mock.calls.filter(([cmd]) => cmd === "list_api_models");
+    expect(customListCalls.length).toBeGreaterThanOrEqual(1);
+    for (const [, args] of customListCalls) {
+      expect(args).toEqual({
+        provider: "custom",
+        baseUrl: "https://origin-b.example/v1",
+      });
+      expect(args).not.toHaveProperty("apiKey");
+    }
+  });
+
+  it("holds a Custom API key entered before Base URL across typing debounce and passive unmount until explicit blur/Enter", async () => {
+    vi.useFakeTimers();
+    try {
+      mocks.settingsMap = {
+        ...mocks.settingsMap,
+        ai_auth_mode: "api_key",
+        ai_provider: "custom",
+        ai_base_url: "",
+        ai_model: "",
+      };
+
+      const baseImpl = mocks.invoke.getMockImplementation()!;
+      mocks.invoke.mockImplementation(async (cmd, args) => {
+        if (cmd === "set_setting" && args?.key === "ai_api_key" && String(args.value).trim()) {
+          if (!mocks.settingsMap.ai_base_url?.startsWith("http")) {
+            throw new Error("Cannot save an API key without a valid HTTP(S) base URL");
+          }
+        }
+        if (cmd === "set_settings_bulk" && args && typeof args.settings === "object" && args.settings) {
+          const s = args.settings as Record<string, string>;
+          const nextUrl = s.ai_base_url ?? mocks.settingsMap.ai_base_url ?? "";
+          if (s.ai_api_key?.trim() && !nextUrl.startsWith("http")) {
+            throw new Error("Cannot save an API key without a valid HTTP(S) base URL");
+          }
+        }
+        return baseImpl(cmd, args);
+      });
+
+      await renderView("ai");
+
+      const baseUrlInput = container.querySelector<HTMLInputElement>('input[aria-label="Base URL"]')!;
+      const apiKeyInput = container.querySelector<HTMLInputElement>('input[aria-label="API key"]')!;
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+
+      // 1) User enters API key first while Base URL is blank and blurs -> held locally without saving.
+      mocks.invoke.mockClear();
+      await act(async () => {
+        setter.call(apiKeyInput, "sk-custom-first");
+        apiKeyInput.dispatchEvent(new Event("input", { bubbles: true }));
+        apiKeyInput.focus();
+        apiKeyInput.blur();
+      });
+      await flush();
+
+      expect(apiKeyInput.value).toBe("sk-custom-first");
+      expect(mocks.settingsMap.ai_api_key).toBeUndefined();
+      expect(mocks.invoke.mock.calls.some(([cmd]) => cmd === "set_setting" || cmd === "set_settings_bulk")).toBe(false);
+
+      // 2) Focus Base URL, pause past 450ms debounce at an intermediate valid port -> must NOT save or list!
+      await act(async () => {
+        baseUrlInput.focus();
+        setter.call(baseUrlInput, "http://localhost:1143");
+        baseUrlInput.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      await act(async () => {
+        vi.advanceTimersByTime(1000);
+      });
+      await flush();
+
+      expect(mocks.settingsMap.ai_api_key).toBeUndefined();
+      expect(mocks.settingsMap.ai_base_url).toBe("");
+      expect(mocks.invoke.mock.calls.some(([cmd]) => cmd === "set_setting" || cmd === "set_settings_bulk")).toBe(false);
+      expect(mocks.invoke.mock.calls.some(([cmd]) => cmd === "list_api_models")).toBe(false);
+
+      // 3) Finish the port/path and blur -> first key-bearing save and first listing belong to completed URL.
+      await act(async () => {
+        setter.call(baseUrlInput, "http://localhost:11434/v1");
+        baseUrlInput.dispatchEvent(new Event("input", { bubbles: true }));
+        baseUrlInput.blur();
+      });
+      await flush();
+
+      const keySaves = mocks.invoke.mock.calls.filter(
+        ([cmd, args]) =>
+          (cmd === "set_settings_bulk" && Boolean((args?.settings as Record<string, string> | undefined)?.ai_api_key)) ||
+          (cmd === "set_setting" && args?.key === "ai_api_key"),
+      );
+      expect(keySaves).toHaveLength(1);
+      expect(keySaves[0]).toEqual([
+        "set_settings_bulk",
+        expect.objectContaining({
+          settings: expect.objectContaining({
+            ai_provider: "custom",
+            ai_base_url: "http://localhost:11434/v1",
+            ai_api_key: "sk-custom-first",
+          }),
+        }),
+      ]);
+      const listCalls = mocks.invoke.mock.calls.filter(([cmd]) => cmd === "list_api_models");
+      expect(listCalls).toEqual([
+        [
+          "list_api_models",
+          {
+            provider: "custom",
+            baseUrl: "http://localhost:11434/v1",
+          },
+        ],
+      ]);
+
+      // 4) Switching away and back preserves both the URL and the committed key.
+      await clickTab("general");
+      await clickTab("ai");
+      expect(container.querySelector<HTMLInputElement>('input[aria-label="Base URL"]')?.value).toBe(
+        "http://localhost:11434/v1",
+      );
+      expect(container.querySelector<HTMLInputElement>('input[aria-label="API key"]')?.value).toBe(
+        "sk-custom-first",
+      );
+
+      // 5) Passive unmount while editing an intermediate URL with a waiting draft key must NEVER promote it.
+      mocks.settingsMap = {
+        ...mocks.settingsMap,
+        ai_auth_mode: "api_key",
+        ai_provider: "custom",
+        ai_base_url: "",
+        ai_model: "",
+      };
+      delete mocks.settingsMap.ai_api_key;
+      await act(async () => {
+        root.unmount();
+      });
+      root = createRoot(container);
+      await renderView("ai");
+
+      const freshUrl = container.querySelector<HTMLInputElement>('input[aria-label="Base URL"]')!;
+      const freshKey = container.querySelector<HTMLInputElement>('input[aria-label="API key"]')!;
+      mocks.invoke.mockClear();
+      await act(async () => {
+        setter.call(freshKey, "sk-never-promote");
+        freshKey.dispatchEvent(new Event("input", { bubbles: true }));
+        freshKey.focus();
+        freshKey.blur();
+      });
+      await flush();
+      await act(async () => {
+        setter.call(freshUrl, "http://localhost:808");
+        freshUrl.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      // Unmount passively without blurring Base URL.
+      await clickTab("general");
+
+      expect(mocks.settingsMap.ai_api_key).toBeUndefined();
+      expect(mocks.settingsMap.ai_base_url).toBe("");
+      expect(mocks.invoke.mock.calls.some(([cmd]) => cmd === "list_api_models")).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

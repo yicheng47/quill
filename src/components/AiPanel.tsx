@@ -17,6 +17,7 @@ import { useAiChat } from "../hooks/useAiChat";
 import { invoke } from "../platform";
 import { getAllSettings } from "../hooks/useSettings";
 import { formatAiModelFooter, parseAiErrorMessage } from "../utils/aiStream";
+import { isExactAiSentinel } from "../lib/aiConnections";
 import { timeAgo } from "../utils/timeAgo";
 import MessageBubble from "./MessageBubble";
 import QuillLogo from "./QuillLogo";
@@ -260,8 +261,7 @@ export default function AiPanel({
       lastMessage &&
       lastMessage.role === "assistant" &&
       lastMessage.content &&
-      lastMessage.content !== "AI_NOT_CONFIGURED" &&
-      lastMessage.content !== "AI_REAUTH_REQUIRED" &&
+      !isExactAiSentinel(lastMessage.content) &&
       !parseAiErrorMessage(lastMessage.content),
   );
 

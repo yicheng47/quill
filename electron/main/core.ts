@@ -28,6 +28,7 @@ export interface QuillCoreInstance {
   allowedMediaRoots(): Promise<string[]>;
   localDir(): string;
   logDir(): string;
+  shutdown(): void;
 }
 
 interface QuillNodeModule {

@@ -153,7 +153,11 @@ describe("useAiChat", () => {
 
     const aiChatCall = mocks.invoke.mock.calls.find(([cmd]) => cmd === "ai_chat");
     expect(aiChatCall).toBeDefined();
+    const requestId = (aiChatCall?.[1] as { requestId?: string })?.requestId;
+    expect(requestId).toBeTruthy();
     expect(aiChatCall?.[1]).toEqual({
+      chatId: "chat-new",
+      requestId,
       messages: [
         {
           role: "user",
@@ -166,7 +170,7 @@ describe("useAiChat", () => {
     });
 
     await act(async () => {
-      listeners.get("ai-stream-chunk")?.({ payload: { delta: "", done: true } });
+      listeners.get(`ai-stream-chunk-${requestId}`)?.({ payload: { delta: "", done: true } });
     });
   });
 
@@ -194,7 +198,11 @@ describe("useAiChat", () => {
 
     const aiChatCall = mocks.invoke.mock.calls.find(([cmd]) => cmd === "ai_chat");
     expect(aiChatCall).toBeDefined();
+    const requestId = (aiChatCall?.[1] as { requestId?: string })?.requestId;
+    expect(requestId).toBeTruthy();
     expect(aiChatCall?.[1]).toEqual({
+      chatId: "chat-new",
+      requestId,
       messages: [{ role: "user", content: "Hi." }],
       bookTitle: "Frankenstein",
       bookAuthor: "Mary Shelley",
@@ -202,7 +210,7 @@ describe("useAiChat", () => {
     });
 
     await act(async () => {
-      listeners.get("ai-stream-chunk")?.({ payload: { delta: "", done: true } });
+      listeners.get(`ai-stream-chunk-${requestId}`)?.({ payload: { delta: "", done: true } });
     });
   });
 
@@ -226,6 +234,8 @@ describe("useAiChat", () => {
     await withoutActFlush(() => current.send("Second"));
 
     const aiChatCall = mocks.invoke.mock.calls.find(([cmd]) => cmd === "ai_chat");
+    const requestId = (aiChatCall?.[1] as { requestId?: string })?.requestId;
+    expect(requestId).toBeTruthy();
     expect(aiChatCall?.[1]).toMatchObject({
       messages: [
         { role: "user", content: "First" },
@@ -235,8 +245,8 @@ describe("useAiChat", () => {
     });
 
     await act(async () => {
-      listeners.get("ai-stream-chunk")?.({ payload: { delta: "Done", done: false } });
-      listeners.get("ai-stream-chunk")?.({ payload: { delta: "", done: true } });
+      listeners.get(`ai-stream-chunk-${requestId}`)?.({ payload: { delta: "Done", done: false } });
+      listeners.get(`ai-stream-chunk-${requestId}`)?.({ payload: { delta: "", done: true } });
     });
 
     expect(mocks.invoke).toHaveBeenCalledWith("save_chat_message", {
@@ -290,15 +300,38 @@ describe("useAiChat", () => {
     });
 
     expect(mocks.invoke.mock.calls.some(([cmd]) => cmd === "ai_chat")).toBe(false);
-    expect(listeners.has("ai-stream-chunk")).toBe(false);
+    expect([...listeners.keys()].some((k) => k.startsWith("ai-stream-chunk"))).toBe(false);
   });
 
-  it("maps rejected AI_REAUTH_REQUIRED error and never persists sentinel", async () => {
+  it("isolates per-send channels and cancels only the active request channel", async () => {
+    mockCommands([{ id: "chat-1", messages: [] }]);
+    await act(async () => {
+      root.render(<AiChatHarness />);
+    });
+    await act(async () => {
+      await current.initialize();
+    });
+
+    await withoutActFlush(() => current.send("First stream"));
+    const firstCall = mocks.invoke.mock.calls.find(([cmd]) => cmd === "ai_chat");
+    const firstReqId = (firstCall?.[1] as { requestId?: string })?.requestId;
+    expect(firstReqId).toBeTruthy();
+
+    await act(async () => {
+      await current.reset();
+    });
+
+    expect(mocks.invoke).toHaveBeenCalledWith("ai_cancel", {
+      channel: `ai-stream-chunk-${firstReqId}`,
+    });
+  });
+
+  it("maps rejected Codex sentinel errors, passes chatId, and never persists sentinel", async () => {
     mockCommands([{ id: "chat-1", messages: [] }]);
     const baseImpl = mocks.invoke.getMockImplementation()!;
     mocks.invoke.mockImplementation((command, args) => {
       if (command === "ai_chat") {
-        return Promise.reject(new Error("AI_REAUTH_REQUIRED"));
+        return Promise.reject(new Error("CODEX_NOT_SIGNED_IN"));
       }
       return baseImpl(command, args);
     });
@@ -314,16 +347,20 @@ describe("useAiChat", () => {
       await current.send("Explain Chapter 3");
     });
 
+    expect(mocks.invoke).toHaveBeenCalledWith(
+      "ai_chat",
+      expect.objectContaining({ chatId: "chat-1" }),
+    );
     const assistant = current.messages[current.messages.length - 1];
     expect(assistant.role).toBe("assistant");
-    expect(assistant.content).toBe("AI_REAUTH_REQUIRED");
+    expect(assistant.content).toBe("CODEX_NOT_SIGNED_IN");
     const assistantSaves = mocks.invoke.mock.calls.filter(
       ([cmd, args]) => cmd === "save_chat_message" && (args as { role?: string })?.role === "assistant",
     );
     expect(assistantSaves).toHaveLength(0);
   });
 
-  it("skips persistence for streamed AI_REAUTH_REQUIRED and ignores sentinel in title stream", async () => {
+  it("skips persistence for streamed Codex sentinels and ignores sentinel in title stream", async () => {
     mockCommands();
 
     await act(async () => {
@@ -336,17 +373,19 @@ describe("useAiChat", () => {
     await withoutActFlush(() => current.send("First message"));
 
     const titleEventName = [...listeners.keys()].find((k) => k.startsWith("ai-title-chunk-"));
+    const chatEventName = [...listeners.keys()].find((k) => k.startsWith("ai-stream-chunk-"));
     expect(titleEventName).toBeDefined();
+    expect(chatEventName).toBeDefined();
 
     await act(async () => {
-      listeners.get(titleEventName!)?.({ payload: { delta: "AI_REAUTH_REQUIRED", done: false } });
+      listeners.get(titleEventName!)?.({ payload: { delta: "CODEX_NOT_SIGNED_IN", done: false } });
       listeners.get(titleEventName!)?.({ payload: { delta: "", done: true } });
-      listeners.get("ai-stream-chunk")?.({ payload: { delta: "AI_REAUTH_REQUIRED", done: false } });
-      listeners.get("ai-stream-chunk")?.({ payload: { delta: "", done: true } });
+      listeners.get(chatEventName!)?.({ payload: { delta: "CODEX_NOT_SIGNED_IN", done: false } });
+      listeners.get(chatEventName!)?.({ payload: { delta: "", done: true } });
     });
 
     const assistant = current.messages[current.messages.length - 1];
-    expect(assistant.content).toBe("AI_REAUTH_REQUIRED");
+    expect(assistant.content).toBe("CODEX_NOT_SIGNED_IN");
     const assistantSaves = mocks.invoke.mock.calls.filter(
       ([cmd, args]) => cmd === "save_chat_message" && (args as { role?: string })?.role === "assistant",
     );
@@ -356,7 +395,7 @@ describe("useAiChat", () => {
     expect((renameCalls[0]?.[1] as { title?: string })?.title).toBe("First message");
   });
 
-  it("preserves AI_REAUTH_REQUIRED on first message when first auth check clears the session", async () => {
+  it("preserves Codex sentinel on first message without running title generation before auth check", async () => {
     mockCommands();
     const baseImpl = mocks.invoke.getMockImplementation()!;
     let sessionCleared = false;
@@ -367,7 +406,7 @@ describe("useAiChat", () => {
         authCommandOrder.push(command);
         if (!sessionCleared) {
           sessionCleared = true;
-          return Promise.reject(new Error("AI_REAUTH_REQUIRED"));
+          return Promise.reject(new Error("CODEX_NOT_SIGNED_IN"));
         }
         return Promise.reject(new Error("AI_NOT_CONFIGURED"));
       }
@@ -388,8 +427,63 @@ describe("useAiChat", () => {
     expect(authCommandOrder).toEqual(["ai_chat"]);
     const assistant = current.messages[current.messages.length - 1];
     expect(assistant.role).toBe("assistant");
-    expect(assistant.content).toBe("AI_REAUTH_REQUIRED");
+    expect(assistant.content).toBe("CODEX_NOT_SIGNED_IN");
     const assistantSaves = mocks.invoke.mock.calls.filter(
+      ([cmd, args]) => cmd === "save_chat_message" && (args as { role?: string })?.role === "assistant",
+    );
+    expect(assistantSaves).toHaveLength(0);
+  });
+
+  it("handles terminal stream error chunks separately from partial deltas without persisting failed replies", async () => {
+    mockCommands();
+
+    await act(async () => {
+      root.render(<AiChatHarness />);
+    });
+    await act(async () => {
+      await current.initialize();
+    });
+
+    // 1) Partial delta followed by terminal sentinel error -> sentinel replaces partial delta, never persisted
+    await withoutActFlush(() => current.send("First question"));
+    const titleEvent = [...listeners.keys()].find((k) => k.startsWith("ai-title-chunk-"));
+    const chatEvent = [...listeners.keys()].find((k) => k.startsWith("ai-stream-chunk-"));
+    expect(titleEvent).toBeDefined();
+    expect(chatEvent).toBeDefined();
+
+    await act(async () => {
+      listeners.get(titleEvent!)?.({ payload: { delta: "Half title", done: false } });
+      listeners.get(titleEvent!)?.({ payload: { delta: "", done: true, error: "CODEX_NOT_SIGNED_IN" } });
+      listeners.get(chatEvent!)?.({ payload: { delta: "Half reply", done: false } });
+      listeners.get(chatEvent!)?.({ payload: { delta: "", done: true, error: "CODEX_NOT_SIGNED_IN" } });
+    });
+
+    let assistant = current.messages[current.messages.length - 1];
+    expect(assistant.content).toBe("CODEX_NOT_SIGNED_IN");
+    let assistantSaves = mocks.invoke.mock.calls.filter(
+      ([cmd, args]) => cmd === "save_chat_message" && (args as { role?: string })?.role === "assistant",
+    );
+    expect(assistantSaves).toHaveLength(0);
+    // Title must fall back to the first user message rather than "Half title"
+    const renameCalls = mocks.invoke.mock.calls.filter(([cmd]) => cmd === "rename_chat");
+    expect(renameCalls.length).toBeGreaterThanOrEqual(1);
+    expect((renameCalls[0]?.[1] as { title?: string })?.title).toBe("First question");
+
+    // 2) Partial delta followed by terminal generic error -> shows Error:, never persisted
+    await withoutActFlush(() => current.send("Second question"));
+    const secondChatEvent = [...listeners.keys()].find((k) => k.startsWith("ai-stream-chunk-"));
+    expect(secondChatEvent).toBeDefined();
+
+    await act(async () => {
+      listeners.get(secondChatEvent!)?.({ payload: { delta: "Partial prose", done: false } });
+      listeners.get(secondChatEvent!)?.({
+        payload: { delta: "", done: true, error: "AI error: Codex exited" },
+      });
+    });
+
+    assistant = current.messages[current.messages.length - 1];
+    expect(assistant.content).toBe("Error: AI error: Codex exited");
+    assistantSaves = mocks.invoke.mock.calls.filter(
       ([cmd, args]) => cmd === "save_chat_message" && (args as { role?: string })?.role === "assistant",
     );
     expect(assistantSaves).toHaveLength(0);

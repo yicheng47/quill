@@ -7,6 +7,7 @@ import remarkGfm from "remark-gfm";
 import AiAuthPromptCard from "./AiAuthPromptCard";
 import ReaderPopover from "./ReaderPopover";
 import { LOOKUP_PROSE } from "./lookup-prose";
+import { isExactAiSentinel, matchAiSentinel, type AiSentinel } from "../lib/aiConnections";
 import { parseAiErrorMessage } from "../utils/aiStream";
 
 interface ExplainPopoverProps {
@@ -31,50 +32,70 @@ function useExplainStream(
   const contentRef = useRef("");
   const [content, setContent] = useState("");
   const [streaming, setStreaming] = useState(true);
-  const [notConfigured, setNotConfigured] = useState(false);
-  const [reauthRequired, setReauthRequired] = useState(false);
-  const unlistenRef = useRef<UnlistenFn | null>(null);
+  const [sentinel, setSentinel] = useState<AiSentinel | null>(null);
 
   useEffect(() => {
     let cancelled = false;
+    let activeChannel: string | null = null;
+    let unlisten: UnlistenFn | null = null;
+    const disposeListener = () => {
+      unlisten?.();
+      unlisten = null;
+    };
     contentRef.current = "";
     setContent("");
     setStreaming(true);
-    setNotConfigured(false);
-    setReauthRequired(false);
+    setSentinel(null);
 
     const run = async () => {
       const requestId = crypto.randomUUID();
+      const channel = `ai-lookup-chunk-${requestId}`;
 
-      unlistenRef.current = await listen<{ delta: string; done: boolean }>(
-        `ai-lookup-chunk-${requestId}`,
+      const stop = await listen<{ delta: string; done: boolean; error?: string | null }>(
+        channel,
         (event) => {
           if (cancelled) return;
-          if (event.payload.done) {
-            const finalContent = contentRef.current.trim();
-            if (finalContent === "AI_REAUTH_REQUIRED") {
-              setReauthRequired(true);
+          if (event.payload.error) {
+            activeChannel = null;
+            const err = event.payload.error;
+            const matched = matchAiSentinel(err);
+            if (matched) {
+              setSentinel(matched);
               contentRef.current = "";
               setContent("");
-            } else if (finalContent === "AI_NOT_CONFIGURED") {
-              setNotConfigured(true);
+            } else {
+              contentRef.current = err.startsWith("Error:") ? err : `Error: ${err}`;
+              setContent(contentRef.current);
+            }
+            setStreaming(false);
+            disposeListener();
+            return;
+          }
+          if (event.payload.done) {
+            activeChannel = null;
+            const finalContent = contentRef.current.trim();
+            if (isExactAiSentinel(finalContent)) {
+              setSentinel(finalContent);
               contentRef.current = "";
               setContent("");
             }
             setStreaming(false);
-            unlistenRef.current?.();
-            unlistenRef.current = null;
+            disposeListener();
             return;
           }
           contentRef.current += event.payload.delta;
-          if (
-            contentRef.current !== "AI_REAUTH_REQUIRED" &&
-            contentRef.current !== "AI_NOT_CONFIGURED"
-          ) {
+          if (!isExactAiSentinel(contentRef.current)) {
             setContent(contentRef.current);
           }
         },
       );
+
+      if (cancelled) {
+        stop();
+        return;
+      }
+      unlisten = stop;
+      activeChannel = channel;
 
       try {
         await invoke("ai_explain", {
@@ -84,13 +105,19 @@ function useExplainStream(
           chapter: chapter || null,
           requestId,
         });
+        if (cancelled && activeChannel) {
+          const ch = activeChannel;
+          activeChannel = null;
+          void invoke("ai_cancel", { channel: ch }).catch(() => {});
+        }
       } catch (err) {
+        activeChannel = null;
+        disposeListener();
         if (!cancelled) {
           const msg = String(err);
-          if (msg.includes("AI_NOT_CONFIGURED")) {
-            setNotConfigured(true);
-          } else if (msg.includes("AI_REAUTH_REQUIRED")) {
-            setReauthRequired(true);
+          const matched = matchAiSentinel(msg);
+          if (matched) {
+            setSentinel(matched);
           } else {
             contentRef.current = `Error: ${msg}`;
             setContent(contentRef.current);
@@ -100,16 +127,20 @@ function useExplainStream(
       }
     };
 
-    run();
+    void run();
 
     return () => {
       cancelled = true;
-      unlistenRef.current?.();
-      unlistenRef.current = null;
+      if (activeChannel) {
+        const ch = activeChannel;
+        activeChannel = null;
+        void invoke("ai_cancel", { channel: ch }).catch(() => {});
+      }
+      disposeListener();
     };
   }, [passage, surrounding, bookTitle, chapter]);
 
-  return { content, contentRef, streaming, notConfigured, reauthRequired };
+  return { content, contentRef, streaming, sentinel };
 }
 
 export default function ExplainPopover({
@@ -125,14 +156,14 @@ export default function ExplainPopover({
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
 
-  const { content, contentRef, streaming, notConfigured, reauthRequired } = useExplainStream(
+  const { content, contentRef, streaming, sentinel } = useExplainStream(
     text,
     sentence,
     bookTitle,
     chapter,
   );
   const errorMessage = parseAiErrorMessage(content);
-  const hasAuthOrConfigError = reauthRequired || notConfigured;
+  const hasAuthOrConfigError = Boolean(sentinel);
   const showFooter = !streaming && Boolean(content) && !hasAuthOrConfigError && !errorMessage;
 
   const handleCopy = () => {
@@ -183,9 +214,9 @@ export default function ExplainPopover({
           </p>
         </div>
 
-        {hasAuthOrConfigError ? (
+        {sentinel ? (
           <AiAuthPromptCard
-            variant={reauthRequired ? "reauth" : "notConfigured"}
+            sentinel={sentinel}
             embedded
             onOpenSettings={async () => {
               onClose();

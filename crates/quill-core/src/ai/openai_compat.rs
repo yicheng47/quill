@@ -16,8 +16,8 @@ pub async fn stream_chat(
     event_name: &str,
     max_tokens_override: Option<u32>,
 ) -> AppResult<()> {
-    let client = reqwest::Client::new();
-    let url = format!("{}/v1/chat/completions", base_url.trim_end_matches('/'));
+    let client = crate::ai::api::http_client(None)?;
+    let url = crate::ai::api::chat_completions_url(base_url);
 
     let mut body = serde_json::json!({
         "model": model,
@@ -65,29 +65,20 @@ pub async fn stream_chat(
 
             if let Some(data) = line.strip_prefix("data: ") {
                 if data == "[DONE]" {
-                    host.emit_json(event_name, &AiStreamChunk {
-                        delta: String::new(),
-                        done: true,
-                    });
+                    host.emit_json(event_name, &AiStreamChunk::done());
                     return Ok(());
                 }
 
                 if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data) {
                     if let Some(delta) = parsed["choices"][0]["delta"]["content"].as_str() {
-                        host.emit_json(event_name, &AiStreamChunk {
-                            delta: delta.to_string(),
-                            done: false,
-                        });
+                        host.emit_json(event_name, &AiStreamChunk::delta(delta));
                     }
                 }
             }
         }
     }
 
-    host.emit_json(event_name, &AiStreamChunk {
-        delta: String::new(),
-        done: true,
-    });
+    host.emit_json(event_name, &AiStreamChunk::done());
 
     Ok(())
 }
