@@ -5,7 +5,6 @@ import {
   BookOpen,
   Check,
   Cloud,
-  FolderClosed,
   Languages,
   MessageSquare,
   Plus,
@@ -389,7 +388,7 @@ export default function HomeView({
         {/* Row 1: Now reading + Side column */}
         <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_380px] xl:grid-cols-[minmax(0,1fr)_420px] gap-4">
           {nowReadingBook && (
-            <section className="dawn-glass rounded-[24px] p-7 lg:p-9 flex flex-col sm:flex-row gap-8 lg:gap-10 min-h-[420px] lg:min-h-[520px]">
+            <section className="dawn-glass rounded-[24px] p-7 lg:p-8 flex flex-col sm:flex-row gap-8 lg:gap-10 min-h-[420px] lg:min-h-[484px]">
               <button
                 type="button"
                 onClick={() => void openReaderWindow(nowReadingBook.id)}
@@ -519,7 +518,8 @@ export default function HomeView({
                         key={word.id}
                         type="button"
                         onClick={() => onNavigate("words", { wordId: word.id })}
-                        className="px-[11px] py-[5px] rounded-full bg-surface-chip border border-border-subtle hover:bg-surface-solid text-[13px] text-text-primary cursor-pointer transition-colors"
+                        title={word.word}
+                        className="max-w-[calc(50%-3px)] truncate px-[11px] py-[5px] rounded-full bg-surface-chip border border-border-subtle hover:bg-surface-solid text-[13px] text-text-primary cursor-pointer transition-colors"
                       >
                         {word.word}
                       </button>
@@ -596,9 +596,9 @@ export default function HomeView({
 
         {/* Row 2: Library 5-up shelf + Also reading / Collections */}
         <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_380px] xl:grid-cols-[minmax(0,1fr)_420px] gap-4">
-          <section className="dawn-glass rounded-[24px] p-6 flex flex-col gap-3.5">
+          <section className="dawn-glass rounded-[24px] p-6 lg:px-6 lg:py-5 flex flex-col gap-3.5">
             <div className="flex items-center justify-between gap-2">
-              <span className="text-[13px] font-medium text-text-secondary">
+              <span className="text-[13px] leading-tight font-medium text-text-secondary">
                 {t("home.libraryCount", { count: totalBooksCount })}
               </span>
               <button
@@ -633,10 +633,10 @@ export default function HomeView({
             </div>
           </section>
 
-          <section className="dawn-glass rounded-[24px] p-6 flex flex-col justify-between gap-4">
-            <div className="flex flex-col gap-3.5">
+          <section className="dawn-glass rounded-[24px] p-6 lg:px-6 lg:py-5 flex flex-col justify-between gap-3">
+            <div className="flex flex-col gap-3">
               <div className="flex items-center justify-between gap-2">
-                <span className="text-[13px] font-medium text-text-secondary">
+                <span className="text-[13px] leading-tight font-medium text-text-secondary">
                   {t("home.alsoReading")}
                 </span>
                 <button
@@ -700,16 +700,17 @@ export default function HomeView({
             </div>
 
             {collections.length > 0 && (
-              <div className="flex flex-col gap-2.5 pt-2">
-                <span className="text-[13px] font-medium text-text-secondary">
+              <div className="flex flex-col gap-2">
+                <span className="text-[13px] leading-tight font-medium text-text-secondary">
                   {t("collections.sectionTitle")}
                 </span>
                 <div className="flex flex-wrap gap-1.5">
                   {collections.slice(0, 4).map((col) => (
                     <Chip
                       key={col.id}
-                      icon={<FolderClosed size={13} />}
                       count={col.book_count}
+                      title={col.name}
+                      className="max-w-[calc(50%-3px)]"
                       onClick={() =>
                         onNavigate("library", {
                           collectionId: col.id,

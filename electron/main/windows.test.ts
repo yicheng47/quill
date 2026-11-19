@@ -30,6 +30,7 @@ const mockState = vi.hoisted(() => ({
   cursorPoint: { x: 200, y: 200 },
   userDataDir: "",
   asyncFullScreen: false,
+  primaryDisplayIndex: 0,
   displays: [
     {
       id: 1,
@@ -167,6 +168,8 @@ vi.mock("electron", () => {
     nativeTheme: { shouldUseDarkColors: false },
     shell: { openExternal: vi.fn() },
     screen: {
+      getPrimaryDisplay: () =>
+        mockState.displays[mockState.primaryDisplayIndex] ?? mockState.displays[0],
       getAllDisplays: () => mockState.displays,
       getDisplayMatching: (rect: { x: number; y: number; width: number; height: number }) =>
         findDisplayForRect(rect),
@@ -219,6 +222,7 @@ describe("electron windows titlebar & lifecycle", () => {
     mockState.nextId = 1;
     mockState.cursorPoint = { x: 200, y: 200 };
     mockState.asyncFullScreen = false;
+    mockState.primaryDisplayIndex = 0;
     mockState.userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "quill-win-test-"));
     mockState.displays = [
       {
@@ -1182,5 +1186,50 @@ describe("electron windows titlebar & lifecycle", () => {
     });
 
     closeIfOpen("main", first);
+  });
+
+  it("clamps first-launch main window dimensions to screen.getPrimaryDisplay().workArea", () => {
+    mockState.displays = [
+      {
+        id: 1,
+        bounds: { x: -2560, y: 0, width: 2560, height: 1440 },
+        workArea: { x: -2560, y: 25, width: 2560, height: 1415 },
+      },
+      {
+        id: 2,
+        bounds: { x: 0, y: 0, width: 1512, height: 982 },
+        workArea: { x: 0, y: 37, width: 1512, height: 945 },
+      },
+    ];
+    mockState.primaryDisplayIndex = 1;
+
+    createMainWindow(false);
+    const win = mockState.instances[0];
+    expect(win.options.width).toBe(1440);
+    expect(win.options.height).toBe(945);
+    expect(win.options.minWidth).toBe(700);
+    expect(win.options.minHeight).toBe(500);
+
+    closeIfOpen("main", win);
+  });
+
+  it("caps native BrowserWindow minimum dimensions to the clamped work area for sub-minimum displays", () => {
+    mockState.displays = [
+      {
+        id: 1,
+        bounds: { x: 0, y: 0, width: 1024, height: 500 },
+        workArea: { x: 0, y: 20, width: 1024, height: 480 },
+      },
+    ];
+    mockState.primaryDisplayIndex = 0;
+
+    createMainWindow(false);
+    const win = mockState.instances[0];
+    expect(win.options.width).toBe(1024);
+    expect(win.options.height).toBe(480);
+    expect(win.options.minWidth).toBe(700);
+    expect(win.options.minHeight).toBe(480);
+
+    closeIfOpen("main", win);
   });
 });
