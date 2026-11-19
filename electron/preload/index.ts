@@ -87,6 +87,32 @@ const bridge = {
     return ipcRenderer.invoke("quill:set-window-title", title);
   },
 
+  minimizeWindow(): Promise<void> {
+    return ipcRenderer.invoke("quill:minimize-window");
+  },
+
+  toggleMaximizeWindow(): Promise<void> {
+    return ipcRenderer.invoke("quill:toggle-maximize-window");
+  },
+
+  closeWindow(): Promise<void> {
+    return ipcRenderer.invoke("quill:close-window");
+  },
+
+  isWindowMaximized(): Promise<boolean> {
+    return ipcRenderer.invoke("quill:is-window-maximized");
+  },
+
+  onWindowMaximized(handler: (maximized: boolean) => void): () => void {
+    const listener = (_e: unknown, maximized: boolean) => {
+      handler(maximized);
+    };
+    ipcRenderer.on("quill:window-maximized", listener);
+    return () => {
+      ipcRenderer.removeListener("quill:window-maximized", listener);
+    };
+  },
+
   setWindowBackgroundColor(color: string): Promise<void> {
     return ipcRenderer.invoke("quill:set-window-background", color);
   },

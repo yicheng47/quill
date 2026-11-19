@@ -1,3 +1,4 @@
+import { BrowserWindow } from "electron";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const state = vi.hoisted(() => ({
@@ -161,5 +162,79 @@ describe("registerIpcHandlers platform and updater channels", () => {
     const cancel = state.handlers.get("quill:cancel-update-download");
     expect(cancel?.()).toBe(true);
     expect((updater as { cancelDownload: ReturnType<typeof vi.fn> }).cancelDownload).toHaveBeenCalledTimes(1);
+  });
+
+  it("handles window-control IPC actions for the sender window only", () => {
+    const core = { dispatch: vi.fn() } as never;
+    registerIpcHandlers(core);
+
+    const winState = {
+      destroyed: false,
+      maximized: false,
+      fullscreen: false,
+    };
+    const fakeWin = {
+      isDestroyed: () => winState.destroyed,
+      isMaximized: () => winState.maximized,
+      isFullScreen: () => winState.fullscreen,
+      minimize: vi.fn(),
+      maximize: vi.fn(() => {
+        winState.maximized = true;
+      }),
+      unmaximize: vi.fn(() => {
+        winState.maximized = false;
+      }),
+      setFullScreen: vi.fn((flag: boolean) => {
+        winState.fullscreen = flag;
+      }),
+      close: vi.fn(),
+    };
+    const fromWebContents = vi.mocked(BrowserWindow.fromWebContents);
+    fromWebContents.mockReturnValue(fakeWin as never);
+
+    const senderEvent = { sender: { id: 42 } };
+    const minimize = state.handlers.get("quill:minimize-window")!;
+    const toggleMaximize = state.handlers.get("quill:toggle-maximize-window")!;
+    const close = state.handlers.get("quill:close-window")!;
+    const isMaximized = state.handlers.get("quill:is-window-maximized")!;
+
+    expect(isMaximized(senderEvent)).toBe(false);
+    expect(fromWebContents).toHaveBeenCalledWith(senderEvent.sender);
+
+    minimize(senderEvent);
+    expect(fakeWin.minimize).toHaveBeenCalledTimes(1);
+
+    toggleMaximize(senderEvent);
+    expect(fakeWin.maximize).toHaveBeenCalledTimes(1);
+    expect(isMaximized(senderEvent)).toBe(true);
+
+    toggleMaximize(senderEvent);
+    expect(fakeWin.unmaximize).toHaveBeenCalledTimes(1);
+    expect(isMaximized(senderEvent)).toBe(false);
+
+    // Entering F11 full screen from a restored window reports restorable=true and clicking exits full screen.
+    winState.fullscreen = true;
+    expect(isMaximized(senderEvent)).toBe(true);
+    toggleMaximize(senderEvent);
+    expect(fakeWin.setFullScreen).toHaveBeenCalledWith(false);
+    expect(fakeWin.maximize).toHaveBeenCalledTimes(1);
+    expect(isMaximized(senderEvent)).toBe(false);
+
+    close(senderEvent);
+    expect(fakeWin.close).toHaveBeenCalledTimes(1);
+
+    // Destroyed or missing sender windows are safe no-ops.
+    winState.destroyed = true;
+    minimize(senderEvent);
+    close(senderEvent);
+    expect(isMaximized(senderEvent)).toBe(false);
+    expect(fakeWin.minimize).toHaveBeenCalledTimes(1);
+    expect(fakeWin.close).toHaveBeenCalledTimes(1);
+
+    fromWebContents.mockReturnValue(null);
+    minimize(senderEvent);
+    toggleMaximize(senderEvent);
+    close(senderEvent);
+    expect(isMaximized(senderEvent)).toBe(false);
   });
 });

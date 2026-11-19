@@ -72,6 +72,11 @@ export interface Platform {
   getInitialReaderTheme(): string;
   setWindowTitle(title: string): Promise<void>;
   setWindowBackgroundColor(color: string): Promise<void>;
+  minimizeWindow(): Promise<void>;
+  toggleMaximizeWindow(): Promise<void>;
+  closeWindow(): Promise<void>;
+  isWindowMaximized(): Promise<boolean>;
+  onWindowMaximized(handler: (maximized: boolean) => void): Promise<UnlistenFn>;
   appReady(): Promise<void>;
   focusWindow(label: string): Promise<boolean>;
   openReaderWindow(params: ReaderWindowParams): Promise<void>;

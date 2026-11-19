@@ -10,12 +10,14 @@ import {
   focusManagedWindow,
   getOpenReaderWindowCount,
   getWindow,
+  isWindowRestorable,
   labelForWebContents,
   markQuitting,
   resolveInitialDark,
   sendEventToWindow,
   setTitlebarZoomForWindow,
   setWindowBackgroundColor,
+  toggleWindowMaximizeOrRestore,
   type InitialAppearance,
   type ReaderWindowParams,
 } from "./windows";
@@ -140,6 +142,30 @@ export function registerIpcHandlers(
     if (win && !win.isDestroyed()) {
       win.setTitle(title);
     }
+  });
+
+  ipcMain.handle("quill:minimize-window", (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (win && !win.isDestroyed()) {
+      win.minimize();
+    }
+  });
+
+  ipcMain.handle("quill:toggle-maximize-window", (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    toggleWindowMaximizeOrRestore(win);
+  });
+
+  ipcMain.handle("quill:close-window", (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (win && !win.isDestroyed()) {
+      win.close();
+    }
+  });
+
+  ipcMain.handle("quill:is-window-maximized", (event): boolean => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    return isWindowRestorable(win);
   });
 
   ipcMain.handle("quill:set-window-background", (event, color: string) => {

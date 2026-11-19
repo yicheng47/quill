@@ -14,11 +14,13 @@ import {
 } from "lucide-react";
 import QuillLogo from "./QuillLogo";
 import IconButton from "./ui/IconButton";
+import WindowControls from "./WindowControls";
 import { useUpdate } from "../contexts/UpdateContext";
 import { getOpenReaderCount, listen, listenCurrentWindow, openUrl } from "../platform";
 import type { UpdateStatus } from "../hooks/useUpdateChecker";
 import {
   isMacOS,
+  isWindows,
   MAC_TRAFFIC_LIGHT_SPACER_CLASS,
   shortcutModSymbol,
 } from "../lib/platformEnv";
@@ -384,6 +386,7 @@ export default function TopBar({
     (updateStatus === "checking" && manualCheck) ||
     (updateStatus === "idle" && showUpToDate);
   const isMac = isMacOS();
+  const isWin = isWindows();
   const mod = shortcutModSymbol();
 
   useEffect(() => {
@@ -418,12 +421,50 @@ export default function TopBar({
     { id: "chats", label: t("nav.chats") },
   ];
 
+  const navElement = (
+    <nav
+      aria-label={t("topBar.navigation")}
+      className={`no-drag inline-flex items-center gap-0.5 p-1 rounded-full dawn-glass shrink-0 ${
+        isWin ? "max-w-full overflow-x-auto scrollbar-none" : ""
+      }`}
+    >
+      {routes.map((route) => {
+        const isActive = !settingsOpen && activeRoute === route.id;
+        return (
+          <button
+            key={route.id}
+            type="button"
+            aria-current={isActive ? "page" : undefined}
+            onClick={() => onRouteChange(route.id)}
+            className={`px-2 sm:px-3 md:px-4 py-[7px] rounded-full text-[12.5px] sm:text-[13px] whitespace-nowrap cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-focus-ring ${
+              isActive
+                ? "bg-accent-tint text-accent-on-tint font-semibold"
+                : "text-text-secondary font-medium hover:bg-surface-hover"
+            }`}
+          >
+            {route.label}
+          </button>
+        );
+      })}
+    </nav>
+  );
+
   return (
     <header
       data-drag-region
-      className="h-[71px] shrink-0 w-full pl-7 pr-4 lg:px-7 py-4 flex items-center justify-between gap-2 lg:gap-3 select-none relative z-30"
+      className={
+        isWin
+          ? "max-[920px]:h-auto max-[920px]:flex-wrap max-[920px]:py-2.5 max-[920px]:gap-y-2 min-[920px]:h-[71px] min-[920px]:flex-nowrap min-[920px]:py-4 shrink-0 w-full px-3 min-[920px]:px-5 lg:px-7 flex items-center justify-between gap-x-2 lg:gap-x-3 select-none relative"
+          : "h-[71px] shrink-0 w-full pl-7 pr-4 lg:px-7 py-4 flex items-center justify-between gap-2 lg:gap-3 select-none relative z-30"
+      }
     >
-      <div className="flex items-center gap-2.5 lg:gap-[18px] flex-1 basis-0 min-w-0 lg:min-w-fit">
+      <div
+        className={
+          isWin
+            ? "flex items-center gap-2.5 lg:gap-[18px] flex-1 basis-0 min-w-0 lg:min-w-fit max-[920px]:order-1"
+            : "flex items-center gap-2.5 lg:gap-[18px] flex-1 basis-0 min-w-0 lg:min-w-fit"
+        }
+      >
         {isMac && <div className={`${MAC_TRAFFIC_LIGHT_SPACER_CLASS} shrink-0`} aria-hidden="true" />}
 
         <div className="flex items-center gap-2 lg:gap-[9px] min-w-0">
@@ -452,31 +493,21 @@ export default function TopBar({
         )}
       </div>
 
-      <nav
-        aria-label={t("topBar.navigation")}
-        className="no-drag inline-flex items-center gap-0.5 p-1 rounded-full dawn-glass shrink-0"
-      >
-        {routes.map((route) => {
-          const isActive = !settingsOpen && activeRoute === route.id;
-          return (
-            <button
-              key={route.id}
-              type="button"
-              aria-current={isActive ? "page" : undefined}
-              onClick={() => onRouteChange(route.id)}
-              className={`px-2 sm:px-3 md:px-4 py-[7px] rounded-full text-[12.5px] sm:text-[13px] whitespace-nowrap cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-focus-ring ${
-                isActive
-                  ? "bg-accent-tint text-accent-on-tint font-semibold"
-                  : "text-text-secondary font-medium hover:bg-surface-hover"
-              }`}
-            >
-              {route.label}
-            </button>
-          );
-        })}
-      </nav>
+      {isWin ? (
+        <div className="max-[920px]:order-3 max-[920px]:basis-full max-[920px]:flex max-[920px]:justify-center max-[920px]:min-w-0 min-[920px]:contents">
+          {navElement}
+        </div>
+      ) : (
+        navElement
+      )}
 
-      <div className="flex items-center justify-end gap-1.5 lg:gap-2.5 shrink-0 lg:flex-1 lg:basis-0 lg:min-w-fit">
+      <div
+        className={
+          isWin
+            ? "flex items-center justify-end gap-1.5 lg:gap-2.5 shrink-0 max-[920px]:order-2 min-[920px]:flex-1 min-[920px]:basis-0 min-[920px]:min-w-fit"
+            : "flex items-center justify-end gap-1.5 lg:gap-2.5 shrink-0 lg:flex-1 lg:basis-0 lg:min-w-fit"
+        }
+      >
         <IconButton
           active={searchOpen}
           onClick={onOpenSearch}
@@ -504,6 +535,7 @@ export default function TopBar({
         >
           <Settings size={16} />
         </IconButton>
+        <WindowControls />
       </div>
     </header>
   );

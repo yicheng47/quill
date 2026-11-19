@@ -259,4 +259,37 @@ describe("ReaderSettings popover variants", () => {
       theme: "dark",
     });
   });
+
+  it("clamps EPUB and PDF popover horizontally inside narrow viewports while preserving anchor alignment when wide", async () => {
+    const origWidth = window.innerWidth;
+    const setViewport = (width: number, anchorRight: number) => {
+      Object.defineProperty(window, "innerWidth", { value: width, configurable: true, writable: true });
+      anchorEl.getBoundingClientRect = () =>
+        ({ bottom: 48, right: anchorRight, top: 16, left: anchorRight - 32, width: 32, height: 32 }) as DOMRect;
+    };
+
+    try {
+      // Wide viewport: aligns right edge to Typography button (1200 - 950 = 250px).
+      setViewport(1200, 950);
+      await renderPopover({ bookFormat: "epub" }).render();
+      const wideDialog = container.querySelector<HTMLElement>('[role="dialog"][aria-label="Typography"]')!;
+      expect(wideDialog.style.right).toBe("250px");
+      expect(wideDialog.className).toContain("max-w-[calc(100vw-24px)]");
+
+      // Narrow 500px viewport (700 DIP @ 140% zoom) with Windows caption group shifting anchor right to 257px:
+      // EPUB (316px wide) clamps to right = 500 - 316 - 12 = 172px so left edge stays at 12px instead of -59px.
+      setViewport(500, 257);
+      await act(async () => {
+        window.dispatchEvent(new Event("resize"));
+      });
+      expect(wideDialog.style.right).toBe("172px");
+
+      // PDF (296px wide) clamps to right = 500 - 296 - 12 = 192px so left edge stays at 12px.
+      await renderPopover({ bookFormat: "pdf" }).render();
+      const pdfDialog = container.querySelector<HTMLElement>('[role="dialog"][aria-label="Typography"]')!;
+      expect(pdfDialog.style.right).toBe("192px");
+    } finally {
+      Object.defineProperty(window, "innerWidth", { value: origWidth, configurable: true, writable: true });
+    }
+  });
 });

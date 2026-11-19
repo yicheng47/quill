@@ -32,6 +32,14 @@ export const setWindowTitle: Platform["setWindowTitle"] = (title) =>
   platform.setWindowTitle(title);
 export const setWindowBackgroundColor: Platform["setWindowBackgroundColor"] = (color) =>
   platform.setWindowBackgroundColor(color);
+export const minimizeWindow: Platform["minimizeWindow"] = () => platform.minimizeWindow();
+export const toggleMaximizeWindow: Platform["toggleMaximizeWindow"] = () =>
+  platform.toggleMaximizeWindow();
+export const closeWindow: Platform["closeWindow"] = () => platform.closeWindow();
+export const isWindowMaximized: Platform["isWindowMaximized"] = () =>
+  platform.isWindowMaximized();
+export const onWindowMaximized: Platform["onWindowMaximized"] = (handler) =>
+  platform.onWindowMaximized(handler);
 export const appReady: Platform["appReady"] = () => platform.appReady();
 export const focusWindow: Platform["focusWindow"] = (label) => platform.focusWindow(label);
 export const openReaderWindow: Platform["openReaderWindow"] = (params) =>

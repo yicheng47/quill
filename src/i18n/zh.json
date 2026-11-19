@@ -11,6 +11,11 @@
   "topBar.import": "导入书籍",
   "topBar.settings": "设置",
 
+  "window.minimize": "最小化",
+  "window.maximize": "最大化",
+  "window.restore": "向下还原",
+  "window.close": "关闭",
+
   "commandSearch.ariaLabel": "搜索 Quill",
   "commandSearch.placeholder": "搜索书籍、高亮、词汇或对话…",
   "commandSearch.scopesLabel": "搜索范围",

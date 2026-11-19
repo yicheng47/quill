@@ -5,6 +5,10 @@ export function isMacOS(): boolean {
   return typeof navigator !== "undefined" && navigator.userAgent.includes("Macintosh");
 }
 
+export function isWindows(): boolean {
+  return typeof navigator !== "undefined" && navigator.userAgent.includes("Windows");
+}
+
 export function shortcutModSymbol(): string {
   return isMacOS() ? "⌘" : "Ctrl+";
 }

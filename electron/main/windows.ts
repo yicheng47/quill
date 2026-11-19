@@ -192,6 +192,80 @@ export function toggleWindowZoom(win: BaseWindow | undefined): void {
   win.maximize();
 }
 
+export function isWindowRestorable(
+  win: Pick<BrowserWindow, "isDestroyed" | "isMaximized" | "isFullScreen"> | null | undefined,
+): boolean {
+  return Boolean(win && !win.isDestroyed() && (win.isMaximized() || win.isFullScreen()));
+}
+
+export function toggleWindowMaximizeOrRestore(win: BaseWindow | null | undefined): void {
+  if (!win || win.isDestroyed()) return;
+  if (win.isFullScreen()) {
+    win.setFullScreen(false);
+    return;
+  }
+  toggleWindowZoom(win);
+}
+
+export function handleWindowsBeforeInputEvent(
+  win: Pick<
+    BrowserWindow,
+    "isDestroyed" | "isFullScreen" | "setFullScreen" | "minimize" | "close" | "webContents"
+  >,
+  event: { preventDefault: () => void },
+  input: Pick<Electron.Input, "type" | "key" | "control" | "shift" | "alt" | "meta" | "isAutoRepeat">,
+  isDev: boolean,
+): boolean {
+  if (input.type !== "keyDown" || input.isAutoRepeat || win.isDestroyed()) {
+    return false;
+  }
+
+  const hasModifiers = input.control || input.shift || input.alt || input.meta;
+  if (input.key === "F11" && !hasModifiers) {
+    event.preventDefault();
+    win.setFullScreen(!win.isFullScreen());
+    return true;
+  }
+
+  if (!input.control || input.alt || input.meta) {
+    return false;
+  }
+
+  const key = input.key.toLowerCase();
+  if (key === "w" && !input.shift) {
+    event.preventDefault();
+    win.close();
+    return true;
+  }
+  if (key === "m" && !input.shift) {
+    event.preventDefault();
+    win.minimize();
+    return true;
+  }
+
+  if (!isDev) {
+    return false;
+  }
+
+  if (key === "r" && !input.shift) {
+    event.preventDefault();
+    win.webContents.reload();
+    return true;
+  }
+  if (key === "r" && input.shift) {
+    event.preventDefault();
+    win.webContents.reloadIgnoringCache();
+    return true;
+  }
+  if (key === "i" && input.shift) {
+    event.preventDefault();
+    win.webContents.toggleDevTools();
+    return true;
+  }
+
+  return false;
+}
+
 export function isQuitting(): boolean {
   return quitting;
 }
@@ -335,6 +409,7 @@ function createWindow(options: {
 }): BrowserWindow {
   const targetUrl = resolveWindowUrl(options.routePath, process.env.ELECTRON_RENDERER_URL);
   const isMac = process.platform === "darwin";
+  const isWin = process.platform === "win32";
   const isMain = options.label === "main";
   const initialDarkSeed =
     options.initialDarkSeed !== undefined ? options.initialDarkSeed : options.initialDark;
@@ -357,7 +432,11 @@ function createWindow(options: {
           titleBarStyle: "hiddenInset" as const,
           trafficLightPosition,
         }
-      : {}),
+      : isWin
+        ? {
+            titleBarStyle: "hidden" as const,
+          }
+        : {}),
     webPreferences: {
       preload: path.join(__dirname, "../preload/index.cjs"),
       additionalArguments: [
@@ -407,6 +486,22 @@ function createWindow(options: {
     const [width, height] = win.getSize();
     win.webContents.send("quill:window-resized", { width, height });
   });
+
+  const sendMaximizedState = () => {
+    if (win.isDestroyed()) return;
+    win.webContents.send("quill:window-maximized", isWindowRestorable(win));
+  };
+  win.on("maximize", sendMaximizedState);
+  win.on("unmaximize", sendMaximizedState);
+  win.on("enter-full-screen", sendMaximizedState);
+  win.on("leave-full-screen", sendMaximizedState);
+
+  if (isWin) {
+    win.removeMenu();
+    win.webContents.on("before-input-event", (event, input) => {
+      handleWindowsBeforeInputEvent(win, event, input, !app.isPackaged);
+    });
+  }
 
   if (isMac) {
     win.on("leave-full-screen", () => {
