@@ -188,8 +188,15 @@ const getReaderCSS = (settings: ReaderSettingsState) => {
   const fontFaceCSS = settings.font === "literata" ? getLiterataFontFaceCSS() : "";
   const letterSpacing = settings.charSpacing === 0 ? "normal" : `${settings.charSpacing * 0.01}em`;
   const wordSpacing = settings.wordSpacing === 0 ? "normal" : `${settings.wordSpacing * 0.01}em`;
+  // The book's iframe cannot see Quill's CSS variables, so this repeats the
+  // --color-focus-ring values for light and dark pages.
+  const focusRing = settings.theme === "dark" ? "rgba(161, 147, 245, 0.5)" : "rgba(111, 99, 210, 0.4)";
   return `
     ${fontFaceCSS}
+    :focus-visible {
+      outline: 3px solid ${focusRing} !important;
+      outline-offset: 0 !important;
+    }
     body {
       background-color: ${themeColors.body} !important;
       color: ${themeColors.text} !important;
