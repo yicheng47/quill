@@ -57,9 +57,9 @@ export default function AiSetupDialog({
   signingInRef.current = signingIn;
   const copyTimerRef = useRef<number | null>(null);
 
-  const probeCodex = useCallback(async () => {
+  const probeCodex = useCallback(async (options?: { quiet?: boolean }) => {
     const seq = ++probeSeqRef.current;
-    setChecking(true);
+    if (!options?.quiet) setChecking(true);
     try {
       const result = await invoke<CodexStatus>("codex_status");
       if (probeSeqRef.current !== seq) return;
@@ -99,7 +99,7 @@ export default function AiSetupDialog({
     if (!open) return;
     const onFocus = () => {
       if (!signingInRef.current) {
-        void probeCodex();
+        void probeCodex({ quiet: true });
       }
     };
     window.addEventListener("focus", onFocus);

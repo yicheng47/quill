@@ -269,6 +269,27 @@ describe("Home navigate-main-route integration", () => {
     expect(container.textContent).not.toContain("First saved definition.");
   });
 
+  it("starts the Codex app server on mount only on the Codex connection", async () => {
+    settingsOverride = { theme: "light", ai_setup_seen: "true", ai_auth_mode: "codex" };
+    await act(async () => {
+      root.render(<Home />);
+    });
+    await flushMicrotasks();
+    expect(invokeMock).toHaveBeenCalledWith("codex_status", undefined);
+
+    act(() => {
+      root.unmount();
+    });
+    invokeMock.mockClear();
+    settingsOverride = { theme: "light", ai_setup_seen: "true", ai_auth_mode: "api_key" };
+    root = createRoot(container);
+    await act(async () => {
+      root.render(<Home />);
+    });
+    await flushMicrotasks();
+    expect(invokeMock).not.toHaveBeenCalledWith("codex_status", undefined);
+  });
+
   it("makes Home inert and suppresses global shortcuts while AiSetupDialog is open, then restores them on dismiss", async () => {
     settingsOverride = { theme: "light", reader_settings_open: "false" };
 

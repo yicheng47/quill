@@ -339,6 +339,9 @@ export default function Home() {
         const decision = shouldShowAiSetup(loaded);
         if (decision.show) {
           setAiSetupState({ open: true, isMigration: decision.isMigration });
+        } else if (loaded.ai_auth_mode === "codex") {
+          // Start the Codex app server now so the first AI call does not wait for it.
+          void invoke("codex_status").catch(() => {});
         }
       })
       .catch(() => {});
