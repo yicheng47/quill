@@ -545,7 +545,7 @@ describe("Home integration flows (R1, R2, R3, R6)", () => {
     });
     await flushMicrotasks();
 
-    expect(container.querySelector("h1")?.textContent).toBe("Your quiet reading room");
+    expect(container.querySelector("h1")?.textContent).toBe("Trace your thoughts as you read");
     expect(Array.from(container.querySelectorAll("nav button")).map((b) => b.textContent)).toEqual([
       "Home",
       "Library",
@@ -725,7 +725,7 @@ describe("Home integration flows (R1, R2, R3, R6)", () => {
     await flushMicrotasks();
 
     expect(container.querySelector('[data-testid="settings-view"]')).toBeNull();
-    expect(container.querySelector("h1")?.textContent).toBe("Your quiet reading room");
+    expect(container.querySelector("h1")?.textContent).toBe("Trace your thoughts as you read");
 
     // Gear toggles Settings open and closed from Home
     const gearBtn = container.querySelector<HTMLButtonElement>('button[aria-label="Settings"]');
@@ -737,7 +737,7 @@ describe("Home integration flows (R1, R2, R3, R6)", () => {
       gearBtn?.click();
     });
     expect(container.querySelector('[data-testid="settings-view"]')).toBeNull();
-    expect(container.querySelector("h1")?.textContent).toBe("Your quiet reading room");
+    expect(container.querySelector("h1")?.textContent).toBe("Trace your thoughts as you read");
 
     // Cmd+, toggles Settings open from Home, clicking Home route exits back to Home
     await act(async () => {
@@ -752,7 +752,7 @@ describe("Home integration flows (R1, R2, R3, R6)", () => {
     });
     await flushMicrotasks();
     expect(container.querySelector('[data-testid="settings-view"]')).toBeNull();
-    expect(container.querySelector("h1")?.textContent).toBe("Your quiet reading room");
+    expect(container.querySelector("h1")?.textContent).toBe("Trace your thoughts as you read");
 
     // Enter Library, open Settings via Cmd+,, and exit via Library route click
     const libraryBtn = Array.from(container.querySelectorAll<HTMLButtonElement>("nav button")).find((b) =>

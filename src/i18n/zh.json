@@ -70,7 +70,7 @@
   "home.alsoReading": "还在阅读",
   "home.openReading": "阅读中",
   "home.noAlsoReading": "开始阅读的书籍会与书单一起显示在这里。",
-  "home.empty.headline": "你的静谧阅读空间",
+  "home.empty.headline": "记录你的阅读时光",
   "home.empty.subtitle": "导入你的第一本 EPUB 或 PDF，开始构建包含高亮、批注、生词本与书籍对话的私人图书馆。",
   "home.empty.importFirst": "导入第一本书",
   "home.empty.turnOnICloud": "开启 iCloud 同步…",
@@ -612,7 +612,7 @@
 
   "settings.about.title": "关于",
   "settings.about.subtitle": "版本、日志与项目链接",
-  "settings.about.description": "支持 AI 辅助的 EPUB 与 PDF 阅读器",
+  "settings.about.description": "记录你的阅读时光",
   "settings.about.linksGroup": "链接与许可",
   "settings.about.github": "GitHub",
   "settings.about.documentation": "文档",
