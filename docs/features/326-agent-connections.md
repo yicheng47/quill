@@ -42,7 +42,7 @@ In scope:
 
 - **Status and errors.** Codex has six states that settings, the setup helper, and the AI entry points all share: checking, ready (account email, plan and Codex version), not installed, not signed in, too old, and failed to start (with the process's error). The backend returns a sentinel for each failure alongside `AI_NOT_CONFIGURED`, and the reader's AI popovers and Ask Quill map them to the setup card from #348 instead of a red error.
 
-- **First-launch AI setup helper.** On the first launch with no AI configured, Quill runs Codex detection and offers the next step for its state: **Use Codex** when it is ready, **Sign in with ChatGPT** when it is not signed in, and the install command, a link to OpenAI's install page and **Check again** when it is missing or too old. Every state also offers **Use an API key or Ollama**, which opens Settings → AI on API, and **Skip for now**. Skipping or finishing records `ai_setup_seen` so the helper never reappears on its own; afterwards the AI entry points' setup card and Settings → AI cover the same ground. The placement and visual form are open design choices (see Design).
+- **First-launch AI setup helper.** On the first launch with no AI configured, Quill runs Codex detection and offers the next step for its state: **Use Codex** when it is ready, **Sign in with ChatGPT** when it is not signed in, and the install command, a link to OpenAI's install page and **Check again** when it is missing or too old. Every state also offers **Use an API key or Ollama**, which opens Settings → AI on API, and **Skip for now**. Skipping or finishing records `ai_setup_seen` so the helper never reappears on its own; afterwards the AI entry points' setup card and Settings → AI cover the same ground. It is a dialog over Home (see Design), shown once.
 
 - **Migration from the ChatGPT login.** On the first 2.0 launch, a saved `ai_auth_mode = oauth` becomes `codex`, the saved model and effort tiers carry over (the slugs are the same catalog), and the ChatGPT OAuth tokens are deleted from `secrets.db`, since no code can use them any more. These users see the setup helper once with a short note that ChatGPT sign-in now goes through Codex, whatever `ai_setup_seen` says.
 
@@ -61,11 +61,13 @@ Out of scope:
 
 ## Design
 
-The UI is drawn in Pencil at `quill/desktop/specs/326-agent-connections.pen` in `YeelinksCo/yeelinks_design` and needs sign-off before implementation. It covers:
+The UI is signed off (2026-11-19) in Pencil at `quill/desktop/specs/326-agent-connections.pen` in `YeelinksCo/yeelinks_design`. The canvas holds only the chosen design:
 
-- Settings → AI: the Connection list with Agent and API (chosen over three peer choices with a separate Ollama option, a segmented control, and a Codex-first layout), shown with the agent selected and with API on OpenRouter and on Ollama; the service menu; the Codex status row in each state; the model card and the effort tiers. Temperature is not shown for the agent, which does not take it.
-- The first-launch helper in three placements for comparison: a modal over Home (A1, recommended), a banner on Home (A2), and a step inside the empty-library view (A3), with the modal's not-signed-in, signing-in, not-installed and too-old states.
-- The migration note for former ChatGPT-login users.
+- `326 / Settings — AI · Codex ready`: the Agent/API connection list with the agent selected, then the model card and effort tiers. Temperature is not shown for the agent, which does not take it.
+- `326 / Codex status row — states`: the status row in every state.
+- `326 / API connection — selected states and service menu`: API on OpenRouter and on the Ollama preset, the model picker, and the service menu.
+- `326 / First-launch AI setup — dialog over Home`: the helper as a dialog over the first-launch Home, in the ready state.
+- `326 / Setup helper — states`: the dialog when not signed in, signing in, not installed and too old, and with the one-time note for people moving from the ChatGPT login.
 
 ## Implementation Phases
 
