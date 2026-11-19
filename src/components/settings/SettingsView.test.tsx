@@ -666,7 +666,7 @@ describe("SettingsView and redesigned sections", () => {
 
     await clickTab("about");
     expect(container.textContent).toContain("macOS · arm64");
-    expect(container.textContent).toContain("An AI-powered reader for EPUB and PDF");
+    expect(container.textContent).toContain("Trace your thoughts as you read");
 
     const revealBtn = Array.from(container.querySelectorAll("button")).find((b) =>
       b.textContent?.includes("Reveal in Finder"),

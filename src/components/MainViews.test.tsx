@@ -116,7 +116,7 @@ describe("Main Views (Home, Highlights, Words, Chats)", () => {
       });
       await flushMicrotasks();
 
-      expect(container.textContent).toContain("Your quiet reading room");
+      expect(container.textContent).toContain("Trace your thoughts as you read");
       expect(container.textContent).toContain("palimpsest");
       expect(container.textContent).toContain("Psychological time");
 

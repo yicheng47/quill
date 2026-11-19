@@ -70,7 +70,7 @@
   "home.alsoReading": "Also reading",
   "home.openReading": "Reading",
   "home.noAlsoReading": "Books you start reading appear here alongside your collections.",
-  "home.empty.headline": "Your quiet reading room",
+  "home.empty.headline": "Trace your thoughts as you read",
   "home.empty.subtitle": "Import your first EPUB or PDF to start building a private library with highlights, margin notes, saved vocabulary, and book-aware conversations.",
   "home.empty.importFirst": "Import Your First Book",
   "home.empty.turnOnICloud": "Turn On iCloud Sync…",
@@ -612,7 +612,7 @@
 
   "settings.about.title": "About",
   "settings.about.subtitle": "Version, logs and project links",
-  "settings.about.description": "An AI-powered reader for EPUB and PDF",
+  "settings.about.description": "Trace your thoughts as you read",
   "settings.about.linksGroup": "Links & License",
   "settings.about.github": "GitHub",
   "settings.about.documentation": "Documentation",
