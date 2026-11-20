@@ -5,36 +5,92 @@ interface QuillLogoProps {
   className?: string;
 }
 
+const BACK_PAGE_PATH =
+  "M 23.2 78.2 C 40.5 79.4 58.6 73.6 71.2 61.2 C 79.8 52.6 84.0 41.2 83.2 29.5 C 74.8 36.2 65.4 45.2 55.2 55.0 C 44.8 65.0 34.0 72.8 23.2 78.2 Z";
+
+const FRONT_QUILL_PATH =
+  "M 18.39 77.43 C 21.13 64.46 25.85 51.09 35.45 38.89 L 37.22 45.82 L 38.87 34.51 C 48.11 25.07 61.56 18.6 73.86 17.71 C 73.59 31.84 66 49.2 52.26 62.03 C 41.27 71.86 29.47 76.53 19.21 78.17 L 39.33 57.14 A 3.6 3.6 0 1 0 37.59 55.55 L 18.39 77.43 Z";
+
 export default function QuillLogo({ size = 28, className = "" }: QuillLogoProps) {
-  const gradientId = useId();
+  const uid = useId();
+  const tileGradId = `${uid}-tile`;
+  const glowGradId = `${uid}-glow`;
+  const backGradId = `${uid}-back`;
+  const frontGradId = `${uid}-front`;
+  const clipId = `${uid}-clip`;
+  const shadowId = `${uid}-shadow`;
+  const useDropShadow = size >= 40;
 
   return (
     <svg
       width={size}
       height={size}
-      viewBox="0 0 28 28"
+      viewBox="0 0 100 100"
       fill="none"
       xmlns="http://www.w3.org/2000/svg"
       className={className}
     >
       <defs>
-        <linearGradient
-          id={gradientId}
-          x1="-1"
-          x2="1"
-          gradientUnits="userSpaceOnUse"
-          gradientTransform="matrix(4.788282 13.155697 -13.155697 4.788282 14 14)"
-        >
-          <stop offset="0" stopColor="#6d5bff" />
-          <stop offset="1" stopColor="#9d7bff" />
+        <linearGradient id={tileGradId} x1="21" y1="10" x2="79" y2="90" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stopColor="#3C2DAE" />
+          <stop offset="0.5" stopColor="#6A5BE3" />
+          <stop offset="1" stopColor="#9B8DFA" />
         </linearGradient>
+        <radialGradient
+          id={glowGradId}
+          cx="61"
+          cy="18"
+          r="47"
+          gradientTransform="matrix(1 0 0 0.766 0 4.21)"
+          gradientUnits="userSpaceOnUse"
+        >
+          <stop offset="0" stopColor="#FFFFFF" stopOpacity="0.20" />
+          <stop offset="1" stopColor="#FFFFFF" stopOpacity="0" />
+        </radialGradient>
+        <linearGradient id={backGradId} x1="34" y1="32" x2="74" y2="78" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stopColor="#D8D0FF" stopOpacity="0.47" />
+          <stop offset="1" stopColor="#FFFFFF" stopOpacity="0.80" />
+        </linearGradient>
+        <linearGradient id={frontGradId} x1="49" y1="17" x2="43" y2="78" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stopColor="#FFFFFF" />
+          <stop offset="1" stopColor="#EFEAFF" stopOpacity="0.92" />
+        </linearGradient>
+        <clipPath id={clipId}>
+          <rect width="100" height="100" rx="23.2" />
+        </clipPath>
+        {useDropShadow && (
+          <filter id={shadowId} x="0" y="0" width="100" height="100" filterUnits="userSpaceOnUse">
+            <feDropShadow
+              dx="1.8"
+              dy="2.2"
+              stdDeviation="2.6"
+              floodColor="#261B68"
+              floodOpacity="0.20"
+            />
+          </filter>
+        )}
       </defs>
-      <rect width="28" height="28" rx="7" fill={`url(#${gradientId})`} />
-      <path
-        transform="translate(7.3581 7.1788)"
-        d="M6.583 0c1.719-.004 3.374 .654 4.619 1.839 1.291 1.203 2.039 2.877 2.076 4.641 .03 1.309-.274 2.53-.977 3.64-.16 .253-.376 .566-.582 .783 .015 .013 .029 .026 .043 .04 .226 .219 .451 .446 .674 .669 .208 .214 .442 .405 .598 .663 .239 .396 .167 .85-.154 1.174-.188 .194-.447 .303-.718 .302-.534-.001-.879-.444-1.228-.792-.271-.266-.541-.533-.809-.803-.359 .245-.541 .345-.93 .538-.696 .333-1.606 .535-2.372 .554-1.756 .054-3.46-.597-4.732-1.809-1.289-1.225-2.047-2.715-2.088-4.511-.054-1.764 .536-3.506 1.763-4.798 1.299-1.369 2.936-2.084 4.817-2.13zM7.776 11.053c.168-.043 .61-.19 .752-.281-.2-.172-.332-.323-.437-.565-.293-.671 .276-1.293 .946-1.335 .376-.023 .701 .115 .983 .364 .071 .064 .136 .133 .206 .198 .777-.981 1.124-2.097 .978-3.347-.137-1.232-.762-2.358-1.735-3.126-.744-.578-1.649-.912-2.591-.954-.139-.007-.319-.016-.457-.005-1.207 .052-2.344 .58-3.163 1.468-.958 1.042-1.392 2.633-1.139 4.011 .396 2.156 2.58 3.863 4.769 3.712 .228-.016 .676-.058 .888-.14z"
-        fill="#fefdfe"
-      />
+
+      <g clipPath={`url(#${clipId})`}>
+        <rect width="100" height="100" rx="23.2" fill={`url(#${tileGradId})`} />
+        <ellipse cx="61" cy="18" rx="47" ry="36" fill={`url(#${glowGradId})`} />
+        <path d={BACK_PAGE_PATH} fill={`url(#${backGradId})`} />
+        <path
+          d={FRONT_QUILL_PATH}
+          fill={`url(#${frontGradId})`}
+          filter={useDropShadow ? `url(#${shadowId})` : undefined}
+        />
+        <rect
+          x="0.8"
+          y="0.8"
+          width="98.4"
+          height="98.4"
+          rx="22.4"
+          stroke="#FFFFFF"
+          strokeOpacity="0.24"
+          strokeWidth={size >= 48 ? 1.2 : 2.2}
+        />
+      </g>
     </svg>
   );
 }
