@@ -96,7 +96,7 @@ vi.mock("../components/BookmarksPanel", () => ({
   default: () => <div data-testid="bookmarks-panel-stub">Bookmarks Panel</div>,
 }));
 
-import Reader, { getPdfOverlays } from "./Reader";
+import Reader, { getPdfOverlays, getReaderScrollbarVars } from "./Reader";
 import { getThemeStyles } from "../components/ReaderSettings";
 
 class MockFoliateView extends HTMLElement {
@@ -920,4 +920,41 @@ describe("getPdfOverlays", () => {
       layers: [{ backgroundColor: getThemeStyles("quiet").body, mixBlendMode: "multiply" }],
     });
   });
+});
+
+describe("getReaderScrollbarVars", () => {
+  const luminance = ([r, g, b]: [number, number, number]) => {
+    const lin = (c: number) => {
+      const v = c / 255;
+      return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+    };
+    return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+  };
+  const contrast = (a: [number, number, number], b: [number, number, number]) => {
+    const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+    return (hi + 0.05) / (lo + 0.05);
+  };
+  const over = (hexWithAlpha: string, backdrop: [number, number, number]) => {
+    const rgb = parseHexChannelTuple(hexWithAlpha.slice(0, 7));
+    const alpha = parseInt(hexWithAlpha.slice(7, 9), 16) / 255;
+    return rgb.map((c, i) => Math.round(c * alpha + backdrop[i] * (1 - alpha))) as [number, number, number];
+  };
+
+  it.each(["original", "paper", "quiet", "dark"] as const)(
+    "keeps the thumb distinguishable from the page in %s for EPUB and PDF",
+    (theme) => {
+      const page = parseHexChannelTuple(getThemeStyles(theme).body);
+      const epub = getReaderScrollbarVars("epub", theme);
+      expect(contrast(over(epub["--scrollbar-thumb"], page), page)).toBeGreaterThan(1.25);
+
+      const pdf = getReaderScrollbarVars("pdf", theme);
+      const layers = getPdfOverlays(theme)?.layers ?? [];
+      const white: [number, number, number] = [255, 255, 255];
+      const pdfPage = compositePdfLayers(white, layers);
+      for (const key of ["--scrollbar-thumb", "--scrollbar-thumb-hover"]) {
+        const thumb = compositePdfLayers(over(pdf[key], white), layers);
+        expect(contrast(thumb, pdfPage)).toBeGreaterThan(1.25);
+      }
+    },
+  );
 });
