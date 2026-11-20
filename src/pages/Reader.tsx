@@ -198,18 +198,18 @@ const getReaderCSS = (settings: ReaderSettingsState) => {
   // --color-focus-ring values for light and dark pages.
   const focusRing = settings.theme === "dark" ? "rgba(161, 147, 245, 0.5)" : "rgba(111, 99, 210, 0.4)";
   const colorScheme = settings.theme === "dark" ? "dark" : "light";
-  const scrollbarCSS = isMacOS()
-    ? ""
-    : `
+  const scrollbarCSS = `
     ::-webkit-scrollbar { width: 8px; height: 8px; }
-    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-track,
+    ::-webkit-scrollbar-corner { background: transparent; }
     ::-webkit-scrollbar-thumb {
       background-color: ${themeColors.text}33;
       border: 2px solid transparent;
       background-clip: content-box;
       border-radius: 9999px;
     }
-    ::-webkit-scrollbar-thumb:hover { background-color: ${themeColors.text}55; }
+    ::-webkit-scrollbar-thumb:hover,
+    ::-webkit-scrollbar-thumb:active { background-color: ${themeColors.text}55; }
   `;
   return `
     ${fontFaceCSS}

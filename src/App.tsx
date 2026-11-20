@@ -16,6 +16,7 @@ import {
   restoreAppZoom,
   syncTitlebarZoom,
 } from "./lib/appZoom";
+import { installFadingScrollbars } from "./lib/fadingScrollbars";
 import { applyPlatformClass } from "./lib/platformEnv";
 import {
   readAppZoom,
@@ -144,6 +145,8 @@ export default function App() {
     mq.addEventListener("change", handler);
     return () => mq.removeEventListener("change", handler);
   }, [isMainWindow]);
+
+  useEffect(() => installFadingScrollbars(), []);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {

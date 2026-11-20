@@ -408,8 +408,8 @@ export default function ChatsView({
             </button>
 
             {bookMenuOpen && (
-              <div className="absolute right-0 top-[calc(100%+6px)] z-30 w-64 max-h-80 overflow-y-auto">
-                <Menu role="menu" aria-label={t("chats.bookFilterLabel")}>
+              <div className="absolute right-0 top-[calc(100%+6px)] z-30 w-64">
+                <Menu role="menu" aria-label={t("chats.bookFilterLabel")} className="max-h-80 overflow-y-auto">
                   <MenuItem
                     role="menuitemradio"
                     aria-checked={bookFilter === null}

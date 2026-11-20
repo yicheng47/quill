@@ -797,7 +797,7 @@ describe("Reader shell themes, cascade, and startup navigation", () => {
     );
   });
 
-  it("omits custom iframe scrollbar CSS on macOS and injects an inset scrollbar on Windows", async () => {
+  it("injects transparent-track inset iframe scrollbar CSS on both macOS and Windows", async () => {
     const originalUA = navigator.userAgent;
     const epubBook = {
       id: "book-1",
@@ -811,40 +811,37 @@ describe("Reader shell themes, cascade, and startup navigation", () => {
     };
 
     try {
-      Object.defineProperty(window.navigator, "userAgent", {
-        configurable: true,
-        value: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
-      });
-      testState.getBook.mockResolvedValue(epubBook);
-      testState.getAllSettings.mockResolvedValue({ reader_theme: "dark" });
+      for (const ua of [
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+      ]) {
+        Object.defineProperty(window.navigator, "userAgent", {
+          configurable: true,
+          value: ua,
+        });
+        testState.getBook.mockResolvedValue(epubBook);
+        testState.getAllSettings.mockResolvedValue({ reader_theme: "dark" });
 
-      await renderReader("/reader/book-1");
-      await flushAsync();
+        await renderReader("/reader/book-1");
+        await flushAsync();
 
-      const macView = container.querySelector("foliate-view") as MockFoliateView | null;
-      const macCalls = macView?.renderer.setStyles.mock.calls ?? [];
-      const macCss = macCalls[macCalls.length - 1]?.[0] as string;
-      expect(macCss).toContain("color-scheme: dark;");
-      expect(macCss).not.toContain("::-webkit-scrollbar");
+        const view = container.querySelector("foliate-view") as MockFoliateView | null;
+        const calls = view?.renderer.setStyles.mock.calls ?? [];
+        const css = calls[calls.length - 1]?.[0] as string;
+        expect(css).toContain("color-scheme: dark;");
+        expect(css).toContain("::-webkit-scrollbar { width: 8px; height: 8px; }");
+        expect(css).toContain("::-webkit-scrollbar-track");
+        expect(css).toContain("::-webkit-scrollbar-corner { background: transparent; }");
+        expect(css).toContain("border: 2px solid transparent;");
+        expect(css).toContain("background-clip: content-box;");
+        expect(css).toContain("::-webkit-scrollbar-thumb:hover");
+        expect(css).toContain("::-webkit-scrollbar-thumb:active");
 
-      await act(async () => {
-        root.unmount();
-      });
-      root = createRoot(container);
-
-      Object.defineProperty(window.navigator, "userAgent", {
-        configurable: true,
-        value: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-      });
-      await renderReader("/reader/book-1");
-      await flushAsync();
-
-      const winView = container.querySelector("foliate-view") as MockFoliateView | null;
-      const winCalls = winView?.renderer.setStyles.mock.calls ?? [];
-      const winCss = winCalls[winCalls.length - 1]?.[0] as string;
-      expect(winCss).toContain("color-scheme: dark;");
-      expect(winCss).toContain("::-webkit-scrollbar");
-      expect(winCss).toContain("background-clip: content-box;");
+        await act(async () => {
+          root.unmount();
+        });
+        root = createRoot(container);
+      }
     } finally {
       Object.defineProperty(window.navigator, "userAgent", {
         configurable: true,

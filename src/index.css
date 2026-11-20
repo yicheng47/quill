@@ -183,14 +183,14 @@
   --color-accent: #6f63d2;
   --color-success: #2f9e6b;
   --color-danger: #d93f4c;
-  --scrollbar-thumb: rgba(21, 21, 26, 0.14);
-  --scrollbar-thumb-hover: rgba(21, 21, 26, 0.28);
+  --scrollbar-thumb: rgba(21, 21, 26, 0.22);
+  --scrollbar-thumb-hover: rgba(21, 21, 26, 0.38);
 }
 
 .dawn.dark {
   color-scheme: dark;
-  --scrollbar-thumb: rgba(255, 255, 255, 0.16);
-  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.3);
+  --scrollbar-thumb: rgba(255, 255, 255, 0.22);
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.38);
   --color-bg-start: #0d0c0b;
   --color-bg-end: #11100e;
   --color-bg-glow-violet: rgba(0, 0, 0, 0);
@@ -505,38 +505,29 @@ body {
   }
 }
 
-/* Custom slim scrollbar on non-macOS; macOS keeps native auto-hiding overlay scrollbars. */
-html:not(.platform-mac)::-webkit-scrollbar,
-html:not(.platform-mac) ::-webkit-scrollbar {
+/* Electron on macOS paints a permanent light gutter when ::-webkit-scrollbar is
+   omitted, so every platform uses a slim 4px inset thumb on an 8px transparent
+   track, invisible at rest and revealed while scrolling, hovered, or dragged. */
+::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
-html:not(.platform-mac)::-webkit-scrollbar-track,
-html:not(.platform-mac) ::-webkit-scrollbar-track {
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
   background: transparent;
 }
-html:not(.platform-mac)::-webkit-scrollbar-thumb,
-html:not(.platform-mac) ::-webkit-scrollbar-thumb {
-  background-color: var(--color-border);
+::-webkit-scrollbar-thumb {
+  background-color: transparent;
   border: 2px solid transparent;
   background-clip: content-box;
   border-radius: 9999px;
 }
-html:not(.platform-mac)::-webkit-scrollbar-thumb:hover,
-html:not(.platform-mac) ::-webkit-scrollbar-thumb:hover {
-  background-color: var(--color-text-muted);
+[data-scrollbar-active]::-webkit-scrollbar-thumb {
+  background-color: var(--scrollbar-thumb, var(--color-border));
 }
-html.dawn:not(.platform-mac)::-webkit-scrollbar-thumb,
-html.dawn:not(.platform-mac) ::-webkit-scrollbar-thumb {
-  background-color: var(--scrollbar-thumb);
-}
-html.dawn:not(.platform-mac)::-webkit-scrollbar-thumb:hover,
-html.dawn:not(.platform-mac) ::-webkit-scrollbar-thumb:hover {
-  background-color: var(--scrollbar-thumb-hover);
-}
-html:not(.platform-mac)::-webkit-scrollbar-corner,
-html:not(.platform-mac) ::-webkit-scrollbar-corner {
-  background: transparent;
+[data-scrollbar-active]::-webkit-scrollbar-thumb:hover,
+[data-scrollbar-active]::-webkit-scrollbar-thumb:active {
+  background-color: var(--scrollbar-thumb-hover, var(--color-text-muted));
 }
 
 .scrollbar-none {
