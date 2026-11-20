@@ -171,9 +171,9 @@ export default function HomeView({
     return (
       <main
         data-testid="home-empty-state"
-        className="flex-1 min-h-0 overflow-y-auto px-7 -mt-2.5 pt-[18px] pb-6"
+        className="flex-1 min-h-0 overflow-y-auto px-7 -mt-2.5 pt-[18px] pb-6 flex flex-col"
       >
-        <div className="max-w-[1440px] mx-auto flex flex-col gap-4">
+        <div className="w-full max-w-[1440px] m-auto flex flex-col gap-4">
           <section className="dawn-glass rounded-surface p-9 flex flex-col items-center text-center gap-[18px]">
             <QuillLogo size={68} />
             <div className="max-w-[520px] flex flex-col items-center gap-2.5">
@@ -383,9 +383,9 @@ export default function HomeView({
   return (
     <main
       data-testid="home-bento"
-      className="flex-1 min-h-0 overflow-y-auto px-7 -mt-2.5 pt-[18px] pb-6"
+      className="flex-1 min-h-0 overflow-y-auto px-7 -mt-2.5 pt-[18px] pb-6 flex flex-col"
     >
-      <div className="max-w-[1440px] mx-auto flex flex-col gap-4">
+      <div className="w-full max-w-[1440px] m-auto flex flex-col gap-4">
         {/* Row 1: Now reading + Side column */}
         <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_380px] xl:grid-cols-[minmax(0,1fr)_420px] gap-4">
           {nowReadingBook && (
