@@ -327,6 +327,71 @@ describe("Main Views (Home, Highlights, Words, Chats)", () => {
       });
       expect(onNavigate).toHaveBeenCalledWith("chats", { chatId: "ch1" });
     });
+
+    it.each([
+      { label: "no highlights", highlights: [] as Highlight[] },
+      {
+        label: "a highlight with null text_content",
+        highlights: [
+          {
+            id: "hl-empty",
+            book_id: "b-no-hl",
+            cfi_range: "epubcfi(/6/4!/4/2/1:0)",
+            color: "yellow",
+            note: null,
+            text_content: null,
+            created_at: 9000,
+            updated_at: 9000,
+          } satisfies Highlight,
+        ],
+      },
+    ])(
+      "hides Ask about this part when the hero book has $label while keeping Continue reading",
+      async ({ highlights }) => {
+        const book = makeBook("b-no-hl", { title: "Stoner", author: "John Williams" });
+        mocks.invoke.mockImplementation(async (cmd: string) => {
+          if (cmd === "list_all_highlights") return highlights;
+          if (cmd === "list_all_vocab_words") return [];
+          if (cmd === "list_all_chats") return { chats: [], next_cursor: null, total: 0 };
+          return [];
+        });
+
+        await act(async () => {
+          root.render(
+            <HomeView
+              books={[book]}
+              totalBooksCount={1}
+              booksLoading={false}
+              collections={[]}
+              onNavigate={vi.fn()}
+              onImport={vi.fn()}
+              onOpenSettings={vi.fn()}
+            />,
+          );
+        });
+        await flushMicrotasks();
+
+        expect(mocks.invoke).toHaveBeenCalledWith(
+          "list_all_highlights",
+          expect.objectContaining({ bookId: "b-no-hl" }),
+        );
+        expect(container.textContent).not.toContain("Last highlight");
+        expect(
+          Array.from(container.querySelectorAll("button")).find((b) =>
+            b.textContent?.includes("Ask about this part"),
+          ),
+        ).toBeUndefined();
+
+        const continueBtn = Array.from(container.querySelectorAll("button")).find((b) =>
+          b.textContent?.includes("Continue reading"),
+        )!;
+        expect(continueBtn).toBeDefined();
+        await act(async () => {
+          continueBtn.click();
+        });
+        expect(mocks.openReaderWindow).toHaveBeenCalledWith("b-no-hl", undefined);
+      },
+    );
   });
 
   describe("HighlightsView", () => {
@@ -1334,6 +1399,7 @@ describe("Main Views (Home, Highlights, Words, Chats)", () => {
     it("guards HomeView bento highlight against stale Book A completion and clears mismatch while Book B loads (R6 follow-up)", async () => {
       let resolveBookAHighlight!: (rows: Highlight[]) => void;
       let resolveBookBHighlight!: (rows: Highlight[]) => void;
+      let resolveBookCHighlight!: (rows: Highlight[]) => void;
 
       const bookA = makeBook("bA", { title: "Book Alpha", updated_at: 1000, progress: 20 });
       const bookB = makeBook("bB", { title: "Book Beta", updated_at: 9000, progress: 55 });
@@ -1348,6 +1414,11 @@ describe("Main Views (Home, Highlights, Words, Chats)", () => {
           if (args?.bookId === "bB") {
             return new Promise<Highlight[]>((res) => {
               resolveBookBHighlight = res;
+            });
+          }
+          if (args?.bookId === "bC") {
+            return new Promise<Highlight[]>((res) => {
+              resolveBookCHighlight = res;
             });
           }
           return [];
@@ -1439,7 +1510,8 @@ describe("Main Views (Home, Highlights, Words, Chats)", () => {
         cfi: "epubcfi(/6/8!/bB)",
       });
 
-      // Also when flipping to Book C while C's highlight fetch is still pending, B's old quote must NOT leak into Ask C
+      // When flipping to Book C while C's highlight fetch is pending (and after it resolves empty),
+      // hide Ask about this part so "this part" never lacks a visible highlight referent; keep Continue reading.
       const bookC = makeBook("bC", { title: "Book Gamma", updated_at: 99999, progress: 10 });
       await act(async () => {
         root.render(
@@ -1456,17 +1528,33 @@ describe("Main Views (Home, Highlights, Words, Chats)", () => {
       });
       expect(container.textContent).toContain("Book Gamma");
       expect(container.textContent).not.toContain("Beta fresh quote");
-      const askCBtn = Array.from(container.querySelectorAll("button")).find((b) =>
-        b.textContent?.includes("Ask about this part"),
-      )!;
+      expect(resolveBookCHighlight).toBeTypeOf("function");
+      // While Book C's highlight fetch is still pending (with Book B's highlight still in state),
+      // Ask about this part stays hidden.
+      expect(
+        Array.from(container.querySelectorAll("button")).find((b) =>
+          b.textContent?.includes("Ask about this part"),
+        ),
+      ).toBeUndefined();
+
       await act(async () => {
-        askCBtn.click();
+        resolveBookCHighlight([]);
       });
-      expect(mocks.openReaderWindow).toHaveBeenLastCalledWith("bC", {
-        openChat: true,
-        quote: undefined,
-        cfi: undefined,
+      await flushMicrotasks();
+      expect(
+        Array.from(container.querySelectorAll("button")).find((b) =>
+          b.textContent?.includes("Ask about this part"),
+        ),
+      ).toBeUndefined();
+
+      const continueCBtn = Array.from(container.querySelectorAll("button")).find((b) =>
+        b.textContent?.includes("Continue reading"),
+      )!;
+      expect(continueCBtn).toBeDefined();
+      await act(async () => {
+        continueCBtn.click();
       });
+      expect(mocks.openReaderWindow).toHaveBeenLastCalledWith("bC", undefined);
     });
 
     it("scrolls to target highlight on repeat same-target navigation when ID and list are unchanged (R4 follow-up)", async () => {

@@ -469,20 +469,22 @@ export default function HomeView({
                     <BookOpen size={16} />
                     <span>{t("home.continueReading")}</span>
                   </button>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      void openReaderWindow(nowReadingBook.id, {
-                        openChat: true,
-                        quote: heroHighlight?.text_content ?? undefined,
-                        cfi: heroHighlight?.cfi_range ?? undefined,
-                      })
-                    }
-                    className="rounded-control bg-surface-chip border border-border-default hover:bg-surface-solid text-text-primary px-5 py-3 text-[14px] font-medium inline-flex items-center gap-2 cursor-pointer transition-colors"
-                  >
-                    <Sparkles size={16} className="text-text-secondary" />
-                    <span>{t("home.askAboutPart")}</span>
-                  </button>
+                  {heroHighlight?.text_content && nowHighlightMeta && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void openReaderWindow(nowReadingBook.id, {
+                          openChat: true,
+                          quote: heroHighlight.text_content ?? undefined,
+                          cfi: heroHighlight.cfi_range ?? undefined,
+                        })
+                      }
+                      className="rounded-control bg-surface-chip border border-border-default hover:bg-surface-solid text-text-primary px-5 py-3 text-[14px] font-medium inline-flex items-center gap-2 cursor-pointer transition-colors"
+                    >
+                      <Sparkles size={16} className="text-text-secondary" />
+                      <span>{t("home.askAboutPart")}</span>
+                    </button>
+                  )}
                 </div>
               </div>
             </section>

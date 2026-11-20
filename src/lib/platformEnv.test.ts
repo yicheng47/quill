@@ -35,7 +35,7 @@ describe("platformEnv", () => {
     expect(document.documentElement.classList.contains("platform-mac")).toBe(false);
   });
 
-  it("scopes custom ::-webkit-scrollbar rules in index.css to non-macOS with an inset thumb", () => {
+  it("applies all-platform transparent-track fading ::-webkit-scrollbar rules in index.css with readable Dawn contrast", () => {
     const css = fs.readFileSync(path.resolve(process.cwd(), "src/index.css"), "utf8");
     const scrollbarLines = css
       .split("\n")
@@ -44,12 +44,75 @@ describe("platformEnv", () => {
 
     expect(scrollbarLines.length).toBeGreaterThan(0);
     for (const line of scrollbarLines) {
-      if (line.startsWith(".scrollbar-none::-webkit-scrollbar")) continue;
-      expect(line).toContain(":not(.platform-mac)");
+      expect(line).not.toContain(":not(.platform-mac)");
+      expect(line).not.toContain(".platform-mac");
     }
+    expect(css).toMatch(/::-webkit-scrollbar\s*\{\s*width:\s*8px;\s*height:\s*8px;\s*\}/);
+    expect(css).toContain("::-webkit-scrollbar-track");
+    expect(css).toContain("::-webkit-scrollbar-corner");
+    expect(css).toMatch(/::-webkit-scrollbar-thumb\s*\{\s*background-color:\s*transparent;/);
+    expect(css).toContain("border: 2px solid transparent;");
     expect(css).toContain("background-clip: content-box;");
-    expect(css).toContain("--scrollbar-thumb:");
-    expect(css).toContain("--scrollbar-thumb-hover:");
+    expect(css).toContain("border-radius: 9999px;");
+    expect(css).toMatch(/\[data-scrollbar-active\]::-webkit-scrollbar-thumb\s*\{\s*background-color:\s*var\(--scrollbar-thumb/);
+    expect(css).toContain("[data-scrollbar-active]::-webkit-scrollbar-thumb:hover");
+    expect(css).toContain("[data-scrollbar-active]::-webkit-scrollbar-thumb:active");
+    for (const line of scrollbarLines) {
+      if (line.includes("::-webkit-scrollbar-thumb:hover") || line.includes("::-webkit-scrollbar-thumb:active")) {
+        expect(line).toMatch(/^\[data-scrollbar-active\]::-webkit-scrollbar-thumb:(?:hover|active)/);
+      }
+    }
+    expect(css).toContain(".scrollbar-none::-webkit-scrollbar");
+
+    const parseRgba = (token: string): [number, number, number, number] => {
+      const m = token.match(/rgba\(\s*(\d+),\s*(\d+),\s*(\d+),\s*([\d.]+)\s*\)/);
+      expect(m).not.toBeNull();
+      return [Number(m![1]), Number(m![2]), Number(m![3]), Number(m![4])];
+    };
+    const over = (
+      [r, g, b, a]: [number, number, number, number],
+      [br, bg, bb]: [number, number, number],
+    ): [number, number, number] => [
+      Math.round(r * a + br * (1 - a)),
+      Math.round(g * a + bg * (1 - a)),
+      Math.round(b * a + bb * (1 - a)),
+    ];
+    const luminance = ([r, g, b]: [number, number, number]) => {
+      const lin = (c: number) => {
+        const v = c / 255;
+        return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+      };
+      return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+    };
+    const contrast = (a: [number, number, number], b: [number, number, number]) => {
+      const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+      return (hi + 0.05) / (lo + 0.05);
+    };
+
+    const lightBlock = css.match(/\.dawn\s*\{[\s\S]*?\n\}/)?.[0] ?? "";
+    const darkBlock = css.match(/\.dawn\.dark\s*\{[\s\S]*?\n\}/)?.[0] ?? "";
+    const lightThumb = parseRgba(lightBlock.match(/--scrollbar-thumb:\s*([^;]+);/)?.[1] ?? "");
+    const lightHover = parseRgba(lightBlock.match(/--scrollbar-thumb-hover:\s*([^;]+);/)?.[1] ?? "");
+    const darkThumb = parseRgba(darkBlock.match(/--scrollbar-thumb:\s*([^;]+);/)?.[1] ?? "");
+    const darkHover = parseRgba(darkBlock.match(/--scrollbar-thumb-hover:\s*([^;]+);/)?.[1] ?? "");
+
+    for (const bg of [
+      [238, 235, 248] as [number, number, number], // light canvas start
+      [250, 249, 253] as [number, number, number], // dawn-glass over canvas
+      [255, 255, 255] as [number, number, number], // surface-solid
+    ]) {
+      expect(contrast(over(lightThumb, bg), bg)).toBeGreaterThan(1.5);
+      expect(contrast(over(lightHover, bg), bg)).toBeGreaterThan(2.2);
+    }
+    for (const bg of [
+      [13, 12, 11] as [number, number, number], // dark canvas start
+      [18, 17, 15] as [number, number, number], // surface-inset
+      [27, 25, 23] as [number, number, number], // dawn-glass
+      [39, 36, 31] as [number, number, number], // surface-solid
+    ]) {
+      expect(contrast(over(darkThumb, bg), bg)).toBeGreaterThan(1.5);
+      expect(contrast(over(darkHover, bg), bg)).toBeGreaterThan(2.2);
+    }
   });
 
   it("gives foliate-js shadow renderers a fading inset thumb on a transparent track on every platform", async () => {
