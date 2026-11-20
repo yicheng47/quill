@@ -52,7 +52,7 @@ describe("platformEnv", () => {
     expect(css).toContain("--scrollbar-thumb-hover:");
   });
 
-  it("omits custom scrollbars in foliate-js shadow renderers on macOS and emits inset 4px thumbs on Windows", async () => {
+  it("gives foliate-js shadow renderers a fading inset thumb on a transparent track on every platform", async () => {
     const capturedRoots = new WeakMap<Element, ShadowRoot>();
     const originalAttachShadow = HTMLElement.prototype.attachShadow;
     vi.spyOn(HTMLElement.prototype, "attachShadow").mockImplementation(function (
@@ -106,20 +106,65 @@ describe("platformEnv", () => {
       return `${inlineCss}\n${adoptedCss}`;
     };
 
-    setUserAgent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36");
-    for (const tag of ["foliate-paginator", "foliate-pdf-scroll", "foliate-fxl"]) {
-      const css = readShadowCss(tag);
-      expect(css).not.toContain("::-webkit-scrollbar");
+    for (const ua of [
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    ]) {
+      setUserAgent(ua);
+      for (const tag of ["foliate-paginator", "foliate-pdf-scroll", "foliate-fxl"]) {
+        const css = readShadowCss(tag);
+        expect(css).toContain("::-webkit-scrollbar { width: 8px; height: 8px; }");
+        expect(css).toContain("::-webkit-scrollbar-track");
+        expect(css).toMatch(/::-webkit-scrollbar-thumb \{\s*background-color: transparent;/);
+        expect(css).toContain("border: 2px solid transparent");
+        expect(css).toContain("background-clip: content-box");
+        expect(css).toMatch(/\[scrolling\]\)?::-webkit-scrollbar-thumb \{\s*background-color: var\(--scrollbar-thumb/);
+      }
     }
 
-    setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
-    for (const tag of ["foliate-paginator", "foliate-pdf-scroll", "foliate-fxl"]) {
-      const css = readShadowCss(tag);
-      expect(css).toContain("::-webkit-scrollbar");
-      expect(css).toContain("width: 8px");
-      expect(css).toContain("border: 2px solid transparent");
-      expect(css).toContain("background-clip: content-box");
-      expect(css).toContain("var(--scrollbar-thumb");
+    vi.useFakeTimers();
+    try {
+      const pdf = document.createElement("foliate-pdf-scroll");
+      pdf.dispatchEvent(new Event("scroll"));
+      expect(pdf.hasAttribute("scrolling")).toBe(true);
+      vi.advanceTimersByTime(999);
+      pdf.dispatchEvent(new Event("scroll"));
+      vi.advanceTimersByTime(999);
+      expect(pdf.hasAttribute("scrolling")).toBe(true);
+      vi.advanceTimersByTime(1);
+      expect(pdf.hasAttribute("scrolling")).toBe(false);
+
+      const fxl = document.createElement("foliate-fxl");
+      Object.defineProperty(fxl, "clientWidth", { value: 100 });
+      Object.defineProperty(fxl, "clientHeight", { value: 100 });
+      const move = (clientX: number) => fxl.dispatchEvent(new MouseEvent("pointermove", { clientX, clientY: 10 }));
+      move(50);
+      expect(fxl.hasAttribute("scrolling")).toBe(false);
+      move(104);
+      vi.advanceTimersByTime(5000);
+      expect(fxl.hasAttribute("scrolling")).toBe(true);
+      move(50);
+      vi.advanceTimersByTime(999);
+      expect(fxl.hasAttribute("scrolling")).toBe(true);
+      vi.advanceTimersByTime(1);
+      expect(fxl.hasAttribute("scrolling")).toBe(false);
+
+      move(104);
+      expect(fxl.hasAttribute("scrolling")).toBe(true);
+      const content = document.createElement("div");
+      capturedRoots.get(fxl)!.append(content);
+      content.dispatchEvent(new MouseEvent("pointerover", { bubbles: true }));
+      vi.advanceTimersByTime(1000);
+      expect(fxl.hasAttribute("scrolling")).toBe(false);
+
+      const paginator = document.createElement("foliate-paginator");
+      const container = capturedRoots.get(paginator)!.getElementById("container")!;
+      container.dispatchEvent(new Event("scroll"));
+      expect(container.hasAttribute("scrolling")).toBe(true);
+      vi.advanceTimersByTime(1000);
+      expect(container.hasAttribute("scrolling")).toBe(false);
+    } finally {
+      vi.useRealTimers();
     }
   });
 });

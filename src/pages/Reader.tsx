@@ -142,6 +142,12 @@ export function getPdfOverlays(theme: string): PdfOverlay {
   }
 }
 
+// PDF pages render as black ink on white beneath getPdfOverlays, which recolour the thumb with them.
+export function getReaderScrollbarVars(format: string, theme: ReaderTheme): Record<string, string> {
+  const ink = format === "pdf" ? "#000000" : getThemeStyles(theme).text;
+  return { "--scrollbar-thumb": `${ink}33`, "--scrollbar-thumb-hover": `${ink}55` };
+}
+
 let cachedLiterataFontCss: string | null = null;
 
 function getLiterataFontFaceCSS(): string {
@@ -1652,7 +1658,8 @@ export default function Reader() {
         : paperStyles.body,
     borderColor: paperStyles.border,
     color: paperStyles.text,
-  };
+    ...getReaderScrollbarVars(book.format, readerSettings.theme),
+  } as React.CSSProperties;
 
   return (
     <div className={`flex flex-col h-screen ${shellClass} overflow-hidden`}>
