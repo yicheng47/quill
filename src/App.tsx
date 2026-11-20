@@ -16,6 +16,7 @@ import {
   restoreAppZoom,
   syncTitlebarZoom,
 } from "./lib/appZoom";
+import { applyPlatformClass } from "./lib/platformEnv";
 import {
   readAppZoom,
   snapAppZoom,
@@ -67,6 +68,7 @@ export default function App() {
     const cachedZoomReady = restoreAppZoom(cachedZoom);
     const root = document.documentElement;
     root.classList.add("dawn");
+    applyPlatformClass(root);
 
     const startRevision = getAppThemeRevision();
     const mainInitialDark = isMainWindow ? readInitialMainDark() : null;

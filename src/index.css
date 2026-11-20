@@ -183,10 +183,14 @@
   --color-accent: #6f63d2;
   --color-success: #2f9e6b;
   --color-danger: #d93f4c;
+  --scrollbar-thumb: rgba(21, 21, 26, 0.14);
+  --scrollbar-thumb-hover: rgba(21, 21, 26, 0.28);
 }
 
 .dawn.dark {
   color-scheme: dark;
+  --scrollbar-thumb: rgba(255, 255, 255, 0.16);
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.3);
   --color-bg-start: #0d0c0b;
   --color-bg-end: #11100e;
   --color-bg-glow-violet: rgba(0, 0, 0, 0);
@@ -501,34 +505,37 @@ body {
   }
 }
 
-/* Transparent scrollbar track, subtle thumb */
-::-webkit-scrollbar {
+/* Custom slim scrollbar on non-macOS; macOS keeps native auto-hiding overlay scrollbars. */
+html:not(.platform-mac)::-webkit-scrollbar,
+html:not(.platform-mac) ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
-::-webkit-scrollbar-track {
+html:not(.platform-mac)::-webkit-scrollbar-track,
+html:not(.platform-mac) ::-webkit-scrollbar-track {
   background: transparent;
 }
-::-webkit-scrollbar-thumb {
-  background: var(--color-border);
+html:not(.platform-mac)::-webkit-scrollbar-thumb,
+html:not(.platform-mac) ::-webkit-scrollbar-thumb {
+  background-color: var(--color-border);
+  border: 2px solid transparent;
+  background-clip: content-box;
   border-radius: 9999px;
 }
-::-webkit-scrollbar-thumb:hover {
-  background: var(--color-text-muted);
+html:not(.platform-mac)::-webkit-scrollbar-thumb:hover,
+html:not(.platform-mac) ::-webkit-scrollbar-thumb:hover {
+  background-color: var(--color-text-muted);
 }
-.dawn ::-webkit-scrollbar-thumb {
-  background: rgba(21, 21, 26, 0.14);
+html.dawn:not(.platform-mac)::-webkit-scrollbar-thumb,
+html.dawn:not(.platform-mac) ::-webkit-scrollbar-thumb {
+  background-color: var(--scrollbar-thumb);
 }
-.dawn ::-webkit-scrollbar-thumb:hover {
-  background: rgba(21, 21, 26, 0.26);
+html.dawn:not(.platform-mac)::-webkit-scrollbar-thumb:hover,
+html.dawn:not(.platform-mac) ::-webkit-scrollbar-thumb:hover {
+  background-color: var(--scrollbar-thumb-hover);
 }
-.dawn.dark ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.16);
-}
-.dawn.dark ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.28);
-}
-::-webkit-scrollbar-corner {
+html:not(.platform-mac)::-webkit-scrollbar-corner,
+html:not(.platform-mac) ::-webkit-scrollbar-corner {
   background: transparent;
 }
 

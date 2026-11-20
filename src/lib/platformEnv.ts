@@ -12,3 +12,7 @@ export function isWindows(): boolean {
 export function shortcutModSymbol(): string {
   return isMacOS() ? "⌘" : "Ctrl+";
 }
+
+export function applyPlatformClass(root: HTMLElement = document.documentElement): void {
+  root.classList.toggle("platform-mac", isMacOS());
+}

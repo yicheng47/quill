@@ -12,6 +12,7 @@ import {
   getInitialDark,
   getInitialReaderTheme,
 } from "./platform";
+import { applyPlatformClass } from "./lib/platformEnv";
 import { readAppTheme, resolveAppThemeIsDark } from "./lib/theme";
 
 // Polyfill Map.getOrInsertComputed for PDF.js v5.5+ (Stage 3 proposal, not yet in WebKit)
@@ -30,6 +31,7 @@ if (!(Map.prototype as any).getOrInsertComputed) {
 // matches Electron main's initial appearance without a white/light flash; reader
 // windows follow their own page theme only.
 document.documentElement.classList.add("dawn");
+applyPlatformClass();
 if (getCurrentWindowLabel() === "main") {
   const initialDark = getInitialDark();
   document.documentElement.classList.toggle(
