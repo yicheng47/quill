@@ -251,7 +251,7 @@ pub(crate) fn do_import_epub(
     let rel_file_path = format!("books/{}", filename);
     let cover_data_b64 = metadata.cover_data.as_deref().map(cover_blob_to_data_uri);
 
-    let book = Book {
+    let mut book = Book {
         id: book_id,
         title: metadata.title,
         author: metadata.author,
@@ -270,7 +270,13 @@ pub(crate) fn do_import_epub(
         cover_data: cover_data_b64,
     };
 
+    // Persist the raw metadata representation so reads project HTML -> plain text
+    // exactly once (matching legacy rows and avoiding double-parsing literal tags/entities).
     do_insert_book(&book, metadata.cover_data.as_deref(), db, sync, now)?;
+    book.description = book
+        .description
+        .as_deref()
+        .and_then(crate::html::clean_description);
 
     log::info!("import_book: complete id={} title={:?}", book.id, book.title);
     Ok(book)
@@ -315,7 +321,7 @@ pub(crate) fn do_import_pdf(
     let rel_file_path = format!("books/{}", filename);
     let cover_data_b64 = extracted.cover.as_deref().map(cover_blob_to_data_uri);
 
-    let book = Book {
+    let mut book = Book {
         id: book_id,
         title: extracted.title,
         author: extracted.author,
@@ -335,6 +341,10 @@ pub(crate) fn do_import_pdf(
     };
 
     do_insert_book(&book, extracted.cover.as_deref(), db, sync, now)?;
+    book.description = book
+        .description
+        .as_deref()
+        .and_then(crate::html::clean_description);
 
     log::info!(
         "import_book: complete id={} title={:?} format=pdf cover={} | extract={:?} copy={:?}",
@@ -542,11 +552,12 @@ pub(crate) fn query_books(
     let mut stmt = conn.prepare(&sql)?;
     let mut books: Vec<Book> = stmt.query_map(params_refs.as_slice(), |row| {
         let cover_blob: Option<Vec<u8>> = row.get(14)?;
+        let raw_description: Option<String> = row.get(3)?;
         Ok(Book {
             id: row.get(0)?,
             title: row.get(1)?,
             author: row.get(2)?,
-            description: row.get(3)?,
+            description: raw_description.and_then(|s| crate::html::clean_description(&s)),
             cover_path: row.get(4)?,
             file_path: row.get(5)?,
             format: row.get(6)?,
@@ -583,11 +594,12 @@ pub(crate) fn query_book(db: &Db, id: &str) -> AppResult<Book> {
         params![id],
         |row| {
             let cover_blob: Option<Vec<u8>> = row.get(14)?;
+            let raw_description: Option<String> = row.get(3)?;
             Ok(Book {
                 id: row.get(0)?,
                 title: row.get(1)?,
                 author: row.get(2)?,
-                description: row.get(3)?,
+                description: raw_description.and_then(|s| crate::html::clean_description(&s)),
                 cover_path: row.get(4)?,
                 file_path: row.get(5)?,
                 format: row.get(6)?,
@@ -657,11 +669,12 @@ pub(crate) fn query_books_lite(
     let books = stmt
         .query_map(params_refs.as_slice(), |row| {
             let has_cover: bool = row.get(14)?;
+            let raw_description: Option<String> = row.get(3)?;
             Ok(Book {
                 id: row.get(0)?,
                 title: row.get(1)?,
                 author: row.get(2)?,
-                description: row.get(3)?,
+                description: raw_description.and_then(|s| crate::html::clean_description(&s)),
                 cover_path: row.get(4)?,
                 file_path: row.get(5)?,
                 format: row.get(6)?,
@@ -1474,6 +1487,10 @@ mod tests {
     /// could be all-white in a way that depends on background fill
     /// semantics we don't want to depend on.
     fn write_fixture_pdf(path: &std::path::Path) {
+        write_fixture_pdf_with_subject(path, None);
+    }
+
+    fn write_fixture_pdf_with_subject(path: &std::path::Path, subject: Option<&str>) {
         use lopdf::content::{Content, Operation};
         use lopdf::{Document, Object, Stream, dictionary};
 
@@ -1507,6 +1524,12 @@ mod tests {
             "Pages" => pages_id,
         });
         doc.trailer.set("Root", catalog_id);
+        if let Some(subj) = subject {
+            let info_id = doc.add_object(dictionary! {
+                "Subject" => Object::string_literal(subj),
+            });
+            doc.trailer.set("Info", info_id);
+        }
         doc.save(path).unwrap();
     }
 
@@ -1610,5 +1633,226 @@ mod tests {
         assert_eq!(coll_counts.reading, 1);
         assert_eq!(coll_counts.finished, 0);
         assert_eq!(coll_counts.unread, 1);
+    }
+
+    #[test]
+    fn book_queries_clean_legacy_html_descriptions() {
+        let (_dir, db) = setup();
+        let conn = db.conn.lock().unwrap();
+        let now = chrono::Utc::now().timestamp_millis();
+        conn.execute(
+            "INSERT INTO books (id, title, author, description, file_path, format, status, progress, created_at, updated_at)
+             VALUES (?1, 'Witcher 1', 'Andrzej Sapkowski', ?2, 'books/w1.epub', 'epub', 'unread', 0, ?3, ?3)",
+            params![
+                "b-html",
+                r#"<div> <p style="font-family: 'Amazon Ember'"><strong>Introducing Geralt &amp; Ciri.</strong></p><p>Next line.</p></div>"#,
+                now + 1
+            ],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO books (id, title, author, description, file_path, format, status, progress, created_at, updated_at)
+             VALUES (?1, 'Empty Markup', 'Author', ?2, 'books/empty.epub', 'epub', 'unread', 0, ?3, ?3)",
+            params!["b-empty", "<div><p>&nbsp;<br/></p></div>", now],
+        ).unwrap();
+        drop(conn);
+
+        let expected = Some("Introducing Geralt & Ciri. Next line.");
+
+        let page = query_books(&db, None, None, None, None, 10).unwrap();
+        assert_eq!(page.books.len(), 2);
+        assert_eq!(page.books[0].id, "b-html");
+        assert_eq!(page.books[0].description.as_deref(), expected);
+        assert_eq!(page.books[1].id, "b-empty");
+        assert_eq!(page.books[1].description, None);
+
+        let single = query_book(&db, "b-html").unwrap();
+        assert_eq!(single.description.as_deref(), expected);
+        assert_eq!(query_book(&db, "b-empty").unwrap().description, None);
+
+        let lite = query_books_lite(&db, None, None, 10).unwrap();
+        assert_eq!(lite[0].description.as_deref(), expected);
+        assert_eq!(lite[1].description, None);
+    }
+
+    fn crc32(data: &[u8]) -> u32 {
+        let mut crc = 0xFFFF_FFFFu32;
+        for &b in data {
+            crc ^= u32::from(b);
+            for _ in 0..8 {
+                let mask = (crc & 1).wrapping_neg();
+                crc = (crc >> 1) ^ (0xEDB8_8320 & mask);
+            }
+        }
+        !crc
+    }
+
+    fn write_fixture_epub(path: &std::path::Path, xml_escaped_description: &str) {
+        use std::io::Write;
+
+        let container_xml = br#"<?xml version="1.0" encoding="UTF-8"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>"#;
+        let opf = format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="uid">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:identifier id="uid">urn:uuid:12345</dc:identifier>
+    <dc:title>Witcher 1: The Last Wish</dc:title>
+    <dc:creator>Andrzej Sapkowski</dc:creator>
+    <dc:language>en</dc:language>
+    <dc:description>{xml_escaped_description}</dc:description>
+  </metadata>
+  <manifest>
+    <item id="ch1" href="ch1.xhtml" media-type="application/xhtml+xml"/>
+    <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
+  </manifest>
+  <spine toc="ncx">
+    <itemref idref="ch1"/>
+  </spine>
+</package>"#
+        );
+        let ch1 = b"<html xmlns=\"http://www.w3.org/1999/xhtml\"><body><p>Hi</p></body></html>";
+        let ncx = br#"<?xml version="1.0" encoding="UTF-8"?>
+<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
+  <navMap><navPoint id="n1" playOrder="1"><navLabel><text>Ch 1</text></navLabel><content src="ch1.xhtml"/></navPoint></navMap>
+</ncx>"#;
+
+        let entries: [(&str, &[u8]); 5] = [
+            ("mimetype", b"application/epub+zip"),
+            ("META-INF/container.xml", container_xml),
+            ("OEBPS/content.opf", opf.as_bytes()),
+            ("OEBPS/ch1.xhtml", ch1),
+            ("OEBPS/toc.ncx", ncx),
+        ];
+
+        let mut buf = Vec::new();
+        let mut central = Vec::new();
+
+        for (name, data) in entries {
+            let name_bytes = name.as_bytes();
+            let offset = buf.len() as u32;
+            let crc = crc32(data);
+            let size = data.len() as u32;
+
+            buf.extend_from_slice(&0x0403_4b50u32.to_le_bytes());
+            buf.extend_from_slice(&20u16.to_le_bytes());
+            buf.extend_from_slice(&0u16.to_le_bytes());
+            buf.extend_from_slice(&0u16.to_le_bytes());
+            buf.extend_from_slice(&0u16.to_le_bytes());
+            buf.extend_from_slice(&0u16.to_le_bytes());
+            buf.extend_from_slice(&crc.to_le_bytes());
+            buf.extend_from_slice(&size.to_le_bytes());
+            buf.extend_from_slice(&size.to_le_bytes());
+            buf.extend_from_slice(&(name_bytes.len() as u16).to_le_bytes());
+            buf.extend_from_slice(&0u16.to_le_bytes());
+            buf.extend_from_slice(name_bytes);
+            buf.extend_from_slice(data);
+
+            central.extend_from_slice(&0x0201_4b50u32.to_le_bytes());
+            central.extend_from_slice(&20u16.to_le_bytes());
+            central.extend_from_slice(&20u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&crc.to_le_bytes());
+            central.extend_from_slice(&size.to_le_bytes());
+            central.extend_from_slice(&size.to_le_bytes());
+            central.extend_from_slice(&(name_bytes.len() as u16).to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u32.to_le_bytes());
+            central.extend_from_slice(&offset.to_le_bytes());
+            central.extend_from_slice(name_bytes);
+        }
+
+        let central_offset = buf.len() as u32;
+        let central_size = central.len() as u32;
+        let count = entries.len() as u16;
+        buf.extend_from_slice(&central);
+
+        buf.extend_from_slice(&0x0605_4b50u32.to_le_bytes());
+        buf.extend_from_slice(&0u16.to_le_bytes());
+        buf.extend_from_slice(&0u16.to_le_bytes());
+        buf.extend_from_slice(&count.to_le_bytes());
+        buf.extend_from_slice(&count.to_le_bytes());
+        buf.extend_from_slice(&central_size.to_le_bytes());
+        buf.extend_from_slice(&central_offset.to_le_bytes());
+        buf.extend_from_slice(&0u16.to_le_bytes());
+
+        let mut file = std::fs::File::create(path).unwrap();
+        file.write_all(&buf).unwrap();
+    }
+
+    #[test]
+    fn import_epub_cleans_description_once_and_agrees_with_all_queries() {
+        let (dir, db) = setup();
+        let epub_path = dir.path().join("escaped-tags.epub");
+        // After OPF XML decoding, dc:description is:
+        // <p>Learn &lt;script&gt; safely &amp;copy;. The rest of the summary.</p>
+        write_fixture_epub(
+            &epub_path,
+            "&lt;p&gt;Learn &amp;lt;script&amp;gt; safely &amp;amp;copy;. The rest of the summary.&lt;/p&gt;",
+        );
+
+        let sync = SyncWriter::new("dev-A".into());
+        let imported = do_import_epub(epub_path.to_str().unwrap(), &db, &sync).unwrap();
+        let expected = Some("Learn <script> safely &copy;. The rest of the summary.");
+
+        assert_eq!(imported.description.as_deref(), expected);
+
+        // Storage preserves the raw representation so reads parse it only once.
+        let stored: Option<String> = db
+            .conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT description FROM books WHERE id = ?1",
+                params![imported.id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            stored.as_deref(),
+            Some("<p>Learn &lt;script&gt; safely &amp;copy;. The rest of the summary.</p>")
+        );
+
+        let listed = query_books(&db, None, None, None, None, 10).unwrap();
+        assert_eq!(listed.books[0].description.as_deref(), expected);
+
+        let fetched = query_book(&db, &imported.id).unwrap();
+        assert_eq!(fetched.description.as_deref(), expected);
+
+        let lite = query_books_lite(&db, None, None, 10).unwrap();
+        assert_eq!(lite[0].description.as_deref(), expected);
+    }
+
+    #[test]
+    fn import_pdf_cleans_html_subject_once_and_agrees_with_all_queries() {
+        let (dir, db) = setup();
+        let pdf_path = dir.path().join("html-subject.pdf");
+        let raw_subject =
+            "<p>Guide to &lt;script&gt; &amp;copy; and <strong>HTML</strong> &mdash; notes.</p>";
+        write_fixture_pdf_with_subject(&pdf_path, Some(raw_subject));
+
+        let sync = SyncWriter::new("dev-A".into());
+        let imported = do_import_pdf(pdf_path.to_str().unwrap(), &db, &sync).unwrap();
+        let expected = Some("Guide to <script> &copy; and HTML \u{2014} notes.");
+
+        assert_eq!(imported.description.as_deref(), expected);
+
+        let listed = query_books(&db, None, None, None, None, 10).unwrap();
+        assert_eq!(listed.books[0].description.as_deref(), expected);
+
+        let fetched = query_book(&db, &imported.id).unwrap();
+        assert_eq!(fetched.description.as_deref(), expected);
+
+        let lite = query_books_lite(&db, None, None, 10).unwrap();
+        assert_eq!(lite[0].description.as_deref(), expected);
     }
 }
