@@ -44,6 +44,16 @@ interface HomeViewProps {
   onOpenSettings: (section?: SettingsSection) => void;
 }
 
+const SHELF_BASE_COUNT = 5;
+
+// Wide windows add a shelf column only when a book exists to fill it, and show that
+// book only once its column exists, so the shelf never has an empty or partial slot.
+const WIDE_SHELF_STEPS = [
+  { columns: "min-[105rem]:grid-cols-6", book: "hidden min-[105rem]:block" },
+  { columns: "min-[120rem]:grid-cols-7", book: "hidden min-[120rem]:block" },
+  { columns: "min-[140rem]:grid-cols-8", book: "hidden min-[140rem]:block" },
+];
+
 function formatReadingTimeLeft(
   pages: number | null | undefined,
   progress: number,
@@ -100,7 +110,14 @@ export default function HomeView({
       .slice(0, 2);
   }, [sortedByRecent, nowReadingBook]);
 
-  const shelfBooks = useMemo(() => books.slice(0, 5), [books]);
+  const shelfBooks = useMemo(
+    () => books.slice(0, SHELF_BASE_COUNT + WIDE_SHELF_STEPS.length),
+    [books],
+  );
+  const wideShelfSteps = WIDE_SHELF_STEPS.slice(
+    0,
+    Math.max(0, shelfBooks.length - SHELF_BASE_COUNT),
+  );
 
   const fetchBentoDetails = useCallback(async () => {
     const requestId = ++bentoRequestIdRef.current;
@@ -385,24 +402,29 @@ export default function HomeView({
       data-testid="home-bento"
       className="flex-1 min-h-0 overflow-y-auto px-7 -mt-2.5 pt-[18px] pb-6 flex flex-col"
     >
-      <div className="w-full max-w-[1440px] m-auto flex flex-col gap-4">
+      <div className="w-full m-auto lg:flex-1 flex flex-col gap-4">
         {/* Row 1: Now reading + Side column */}
-        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_380px] xl:grid-cols-[minmax(0,1fr)_420px] gap-4">
+        <div className="lg:flex-1 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_380px] xl:grid-cols-[minmax(0,1fr)_minmax(420px,30%)] gap-4">
           {nowReadingBook && (
             <section className="dawn-glass rounded-surface p-7 lg:p-8 flex flex-col sm:flex-row gap-8 lg:gap-10 min-h-[420px] lg:min-h-[448px]">
-              <button
-                type="button"
-                onClick={() => void openReaderWindow(nowReadingBook.id)}
-                className="w-[180px] sm:w-[220px] lg:w-[250px] aspect-[250/352] shrink-0 self-start text-left cursor-pointer group focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-focus-ring rounded-[6px]"
-              >
-                <BookCover
-                  title={nowReadingBook.title}
-                  author={nowReadingBook.author}
-                  coverData={nowReadingBook.cover_data}
-                  coverPath={nowReadingBook.cover_path}
-                  className="size-full transition-shadow duration-200 group-hover:shadow-[var(--shadow-cover-hover)]"
-                />
-              </button>
+              {/* At lg the slot stretches to the card's height and takes its width from the
+                  cover's aspect ratio; the cover is positioned out of flow so it never makes
+                  the card taller than the row gives it. */}
+              <div className="w-[180px] sm:w-[220px] shrink-0 self-start lg:self-stretch lg:w-auto lg:min-w-[250px] lg:max-w-[min(38%,480px)] lg:aspect-[250/352] lg:relative">
+                <button
+                  type="button"
+                  onClick={() => void openReaderWindow(nowReadingBook.id)}
+                  className="block w-full aspect-[250/352] lg:absolute lg:inset-x-0 lg:top-0 text-left cursor-pointer group focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-focus-ring rounded-[6px]"
+                >
+                  <BookCover
+                    title={nowReadingBook.title}
+                    author={nowReadingBook.author}
+                    coverData={nowReadingBook.cover_data}
+                    coverPath={nowReadingBook.cover_path}
+                    className="size-full transition-shadow duration-200 group-hover:shadow-[var(--shadow-cover-hover)]"
+                  />
+                </button>
+              </div>
 
               <div className="flex-1 min-w-0 flex flex-col justify-between gap-6">
                 <div className="flex flex-col gap-[22px]">
@@ -598,8 +620,8 @@ export default function HomeView({
           </div>
         </div>
 
-        {/* Row 2: Library 5-up shelf + Also reading / Collections */}
-        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_380px] xl:grid-cols-[minmax(0,1fr)_420px] gap-4">
+        {/* Row 2: Library shelf + Also reading / Collections */}
+        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_380px] xl:grid-cols-[minmax(0,1fr)_minmax(420px,30%)] gap-4">
           <section className="dawn-glass rounded-surface p-6 lg:px-6 lg:py-5 flex flex-col gap-3.5">
             <div className="flex items-center justify-between gap-2">
               <span className="text-[13px] leading-tight font-medium text-text-secondary">
@@ -616,14 +638,18 @@ export default function HomeView({
                 <ArrowUpRight size={16} />
               </button>
             </div>
-            <div className="grid grid-cols-3 sm:grid-cols-5 gap-3.5">
-              {shelfBooks.map((book) => (
+            <div
+              className={`grid grid-cols-3 sm:grid-cols-5 ${wideShelfSteps
+                .map((step) => step.columns)
+                .join(" ")} gap-3.5`}
+            >
+              {shelfBooks.map((book, index) => (
                 <button
                   key={book.id}
                   type="button"
                   onClick={() => void openReaderWindow(book.id)}
                   aria-label={book.title}
-                  className="text-left cursor-pointer group focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-focus-ring rounded-[6px]"
+                  className={`${WIDE_SHELF_STEPS[index - SHELF_BASE_COUNT]?.book ?? ""} text-left cursor-pointer group focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-focus-ring rounded-[6px]`}
                 >
                   <BookCover
                     title={book.title}
