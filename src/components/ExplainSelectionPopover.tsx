@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useCallback, useState, useEffect, useMemo, useRef } from "react";
 import { focusWindow, invoke, listen, type UnlistenFn } from "../platform";
 import {
   AlertCircle,
@@ -49,6 +49,12 @@ export interface ExplainSelectionPopoverProps {
   onClose: () => void;
 }
 
+interface SettledLookupResult {
+  content: string;
+  failed: boolean;
+  cancelled?: boolean;
+}
+
 function useStreamingLookup(
   enabled: boolean,
   word: string,
@@ -62,6 +68,10 @@ function useStreamingLookup(
   const [streaming, setStreaming] = useState(false);
   const [sentinel, setSentinel] = useState<AiSentinel | null>(null);
   const [translationLanguageNotConfigured, setTranslationLanguageNotConfigured] = useState(false);
+  const settledPromiseRef = useRef<Promise<SettledLookupResult>>(
+    Promise.resolve({ content: "", failed: true }),
+  );
+  const settledStateRef = useRef<SettledLookupResult | null>({ content: "", failed: true });
 
   useEffect(() => {
     contentRef.current = "";
@@ -70,13 +80,28 @@ function useStreamingLookup(
     setTranslationLanguageNotConfigured(false);
 
     if (!enabled || !word.trim()) {
+      const idle: SettledLookupResult = { content: "", failed: true };
+      settledStateRef.current = idle;
+      settledPromiseRef.current = Promise.resolve(idle);
       setStreaming(false);
       return;
     }
 
     let cancelled = false;
+    let settled = false;
     let activeChannel: string | null = null;
     let unlisten: UnlistenFn | null = null;
+    let resolveSettled!: (res: SettledLookupResult) => void;
+    settledStateRef.current = null;
+    settledPromiseRef.current = new Promise<SettledLookupResult>((resolve) => {
+      resolveSettled = resolve;
+    });
+    const finishSettled = (res: SettledLookupResult) => {
+      if (settled) return;
+      settled = true;
+      settledStateRef.current = res;
+      resolveSettled(res);
+    };
     const disposeListener = () => {
       unlisten?.();
       unlisten = null;
@@ -108,6 +133,7 @@ function useStreamingLookup(
               setContent(contentRef.current);
             }
             setStreaming(false);
+            finishSettled({ content: "", failed: true });
             disposeListener();
             return;
           }
@@ -118,8 +144,14 @@ function useStreamingLookup(
               setSentinel(finalContent);
               contentRef.current = "";
               setContent("");
+              setStreaming(false);
+              finishSettled({ content: "", failed: true });
+              disposeListener();
+              return;
             }
+            const failed = Boolean(parseAiErrorMessage(finalContent));
             setStreaming(false);
+            finishSettled({ content: failed ? "" : finalContent, failed });
             disposeListener();
             return;
           }
@@ -166,6 +198,7 @@ function useStreamingLookup(
             setContent(contentRef.current);
           }
           setStreaming(false);
+          finishSettled({ content: "", failed: true });
         }
       }
     };
@@ -174,6 +207,7 @@ function useStreamingLookup(
 
     return () => {
       cancelled = true;
+      finishSettled({ content: "", failed: true, cancelled: true });
       if (activeChannel) {
         const ch = activeChannel;
         activeChannel = null;
@@ -183,7 +217,21 @@ function useStreamingLookup(
     };
   }, [enabled, word, sentence, bookTitle, chapter, kind]);
 
-  return { content, contentRef, streaming, sentinel, translationLanguageNotConfigured };
+  const waitUntilSettled = useCallback((): Promise<SettledLookupResult> => {
+    if (settledStateRef.current) {
+      return Promise.resolve(settledStateRef.current);
+    }
+    return settledPromiseRef.current;
+  }, []);
+
+  return {
+    content,
+    contentRef,
+    streaming,
+    sentinel,
+    translationLanguageNotConfigured,
+    waitUntilSettled,
+  };
 }
 
 function useExplainStream(
@@ -405,6 +453,14 @@ export default function ExplainSelectionPopover({
   const [vocabStatus, setVocabStatus] = useState<VocabLemmaCheck | null>(null);
   const [saving, setSaving] = useState(false);
   const [copied, setCopied] = useState(false);
+  const vocabStatusEpochRef = useRef(0);
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   // Sync mode and query term when the selected text / initial mode changes.
   useEffect(() => {
@@ -474,6 +530,7 @@ export default function ExplainSelectionPopover({
 
   // Check whether canonical lemma is already in Vocab across all books + this passage.
   useEffect(() => {
+    const epoch = ++vocabStatusEpochRef.current;
     if (mode !== "word" || !dictSettled || !canonicalLemma) {
       setVocabStatus(null);
       return;
@@ -486,7 +543,7 @@ export default function ExplainSelectionPopover({
       contextSentence: sentence || null,
     })
       .then((status) => {
-        if (cancelled) return;
+        if (cancelled || vocabStatusEpochRef.current !== epoch) return;
         if (status && typeof status.total_count === "number") {
           setVocabStatus(status);
         } else {
@@ -494,7 +551,7 @@ export default function ExplainSelectionPopover({
         }
       })
       .catch(() => {
-        if (!cancelled) {
+        if (!cancelled && vocabStatusEpochRef.current === epoch) {
           setVocabStatus({ total_count: 0, matches_this_passage: false });
         }
       });
@@ -590,31 +647,72 @@ export default function ExplainSelectionPopover({
   const handleSave = async () => {
     if (saving || isPassageAlreadySaved) return;
     setSaving(true);
+    const saveEpoch = ++vocabStatusEpochRef.current;
+    const lemmaToSave = canonicalLemma;
     try {
       const defToSave =
         hasDictMatch && activeMatch
           ? synthesizeFallbackDefinition(activeMatch, briefGloss)
           : displayedDefinitionContent(definition.contentRef.current ?? "");
-      const ctxToSave =
-        contextError || context.sentinel ? null : context.contentRef.current.trim() || null;
+
+      let ctxToSave: string | null;
+      if (hasDictMatch && context.streaming) {
+        // Wait for the in-flight context stream so we never persist a half-streamed note.
+        const settledCtx = await context.waitUntilSettled();
+        if (!mountedRef.current || settledCtx.cancelled || vocabStatusEpochRef.current !== saveEpoch) {
+          return;
+        }
+        ctxToSave = settledCtx.failed ? null : settledCtx.content.trim() || null;
+      } else {
+        ctxToSave =
+          contextError || context.sentinel ? null : context.contentRef.current.trim() || null;
+      }
 
       await invoke("add_vocab_word", {
         bookId,
-        word: canonicalLemma,
+        word: lemmaToSave,
         definition: defToSave,
         contextSentence: sentence || null,
         contextExplanation: ctxToSave,
         cfi: cfi || null,
       });
-      setVocabStatus((prev) => ({
-        total_count: (prev?.total_count ?? 0) + (prev?.matches_this_passage ? 0 : 1),
-        matches_this_passage: true,
-      }));
+
+      let authoritativeStatus: VocabLemmaCheck | null = null;
+      try {
+        const refreshed = await invoke<VocabLemmaCheck | null>("check_vocab_lemma", {
+          lemma: lemmaToSave,
+          bookId,
+          cfi: cfi || null,
+          contextSentence: sentence || null,
+        });
+        if (refreshed && typeof refreshed.total_count === "number") {
+          authoritativeStatus = {
+            total_count: Math.max(refreshed.total_count, 1),
+            matches_this_passage: true,
+          };
+        }
+      } catch {
+        // Fall back to monotonic local floor below.
+      }
+
+      if (mountedRef.current && vocabStatusEpochRef.current === saveEpoch) {
+        setVocabStatus((prev) =>
+          authoritativeStatus ?? {
+            total_count: Math.max(
+              (prev?.total_count ?? 0) + (prev?.matches_this_passage ? 0 : 1),
+              1,
+            ),
+            matches_this_passage: true,
+          },
+        );
+      }
       onSaved?.();
     } catch (err) {
       console.error("Failed to save vocab word:", err);
     } finally {
-      setSaving(false);
+      if (mountedRef.current) {
+        setSaving(false);
+      }
     }
   };
 
@@ -742,6 +840,37 @@ export default function ExplainSelectionPopover({
     </>
   ) : undefined;
 
+  const sourceSwitcher = showSourceSwitcher ? (
+    <div
+      role="tablist"
+      aria-label={t("lookup.dictionarySource")}
+      className="inline-flex items-center gap-0.5 p-0.5 rounded-control bg-surface-inset border border-border-subtle shrink-0"
+    >
+      {matches.map((match, idx) => {
+        const active = idx === activeDictIdx;
+        return (
+          <button
+            key={match.dictId}
+            type="button"
+            role="tab"
+            aria-selected={active}
+            onClick={() => {
+              setActiveDictIdx(idx);
+              setExpandedSenses(false);
+            }}
+            className={`px-[7px] py-[2px] rounded-[6px] text-[11px] leading-snug cursor-pointer transition-colors ${
+              active
+                ? "bg-surface-solid font-semibold text-text-primary shadow-xs"
+                : "font-medium text-text-tertiary hover:text-text-secondary"
+            }`}
+          >
+            {match.dictName}
+          </button>
+        );
+      })}
+    </div>
+  ) : null;
+
   return (
     <ReaderPopover
       x={x}
@@ -805,48 +934,20 @@ export default function ExplainSelectionPopover({
                 </p>
               )}
 
-              {showSourceSwitcher && (
-                <div className="flex items-center justify-end">
-                  <div
-                    role="tablist"
-                    aria-label={t("lookup.dictionarySource")}
-                    className="inline-flex items-center gap-0.5 p-0.5 rounded-control bg-surface-inset border border-border-subtle"
-                  >
-                    {matches.map((match, idx) => {
-                      const active = idx === activeDictIdx;
-                      return (
-                        <button
-                          key={match.dictId}
-                          type="button"
-                          role="tab"
-                          aria-selected={active}
-                          onClick={() => {
-                            setActiveDictIdx(idx);
-                            setExpandedSenses(false);
-                          }}
-                          className={`px-[7px] py-[2px] rounded-[6px] text-[11px] leading-snug cursor-pointer transition-colors ${
-                            active
-                              ? "bg-surface-solid font-semibold text-text-primary shadow-xs"
-                              : "font-medium text-text-tertiary hover:text-text-secondary"
-                          }`}
-                        >
-                          {match.dictName}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
               {senseSlice ? (
                 <div className="flex flex-col gap-2">
                   {senseSlice.visibleGroups.map((group, groupIdx) => (
                     <div key={`${group.pos}-${groupIdx}`} className="flex flex-col gap-1">
-                      {group.pos && (
-                        <div>
-                          <span className="inline-block px-2 py-0.5 rounded-full bg-accent-tint text-accent-on-tint text-[11px] font-semibold leading-none">
-                            {group.pos}
-                          </span>
+                      {(group.pos || (groupIdx === 0 && sourceSwitcher)) && (
+                        <div className="flex items-center justify-between gap-2">
+                          <div>
+                            {group.pos && (
+                              <span className="inline-block px-2 py-0.5 rounded-full bg-accent-tint text-accent-on-tint text-[11px] font-semibold leading-none">
+                                {group.pos}
+                              </span>
+                            )}
+                          </div>
+                          {groupIdx === 0 && sourceSwitcher}
                         </div>
                       )}
                       <ol className="list-decimal pl-4 m-0 flex flex-col gap-1 text-[13px] leading-[1.5] text-text-primary">
@@ -871,14 +972,24 @@ export default function ExplainSelectionPopover({
                   )}
                 </div>
               ) : activeMatch.html ? (
-                <div
-                  className={`${DICT_HTML_PROSE} max-h-[190px] overflow-y-auto text-[13px] select-text`}
-                  dangerouslySetInnerHTML={{ __html: activeMatch.html }}
-                />
+                <>
+                  {sourceSwitcher && (
+                    <div className="flex items-center justify-end">{sourceSwitcher}</div>
+                  )}
+                  <div
+                    className={`${DICT_HTML_PROSE} max-h-[190px] overflow-y-auto text-[13px] select-text`}
+                    dangerouslySetInnerHTML={{ __html: activeMatch.html }}
+                  />
+                </>
               ) : activeMatch.plainText ? (
-                <div className="max-h-[190px] overflow-y-auto text-[13px] leading-[1.5] text-text-primary whitespace-pre-wrap select-text">
-                  {activeMatch.plainText}
-                </div>
+                <>
+                  {sourceSwitcher && (
+                    <div className="flex items-center justify-end">{sourceSwitcher}</div>
+                  )}
+                  <div className="max-h-[190px] overflow-y-auto text-[13px] leading-[1.5] text-text-primary whitespace-pre-wrap select-text">
+                    {activeMatch.plainText}
+                  </div>
+                </>
               ) : null}
 
               {/* Parallel AI context slot — gracefully degrades offline / without AI */}

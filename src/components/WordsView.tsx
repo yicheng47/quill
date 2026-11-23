@@ -55,10 +55,31 @@ interface VocabGroup {
   key: string;
   lemma: string;
   encounters: DictionaryWord[];
+  totalEncounterCount: number;
   latestCreatedAt: number;
   oldestCreatedAt: number;
   bookIds: Set<string>;
   parsedFallback: ParsedSavedVocabDefinition;
+}
+
+const HANZI_RE = /[\u3400-\u4dbf\u4e00-\u9fff]/;
+const LATIN_RE = /[A-Za-z]/;
+
+function resolveFallbackBriefGloss(
+  fallbackGloss: string | null,
+  showTranslation: boolean,
+  targetLanguage: string,
+): string | null {
+  if (!showTranslation || !fallbackGloss?.trim()) return null;
+  const trimmed = fallbackGloss.trim();
+  const target = targetLanguage.trim().toLowerCase();
+  if (target.startsWith("zh")) {
+    return HANZI_RE.test(trimmed) ? trimmed : null;
+  }
+  if (target.startsWith("en")) {
+    return LATIN_RE.test(trimmed) && !HANZI_RE.test(trimmed) ? trimmed : null;
+  }
+  return trimmed;
 }
 
 interface WordsViewProps {
@@ -133,6 +154,7 @@ function buildVocabGroups(rows: DictionaryWord[]): VocabGroup[] {
       key,
       lemma: newest.word.trim(),
       encounters,
+      totalEncounterCount: encounters.length,
       latestCreatedAt: newest.created_at,
       oldestCreatedAt: oldest.created_at,
       bookIds,
@@ -173,7 +195,10 @@ export default function WordsView({
     glossTarget: "en",
     showAllMatches: true,
   });
-  const [liveDict, setLiveDict] = useState<LookupDictionaryResult | null>(null);
+  const [liveDictState, setLiveDictState] = useState<{
+    lemma: string;
+    result: LookupDictionaryResult | null;
+  } | null>(null);
   const [activeDictIdx, setActiveDictIdx] = useState(0);
   const [expandedSenses, setExpandedSenses] = useState(false);
 
@@ -389,7 +414,7 @@ export default function WordsView({
   const activeLemma = activeGroup?.lemma ?? null;
   useEffect(() => {
     if (!activeLemma) {
-      setLiveDict(null);
+      setLiveDictState(null);
       return;
     }
     let cancelled = false;
@@ -399,23 +424,27 @@ export default function WordsView({
       .then((res) => {
         if (cancelled) return;
         const valid = res && typeof res === "object" && Array.isArray(res.matches) ? res : null;
-        setLiveDict(valid);
+        setLiveDictState({ lemma: activeLemma, result: valid });
       })
       .catch(() => {
-        if (!cancelled) setLiveDict(null);
+        if (!cancelled) setLiveDictState({ lemma: activeLemma, result: null });
       });
     return () => {
       cancelled = true;
     };
   }, [activeLemma]);
 
+  const liveDict =
+    activeLemma && liveDictState?.lemma === activeLemma ? liveDictState.result : null;
+
   const multiYear = useMemo(() => {
     const years = new Set<number>();
     for (const g of sortedGroups) {
-      years.add(new Date(g.latestCreatedAt).getFullYear());
+      const ts = sortMode === "oldest" ? g.oldestCreatedAt : g.latestCreatedAt;
+      years.add(new Date(ts).getFullYear());
     }
     return years.size > 1;
-  }, [sortedGroups]);
+  }, [sortedGroups, sortMode]);
 
   const groupedSections = useMemo(() => {
     if (sortMode === "az") {
@@ -440,7 +469,8 @@ export default function WordsView({
     const currentYear = new Date().getFullYear();
     const map = new Map<string, { heading: string; items: VocabGroup[] }>();
     for (const g of sortedGroups) {
-      const d = new Date(g.latestCreatedAt);
+      const ts = sortMode === "oldest" ? g.oldestCreatedAt : g.latestCreatedAt;
+      const d = new Date(ts);
       const year = d.getFullYear();
       const key = Number.isNaN(year) ? "unknown" : `${year}-${d.getMonth()}`;
       const existing = map.get(key);
@@ -448,7 +478,7 @@ export default function WordsView({
         existing.items.push(g);
       } else {
         const heading = formatMonthHeading(
-          g.latestCreatedAt,
+          ts,
           i18n.language,
           multiYear || year !== currentYear,
         );
@@ -536,12 +566,18 @@ export default function WordsView({
     activeLiveMatch?.senses?.[0]?.pos || activeGroup?.parsedFallback.partOfSpeech || null;
 
   const detailBriefGloss = activeGroup
-    ? resolveBriefGloss(
-        activeLiveMatch,
-        prefs.showTranslation,
-        prefs.glossTarget,
-        liveDict?.lang ?? "",
-      ) ?? activeGroup.parsedFallback.gloss
+    ? activeLiveMatch
+      ? resolveBriefGloss(
+          activeLiveMatch,
+          prefs.showTranslation,
+          prefs.glossTarget,
+          liveDict?.lang ?? "",
+        )
+      : resolveFallbackBriefGloss(
+          activeGroup.parsedFallback.gloss,
+          prefs.showTranslation,
+          prefs.glossTarget,
+        )
     : null;
 
   const highlightForms = useMemo(() => {
@@ -792,7 +828,13 @@ export default function WordsView({
                         const selected = activeGroup?.key === g.key;
                         const parsed = g.parsedFallback;
                         const briefGloss =
-                          parsed.gloss || parsed.definition.split(/\n+/)[0]?.trim() || "";
+                          resolveFallbackBriefGloss(
+                            parsed.gloss,
+                            prefs.showTranslation,
+                            prefs.glossTarget,
+                          ) ||
+                          parsed.definition.split(/\n+/)[0]?.trim() ||
+                          "";
                         const latest = g.encounters[0];
                         const primaryBookTitle =
                           booksById.get(latest.book_id)?.title ??
@@ -921,7 +963,13 @@ export default function WordsView({
                         className="h-9 px-3.5 rounded-control bg-danger hover:bg-danger-hover text-text-on-accent text-[12.5px] font-semibold inline-flex items-center gap-1.5 cursor-pointer transition-colors disabled:opacity-60"
                       >
                         <Trash2 size={13} />
-                        <span>{t("words.clickAgainToDelete")}</span>
+                        <span>
+                          {activeGroup.totalEncounterCount > activeGroup.encounters.length
+                            ? t("words.deleteAllAcrossBooks", {
+                                count: activeGroup.totalEncounterCount,
+                              })
+                            : t("words.clickAgainToDelete")}
+                        </span>
                       </button>
                     )}
                   </div>
@@ -1052,9 +1100,7 @@ export default function WordsView({
                 )}
 
                 {/* IN YOUR READING · N bound encounter cards */}
-                {activeGroup.encounters.some(
-                  (e) => Boolean(e.context_sentence) || Boolean(e.context_explanation),
-                ) && (
+                {activeGroup.encounters.length > 0 && (
                   <div className="mb-4">
                     <h3 className="font-mono text-[11px] font-semibold tracking-[0.08em] uppercase text-text-tertiary mb-3">
                       {t("words.inYourReadingHeading", {
@@ -1079,7 +1125,11 @@ export default function WordsView({
                               </p>
                             )}
 
-                            <div className="pt-3 border-t border-border-subtle flex flex-wrap items-center justify-between gap-3">
+                            <div
+                              className={`flex flex-wrap items-center justify-between gap-3 ${
+                                enc.context_sentence ? "pt-3 border-t border-border-subtle" : ""
+                              }`}
+                            >
                               <div className="flex items-center gap-2.5 min-w-0">
                                 <BookCover
                                   title={encBookTitle}
@@ -1117,7 +1167,7 @@ export default function WordsView({
                                   <ArrowUpRight size={14} />
                                   <span>{t("words.goToPassage")}</span>
                                 </button>
-                                {activeGroup.encounters.length > 1 && (
+                                {activeGroup.totalEncounterCount > 1 && (
                                   <button
                                     type="button"
                                     disabled={deletingEncounterId === enc.id}

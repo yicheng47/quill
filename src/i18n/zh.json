@@ -337,6 +337,7 @@
   "words.deleteWord": "删除词汇",
   "words.deleteEncounter": "移除此语境",
   "words.clickAgainToDelete": "再次点击以删除",
+  "words.deleteAllAcrossBooks": "删除全部 {{count}} 处（含其他书籍）",
   "words.pronounce": "朗读发音",
   "words.meaningHeading": "释义",
   "words.dictionaryHeading": "词典释义",

@@ -716,6 +716,20 @@ mod tests {
         assert_eq!(mgr.lookup_dictionary(&db, "walking", None).unwrap().lemma, "walk");
         assert_eq!(mgr.lookup_dictionary(&db, "boxes", None).unwrap().lemma, "box");
 
+        // Canonical lookup recovers regular surface forms even when forms table has
+        // zero suffix rows (ensuring Vocab quote highlighting works after reopening).
+        let walk_canon = mgr.lookup_dictionary(&db, "walk", None).unwrap();
+        assert!(walk_canon.forms.iter().any(|f| f == "walks"));
+        assert!(walk_canon.forms.iter().any(|f| f == "walked"));
+        assert!(walk_canon.forms.iter().any(|f| f == "walking"));
+
+        let study_canon = mgr.lookup_dictionary(&db, "study", None).unwrap();
+        assert!(study_canon.forms.iter().any(|f| f == "studies"));
+        assert!(study_canon.forms.iter().any(|f| f == "studied"));
+
+        let box_canon = mgr.lookup_dictionary(&db, "box", None).unwrap();
+        assert!(box_canon.forms.iter().any(|f| f == "boxes"));
+
         // Homograph: `left` is both an independent lemma AND past tense of `leave`
         let left = mgr.lookup_dictionary(&db, "left", None).unwrap();
         assert_eq!(left.lemma, "left");

@@ -487,7 +487,13 @@ describe("M7 reader AI and word surfaces", () => {
         matches: [],
       };
     };
-    onCheckVocabLemmaImpl = async () => ({ total_count: 1, matches_this_passage: false });
+    let vocabCheckCount = 0;
+    onCheckVocabLemmaImpl = async () => {
+      vocabCheckCount += 1;
+      return vocabCheckCount === 1
+        ? { total_count: 1, matches_this_passage: false }
+        : { total_count: 2, matches_this_passage: true };
+    };
 
     const onQuote = vi.fn();
     const onSaved = vi.fn();
@@ -516,10 +522,12 @@ describe("M7 reader AI and word surfaces", () => {
     expect(container.textContent).toContain("Add passage to Vocab");
     expect(container.textContent).toContain("cause great embarrassment.");
 
-    // Source switcher switches to Quill Built-in and exposes + 1 more sense
+    // Source switcher switches to Quill Built-in, aligns on the first POS line (P1), and exposes + 1 more sense
     await act(async () => {
       findButton(container, "Quill Built-in").click();
     });
+    const switcherTablist = container.querySelector('[role="tablist"]')!;
+    expect(switcherTablist.parentElement?.textContent).toContain("verb");
     expect(container.textContent).toContain("使羞愧；克制");
     expect(container.textContent).toContain("+ 1 more sense");
     await act(async () => {
@@ -593,6 +601,108 @@ describe("M7 reader AI and word surfaces", () => {
     expect(container.textContent).toContain("Explaining…");
     expect(container.querySelector('[data-testid="selection-mode-switch"]')?.textContent).toBe(
       "Look up",
+    );
+  });
+
+  it("waits for in-flight AI context completion before saving, preserves offline save, and prevents delayed check_vocab_lemma from clobbering Saved or inflating count", async () => {
+    const aiLookupCalls: Array<Record<string, unknown>> = [];
+    onAiLookupImpl = async (args) => {
+      aiLookupCalls.push(args);
+    };
+    onLookupDictionaryImpl = async () => ({
+      lemma: "mortify",
+      lang: "en",
+      inflected_from: "mortified",
+      alternate_lemmas: [],
+      forms: ["mortify", "mortified", "mortifying"],
+      matches: [
+        {
+          dictId: "builtin",
+          dictName: "Quill Built-in",
+          format: "builtin",
+          pronunciation: "/ˈmɔːrtɪfaɪ/",
+          senses: [{ pos: "verb", defs: ["Cause deep embarrassment."] }],
+          html: null,
+          plainText: null,
+          gloss_en: null,
+          gloss_zh: "使羞愧",
+        },
+      ],
+    });
+
+    // Delay the initial check_vocab_lemma so the user can save before it resolves
+    let resolveInitialCheck!: (status: { total_count: number; matches_this_passage: boolean }) => void;
+    let checkCallIdx = 0;
+    onCheckVocabLemmaImpl = async () => {
+      checkCallIdx += 1;
+      if (checkCallIdx === 1) {
+        return new Promise((resolve) => {
+          resolveInitialCheck = resolve;
+        });
+      }
+      // Authoritative post-save status (even if concurrent/idempotent, exact DB count is 1)
+      return { total_count: 1, matches_this_passage: true };
+    };
+
+    const onSaved = vi.fn();
+    await act(async () => {
+      root.render(
+        <ExplainSelectionPopover
+          x={40}
+          y={40}
+          text="mortified"
+          sentence="She felt mortified at the remark."
+          bookId="b-1"
+          cfi="epubcfi(/6/2!/4/4)"
+          onSaved={onSaved}
+          onClose={vi.fn()}
+        />,
+      );
+    });
+    await flushMicrotasks();
+
+    // Emit delta 1 WITHOUT done:true
+    const ctxReqId = String(aiLookupCalls[0].requestId);
+    await act(async () => {
+      emitChunks("ai-lookup-chunk-", ctxReqId, ["She felt deeply "], false);
+    });
+    await flushMicrotasks();
+
+    // Click Save between delta 1 and delta 2 — must NOT save partial buffer yet
+    const saveBtn = findButton(container, "Save to Vocab");
+    await act(async () => {
+      saveBtn.click();
+    });
+    await flushMicrotasks();
+    expect(invokeMock).not.toHaveBeenCalledWith("add_vocab_word", expect.anything());
+
+    // Emit delta 2 + done:true — now persists the COMPLETE AI context note
+    await act(async () => {
+      emitChunks("ai-lookup-chunk-", ctxReqId, ["embarrassed by the sudden silence."], true);
+    });
+    await flushMicrotasks();
+
+    expect(invokeMock).toHaveBeenCalledWith(
+      "add_vocab_word",
+      expect.objectContaining({
+        word: "mortify",
+        contextExplanation: "She felt deeply embarrassed by the sudden silence.",
+      }),
+    );
+    expect(onSaved).toHaveBeenCalledTimes(1);
+    expect(container.textContent).toContain("Saved");
+    expect(container.querySelector('[data-testid="vocab-status-pill"]')?.textContent).toContain(
+      "In Vocab · 1",
+    );
+
+    // Now the stale initial check_vocab_lemma resolves — must NOT overwrite Saved or change count
+    await act(async () => {
+      resolveInitialCheck({ total_count: 0, matches_this_passage: false });
+    });
+    await flushMicrotasks();
+    expect(container.textContent).toContain("Saved");
+    expect(container.querySelector('[data-testid="vocab-status-pill"]')?.textContent).toContain(
+      "In Vocab · 1",
     );
   });
 

@@ -142,7 +142,9 @@ class MockFoliateView extends HTMLElement {
   prev = vi.fn(() => Promise.resolve());
   next = vi.fn(() => Promise.resolve());
   close = vi.fn();
-  getCFI = (index: number) => `epubcfi(/6/${(index + 1) * 2}!/4/2/1:0)`;
+  getCFI = vi.fn<(index: number, _range?: Range) => string>(
+    (index: number) => `epubcfi(/6/${(index + 1) * 2}!/4/2/1:0)`,
+  );
   resolveCFI = vi.fn(() => null);
   getLocationOf = vi.fn(() => null);
   addAnnotation = vi.fn(() => Promise.resolve());
@@ -941,7 +943,7 @@ describe("Reader shell themes, cascade, and startup navigation", () => {
     const bmResolver = testState.lastBookmarksResolvePages;
     expect(typeof bmResolver).toBe("function");
 
-    const vocabBtn = container.querySelector<HTMLButtonElement>('button[aria-label="Words in Book"]')!;
+    const vocabBtn = container.querySelector<HTMLButtonElement>('button[aria-label="Vocab in Book"]')!;
     await act(async () => {
       vocabBtn.click();
     });
@@ -1092,9 +1094,23 @@ describe("Reader shell themes, cascade, and startup navigation", () => {
     expect(aiStub.getAttribute("data-quote-cfi")).toBe("epubcfi(/6/102!/4/2/1:0)");
     expect(aiStub.getAttribute("data-quote-page")).toBe("51");
 
-    // 2. Context menu -> Explain -> Quote in Chat on page 51 also reports page 51
+    // 2. Context menu -> Look Up / Explain -> Quote in Chat on page 51 also reports page 51
     let explainRequestId = "";
     testState.invoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === "lookup_dictionary") {
+        return {
+          term: "Budget authority",
+          lang: "en",
+          lemma: "Budget authority",
+          lemmatized: false,
+          alternate_lemmas: [],
+          entries: [],
+          has_builtin: true,
+        };
+      }
+      if (cmd === "check_vocab_lemma") {
+        return { exists: false, count: 0, exact_exists: false };
+      }
       if (cmd === "ai_explain") {
         explainRequestId = String((args as { requestId?: string })?.requestId ?? "");
         return null;
@@ -1119,12 +1135,22 @@ describe("Reader shell themes, cascade, and startup navigation", () => {
     await act(async () => {
       page51Doc.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 40, clientY: 40 }));
     });
-    const explainBtn = Array.from(container.querySelectorAll("button")).find((el) =>
-      el.textContent?.includes("Explain"),
+    const inspectBtn = Array.from(container.querySelectorAll("button")).find((el) =>
+      el.textContent?.includes("Look Up") || el.textContent?.includes("Explain"),
     );
-    expect(explainBtn).toBeDefined();
+    expect(inspectBtn).toBeDefined();
     await act(async () => {
-      explainBtn!.click();
+      inspectBtn!.click();
+    });
+    await flushAsync();
+
+    // Switch gray-zone 2-word selection to Explain mode and quote from passage footer
+    const switchToExplainBtn = Array.from(container.querySelectorAll("button")).find((el) =>
+      el.textContent?.includes("Explain passage"),
+    );
+    expect(switchToExplainBtn).toBeDefined();
+    await act(async () => {
+      switchToExplainBtn!.click();
     });
     await flushAsync();
 
@@ -1183,6 +1209,96 @@ describe("Reader shell themes, cascade, and startup navigation", () => {
     });
     expect(aiStub.getAttribute("data-quote")).toBe("Earlier passage");
     expect(aiStub.getAttribute("data-quote-page")).toBe("12");
+  });
+
+  it("resolves context-menu CFI from the current DOM Range rather than reusing a stale mouseup CFI", async () => {
+    testState.getBook.mockResolvedValue({
+      id: "book-1",
+      title: "Mock EPUB",
+      author: "Author",
+      format: "epub",
+      file_path: "/tmp/book.epub",
+      progress: 0,
+      available: true,
+    });
+    testState.getAllSettings.mockResolvedValue({});
+    await renderReader("/reader/book-1");
+    await flushAsync();
+
+    const view = container.querySelector("foliate-view") as unknown as MockFoliateView;
+    const iframeDoc = document.implementation.createHTMLDocument("chapter");
+    const p1 = iframeDoc.createElement("p");
+    p1.textContent = "First mortified occurrence on page one.";
+    const p2 = iframeDoc.createElement("p");
+    p2.textContent = "Second mortified occurrence on page two.";
+    iframeDoc.body.append(p1, p2);
+
+    const range1 = iframeDoc.createRange();
+    range1.setStart(p1.firstChild!, 6);
+    range1.setEnd(p1.firstChild!, 15);
+    const range2 = iframeDoc.createRange();
+    range2.setStart(p2.firstChild!, 7);
+    range2.setEnd(p2.firstChild!, 16);
+
+    let activeRange = range1;
+    let activeText = "mortified";
+    Object.defineProperty(iframeDoc, "getSelection", {
+      configurable: true,
+      value: () => ({
+        toString: () => activeText,
+        rangeCount: 1,
+        getRangeAt: () => activeRange,
+      }),
+    });
+
+    view.getCFI.mockImplementation((_idx: number, range?: Range) =>
+      range === range1 ? "epubcfi(/6/2!/4/2/1:6)" : "epubcfi(/6/2!/4/4/1:7)",
+    );
+
+    await act(async () => {
+      view.dispatchEvent(new CustomEvent("load", { detail: { doc: iframeDoc, index: 0 } }));
+    });
+    await flushAsync();
+
+    // First selection records mouseup CFI for range1
+    await act(async () => {
+      iframeDoc.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+    });
+
+    // Selection changes to range2 WITHOUT another mouseup (e.g. keyboard / programmatic selection)
+    activeRange = range2;
+    activeText = "mortified";
+    await act(async () => {
+      iframeDoc.dispatchEvent(
+        new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 60, clientY: 80 }),
+      );
+    });
+    await flushAsync();
+
+    // Clicking Look Up opens popover and uses range2's freshly resolved CFI (NOT stale range1 CFI)
+    expect(view.getCFI).toHaveBeenLastCalledWith(0, range2);
+    const lookUpBtn = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+      (b) => b.textContent?.includes("Look Up"),
+    );
+    expect(lookUpBtn).toBeTruthy();
+
+    // If getCFI throws for the current range, never fall back to the stale cached CFI
+    // (Highlight requires a valid CFI, so its swatch button is omitted while Look Up remains usable)
+    view.getCFI.mockImplementationOnce(() => {
+      throw new Error("detached range");
+    });
+    await act(async () => {
+      iframeDoc.dispatchEvent(
+        new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 60, clientY: 80 }),
+      );
+    });
+    await flushAsync();
+    const highlightBtn = container.querySelector<HTMLButtonElement>('button[title*="Yellow"]');
+    expect(highlightBtn).toBeNull();
+    const lookUpBtnAfterError = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+      (b) => b.textContent?.includes("Look Up"),
+    );
+    expect(lookUpBtnAfterError).toBeTruthy();
   });
 });
 

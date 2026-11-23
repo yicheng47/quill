@@ -10,16 +10,29 @@ describe("pinyin vocab grouping, sorting, and search", () => {
     expect(getVocabGroupKey("执拗")).toBe("Z");
     expect(getVocabGroupKey("悖论")).toBe("B");
     expect(getVocabGroupKey("缄默")).toBe("J");
+    // Polyphones must group by their full-phrase reading, matching sort/search
+    expect(getVocabGroupKey("重庆")).toBe("C");
+    expect(getVocabGroupKey("长大")).toBe("Z");
     expect(getVocabGroupKey("42")).toBe("#");
     expect(getVocabGroupKey("…")).toBe("#");
   });
 
   it("interleaves English and Chinese entries alphabetically by pinyin with symbols last", () => {
-    const entries = ["42", "zephyr", "潜移默化", "悖论", "benign", "缄默", "alpha"];
+    const entries = ["42", "zephyr", "潜移默化", "悖论", "benign", "缄默", "alpha", "重庆", "长大"];
     const sorted = [...entries].sort((a, b) =>
       getVocabSortKey(a).localeCompare(getVocabSortKey(b)),
     );
-    expect(sorted).toEqual(["alpha", "悖论", "benign", "缄默", "潜移默化", "zephyr", "42"]);
+    expect(sorted).toEqual([
+      "alpha",
+      "悖论",
+      "benign",
+      "重庆",
+      "缄默",
+      "潜移默化",
+      "zephyr",
+      "长大",
+      "42",
+    ]);
   });
 
   it("matches Chinese entries by substring, full pinyin, pinyin initials, and gloss", () => {

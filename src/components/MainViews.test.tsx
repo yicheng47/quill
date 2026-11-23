@@ -1036,6 +1036,201 @@ describe("Main Views (Home, Highlights, Words, Chats)", () => {
       expect(container.textContent).not.toContain("/qián yí mò huà/");
       expect(container.textContent).toContain("成语");
     });
+
+    it("preserves unseen book encounters on filtered delete, renders quote-less cards, aligns Oldest month headings, and guards stale lookup/gloss preferences", async () => {
+      let rows = [
+        {
+          id: "e-book-b",
+          book_id: "b2",
+          word: "abbreviate",
+          definition: "缩短\n/əˈbriː.vi.eɪt/ verb. Shorten a word or text.",
+          context_sentence: "The editor abbreviates long titles.",
+          context_explanation: null,
+          cfi: "epubcfi(/6/8!/2/2)",
+          created_at: new Date("2026-09-10T10:00:00Z").getTime(),
+          updated_at: new Date("2026-09-10T10:00:00Z").getTime(),
+          book_title: "Book B",
+        },
+        {
+          id: "e-book-a",
+          book_id: "b1",
+          word: "abbreviate",
+          definition: "缩短\n/əˈbriː.vi.eɪt/ verb. Shorten a word or text.",
+          context_sentence: null,
+          context_explanation: null,
+          cfi: "epubcfi(/6/2!/4/2)",
+          created_at: new Date("2026-01-15T10:00:00Z").getTime(),
+          updated_at: new Date("2026-01-15T10:00:00Z").getTime(),
+          book_title: "Book A",
+        },
+        {
+          id: "e-other",
+          book_id: "b1",
+          word: "ephemeral",
+          definition: "短暂的\n/ɪˈfɛm.ər.əl/ adj. Short-lived.",
+          context_sentence: "An ephemeral bloom.",
+          context_explanation: null,
+          cfi: "epubcfi(/6/4!/2/2)",
+          created_at: new Date("2026-05-05T10:00:00Z").getTime(),
+          updated_at: new Date("2026-05-05T10:00:00Z").getTime(),
+          book_title: "Book A",
+        },
+      ];
+
+      let resolveDeferredLookup: ((v: unknown) => void) | null = null;
+      mocks.invoke.mockImplementation(async (cmd: string, args?: Record<string, unknown>) => {
+        if (cmd === "list_all_vocab_words") return [...rows];
+        if (cmd === "get_all_settings") {
+          return {
+            show_translation: "false",
+            lookup_translation_language: "zh",
+            dictionary_show_all_matches: "true",
+          };
+        }
+        if (cmd === "lookup_dictionary") {
+          if (args?.term === "abbreviate") {
+            return {
+              lemma: "abbreviate",
+              lang: "en",
+              inflected_from: null,
+              alternate_lemmas: [],
+              forms: ["abbreviate", "abbreviated", "abbreviates"],
+              matches: [
+                {
+                  dictId: "builtin",
+                  dictName: "Quill Built-in",
+                  format: "builtin",
+                  pronunciation: "/əˈbriː.vi.eɪt/",
+                  senses: [{ pos: "verb", defs: ["Shorten a word or phrase."] }],
+                  html: null,
+                  plainText: null,
+                  gloss_en: null,
+                  gloss_zh: "缩写",
+                },
+              ],
+            };
+          }
+          if (args?.term === "ephemeral") {
+            return new Promise((resolve) => {
+              resolveDeferredLookup = resolve;
+            });
+          }
+          return null;
+        }
+        if (cmd === "remove_vocab_word") {
+          rows = rows.filter((r) => r.id !== args?.id);
+          return null;
+        }
+        return null;
+      });
+
+      await act(async () => {
+        root.render(
+          <WordsView
+            booksById={
+              new Map([
+                ["b1", makeBook("b1", { title: "Book A", author: "Author A" })],
+                ["b2", makeBook("b2", { title: "Book B", author: "Author B" })],
+              ])
+            }
+            onNavigateToLibrary={vi.fn()}
+          />,
+        );
+      });
+      await flushMicrotasks();
+
+      // Suffix-only surface form "abbreviates" is highlighted, and brief gloss is hidden when show_translation=false
+      expect(container.querySelector("h2")?.textContent).toBe("abbreviate");
+      expect(Array.from(container.querySelectorAll("mark")).map((m) => m.textContent)).toEqual([
+        "abbreviates",
+      ]);
+      expect(container.textContent).not.toContain("缩写");
+      expect(container.textContent).not.toContain("缩短");
+
+      // Quote-less and note-less encounter (e-book-a) still renders its card with Go to passage
+      const quotelessCard = container.querySelector('[data-testid="vocab-encounter-e-book-a"]')!;
+      expect(quotelessCard).not.toBeNull();
+      expect(quotelessCard.textContent).toContain("Book A");
+      expect(quotelessCard.textContent).toContain("Go to passage");
+
+      // Oldest sort uses oldestCreatedAt (January 2026) for month heading instead of latestCreatedAt (September 2026)
+      const sortBtn = container.querySelector<HTMLButtonElement>('button[aria-label="Sort vocab"]')!;
+      await act(async () => {
+        sortBtn.click();
+      });
+      const oldestOpt = Array.from(
+        container.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]'),
+      ).find((b) => b.textContent?.includes("Oldest"))!;
+      await act(async () => {
+        oldestOpt.click();
+      });
+      const leftRail = container.querySelector<HTMLElement>('aside[aria-label="Saved vocab"]')!;
+      expect(leftRail.textContent).toContain("JANUARY");
+      expect(leftRail.textContent).not.toContain("SEPTEMBER");
+
+      // Switching to ephemeral while lookup_dictionary is pending must NOT show abbreviate's definition/IPA
+      const ephBtn = Array.from(leftRail.querySelectorAll("button")).find((b) =>
+        b.textContent?.includes("ephemeral"),
+      )!;
+      await act(async () => {
+        ephBtn.click();
+      });
+      expect(container.querySelector("h2")?.textContent).toBe("ephemeral");
+      expect(container.textContent).not.toContain("Shorten a word or phrase.");
+      expect(container.textContent).not.toContain("/əˈbriː.vi.eɪt/");
+      // Fallback gloss also respects show_translation=false
+      expect(container.textContent).not.toContain("短暂的");
+
+      await act(async () => {
+        resolveDeferredLookup?.(null);
+      });
+      await flushMicrotasks();
+
+      // Switch back to abbreviate, filter to Book A, verify per-encounter delete remains and global warning shows all-books scope
+      const abbrBtn = Array.from(leftRail.querySelectorAll("button")).find((b) =>
+        b.textContent?.includes("abbreviate"),
+      )!;
+      await act(async () => {
+        abbrBtn.click();
+      });
+      await flushMicrotasks();
+
+      const bookFilterBtn = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+        (b) => b.textContent?.includes("All books"),
+      )!;
+      await act(async () => {
+        bookFilterBtn.click();
+      });
+      const bookAOpt = Array.from(
+        container.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]'),
+      ).find((b) => b.textContent?.includes("Book A"))!;
+      await act(async () => {
+        bookAOpt.click();
+      });
+      await flushMicrotasks();
+
+      // Arming whole-lemma Delete explicitly warns it removes all 2 across all books
+      const globalDeleteBtn = container.querySelector<HTMLButtonElement>(
+        'button[aria-label="Delete saved vocab"]',
+      )!;
+      await act(async () => {
+        globalDeleteBtn.click();
+      });
+      expect(container.textContent).toContain("Delete all 2 across all books");
+
+      // Book A's single filtered card STILL keeps per-encounter Remove passage and deleting it preserves Book B
+      const removeBookABtn = container.querySelector<HTMLButtonElement>(
+        '[data-testid="vocab-encounter-e-book-a"] button[aria-label="Remove passage"]',
+      )!;
+      expect(removeBookABtn).not.toBeNull();
+      await act(async () => {
+        removeBookABtn.click();
+      });
+      await flushMicrotasks();
+      expect(mocks.invoke).toHaveBeenCalledWith("remove_vocab_word", { id: "e-book-a" });
+      expect(rows.some((r) => r.id === "e-book-b")).toBe(true);
+      expect(rows.some((r) => r.id === "e-book-a")).toBe(false);
+    });
   });
 
   describe("ChatsView", () => {

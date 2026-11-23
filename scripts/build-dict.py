@@ -46,6 +46,20 @@ SOURCES_MANIFEST = Path(__file__).resolve().parent / "dict-sources.json"
 
 MAX_TARGET_BYTES = 20 * 1024 * 1024  # 20 MB hard cap
 PARTICIPIAL_ADJ_RELATION = "participial adjective"
+PARTICIPIAL_ADJ_CODE = "a"
+
+RELATION_TO_CODE = {
+    "traditional": "t",
+    "past tense": "p",
+    "past participle": "d",
+    "present participle": "i",
+    "third-person singular": "3",
+    "plural": "s",
+    "comparative": "r",
+    "superlative": "u",
+    "participial adjective": "a",
+    "inflected form": "f",
+}
 
 # Tone-number pinyin -> tone-marked pinyin converter (for CC-CEDICT)
 TONE_VOWELS = {
@@ -95,6 +109,7 @@ POS_MAP_ZH = {
 
 HANZI_RE = re.compile(r"^[\u3400-\u4dbf\u4e00-\u9fff]+$")
 HANZI_ANY_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
+HANZI_TOKEN_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]{1,6}")
 ASCII_WORD_RE = re.compile(r"^[A-Za-z][A-Za-z'-]{0,39}$")
 ASCII_LETTER_RE = re.compile(r"[A-Za-z]")
 
@@ -164,19 +179,24 @@ def clean_gloss(text: str, max_len: int = 160) -> str:
 def build_senses_zdict(sample_payloads: list[bytes]) -> bytes:
     """Build a deterministic <= 32 KB preset deflate dictionary from common tokens + samples."""
     seed = (
-        '[{"pos":"noun","defs":["'
-        '[{"pos":"verb","defs":["'
-        '[{"pos":"adj.","defs":["'
-        '[{"pos":"adv.","defs":["'
-        '[{"pos":"prep.","defs":["'
-        '[{"pos":"成语","defs":["'
-        '[{"pos":"名词","defs":["'
-        '[{"pos":"动词","defs":["'
-        '[{"pos":"形容词","defs":["'
-        '[{"pos":"副词","defs":["'
-        '"]},{"pos":"'
-        '","'
-        '"]}]'
+        '{"p":"/","gz":"'
+        '","s":[["noun",["'
+        '","s":[["verb",["'
+        '","s":[["adj.",["'
+        '","s":[["adv.",["'
+        '","s":[["prep.",["'
+        '","s":[["成语",["'
+        '","s":[["名词",["'
+        '","s":[["动词",["'
+        '","s":[["形容词",["'
+        '","s":[["副词",["'
+        '"]]],'
+        '"],"f":["'
+        '","ge":"'
+        '","cw":1}'
+        '","ci":1}'
+        '","cw":1,"f":["'
+        '","ci":1,"f":["'
         "To cause someone or something to "
         "The act or process of "
         "A person who "
@@ -187,7 +207,7 @@ def build_senses_zdict(sample_payloads: list[bytes]) -> bytes:
         "比喻 形容 指人的思想、性格 表示 一种 用来 "
     ).encode("utf-8")
     buf = bytearray(seed)
-    step = max(1, len(sample_payloads) // 400)
+    step = max(1, len(sample_payloads) // 450)
     for payload in sample_payloads[::step]:
         if len(buf) + len(payload) > 32768:
             break
@@ -205,22 +225,60 @@ def compress_senses(raw_json: bytes, zdict: bytes | None) -> bytes:
     return raw_json
 
 
-def decompress_senses(raw: bytes | str, zdict: bytes | None) -> list[dict[str, Any]]:
+def decompress_entry_payload(
+    raw: bytes | str,
+    zdict: bytes | None,
+    col_pron: str | None = None,
+    col_gloss_en: str | None = None,
+    col_gloss_zh: str | None = None,
+) -> dict[str, Any]:
     if isinstance(raw, str):
-        return json.loads(raw)
-    if not raw:
-        return []
-    if raw[0] == ord("["):
-        return json.loads(raw.decode("utf-8"))
-    if raw[0] == 0x02:
+        parsed = json.loads(raw)
+    elif not raw:
+        parsed = []
+    elif raw[0] in (ord("["), ord("{")):
+        parsed = json.loads(raw.decode("utf-8"))
+    elif raw[0] == 0x02:
         if zdict is None:
             raise ValueError("Missing senses_zdict metadata")
         d = zlib.decompressobj(wbits=-15, zdict=zdict)
-        return json.loads((d.decompress(raw[1:]) + d.flush()).decode("utf-8"))
-    if raw[0] == 0x01:
+        parsed = json.loads((d.decompress(raw[1:]) + d.flush()).decode("utf-8"))
+    elif raw[0] == 0x01:
         d = zlib.decompressobj(wbits=-15)
-        return json.loads((d.decompress(raw[1:]) + d.flush()).decode("utf-8"))
-    return json.loads(zlib.decompress(raw).decode("utf-8"))
+        parsed = json.loads((d.decompress(raw[1:]) + d.flush()).decode("utf-8"))
+    else:
+        parsed = json.loads(zlib.decompress(raw).decode("utf-8"))
+
+    if isinstance(parsed, dict):
+        ge = parsed.get("ge", col_gloss_en)
+        gz = parsed.get("gz", col_gloss_zh)
+        pron = parsed.get("p", col_pron)
+        if "s" in parsed:
+            senses = [{"pos": g[0], "defs": g[1]} for g in parsed["s"]]
+        elif parsed.get("ci") == 1 or parsed.get("cw") == 1:
+            pos = "成语" if parsed.get("ci") == 1 else "词语"
+            senses = [{"pos": pos, "defs": [ge]}] if ge else []
+        else:
+            senses = []
+        return {
+            "pron": pron,
+            "senses": senses,
+            "gloss_en": ge,
+            "gloss_zh": gz,
+            "forms": parsed.get("f") or [],
+        }
+
+    return {
+        "pron": col_pron,
+        "senses": parsed,
+        "gloss_en": col_gloss_en,
+        "gloss_zh": col_gloss_zh,
+        "forms": [],
+    }
+
+
+def decompress_senses(raw: bytes | str, zdict: bytes | None) -> list[dict[str, Any]]:
+    return decompress_entry_payload(raw, zdict)["senses"]
 
 
 def write_sqlite_db(
@@ -236,10 +294,58 @@ def write_sqlite_db(
     if tmp_path.exists():
         tmp_path.unlink()
 
-    serialized: list[bytes] = [
-        json.dumps(e["senses"], ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-        for e in entries
-    ]
+    # Deduplicate forms preserving is_lemma=1 first
+    seen_forms: set[tuple[str, str, int]] = set()
+    deduped_forms: list[tuple[str, str, int, int, str | None]] = []
+    extra_forms_by_eid: dict[int, list[str]] = defaultdict(list)
+    for form, lang, entry_id, is_lemma, relation in sorted(
+        forms, key=lambda r: (r[1], r[0], -r[3], r[2])
+    ):
+        k = (form, lang, entry_id)
+        if k in seen_forms:
+            continue
+        seen_forms.add(k)
+        stored_rel = (
+            RELATION_TO_CODE.get(relation, relation) if (compress and relation) else relation
+        )
+        deduped_forms.append((form, lang, entry_id, is_lemma, stored_rel))
+        if compress and is_lemma == 0:
+            lemma_str = entries[entry_id - 1]["lemma"]
+            if lang == "zh" or not is_regular_suffix_form(form, lemma_str.lower()):
+                if form not in extra_forms_by_eid[entry_id]:
+                    extra_forms_by_eid[entry_id].append(form)
+
+    serialized: list[bytes] = []
+    for idx, e in enumerate(entries, start=1):
+        if compress:
+            obj: dict[str, Any] = {}
+            if e.get("pron"):
+                obj["p"] = e["pron"]
+            if e.get("gloss_en"):
+                obj["ge"] = e["gloss_en"]
+            if e.get("gloss_zh"):
+                obj["gz"] = e["gloss_zh"]
+            senses = e["senses"]
+            if (
+                e["lang"] == "zh"
+                and len(senses) == 1
+                and senses[0]["pos"] in ("词语", "成语")
+                and len(senses[0]["defs"]) == 1
+                and e.get("gloss_en")
+                and senses[0]["defs"][0] == e["gloss_en"]
+            ):
+                obj["ci" if senses[0]["pos"] == "成语" else "cw"] = 1
+            else:
+                obj["s"] = [[g["pos"], g["defs"]] for g in senses]
+            xf = extra_forms_by_eid.get(idx)
+            if xf:
+                obj["f"] = xf
+            serialized.append(json.dumps(obj, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+        else:
+            serialized.append(
+                json.dumps(e["senses"], ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+            )
+
     zdict = build_senses_zdict(serialized) if compress else None
 
     conn = sqlite3.connect(str(tmp_path))
@@ -282,7 +388,7 @@ def write_sqlite_db(
         )
 
         meta_rows: list[tuple[str, bytes]] = [
-            ("schema_version", b"1"),
+            ("schema_version", b"2" if compress else b"1"),
             ("senses_codec", b"deflate_dict" if zdict is not None else b"plain"),
             ("entry_count", str(len(entries)).encode("utf-8")),
             ("built_at", built_at.encode("utf-8")),
@@ -297,44 +403,32 @@ def write_sqlite_db(
 
         entry_rows = []
         for idx, e in enumerate(entries, start=1):
-            payload = (
-                compress_senses(serialized[idx - 1], zdict)
-                if compress
-                else serialized[idx - 1].decode("utf-8")
-            )
-            entry_rows.append(
-                (
-                    idx,
-                    e["lang"],
-                    e["lemma"],
-                    e.get("pron"),
-                    payload,
-                    e.get("gloss_en"),
-                    e.get("gloss_zh"),
+            if compress:
+                payload = compress_senses(serialized[idx - 1], zdict)
+                entry_rows.append((idx, e["lang"], e["lemma"], None, payload, None, None))
+            else:
+                entry_rows.append(
+                    (
+                        idx,
+                        e["lang"],
+                        e["lemma"],
+                        e.get("pron"),
+                        serialized[idx - 1].decode("utf-8"),
+                        e.get("gloss_en"),
+                        e.get("gloss_zh"),
+                    )
                 )
-            )
         conn.executemany(
             "INSERT INTO entries(id, lang, lemma, pron, senses_json, gloss_en, gloss_zh) VALUES (?, ?, ?, ?, ?, ?, ?)",
             entry_rows,
         )
 
-        # Deduplicate forms preserving is_lemma=1 first
-        seen_forms: set[tuple[str, str, int]] = set()
-        deduped_forms: list[tuple[str, str, int, int, str | None]] = []
-        for form, lang, entry_id, is_lemma, relation in sorted(
-            forms, key=lambda r: (r[1], r[0], -r[3], r[2])
-        ):
-            k = (form, lang, entry_id)
-            if k in seen_forms:
-                continue
-            seen_forms.add(k)
-            deduped_forms.append((form, lang, entry_id, is_lemma, relation))
-
         conn.executemany(
             "INSERT INTO forms(form, lang, entry_id, is_lemma, relation) VALUES (?, ?, ?, ?, ?)",
             deduped_forms,
         )
-        conn.execute("CREATE INDEX idx_forms_entry_id ON forms(entry_id);")
+        if not compress:
+            conn.execute("CREATE INDEX idx_forms_entry_id ON forms(entry_id);")
         conn.commit()
         conn.execute("VACUUM;")
     finally:
@@ -1161,10 +1255,47 @@ def infer_zh_pos(
     return POS_MAP_ZH.get(pos_raw)
 
 
+def is_cedict_proper_or_variant(gloss_en: str) -> bool:
+    low = gloss_en.lower()
+    return (
+        low.startswith(
+            (
+                "surname ",
+                "variant of ",
+                "old variant of ",
+                "see ",
+                "abbr. for ",
+                "also written ",
+            )
+        )
+        or "county in " in low
+        or "district in " in low
+        or "township in " in low
+        or "prefecture" in low
+        or "autonomous region" in low
+    )
+
+
+def extract_ecdict_zh_ranks(ecdict: dict[str, dict[str, Any]]) -> dict[str, int]:
+    """Derive modern Chinese usage-frequency ranks from ECDICT's EN->ZH translations."""
+    zh_ranks: dict[str, int] = {}
+    for rec in ecdict.values():
+        trans = rec.get("translation")
+        if not trans:
+            continue
+        rank = rec["rank"]
+        for tok in HANZI_TOKEN_RE.findall(trans):
+            prev = zh_ranks.get(tok)
+            if prev is None or rank < prev:
+                zh_ranks[tok] = rank
+    return zh_ranks
+
+
 def parse_zh_entries(
     zh_kaikki_path: Path,
     cedict_path: Path,
-    max_entries: int = 70_000,
+    max_entries: int = 63_000,
+    zh_freq_ranks: dict[str, int] | None = None,
 ) -> tuple[list[dict[str, Any]], list[tuple[str, str]]]:
     """
     Merge CC-CEDICT + Chinese-edition Kaikki Wiktionary (zhwiktionary) into
@@ -1172,17 +1303,31 @@ def parse_zh_entries(
     metadata, Traditional->Simplified links, and separate English glosses.
     """
     cedict_rows = load_cedict(cedict_path)
+    zh_freq_ranks = zh_freq_ranks or {}
     by_simp: dict[str, dict[str, Any]] = {}
     trad_to_simp: dict[str, str] = {}
     trad_map: dict[str, set[str]] = defaultdict(set)
+    char_freq: dict[str, int] = defaultdict(int)
 
     for row in cedict_rows:
         simp = row["simp"]
         trad = row["trad"]
+        for ch in simp:
+            char_freq[ch] += 1
         if trad != simp:
             trad_map[simp].add(trad)
             trad_to_simp.setdefault(trad, simp)
         if simp not in by_simp:
+            is_proper = is_cedict_proper_or_variant(row["gloss_en"])
+            ec_rank = zh_freq_ranks.get(simp, 10_000_000)
+            if row["is_idiom"]:
+                prio = 1
+            elif not is_proper and len(simp) <= 4 and ec_rank < 10_000_000:
+                prio = 2
+            elif not is_proper and len(simp) <= 4:
+                prio = 3
+            else:
+                prio = 4
             by_simp[simp] = {
                 "lang": "zh",
                 "lemma": simp,
@@ -1192,10 +1337,13 @@ def parse_zh_entries(
                 "senses_map": defaultdict(list),
                 "cedict_defs": row["defs"],
                 "cedict_is_idiom": row["is_idiom"],
-                "priority": 1 if row["is_idiom"] else (2 if len(simp) == 2 else 3),
+                "priority": prio,
+                "ec_rank": ec_rank,
             }
         elif row["is_idiom"]:
             by_simp[simp]["cedict_is_idiom"] = True
+            if by_simp[simp]["priority"] > 1:
+                by_simp[simp]["priority"] = 1
 
     with open_text_or_gz(zh_kaikki_path) as f:
         for line in f:
@@ -1261,14 +1409,17 @@ def parse_zh_entries(
 
             if rec is not None:
                 # Prioritize entries backed by real Chinese Wiktionary senses
-                rec["priority"] = -2 if pos == "成语" else -1
+                rec["priority"] = -2 if pos == "成语" else (-1 if len(rec["lemma"]) <= 4 else 0)
                 for g in glosses:
                     if len(rec["senses_map"][pos]) < 3 and g not in rec["senses_map"][pos]:
                         rec["senses_map"][pos].append(g)
 
-    ranked = sorted(by_simp.items(), key=lambda kv: (kv[1]["priority"], len(kv[0]), kv[0]))[
-        :max_entries
-    ]
+    def zh_sort_key(kv: tuple[str, dict[str, Any]]) -> tuple[int, int, int, int, str]:
+        simp, rec = kv
+        avg_char_freq = sum(char_freq.get(ch, 0) for ch in simp) // max(1, len(simp))
+        return (rec["priority"], rec["ec_rank"], -avg_char_freq, len(simp), simp)
+
+    ranked = sorted(by_simp.items(), key=zh_sort_key)[:max_entries]
     zh_entries: list[dict[str, Any]] = []
     trad_links: list[tuple[str, str]] = []
     for idx_rank, (simp, rec) in enumerate(ranked):
@@ -1280,7 +1431,7 @@ def parse_zh_entries(
         ]
         if not senses_list:
             fallback_pos = "成语" if rec["cedict_is_idiom"] else "词语"
-            senses_list = [{"pos": fallback_pos, "defs": rec["cedict_defs"][:1]}]
+            senses_list = [{"pos": fallback_pos, "defs": [rec["gloss_en"] or rec["cedict_defs"][0]]}]
         zh_entries.append(
             {
                 "lang": "zh",
@@ -1356,7 +1507,7 @@ def assemble_and_write_production_db(
         sys.exit(f"Error: dict.db ({out_path.stat().st_size} bytes) still exceeds 20 MB cap")
 
 
-def verify_production_db(db_path: Path, *, min_en: int = 50_000, min_zh: int = 40_000) -> None:
+def verify_production_db(db_path: Path, *, min_en: int = 80_000, min_zh: int = 60_000) -> None:
     if not db_path.exists():
         raise RuntimeError(f"Dictionary DB not found: {db_path}")
     size = db_path.stat().st_size
@@ -1386,25 +1537,27 @@ def verify_production_db(db_path: Path, *, min_en: int = 50_000, min_zh: int = 4
                 WHERE f.form = ? AND f.lang = 'en'
                 ORDER BY
                   CASE
-                    WHEN f.is_lemma = 1 AND COALESCE(f.relation, '') != ? THEN 0
+                    WHEN f.is_lemma = 1 AND COALESCE(f.relation, '') NOT IN (?, ?) THEN 0
                     WHEN f.is_lemma = 0 THEN 1
                     ELSE 2
                   END ASC,
                   f.entry_id ASC
                 """,
-                (term.lower(), PARTICIPIAL_ADJ_RELATION),
+                (term.lower(), PARTICIPIAL_ADJ_RELATION, PARTICIPIAL_ADJ_CODE),
             ).fetchall()
             if not rows:
                 raise RuntimeError(f"Missing EN lookup for {term!r}")
             primary = rows[0]
-            senses = decompress_senses(primary[5], zdict)
+            decoded = decompress_entry_payload(
+                primary[5], zdict, col_pron=primary[4], col_gloss_zh=primary[6]
+            )
             alts = [r[3] for r in rows[1:] if r[3].lower() != term.lower()]
             return {
                 "lemma": primary[3],
                 "is_lemma": primary[1],
-                "pron": primary[4],
-                "senses": senses,
-                "gloss_zh": primary[6],
+                "pron": decoded["pron"],
+                "senses": decoded["senses"],
+                "gloss_zh": decoded["gloss_zh"],
                 "alternates": alts,
             }
 
@@ -1422,13 +1575,15 @@ def verify_production_db(db_path: Path, *, min_en: int = 50_000, min_zh: int = 4
             if not rows:
                 raise RuntimeError(f"Missing ZH lookup for {term!r}")
             primary = rows[0]
-            senses = decompress_senses(primary[4], zdict)
+            decoded = decompress_entry_payload(
+                primary[4], zdict, col_pron=primary[3], col_gloss_en=primary[5]
+            )
             return {
                 "lemma": primary[2],
                 "is_lemma": primary[1],
-                "pron": primary[3],
-                "senses": senses,
-                "gloss_en": primary[5],
+                "pron": decoded["pron"],
+                "senses": decoded["senses"],
+                "gloss_en": decoded["gloss_en"],
             }
 
         # Verify participial lemmatization (mortified / mortifying -> mortify)
@@ -1455,6 +1610,10 @@ def verify_production_db(db_path: Path, *, min_en: int = 50_000, min_zh: int = 4
             better = lookup_en("better")
             if better["lemma"] != "good" and "good" not in better["alternates"]:
                 raise RuntimeError(f"Expected 'better' to link to 'good', got {better}")
+            for form in ("计算机", "計算機"):
+                comp = lookup_zh(form)
+                if comp["lemma"] != "计算机" or not comp["gloss_en"] or "computer" not in comp["gloss_en"].lower():
+                    raise RuntimeError(f"Expected {form!r} -> '计算机' (computer), got {comp}")
 
         # Verify Chinese idiom (Simplified + Traditional) has Chinese sense, 成语, and EN gloss
         for form in ("潜移默化", "潛移默化"):
@@ -1516,8 +1675,9 @@ def build_full(args: argparse.Namespace) -> None:
     )
 
     print(f"Parsing ZH Wiktionary + CC-CEDICT ({zh_kaikki_path}, {cedict_path})…")
+    zh_freq_ranks = extract_ecdict_zh_ranks(ecdict)
     zh_entries, zh_trad_links = parse_zh_entries(
-        zh_kaikki_path, cedict_path, max_entries=args.max_zh
+        zh_kaikki_path, cedict_path, max_entries=args.max_zh, zh_freq_ranks=zh_freq_ranks
     )
     print(
         f"Prepared {len(zh_entries):,} ZH entries and {len(zh_trad_links):,} traditional mappings"
@@ -1558,8 +1718,8 @@ def main() -> None:
         action="store_true",
         help="Skip SHA-256 verification against scripts/dict-sources.json (for manual refreshes only)",
     )
-    parser.add_argument("--max-en", type=int, default=72_000)
-    parser.add_argument("--max-zh", type=int, default=56_000)
+    parser.add_argument("--max-en", type=int, default=83_000)
+    parser.add_argument("--max-zh", type=int, default=63_000)
     args = parser.parse_args()
 
     if args.verify:

@@ -265,8 +265,9 @@ describe("Home navigate-main-route integration", () => {
     });
     await flushMicrotasks();
 
-    expect(container.textContent).toContain("Second saved definition.");
-    expect(container.textContent).not.toContain("First saved definition.");
+    const detailText = container.querySelector("section")?.textContent ?? "";
+    expect(detailText).toContain("Second saved definition.");
+    expect(detailText).not.toContain("First saved definition.");
   });
 
   it("starts the Codex app server on mount only on the Codex connection", async () => {

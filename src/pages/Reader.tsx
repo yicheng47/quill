@@ -949,17 +949,20 @@ export default function Reader() {
               offsetX = rect.left;
               offsetY = rect.top;
             }
-            // Extract surrounding context centered on the exact DOM Range selection
+            // Extract surrounding context and CFI from the current DOM Range selection
             let sentence = text;
             let sentenceOffset = 0;
-            let cfiRange = selectedTextRef.current?.cfi;
+            let currentCfi: string | undefined;
             if (sel.rangeCount > 0) {
               const range = sel.getRangeAt(0);
               try {
-                cfiRange = view.getCFI(index, range);
-                selectedTextRef.current = { text, cfi: cfiRange };
+                const resolved = view.getCFI(index, range);
+                if (resolved) {
+                  currentCfi = resolved;
+                  selectedTextRef.current = { text, cfi: resolved };
+                }
               } catch {
-                // Keep last tracked CFI if range serialization fails
+                // Fall back to sentence-based identity when current range CFI is unavailable.
               }
               let node: Node | null = range.startContainer;
               // Walk up to the nearest block-level element
@@ -981,7 +984,7 @@ export default function Reader() {
               text,
               sentence,
               sentenceOffset,
-              cfiRange,
+              cfiRange: currentCfi,
               sectionIndex: typeof index === "number" ? index : undefined,
             });
           }
@@ -1364,7 +1367,7 @@ export default function Reader() {
         text,
         sentence,
         sentenceOffset,
-        cfiRange: selectedTextRef.current?.cfi || undefined,
+        cfiRange: undefined,
       });
     }
   }, []);

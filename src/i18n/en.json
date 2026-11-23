@@ -337,6 +337,7 @@
   "words.deleteWord": "Delete saved vocab",
   "words.deleteEncounter": "Remove passage",
   "words.clickAgainToDelete": "Click again to delete",
+  "words.deleteAllAcrossBooks": "Delete all {{count}} across all books",
   "words.pronounce": "Pronounce word",
   "words.meaningHeading": "Meaning",
   "words.dictionaryHeading": "Dictionary",

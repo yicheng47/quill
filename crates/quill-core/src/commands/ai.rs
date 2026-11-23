@@ -489,6 +489,13 @@ fn explain_system_prompt(language: &str) -> String {
     )
 }
 
+fn resolve_explain_language(lookup_language: Option<String>) -> String {
+    lookup_language
+        .map(|lang| lang.trim().to_string())
+        .filter(|lang| !lang.is_empty())
+        .unwrap_or_else(|| LOOKUP_LANGUAGE_SELECTION.to_string())
+}
+
 pub async fn ai_explain(
     core: Arc<Core>,
     passage: String,
@@ -499,23 +506,14 @@ pub async fn ai_explain(
 ) -> AppResult<()> {
     let language = {
         let conn = core.db.reader();
-        let get = |key: &str| -> Option<String> {
-            conn.query_row(
-                "SELECT value FROM settings WHERE key = ?1",
-                rusqlite::params![key],
+        let lookup_language: Option<String> = conn
+            .query_row(
+                "SELECT value FROM settings WHERE key = 'lookup_language'",
+                [],
                 |row| row.get(0),
             )
-            .ok()
-        };
-        let lookup_language =
-            get("lookup_language").unwrap_or_else(|| LOOKUP_LANGUAGE_SELECTION.to_string());
-        let explain_language = get("explain_language")
-            .map(|lang| lang.trim().to_string())
-            .filter(|lang| !lang.is_empty());
-        match explain_language.as_deref() {
-            Some("lookup") | None => lookup_language,
-            Some(lang) => lang.to_string(),
-        }
+            .ok();
+        resolve_explain_language(lookup_language)
     };
 
     let mut user_content = format!("Passage: \"{}\"", passage);
@@ -892,5 +890,16 @@ mod tests {
             configured_ai_provider(Some(" ollama ".to_string())).unwrap(),
             "ollama"
         );
+    }
+
+    #[test]
+    fn explain_language_follows_merged_lookup_language() {
+        assert_eq!(resolve_explain_language(None), LOOKUP_LANGUAGE_SELECTION);
+        assert_eq!(
+            resolve_explain_language(Some("   ".to_string())),
+            LOOKUP_LANGUAGE_SELECTION
+        );
+        assert_eq!(resolve_explain_language(Some("en".to_string())), "en");
+        assert_eq!(resolve_explain_language(Some(" zh ".to_string())), "zh");
     }
 }

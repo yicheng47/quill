@@ -242,14 +242,16 @@ class BuildDictTests(unittest.TestCase):
                     "SELECT value FROM meta WHERE key = 'senses_zdict'"
                 ).fetchone()[0]
                 row = conn.execute(
-                    "SELECT e.lemma, e.senses_json, e.gloss_en FROM forms f JOIN entries e ON e.id = f.entry_id WHERE f.form = '悖論' AND f.lang = 'zh'"
+                    "SELECT e.lemma, e.pron, e.senses_json, e.gloss_en FROM forms f JOIN entries e ON e.id = f.entry_id WHERE f.form = '悖論' AND f.lang = 'zh'"
                 ).fetchone()
                 self.assertIsNotNone(row)
                 self.assertEqual(row[0], "悖论")
-                senses = build_dict.decompress_senses(row[1], bytes(zdict))
-                self.assertEqual(senses[0]["pos"], "名词")
-                self.assertIn("逻辑", senses[0]["defs"][0])
-                self.assertIn("paradox", row[2].lower())
+                decoded = build_dict.decompress_entry_payload(
+                    row[2], bytes(zdict), col_pron=row[1], col_gloss_en=row[3]
+                )
+                self.assertEqual(decoded["senses"][0]["pos"], "名词")
+                self.assertIn("逻辑", decoded["senses"][0]["defs"][0])
+                self.assertIn("paradox", (decoded["gloss_en"] or "").lower())
             finally:
                 conn.close()
 

@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 
 use flate2::{Decompress, FlushDecompress, Status};
 use rusqlite::{params, types::ValueRef, Connection, OpenFlags};
+use serde::Deserialize;
 
 use super::{AlternateLemma, DictionaryMatch, DictionarySenseGroup};
 use crate::error::{AppError, AppResult};
@@ -13,13 +14,57 @@ use crate::error::{AppError, AppResult};
 pub const BUILTIN_DICT_ID: &str = "builtin";
 pub const BUILTIN_DICT_NAME: &str = "Quill Built-in (EN / ZH)";
 pub const PARTICIPIAL_ADJ_RELATION: &str = "participial adjective";
+const PARTICIPIAL_ADJ_CODE: &str = "a";
 
 const MAX_DECOMPRESSED_SENSES_BYTES: usize = 2 * 1024 * 1024;
+
+#[derive(Debug, Deserialize)]
+struct CompactEntryPayload {
+    #[serde(default)]
+    p: Option<String>,
+    #[serde(default)]
+    ge: Option<String>,
+    #[serde(default)]
+    gz: Option<String>,
+    #[serde(default)]
+    s: Option<Vec<(String, Vec<String>)>>,
+    #[serde(default)]
+    f: Option<Vec<String>>,
+    #[serde(default)]
+    ci: Option<u8>,
+    #[serde(default)]
+    cw: Option<u8>,
+}
+
+struct DecodedEntry {
+    pron: Option<String>,
+    senses: Vec<DictionarySenseGroup>,
+    gloss_en: Option<String>,
+    gloss_zh: Option<String>,
+    extra_forms: Vec<String>,
+}
+
+pub fn decode_relation(raw: Option<&str>) -> String {
+    match raw.map(str::trim) {
+        Some("t") => "traditional".to_string(),
+        Some("p") => "past tense".to_string(),
+        Some("d") => "past participle".to_string(),
+        Some("i") => "present participle".to_string(),
+        Some("3") => "third-person singular".to_string(),
+        Some("s") => "plural".to_string(),
+        Some("r") => "comparative".to_string(),
+        Some("u") => "superlative".to_string(),
+        Some("a") => PARTICIPIAL_ADJ_RELATION.to_string(),
+        Some("f") | None | Some("") => "inflected form".to_string(),
+        Some(other) => other.to_string(),
+    }
+}
 
 pub struct BuiltinDict {
     pub path: PathBuf,
     conn: Connection,
     zdict: Option<Vec<u8>>,
+    has_forms_entry_idx: bool,
     pub entry_count: u64,
     pub size_bytes: u64,
 }
@@ -59,10 +104,19 @@ impl BuiltinDict {
                     .unwrap_or(0)
             });
 
+        let has_forms_entry_idx = conn
+            .query_row(
+                "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_forms_entry_id' LIMIT 1",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .is_ok();
+
         Ok(Self {
             path: path.to_path_buf(),
             conn,
             zdict,
+            has_forms_entry_idx,
             entry_count,
             size_bytes,
         })
@@ -99,7 +153,7 @@ impl BuiltinDict {
 
         if let Some((entry_id, is_lemma, _rel, lemma)) = rows.first() {
             let inflected_from = (*is_lemma == 0 && lemma != trimmed).then(|| trimmed.to_string());
-            let forms = self.load_forms(*entry_id, lemma, inflected_from.as_deref())?;
+            let forms = self.load_forms(*entry_id, "zh", lemma, inflected_from.as_deref())?;
             return Ok(LemmatizeOutput {
                 lemma: lemma.clone(),
                 lang: "zh".to_string(),
@@ -116,7 +170,7 @@ impl BuiltinDict {
             params![trimmed],
             |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)),
         ) {
-            let forms = self.load_forms(entry_id, &lemma, None)?;
+            let forms = self.load_forms(entry_id, "zh", &lemma, None)?;
             return Ok(LemmatizeOutput {
                 lemma,
                 lang: "zh".to_string(),
@@ -184,14 +238,14 @@ impl BuiltinDict {
              WHERE f.form = ?1 AND f.lang = 'en'
              ORDER BY
                CASE
-                 WHEN f.is_lemma = 1 AND COALESCE(f.relation, '') != ?2 THEN 0
+                 WHEN f.is_lemma = 1 AND COALESCE(f.relation, '') NOT IN (?2, ?3) THEN 0
                  WHEN f.is_lemma = 0 THEN 1
                  ELSE 2
                END ASC,
                f.entry_id ASC",
         )?;
         let rows: Vec<(i64, i64, Option<String>, String)> = stmt
-            .query_map(params![lower, PARTICIPIAL_ADJ_RELATION], |r| {
+            .query_map(params![lower, PARTICIPIAL_ADJ_RELATION, PARTICIPIAL_ADJ_CODE], |r| {
                 Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -213,14 +267,12 @@ impl BuiltinDict {
                 if seen_alt.insert(key) {
                     alternate_lemmas.push(AlternateLemma {
                         lemma: alt_lemma.clone(),
-                        relation: rel
-                            .clone()
-                            .unwrap_or_else(|| "inflected form".to_string()),
+                        relation: decode_relation(rel.as_deref()),
                     });
                 }
             }
 
-            let forms = self.load_forms(*primary_id, primary_lemma, inflected_from.as_deref())?;
+            let forms = self.load_forms(*primary_id, "en", primary_lemma, inflected_from.as_deref())?;
             return Ok(LemmatizeOutput {
                 lemma: primary_lemma.clone(),
                 lang: "en".to_string(),
@@ -234,7 +286,7 @@ impl BuiltinDict {
         // Suffix-rule fallback validated against known English lemmas via indexed forms(form, lang)
         if let Some((entry_id, lemma)) = self.try_english_suffix_fallback(&lower)? {
             let inflected_from = (!lemma.eq_ignore_ascii_case(trimmed)).then(|| trimmed.to_string());
-            let forms = self.load_forms(entry_id, &lemma, inflected_from.as_deref())?;
+            let forms = self.load_forms(entry_id, "en", &lemma, inflected_from.as_deref())?;
             return Ok(LemmatizeOutput {
                 lemma,
                 lang: "en".to_string(),
@@ -364,27 +416,42 @@ impl BuiltinDict {
     fn load_forms(
         &self,
         entry_id: i64,
+        lang: &str,
         lemma: &str,
         inflected_from: Option<&str>,
     ) -> AppResult<Vec<String>> {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT DISTINCT form FROM forms WHERE entry_id = ?1")?;
-        let mut forms: Vec<String> = stmt
-            .query_map(params![entry_id], |r| r.get::<_, String>(0))?
-            .collect::<Result<Vec<_>, _>>()?;
-        if !forms.iter().any(|f| f.eq_ignore_ascii_case(lemma)) {
-            forms.insert(0, lemma.to_string());
-        }
-        if let Some(inf) = inflected_from {
-            if !forms.iter().any(|f| f.eq_ignore_ascii_case(inf)) {
-                forms.push(inf.to_string());
+        let mut forms: Vec<String> = vec![lemma.to_string()];
+
+        if let Some(decoded) = self.fetch_decoded_entry(entry_id)? {
+            for f in decoded.extra_forms {
+                push_unique_form(&mut forms, &f);
             }
         }
+
+        if self.has_forms_entry_idx {
+            let mut stmt = self
+                .conn
+                .prepare("SELECT DISTINCT form FROM forms WHERE entry_id = ?1")?;
+            let rows = stmt
+                .query_map(params![entry_id], |r| r.get::<_, String>(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            for f in rows {
+                push_unique_form(&mut forms, &f);
+            }
+        }
+
+        if let Some(inf) = inflected_from {
+            push_unique_form(&mut forms, inf);
+        }
+
+        if lang == "en" {
+            append_regular_en_forms(lemma, &mut forms);
+        }
+
         Ok(forms)
     }
 
-    pub fn fetch_entry_by_id(&self, entry_id: i64) -> AppResult<Option<DictionaryMatch>> {
+    fn fetch_decoded_entry(&self, entry_id: i64) -> AppResult<Option<DecodedEntry>> {
         let mut stmt = self.conn.prepare(
             "SELECT pron, senses_json, gloss_en, gloss_zh FROM entries WHERE id = ?1 LIMIT 1",
         )?;
@@ -402,23 +469,76 @@ impl BuiltinDict {
             .next()
             .transpose()?;
 
-        let Some((pron, senses_raw, gloss_en, gloss_zh)) = row else {
+        let Some((col_pron, senses_raw, col_gloss_en, col_gloss_zh)) = row else {
             return Ok(None);
         };
         let json_str = self.decode_senses(&senses_raw)?;
-        let senses: Vec<DictionarySenseGroup> = serde_json::from_str(&json_str)
-            .map_err(|e| AppError::Other(format!("Invalid built-in dictionary senses JSON: {e}")))?;
+        let trimmed = json_str.trim_start();
+        if trimmed.starts_with('{') {
+            let compact: CompactEntryPayload = serde_json::from_str(trimmed).map_err(|e| {
+                AppError::Other(format!("Invalid compact dictionary entry JSON: {e}"))
+            })?;
+            let gloss_en = compact.ge.or(col_gloss_en);
+            let gloss_zh = compact.gz.or(col_gloss_zh);
+            let pron = compact.p.or(col_pron);
+            let mut senses = Vec::new();
+            if let Some(groups) = compact.s {
+                for (pos, defs) in groups {
+                    if !defs.is_empty() {
+                        senses.push(DictionarySenseGroup { pos, defs });
+                    }
+                }
+            } else if compact.ci == Some(1) || compact.cw == Some(1) {
+                if let Some(ref ge) = gloss_en {
+                    if !ge.trim().is_empty() {
+                        let pos = if compact.ci == Some(1) {
+                            "成语".to_string()
+                        } else {
+                            "词语".to_string()
+                        };
+                        senses.push(DictionarySenseGroup {
+                            pos,
+                            defs: vec![ge.clone()],
+                        });
+                    }
+                }
+            }
+            return Ok(Some(DecodedEntry {
+                pron,
+                senses,
+                gloss_en,
+                gloss_zh,
+                extra_forms: compact.f.unwrap_or_default(),
+            }));
+        }
+
+        let senses: Vec<DictionarySenseGroup> = serde_json::from_str(trimmed).map_err(|e| {
+            AppError::Other(format!("Invalid built-in dictionary senses JSON: {e}"))
+        })?;
+        Ok(Some(DecodedEntry {
+            pron: col_pron,
+            senses,
+            gloss_en: col_gloss_en,
+            gloss_zh: col_gloss_zh,
+            extra_forms: Vec::new(),
+        }))
+    }
+
+    pub fn fetch_entry_by_id(&self, entry_id: i64) -> AppResult<Option<DictionaryMatch>> {
+        let Some(decoded) = self.fetch_decoded_entry(entry_id)? else {
+            return Ok(None);
+        };
 
         Ok(Some(DictionaryMatch {
             dict_id: BUILTIN_DICT_ID.to_string(),
             dict_name: BUILTIN_DICT_NAME.to_string(),
             format: "builtin".to_string(),
-            pronunciation: pron,
-            senses: Some(senses),
+            pronunciation: decoded.pron,
+            senses: Some(decoded.senses),
             html: None,
             plain_text: None,
-            gloss_en,
-            gloss_zh,
+            gloss_en: decoded.gloss_en,
+            gloss_zh: decoded.gloss_zh,
         }))
     }
 
@@ -426,7 +546,7 @@ impl BuiltinDict {
         if raw.is_empty() {
             return Ok("[]".to_string());
         }
-        if raw[0] == b'[' {
+        if raw[0] == b'[' || raw[0] == b'{' {
             return String::from_utf8(raw.to_vec())
                 .map_err(|e| AppError::Other(format!("Invalid UTF-8 senses: {e}")));
         }
@@ -492,6 +612,83 @@ fn inflate_raw_with_dict(input: &[u8], zdict: Option<&[u8]>) -> AppResult<String
     }
     String::from_utf8(out)
         .map_err(|e| AppError::Other(format!("Invalid UTF-8 in decompressed senses: {e}")))
+}
+
+fn push_unique_form(forms: &mut Vec<String>, candidate: &str) {
+    let trimmed = candidate.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+    if !forms.iter().any(|f| f.eq_ignore_ascii_case(trimmed)) {
+        forms.push(trimmed.to_string());
+    }
+}
+
+/// Synthesizes standard regular English inflectional surface forms for quote
+/// highlighting so long-tail lemmas whose regular suffixes were omitted from
+/// `forms` (resolved via suffix fallback on lookup) still highlight accurately
+/// when reopening Vocab detail.
+fn append_regular_en_forms(lemma: &str, forms: &mut Vec<String>) {
+    let lower = lemma.trim().to_lowercase();
+    if lower.len() < 2 || !lower.is_ascii() || !lower.bytes().all(|b| b.is_ascii_alphabetic()) {
+        return;
+    }
+
+    if lower.ends_with("s")
+        || lower.ends_with("x")
+        || lower.ends_with("z")
+        || lower.ends_with("ch")
+        || lower.ends_with("sh")
+    {
+        push_unique_form(forms, &format!("{lower}es"));
+    } else if lower.ends_with('y') && lower.len() >= 2 && !is_ascii_vowel(lower.as_bytes()[lower.len() - 2]) {
+        let stem = &lower[..lower.len() - 1];
+        push_unique_form(forms, &format!("{stem}ies"));
+        push_unique_form(forms, &format!("{stem}ied"));
+        push_unique_form(forms, &format!("{stem}ier"));
+        push_unique_form(forms, &format!("{stem}iest"));
+    } else {
+        push_unique_form(forms, &format!("{lower}s"));
+    }
+
+    if lower.ends_with("ie") && lower.len() >= 3 {
+        let stem = &lower[..lower.len() - 2];
+        push_unique_form(forms, &format!("{lower}d"));
+        push_unique_form(forms, &format!("{stem}ying"));
+    } else if lower.ends_with('e') && !lower.ends_with("ee") && lower.len() >= 3 {
+        let stem = &lower[..lower.len() - 1];
+        push_unique_form(forms, &format!("{lower}d"));
+        push_unique_form(forms, &format!("{stem}ing"));
+        push_unique_form(forms, &format!("{lower}r"));
+        push_unique_form(forms, &format!("{lower}st"));
+    } else {
+        push_unique_form(forms, &format!("{lower}ed"));
+        push_unique_form(forms, &format!("{lower}ing"));
+        push_unique_form(forms, &format!("{lower}er"));
+        push_unique_form(forms, &format!("{lower}est"));
+        // Single-syllable / trailing CVC doubling (e.g. stop -> stopped/stopping)
+        let b = lower.as_bytes();
+        if b.len() >= 3 {
+            let last = b[b.len() - 1];
+            let mid = b[b.len() - 2];
+            let prev = b[b.len() - 3];
+            if !is_ascii_vowel(last)
+                && !matches!(last, b'w' | b'x' | b'y')
+                && is_ascii_vowel(mid)
+                && !is_ascii_vowel(prev)
+            {
+                let doubled = format!("{lower}{}", last as char);
+                push_unique_form(forms, &format!("{doubled}ed"));
+                push_unique_form(forms, &format!("{doubled}ing"));
+                push_unique_form(forms, &format!("{doubled}er"));
+                push_unique_form(forms, &format!("{doubled}est"));
+            }
+        }
+    }
+}
+
+fn is_ascii_vowel(b: u8) -> bool {
+    matches!(b, b'a' | b'e' | b'i' | b'o' | b'u')
 }
 
 fn ends_with_double_consonant(s: &str) -> bool {

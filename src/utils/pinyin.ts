@@ -14,14 +14,18 @@ function firstNonSpaceChar(word: string): string {
 }
 
 export function getVocabGroupKey(word: string): string {
-  const first = firstNonSpaceChar(word);
+  const trimmed = word.trim();
+  const first = firstNonSpaceChar(trimmed);
   if (!first) return "#";
 
   if (HAN_CHAR_RE.test(first)) {
+    // Derive from the full phrase so polyphones like 重庆 (chongqing -> C)
+    // and 长大 (zhangda -> Z) match getVocabSortKey and matchesVocabSearch.
     const initial = stripDiacritics(
-      pinyin(first, {
+      pinyin(trimmed, {
         toneType: "none",
         pattern: "first",
+        nonZh: "consecutive",
         traditional: true,
         v: true,
       }),
