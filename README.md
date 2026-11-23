@@ -1,8 +1,8 @@
 <!-- LOGO -->
 <h1 align="center">
-  <img src="assets/icon.png" alt="Quill" width="128" />
+  <img src="assets/icon.png" alt="Quill Reader" width="128" />
   <br />
-  Quill
+  Quill Reader
 </h1>
 
 <p align="center">
@@ -27,17 +27,17 @@
 
 ---
 
-> Status: shipping on Mac, Windows, and iOS; library, progress, highlights, and settings sync across Mac, iPhone, and iPad via iCloud.
+> Status: shipping on Mac, Windows, and iPhone; your library and reading data sync between Macs and iPhone via iCloud.
 
 ---
 
 ## About
 
-Quill is what happens when you stop alt-tabbing between a reader and ChatGPT and put them in one window instead.
+Quill Reader is what happens when you stop alt-tabbing between a reader and ChatGPT and put them in one window instead.
 
-You open a book — EPUB or PDF, paginated or scrolled, the typography knobs you'd expect. You highlight a passage that confuses you and ask the assistant what's going on; your selection is the context, no copy-pasting. You tap a word and get a contextual definition you can save to a vocabulary deck with spaced repetition. You pick the model: OpenAI via OAuth (your existing ChatGPT subscription, no extra payment), Anthropic, any OpenAI-compatible endpoint, or Ollama running on your own machine.
+You open a book — EPUB or PDF, paginated or scrolled, the typography knobs you'd expect. You highlight a passage that confuses you and ask the assistant what's going on; your selection is the context, no copy-pasting. You tap a word and get a contextual definition you can save to your vocabulary with the sentence it came from. You pick how it reaches a model: Codex, which uses the ChatGPT plan you already pay for, your own API key for OpenAI, Anthropic, Gemini, DeepSeek, OpenRouter or any OpenAI-compatible service, or Ollama running on your own machine.
 
-Your library lives in iCloud, so the book you started on the Mac picks up on the iPhone or iPad — same progress, same highlights, same notes. The desktop app is built on Electron, React, foliate-js, and a Rust core (`quill-core`); the iOS app is native SwiftUI on top of the same renderer.
+With iCloud sync on, the book you started on the Mac picks up on the iPhone — same progress, same highlights, same notes. The desktop app is built on Electron, React, foliate-js, and a Rust core (`quill-core`); the iOS app is native SwiftUI on top of the same renderer.
 
 ## Download
 
@@ -50,7 +50,7 @@ Latest installers on the [releases page](https://github.com/yicheng47/quill/rele
 | `Quill-x.x.x-arm64.dmg` | Apple Silicon (M1/M2/M3/M4) |
 | `Quill-x.x.x-x64.dmg` | Intel Mac |
 
-Open the `.dmg` and drag **Quill.app** to your Applications folder. Upgrading from `1.x` to `2.0.0` is a one-time manual download because the desktop shell moved from Tauri to Electron; existing library data, settings, iCloud sync state, and MCP configurations are preserved automatically.
+Open the `.dmg` and drag **Quill.app** to your Applications folder. Upgrading from `1.x` to `2.0.0` is a one-time manual download because the desktop shell moved from Tauri to Electron; existing library data, settings, API keys, iCloud sync state, and MCP configurations are preserved automatically. If you signed in with ChatGPT in `1.x`, `2.0.0` reaches your plan through Codex instead and walks you through connecting it on first launch.
 
 ### Windows
 
@@ -62,7 +62,7 @@ Upgrading from `1.x` to `2.0.0` is a one-time manual installer download.
 
 ### iOS
 
-[Quill on the App Store](https://apps.apple.com/us/app/quill-ai-book-reader/id6762075206) — iPhone and iPad. Signs in to the same iCloud account as the Mac app to keep your library in sync.
+[Quill Reader for iPhone](https://apps.apple.com/us/app/quill-ai-book-reader/id6762075206) on the App Store. Sign in to the same iCloud account as the Mac app to keep your library in sync.
 
 ## Demo
 
@@ -83,23 +83,23 @@ https://github.com/user-attachments/assets/b0bcbe54-de4b-4ea8-b4c9-b0c4346eda40
 
 ## What it does
 
-- **Reading** — EPUB and PDF, paginated or scrolled, customizable fonts/spacing/margins, color-coded highlights with notes, bookmarks.
-- **AI assistant** — ask about any passage with your highlight as context; word lookup for instant definitions or deep explanations.
-- **Vocabulary** — save words with the sentence they came from, track mastery with spaced repetition.
-- **Library** — grid and list views, search, status filters, collections.
-- **iCloud sync** — books, progress, highlights, vocabulary, and settings sync across Mac, iPhone, and iPad.
+- **Reading** — EPUB and PDF, paginated or scrolled, customizable fonts/spacing/margins, paper, sepia and dark page themes, color-coded highlights with notes, bookmarks.
+- **AI assistant** — ask about any passage with your selection as context; look up a word, explain a passage or translate it inline. Conversations stay in Chats, linked back to the passage.
+- **Vocabulary** — save words with the sentence they came from and browse them across books.
+- **Library** — Home, grid and list views, status filters, collections, and one search across books, highlights, words, and chats.
+- **iCloud sync** — books, reading progress, highlights, bookmarks, vocabulary, collections, and chats sync between your Macs, and your library continues on iPhone.
+- **Agent integration** — a local MCP server lets Claude Code, Codex, and other MCP clients read your library, highlights, vocabulary, and chats, and manage books and collections when you allow it.
 
 ## AI providers
 
-Configure in Settings:
+Configure in Settings → AI Assistant. Chat, look-up, explain, and translate can each use a different model.
 
-| Provider | Setup |
+| Connection | Setup |
 | --- | --- |
-| **OpenAI (OAuth)** *(default)* | Sign in with your OpenAI account — uses your existing ChatGPT subscription, no API key or extra payment |
-| **Ollama** | Install [Ollama](https://ollama.com/), `ollama pull llama3.2`, no API key |
-| **OpenAI (API key)** | Add your OpenAI API key (pay-per-use) |
-| **Anthropic** | Add your Anthropic API key |
-| **OpenAI-compatible** | Pick the OpenAI provider, switch auth to API key, point Base URL at any compatible endpoint |
+| **Agent: Codex** *(recommended)* | Uses the ChatGPT plan you already pay for. Install Codex and sign in with ChatGPT; Quill stores no OpenAI tokens of its own |
+| **API: OpenAI, Anthropic, Gemini, DeepSeek, OpenRouter** | Add your API key (pay-per-use). Keys stay on this computer and never sync |
+| **API: Ollama** | Install [Ollama](https://ollama.com/) and pull a model, no API key |
+| **API: Custom** | Point it at any OpenAI-compatible endpoint |
 
 ## Documentation
 
