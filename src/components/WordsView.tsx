@@ -359,7 +359,17 @@ export default function WordsView({
     const scoped: VocabGroup[] = [];
     for (const g of allGroups) {
       if (bookFilter && !g.bookIds.has(bookFilter)) continue;
-      if (q && !matchesVocabSearch(g.lemma, q, g.parsedFallback.gloss)) continue;
+      if (
+        q &&
+        !matchesVocabSearch(
+          g.lemma,
+          q,
+          g.parsedFallback.gloss,
+          g.parsedFallback.definition,
+        )
+      ) {
+        continue;
+      }
       if (bookFilter) {
         const bookEncounters = g.encounters.filter((e) => e.book_id === bookFilter);
         if (bookEncounters.length === 0) continue;

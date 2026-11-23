@@ -46,7 +46,7 @@ export default function DictionaryPanel({
     const q = dictSearch.trim();
     if (!q) return true;
     const parsed = parseSavedVocabDefinition(w.definition);
-    return matchesVocabSearch(w.word, q, parsed.gloss);
+    return matchesVocabSearch(w.word, q, parsed.gloss, parsed.definition);
   });
 
   return (

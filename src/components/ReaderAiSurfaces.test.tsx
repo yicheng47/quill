@@ -4,6 +4,11 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Book } from "../hooks/useBooks";
 import type { ChatMessage } from "../hooks/useAiChat";
+import {
+  resolveBriefGloss,
+  synthesizeFallbackDefinition,
+  type DictionaryMatch,
+} from "../types/dictionary";
 
 type ChunkListener = (event: { payload: { delta: string; done: boolean } }) => void;
 
@@ -1277,6 +1282,78 @@ describe("M7 reader AI and word surfaces", () => {
     expect(mark.previousSibling?.textContent).toBe(
       "She left the deposit bank and walked down to the river ",
     );
+  });
+
+  it("DictionaryPanel (Vocab in Book) finds saved CEDICT-only entries via parsed definition when duplicate gloss is suppressed", async () => {
+    const cedictMatch: DictionaryMatch = {
+      dictId: "builtin",
+      dictName: "Quill Built-in",
+      format: "builtin",
+      pronunciation: "bù fēn shèng fù",
+      senses: [
+        {
+          pos: "成语",
+          defs: [
+            "unable to determine victory or defeat (idiom); evenly matched",
+            "to come out even",
+          ],
+        },
+      ],
+      html: null,
+      plainText: null,
+      gloss_en: "unable to determine victory or defeat (idiom); evenly matched",
+      gloss_zh: null,
+    };
+    const briefGloss = resolveBriefGloss(cedictMatch, true, "en", "zh");
+    expect(briefGloss).toBeNull();
+    const savedDefinition = synthesizeFallbackDefinition(cedictMatch, briefGloss);
+
+    vocabRows = [
+      {
+        id: "v-cedict",
+        book_id: "b-1",
+        word: "不分胜负",
+        definition: savedDefinition,
+        context_sentence: "两人一时不分胜负。",
+        cfi: "epubcfi(/6/4!/4/2)",
+        created_at: 1_700_000_000,
+      },
+      {
+        id: "v-other",
+        book_id: "b-1",
+        word: "ephemeral",
+        definition: "/ɪˈfɛmərəl/ adj. Lasting for a very short time.",
+        context_sentence: "An ephemeral bloom.",
+        cfi: "epubcfi(/6/4!/4/4)",
+        created_at: 1_700_000_100,
+      },
+    ];
+
+    await act(async () => {
+      root.render(
+        <DictionaryPanel
+          bookId="b-1"
+          resolvePages={async () => new Map()}
+          onClose={vi.fn()}
+        />,
+      );
+    });
+    await flushMicrotasks();
+
+    const searchInput = container.querySelector<HTMLInputElement>(
+      'input[placeholder="Search saved vocab…"]',
+    )!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
+        searchInput,
+        "evenly matched",
+      );
+      searchInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await flushMicrotasks();
+
+    expect(container.textContent).toContain("不分胜负");
+    expect(container.textContent).not.toContain("ephemeral");
   });
 
   it("DictionaryPanel (Vocab in Book) filters English and Chinese pinyin, omits null page labels, navigates on click, deletes, and triggers Open in Vocab", async () => {

@@ -67,6 +67,7 @@ export function matchesVocabSearch(
   word: string,
   query: string,
   gloss?: string | null,
+  definition?: string | null,
 ): boolean {
   const trimmedQuery = query.trim();
   if (!trimmedQuery) return true;
@@ -74,6 +75,7 @@ export function matchesVocabSearch(
   const qLower = trimmedQuery.toLowerCase();
   if (word.toLowerCase().includes(qLower)) return true;
   if (gloss && gloss.toLowerCase().includes(qLower)) return true;
+  if (definition && definition.toLowerCase().includes(qLower)) return true;
 
   if (!HAN_CHAR_RE.test(word)) {
     const qNorm = stripDiacritics(qLower);

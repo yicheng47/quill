@@ -11,6 +11,11 @@ import type { Highlight, HighlightCounts } from "../hooks/useBookmarks";
 import type { DictionaryWord } from "../hooks/useDictionary";
 import type { ChatSummary } from "../hooks/useChats";
 import type { Collection } from "../hooks/useCollections";
+import {
+  resolveBriefGloss,
+  synthesizeFallbackDefinition,
+  type DictionaryMatch,
+} from "../types/dictionary";
 
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn<(cmd: string, args?: Record<string, unknown>) => Promise<unknown>>(),
@@ -1230,6 +1235,116 @@ describe("Main Views (Home, Highlights, Words, Chats)", () => {
       expect(mocks.invoke).toHaveBeenCalledWith("remove_vocab_word", { id: "e-book-a" });
       expect(rows.some((r) => r.id === "e-book-b")).toBe(true);
       expect(rows.some((r) => r.id === "e-book-a")).toBe(false);
+    });
+
+    it("finds saved CEDICT-only entries by English definition even when duplicate display gloss is suppressed", async () => {
+      const cedictMatch: DictionaryMatch = {
+        dictId: "builtin",
+        dictName: "Quill Built-in",
+        format: "builtin",
+        pronunciation: "bù fēn shèng fù",
+        senses: [
+          {
+            pos: "成语",
+            defs: [
+              "unable to determine victory or defeat (idiom); evenly matched",
+              "to come out even",
+            ],
+          },
+        ],
+        html: null,
+        plainText: null,
+        gloss_en: "unable to determine victory or defeat (idiom); evenly matched",
+        gloss_zh: null,
+      };
+      const briefGloss = resolveBriefGloss(cedictMatch, true, "en", "zh");
+      expect(briefGloss).toBeNull();
+      const savedDefinition = synthesizeFallbackDefinition(cedictMatch, briefGloss);
+
+      const rows: DictionaryWord[] = [
+        {
+          id: "w-tie",
+          book_id: "b-1",
+          word: "不分胜负",
+          definition: savedDefinition,
+          context_sentence: "两人一时不分胜负。",
+          context_explanation: null,
+          cfi: "epubcfi(/6/4!/4/2)",
+          mastery: "new",
+          review_count: 0,
+          next_review_at: null,
+          created_at: Date.UTC(2026, 2, 10),
+          updated_at: Date.UTC(2026, 2, 10),
+          book_title: "Book A",
+        },
+        {
+          id: "w-other",
+          book_id: "b-1",
+          word: "ephemeral",
+          definition: "/ɪˈfɛmərəl/ adj. Lasting for a very short time.",
+          context_sentence: "An ephemeral bloom.",
+          context_explanation: null,
+          cfi: "epubcfi(/6/4!/4/4)",
+          mastery: "new",
+          review_count: 0,
+          next_review_at: null,
+          created_at: Date.UTC(2026, 2, 11),
+          updated_at: Date.UTC(2026, 2, 11),
+          book_title: "Book A",
+        },
+      ];
+
+      mocks.invoke.mockImplementation(async (cmd: string) => {
+        if (cmd === "list_all_vocab_words") return rows;
+        if (cmd === "get_all_settings") {
+          return {
+            show_translation: "true",
+            lookup_translation_language: "en",
+            dictionary_show_all_matches: "true",
+          };
+        }
+        if (cmd === "lookup_dictionary") {
+          return {
+            lemma: "不分胜负",
+            lang: "zh",
+            inflected_from: null,
+            alternate_lemmas: [],
+            forms: ["不分胜负", "不分勝負"],
+            matches: [cedictMatch],
+          };
+        }
+        return [];
+      });
+
+      const booksById = new Map<string, Book>([
+        ["b-1", makeBook("b-1", { title: "Book A" })],
+      ]);
+
+      await act(async () => {
+        root.render(
+          <WordsView
+            booksById={booksById}
+            onNavigateToLibrary={vi.fn()}
+          />,
+        );
+      });
+      await flushMicrotasks();
+
+      const searchInput = container.querySelector<HTMLInputElement>(
+        'input[aria-label="Filter vocab…"]',
+      )!;
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
+          searchInput,
+          "evenly matched",
+        );
+        searchInput.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      await flushMicrotasks();
+
+      const leftRail = container.querySelector<HTMLElement>('aside[aria-label="Saved vocab"]')!;
+      expect(leftRail.textContent).toContain("不分胜负");
+      expect(leftRail.textContent).not.toContain("ephemeral");
     });
   });
 

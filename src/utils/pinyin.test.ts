@@ -41,6 +41,14 @@ describe("pinyin vocab grouping, sorting, and search", () => {
     expect(matchesVocabSearch("潜移默化", "qiányí")).toBe(true);
     expect(matchesVocabSearch("潜移默化", "qymh")).toBe(true);
     expect(matchesVocabSearch("潜移默化", "subtly", "subtly influence")).toBe(true);
+    expect(
+      matchesVocabSearch(
+        "不分胜负",
+        "evenly matched",
+        null,
+        "unable to determine victory or defeat (idiom); evenly matched",
+      ),
+    ).toBe(true);
     expect(matchesVocabSearch("潜移默化", "xyz")).toBe(false);
   });
 
