@@ -17,6 +17,7 @@ Specs of features in development. A feature is filed as a GitHub issue only; its
 - [325 — OpenAI OAuth Session Expiry → Re-login Prompt](325-oauth-session-expiry.md)
 - [326 — AI Connections: Agent (Codex) or API, + First-Launch AI Setup](326-agent-connections.md)
 - [327 — Electron Shell](327-electron-shell.md)
+- [329 — Saved-Item Page Labels](329-saved-item-page-labels.md)
 - [331 — Desktop Rebrand (Dawn & Nocturne Design System & Shell)](331-rebrand.md)
 - [347 — Windows Title Bar (Quill-Drawn Window Controls)](347-windows-titlebar.md)
 - [355 — Ember Dark Palette](355-ember-dark-theme.md)

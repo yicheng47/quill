@@ -26,6 +26,11 @@ const testState = vi.hoisted(() => ({
   closeWindow: vi.fn<() => Promise<void>>(() => Promise.resolve()),
   resizeObservers: [] as Array<{ el: Element; cb: ResizeObserverCallback }>,
   navigateListeners: new Set<(e: { payload: unknown }) => void>(),
+  invoke: vi.fn<(cmd: string, args?: unknown) => Promise<unknown>>(() => Promise.resolve([])),
+  listenCallbacks: new Map<string, (e: { payload: unknown }) => void>(),
+  lastBookmarksResolvePages: undefined as ((cfis: Iterable<string>) => Promise<Map<string, number>>) | undefined,
+  lastBookmarksOnAsk: undefined as ((text: string, cfi?: string, page?: number | null) => void) | undefined,
+  lastVocabResolvePages: undefined as ((cfis: Iterable<string>) => Promise<Map<string, number>>) | undefined,
 }));
 
 vi.mock("../platform", () => ({
@@ -34,7 +39,13 @@ vi.mock("../platform", () => ({
   focusWindow: () => Promise.resolve(true),
   getCurrentWindowLabel: () => testState.windowLabel,
   getInitialReaderTheme: () => testState.initialReaderTheme,
-  invoke: () => Promise.resolve([]),
+  invoke: (cmd: string, args?: unknown) => testState.invoke(cmd, args),
+  listen: (event: string, cb: (e: { payload: unknown }) => void) => {
+    testState.listenCallbacks.set(event, cb);
+    return Promise.resolve(() => {
+      testState.listenCallbacks.delete(event);
+    });
+  },
   listenCurrentWindow: (event: string, cb: (e: { payload: unknown }) => void) => {
     if (event === "reader-navigate") {
       testState.navigateListeners.add(cb);
@@ -70,7 +81,7 @@ vi.mock("../hooks/useSettings", () => ({
 
 vi.mock("../components/AiPanel", () => ({
   default: (props: {
-    context?: { text: string; cfi?: string };
+    context?: { text: string; cfi?: string; page?: number | null };
     initialChatId?: string;
     initialChatSeq?: number;
     visible?: boolean;
@@ -79,6 +90,7 @@ vi.mock("../components/AiPanel", () => ({
       data-testid="ai-panel-stub"
       data-quote={props.context?.text ?? ""}
       data-quote-cfi={props.context?.cfi ?? ""}
+      data-quote-page={props.context?.page != null ? String(props.context.page) : ""}
       data-chat-id={props.initialChatId ?? ""}
       data-chat-seq={String(props.initialChatSeq ?? 0)}
       data-visible={String(props.visible ?? true)}
@@ -89,22 +101,33 @@ vi.mock("../components/AiPanel", () => ({
 }));
 
 vi.mock("../components/DictionaryPanel", () => ({
-  default: () => <div data-testid="vocab-panel-stub">Vocab Panel</div>,
+  default: (props: { resolvePages?: (cfis: Iterable<string>) => Promise<Map<string, number>> }) => {
+    testState.lastVocabResolvePages = props.resolvePages;
+    return <div data-testid="vocab-panel-stub">Vocab Panel</div>;
+  },
 }));
 
 vi.mock("../components/BookmarksPanel", () => ({
-  default: () => <div data-testid="bookmarks-panel-stub">Bookmarks Panel</div>,
+  default: (props: {
+    resolvePages?: (cfis: Iterable<string>) => Promise<Map<string, number>>;
+    onAsk?: (text: string, cfi?: string, page?: number | null) => void;
+  }) => {
+    testState.lastBookmarksResolvePages = props.resolvePages;
+    testState.lastBookmarksOnAsk = props.onAsk;
+    return <div data-testid="bookmarks-panel-stub">Bookmarks Panel</div>;
+  },
 }));
 
 import Reader, { getPdfOverlays, getReaderScrollbarVars } from "./Reader";
+import { getPageInfoFromRelocate } from "../utils/savedItemPages";
 import { getThemeStyles } from "../components/ReaderSettings";
 
 class MockFoliateView extends HTMLElement {
-  book = { toc: [], sections: [] };
+  book = { toc: [], sections: [] as Array<Record<string, unknown>> };
   renderer = {
     setAttribute: vi.fn(),
     setStyles: vi.fn(),
-    getContents: () => [],
+    getContents: (): Array<{ index?: number }> => [],
   };
   history = Object.assign(new EventTarget(), {
     canGoBack: false,
@@ -119,7 +142,9 @@ class MockFoliateView extends HTMLElement {
   prev = vi.fn(() => Promise.resolve());
   next = vi.fn(() => Promise.resolve());
   close = vi.fn();
-  getCFI = () => "cfi-sel";
+  getCFI = (index: number) => `epubcfi(/6/${(index + 1) * 2}!/4/2/1:0)`;
+  resolveCFI = vi.fn(() => null);
+  getLocationOf = vi.fn(() => null);
   addAnnotation = vi.fn(() => Promise.resolve());
   deleteAnnotation = vi.fn(() => Promise.resolve());
   deselect = vi.fn();
@@ -248,6 +273,11 @@ describe("Reader shell themes, cascade, and startup navigation", () => {
     testState.closeWindow.mockClear();
     testState.resizeObservers = [];
     testState.navigateListeners.clear();
+    testState.invoke.mockReset().mockResolvedValue([]);
+    testState.listenCallbacks.clear();
+    testState.lastBookmarksResolvePages = undefined;
+    testState.lastBookmarksOnAsk = undefined;
+    testState.lastVocabResolvePages = undefined;
 
     vi.stubGlobal(
       "fetch",
@@ -848,6 +878,338 @@ describe("Reader shell themes, cascade, and startup navigation", () => {
         value: originalUA,
       });
     }
+  });
+
+  it("uses detail.section for PDF pageInfo (index 50 of 100 -> 51 of 100), jump-back, and wires one resolver to both islands", async () => {
+    testState.getBook.mockResolvedValue({
+      id: "pdf-1",
+      title: "US Budget Appendix",
+      author: "OMB",
+      format: "pdf",
+      file_path: "/tmp/budget.pdf",
+      pages: 100,
+      progress: 0,
+      status: "reading",
+      current_cfi: null,
+      available: true,
+    });
+    testState.getAllSettings.mockResolvedValue({
+      reading_mode: "scrolling",
+      page_columns: "1",
+    });
+
+    await renderReader("/reader/pdf-1");
+    await flushAsync();
+
+    const viewEl = container.querySelector("foliate-view") as MockFoliateView | null;
+    expect(viewEl).not.toBeNull();
+    viewEl!.book.sections = Array.from({ length: 100 }, () => ({}));
+
+    // Simulate foliate-js relocate on page 51 (index 50) of a 100-page PDF where
+    // SectionProgress's 1500-byte location math would mistakenly report 34 of 67.
+    await act(async () => {
+      viewEl!.dispatchEvent(
+        new CustomEvent("relocate", {
+          detail: {
+            fraction: 0.5,
+            section: { current: 50, total: 100 },
+            location: { current: 33, total: 67 },
+            cfi: "epubcfi(/6/102)",
+          },
+        }),
+      );
+    });
+    await flushAsync();
+
+    expect(container.textContent).toContain("Page 51 of 100");
+    expect(container.textContent).not.toContain("Page 34 of 67");
+
+    // Triggering a jump records real PDF page 51 on the Back button
+    await act(async () => {
+      viewEl!.dispatchEvent(new CustomEvent("link"));
+      viewEl!.history.canGoBack = true;
+      viewEl!.history.dispatchEvent(new Event("index-change"));
+    });
+    expect(container.textContent).toContain("Back to p. 51");
+    expect(container.textContent).not.toContain("Back to p. 34");
+
+    // Both islands receive the same per-book resolvePages function
+    const bookmarksBtn = container.querySelector<HTMLButtonElement>('button[aria-label="Highlights & Bookmarks"]')!;
+    await act(async () => {
+      bookmarksBtn.click();
+    });
+    const bmResolver = testState.lastBookmarksResolvePages;
+    expect(typeof bmResolver).toBe("function");
+
+    const vocabBtn = container.querySelector<HTMLButtonElement>('button[aria-label="Words in Book"]')!;
+    await act(async () => {
+      vocabBtn.click();
+    });
+    const vocabResolver = testState.lastVocabResolvePages;
+    expect(vocabResolver).toBe(bmResolver);
+
+    const resolved = await bmResolver!(["epubcfi(/6/102!/4/2/1:0)"]);
+    expect(resolved.get("epubcfi(/6/102!/4/2/1:0)")).toBe(51);
+
+    // Two-page scrolling spread uses real PDF page numbers (Pages 51–52 of 100)
+    await act(async () => {
+      root.unmount();
+    });
+    localStorage.clear();
+    root = createRoot(container);
+    testState.getAllSettings.mockResolvedValue({
+      reading_mode: "scrolling",
+      page_columns: "2",
+    });
+    await renderReader("/reader/pdf-1");
+    await flushAsync();
+
+    const spreadView = container.querySelector("foliate-view") as MockFoliateView | null;
+    await act(async () => {
+      spreadView!.dispatchEvent(
+        new CustomEvent("relocate", {
+          detail: {
+            fraction: 0.5,
+            section: { current: 50, total: 100 },
+            location: { current: 33, total: 67 },
+            cfi: "epubcfi(/6/102)",
+          },
+        }),
+      );
+    });
+    await flushAsync();
+    expect(container.textContent).toContain("Pages 51–52 of 100");
+    expect(container.textContent).not.toContain("of 67");
+
+    // Two-page paginated spread uses real PDF total (Pages 50–51 of 100)
+    await act(async () => {
+      root.unmount();
+    });
+    localStorage.clear();
+    root = createRoot(container);
+    testState.getAllSettings.mockResolvedValue({
+      reading_mode: "paginated",
+      page_columns: "2",
+    });
+    await renderReader("/reader/pdf-1");
+    await flushAsync();
+
+    const paginatedView = container.querySelector("foliate-view") as MockFoliateView | null;
+    paginatedView!.renderer.getContents = () => [{ index: 49 }, { index: 50 }];
+    await act(async () => {
+      paginatedView!.dispatchEvent(
+        new CustomEvent("relocate", {
+          detail: {
+            fraction: 0.5,
+            section: { current: 50, total: 100 },
+            location: { current: 33, total: 67 },
+            cfi: "epubcfi(/6/102)",
+          },
+        }),
+      );
+    });
+    await flushAsync();
+    expect(container.textContent).toContain("Pages 50–51 of 100");
+    expect(container.textContent).not.toContain("of 67");
+  });
+
+  it("uses the quoted PDF passage's own page across context menu, explain, highlight toolbar, and highlights island when active and quoted pages differ", async () => {
+    testState.getBook.mockResolvedValue({
+      id: "pdf-spread",
+      title: "US Budget Appendix",
+      author: "OMB",
+      format: "pdf",
+      file_path: "/tmp/budget.pdf",
+      pages: 100,
+      progress: 0,
+      status: "reading",
+      current_cfi: null,
+      available: true,
+    });
+    testState.getAllSettings.mockResolvedValue({
+      reading_mode: "paginated",
+      page_columns: "2",
+    });
+
+    await renderReader("/reader/pdf-spread");
+    await flushAsync();
+
+    const viewEl = container.querySelector("foliate-view") as MockFoliateView | null;
+    expect(viewEl).not.toBeNull();
+    viewEl!.book.sections = Array.from({ length: 100 }, () => ({}));
+    viewEl!.renderer.getContents = () => [{ index: 49 }, { index: 50 }];
+
+    // Active section is index 49 (page 50) in a 50–51 spread
+    await act(async () => {
+      viewEl!.dispatchEvent(
+        new CustomEvent("relocate", {
+          detail: {
+            fraction: 0.49,
+            section: { current: 49, total: 100 },
+            location: { current: 32, total: 67 },
+            cfi: "epubcfi(/6/100)",
+          },
+        }),
+      );
+    });
+    await flushAsync();
+    expect(container.textContent).toContain("Pages 50–51 of 100");
+
+    // Mount page 51 (index 50) document and select text on page 51 while page 50 is active
+    const page51Doc = document.implementation.createHTMLDocument("Page 51");
+    page51Doc.body.innerHTML = "<p>Budget authority for page fifty-one.</p>";
+    const pText = page51Doc.querySelector("p")!.firstChild as Text;
+    const selRange = page51Doc.createRange();
+    selRange.setStart(pText, 0);
+    selRange.setEnd(pText, 16);
+    Object.defineProperty(page51Doc, "getSelection", {
+      configurable: true,
+      value: () => ({
+        rangeCount: 1,
+        toString: () => "Budget authority",
+        getRangeAt: () => selRange,
+      }),
+    });
+
+    await act(async () => {
+      viewEl!.dispatchEvent(new CustomEvent("load", { detail: { doc: page51Doc, index: 50 } }));
+    });
+
+    // 1. Context menu -> Quote in Chat on page 51 reports page 51 (not active page 50)
+    await act(async () => {
+      page51Doc.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+      page51Doc.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 40, clientY: 40 }));
+    });
+    const quoteBtn = Array.from(container.querySelectorAll("button")).find((el) =>
+      el.textContent?.includes("Quote in Chat"),
+    );
+    expect(quoteBtn).toBeDefined();
+    await act(async () => {
+      quoteBtn!.click();
+    });
+    const aiStub = container.querySelector('[data-testid="ai-panel-stub"]')!;
+    expect(aiStub.getAttribute("data-quote")).toBe("Budget authority");
+    expect(aiStub.getAttribute("data-quote-cfi")).toBe("epubcfi(/6/102!/4/2/1:0)");
+    expect(aiStub.getAttribute("data-quote-page")).toBe("51");
+
+    // 2. Context menu -> Explain -> Quote in Chat on page 51 also reports page 51
+    let explainRequestId = "";
+    testState.invoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === "ai_explain") {
+        explainRequestId = String((args as { requestId?: string })?.requestId ?? "");
+        return null;
+      }
+      if (cmd === "list_highlights") {
+        return [
+          {
+            id: "hl-51",
+            book_id: "pdf-spread",
+            cfi_range: "epubcfi(/6/102!/4/2/1:0)",
+            color: "yellow",
+            note: null,
+            text_content: "Saved highlight on page 51",
+            created_at: 1_700_000_000,
+            updated_at: 1_700_000_000,
+          },
+        ];
+      }
+      return [];
+    });
+
+    await act(async () => {
+      page51Doc.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 40, clientY: 40 }));
+    });
+    const explainBtn = Array.from(container.querySelectorAll("button")).find((el) =>
+      el.textContent?.includes("Explain"),
+    );
+    expect(explainBtn).toBeDefined();
+    await act(async () => {
+      explainBtn!.click();
+    });
+    await flushAsync();
+
+    const explainCb = testState.listenCallbacks.get(`ai-lookup-chunk-${explainRequestId}`);
+    expect(explainCb).toBeDefined();
+    await act(async () => {
+      explainCb!({ payload: { delta: "Authority to incur obligations.", done: false } });
+      explainCb!({ payload: { delta: "", done: true } });
+    });
+    await flushAsync();
+
+    const explainQuoteBtn = Array.from(container.querySelectorAll("button")).find((el) =>
+      el.textContent?.includes("Quote in Chat"),
+    );
+    expect(explainQuoteBtn).toBeDefined();
+    await act(async () => {
+      explainQuoteBtn!.click();
+    });
+    expect(aiStub.getAttribute("data-quote-page")).toBe("51");
+
+    // 3. HighlightToolbar -> Ask on a saved highlight on page 51 (even without sectionIndex) reports page 51
+    const mockRange = {
+      getBoundingClientRect: () => ({ left: 10, top: 20, width: 100, height: 14 }),
+      startContainer: { ownerDocument: { defaultView: { frameElement: null } } },
+    };
+    await act(async () => {
+      viewEl!.dispatchEvent(
+        new CustomEvent("show-annotation", {
+          detail: {
+            value: "epubcfi(/6/102!/4/2/1:0)",
+            range: mockRange,
+          },
+        }),
+      );
+    });
+    await flushAsync();
+
+    const toolbarAskBtn = Array.from(container.querySelectorAll("button")).find(
+      (el) => el.textContent?.trim() === "Ask",
+    );
+    expect(toolbarAskBtn).toBeDefined();
+    await act(async () => {
+      toolbarAskBtn!.click();
+    });
+    expect(aiStub.getAttribute("data-quote")).toBe("Saved highlight on page 51");
+    expect(aiStub.getAttribute("data-quote-page")).toBe("51");
+
+    // 4. Highlights island Ask forwards its resolved page (e.g. page 12 while reading page 50)
+    const bookmarksBtn = container.querySelector<HTMLButtonElement>('button[aria-label="Highlights & Bookmarks"]')!;
+    await act(async () => {
+      bookmarksBtn.click();
+    });
+    expect(typeof testState.lastBookmarksOnAsk).toBe("function");
+    await act(async () => {
+      testState.lastBookmarksOnAsk!("Earlier passage", "epubcfi(/6/24!/4/2/1:0)", 12);
+    });
+    expect(aiStub.getAttribute("data-quote")).toBe("Earlier passage");
+    expect(aiStub.getAttribute("data-quote-page")).toBe("12");
+  });
+});
+
+describe("getPageInfoFromRelocate", () => {
+  it("maps PDF relocate section index 50 of 100 to 51 of 100 regardless of location", () => {
+    expect(
+      getPageInfoFromRelocate(
+        { section: { current: 50, total: 100 }, location: { current: 33, total: 67 } },
+        "pdf",
+      ),
+    ).toEqual({ current: 51, total: 100 });
+  });
+
+  it("keeps foliate location mapping for EPUBs", () => {
+    expect(
+      getPageInfoFromRelocate(
+        { section: { current: 2, total: 10 }, location: { current: 33, total: 67 } },
+        "epub",
+      ),
+    ).toEqual({ current: 34, total: 67 });
+  });
+
+  it("returns null for missing or invalid page bounds", () => {
+    expect(getPageInfoFromRelocate({ location: { current: 0, total: 10 } }, "pdf")).toBeNull();
+    expect(getPageInfoFromRelocate({ section: { current: -1, total: 100 } }, "pdf")).toBeNull();
+    expect(getPageInfoFromRelocate({ section: { current: 0, total: 0 } }, "pdf")).toBeNull();
+    expect(getPageInfoFromRelocate({}, "epub")).toBeNull();
   });
 });
 

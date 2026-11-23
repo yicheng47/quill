@@ -55,7 +55,14 @@ import {
   type ReaderWindowOptions,
 } from "../utils/openReaderWindow";
 import { extractRangeSelectionContext } from "../utils/aiStream";
-import { extractPdfPageIndex } from "../utils/highlightSort";
+import {
+  createSavedItemPageResolver,
+  getPageInfoFromRelocate,
+  resolvePdfPageFromCfi,
+  resolveQuotedPage,
+  type ResolveSavedItemPages,
+  type SavedItemPageResolvedCfi,
+} from "../utils/savedItemPages";
 import {
   handleAppZoomShortcut,
   refreshAppZoom,
@@ -88,6 +95,8 @@ interface FoliateView extends HTMLElement {
   lastLocation: any;
   history: { back(): void; forward(): void; canGoBack: boolean; canGoForward: boolean; addEventListener: EventTarget["addEventListener"]; removeEventListener: EventTarget["removeEventListener"] };
   getCFI(index: number, range: Range): string;
+  resolveCFI(cfi: string): SavedItemPageResolvedCfi | null | undefined;
+  getLocationOf(index: number, fraction?: number): { current: number; next?: number; total: number } | null;
   addAnnotation(annotation: { value: string; color?: string }): Promise<any>;
   deleteAnnotation(annotation: { value: string }): Promise<void>;
   deselect(): void;
@@ -343,6 +352,7 @@ export default function Reader() {
   const [progress, setProgress] = useState(0);
   const [pageInfo, setPageInfo] = useState<{ current: number; total: number } | null>(null);
   const [pdfSpreadRange, setPdfSpreadRange] = useState<{ start: number; end: number } | null>(null);
+  const [resolveSavedItemPages, setResolveSavedItemPages] = useState<ResolveSavedItemPages | undefined>(undefined);
   const [timeLeftMinutes, setTimeLeftMinutes] = useState<number | null>(null);
   const currentCfiRef = useRef<string | null>(null);
   const [currentCfi, setCurrentCfi] = useState<string | null>(null);
@@ -369,6 +379,7 @@ export default function Reader() {
     sentence: string;
     sentenceOffset?: number;
     cfiRange?: string;
+    sectionIndex?: number;
   } | null>(null);
   const [aiContext, setAiContext] = useState<AiQuoteContext | undefined>();
   const [initialChatNav, setInitialChatNav] = useState<{ chatId?: string; seq: number }>({ seq: 0 });
@@ -390,6 +401,7 @@ export default function Reader() {
     bookTitle?: string;
     chapter?: string;
     cfi?: string;
+    sectionIndex?: number;
   } | null>(null);
   const [translation, setTranslation] = useState<{
     x: number;
@@ -406,6 +418,7 @@ export default function Reader() {
     cfiRange: string;
     color: string;
     text: string | null;
+    sectionIndex?: number;
   } | null>(null);
   const [readerSettings, setReaderSettings] = useState<ReaderSettingsState>(() => ({
     theme: readInitialBookTheme(bookId),
@@ -704,6 +717,7 @@ export default function Reader() {
     const container = viewerRef.current;
     container.innerHTML = "";
     setBookReady(false);
+    setResolveSavedItemPages(undefined);
     setInitError(null);
 
     let cancelled = false;
@@ -805,7 +819,7 @@ export default function Reader() {
 
       // Listen for location changes
       view.addEventListener("relocate", ((e: CustomEvent) => {
-        const { fraction, location, tocItem, cfi, time } = e.detail;
+        const { fraction, location, section, tocItem, cfi, time } = e.detail;
 
         const pct = Math.round((fraction ?? 0) * 100);
         setProgress(pct);
@@ -818,18 +832,18 @@ export default function Reader() {
             : null;
         setTimeLeftMinutes(remaining);
 
-        if (location) {
-          const current = location.current + 1;
-          const total = location.total;
+        const nextPageInfo = getPageInfoFromRelocate({ location, section }, book.format);
+        if (nextPageInfo) {
+          const { current, total } = nextPageInfo;
           currentPageNumRef.current = current;
-          setPageInfo({ current, total });
+          setPageInfo(nextPageInfo);
           if (book.format === "pdf") {
             const { pageColumns, readingMode } = readerSettingsRef.current;
             if (pageColumns === 2) {
               if (readingMode === "paginated" && view.renderer?.getContents) {
                 const indices = (view.renderer.getContents() as Array<{ index?: number }>)
                   .map((c) => c.index)
-                  .filter((idx): idx is number => typeof idx === "number" && Number.isFinite(idx))
+                  .filter((idx): idx is number => typeof idx === "number" && Number.isFinite(idx) && idx >= 0)
                   .sort((a, b) => a - b);
                 const unique = Array.from(new Set(indices));
                 if (unique.length === 2) {
@@ -946,8 +960,15 @@ export default function Reader() {
             // Extract surrounding context centered on the exact DOM Range selection
             let sentence = text;
             let sentenceOffset = 0;
+            let cfiRange = selectedTextRef.current?.cfi;
             if (sel.rangeCount > 0) {
               const range = sel.getRangeAt(0);
+              try {
+                cfiRange = view.getCFI(index, range);
+                selectedTextRef.current = { text, cfi: cfiRange };
+              } catch {
+                // Keep last tracked CFI if range serialization fails
+              }
               let node: Node | null = range.startContainer;
               // Walk up to the nearest block-level element
               const blockTags = new Set(["P", "DIV", "LI", "BLOCKQUOTE", "TD", "TH", "H1", "H2", "H3", "H4", "H5", "H6", "SECTION", "ARTICLE", "ASIDE", "FIGCAPTION", "DT", "DD"]);
@@ -968,7 +989,8 @@ export default function Reader() {
               text,
               sentence,
               sentenceOffset,
-              cfiRange: selectedTextRef.current?.cfi,
+              cfiRange,
+              sectionIndex: typeof index === "number" ? index : undefined,
             });
           }
         });
@@ -1045,7 +1067,7 @@ export default function Reader() {
       }) as EventListener);
 
       view.addEventListener("show-annotation", ((e: CustomEvent) => {
-        const { value, range } = e.detail;
+        const { value, index, range } = e.detail;
         // Find the highlight in the DB to get its id and color
         if (bookId) {
           invoke<Highlight[]>("list_highlights", { bookId }).then((hls) => {
@@ -1067,6 +1089,7 @@ export default function Reader() {
                 cfiRange: hl.cfi_range,
                 color: hl.color,
                 text: hl.text_content ?? null,
+                sectionIndex: typeof index === "number" ? index : undefined,
               });
             }
           }).catch(() => {});
@@ -1087,6 +1110,7 @@ export default function Reader() {
 
       if (cancelled) return;
 
+      setResolveSavedItemPages(() => createSavedItemPageResolver(view, book.format));
       setBookReady(true);
     };
 
@@ -1112,6 +1136,7 @@ export default function Reader() {
       pendingJumpFromPageRef.current = null;
       setCanGoBack(false);
       setJumpBackPage(null);
+      setResolveSavedItemPages(undefined);
       if (viewRef.current) {
         viewRef.current.close();
         viewRef.current.remove();
@@ -1963,8 +1988,13 @@ export default function Reader() {
                   currentCfi={currentCfi}
                   highlightVersion={highlightVersion}
                   onNavigate={navigateToCfi}
-                  onAsk={(text, cfi) => {
-                    setAiContext({ text, cfi });
+                  onAsk={(text, cfi, page) => {
+                    const resolvedPage =
+                      page ??
+                      (book.format === "pdf" && cfi
+                        ? resolvePdfPageFromCfi(cfi, viewRef.current?.book?.sections?.length ?? 0)
+                        : null);
+                    setAiContext({ text, cfi, page: resolvedPage });
                     openSidePanel("ai");
                   }}
                   onRemoveHighlight={(cfiRange) => {
@@ -1972,7 +2002,7 @@ export default function Reader() {
                   }}
                   getCurrentCfi={() => currentCfiRef.current}
                   getCurrentLabel={() => currentChapter?.title || t("common.bookmark")}
-                  getPageFromCfi={() => pageInfo?.current ?? null}
+                  resolvePages={resolveSavedItemPages}
                 />
               )}
               {sidePanel === "vocab" && bookId && (
@@ -1990,11 +2020,7 @@ export default function Reader() {
                         }, 3000);
                       });
                     }}
-                    getPageFromCfi={(cfi) => {
-                      if (book?.format !== "pdf") return null;
-                      const idx = extractPdfPageIndex(cfi);
-                      return idx !== null ? idx + 1 : null;
-                    }}
+                    resolvePages={resolveSavedItemPages}
                     onClose={() => setSidePanel(null)}
                     onOpenInWords={handleOpenInWords}
                   />
@@ -2028,6 +2054,7 @@ export default function Reader() {
               bookTitle: book?.title,
               chapter: chapterTitle,
               cfi: contextMenu.cfiRange,
+              sectionIndex: contextMenu.sectionIndex,
             });
             setContextMenu(null);
           }}
@@ -2035,7 +2062,13 @@ export default function Reader() {
             setAiContext({
               text: contextMenu.text,
               cfi: contextMenu.cfiRange,
-              page: pageInfo?.current ?? null,
+              page: resolveQuotedPage({
+                format: book.format,
+                cfi: contextMenu.cfiRange,
+                sectionIndex: contextMenu.sectionIndex,
+                sectionCount: viewRef.current?.book?.sections?.length ?? 0,
+                fallbackPage: pageInfo?.current ?? null,
+              }),
             });
             openSidePanel("ai");
             setContextMenu(null);
@@ -2113,7 +2146,13 @@ export default function Reader() {
             setAiContext({
               text: explain.text,
               cfi: explain.cfi,
-              page: pageInfo?.current ?? null,
+              page: resolveQuotedPage({
+                format: book.format,
+                cfi: explain.cfi,
+                sectionIndex: explain.sectionIndex,
+                sectionCount: viewRef.current?.book?.sections?.length ?? 0,
+                fallbackPage: pageInfo?.current ?? null,
+              }),
             });
             openSidePanel("ai");
             setExplain(null);
@@ -2157,7 +2196,13 @@ export default function Reader() {
                   setAiContext({
                     text: highlightToolbar.text!,
                     cfi: highlightToolbar.cfiRange,
-                    page: pageInfo?.current ?? null,
+                    page: resolveQuotedPage({
+                      format: book.format,
+                      cfi: highlightToolbar.cfiRange,
+                      sectionIndex: highlightToolbar.sectionIndex,
+                      sectionCount: viewRef.current?.book?.sections?.length ?? 0,
+                      fallbackPage: pageInfo?.current ?? null,
+                    }),
                   });
                   openSidePanel("ai");
                   setHighlightToolbar(null);
