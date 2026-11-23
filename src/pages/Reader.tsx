@@ -29,9 +29,9 @@ import ReaderSettings, {
 } from "../components/ReaderSettings";
 import ReaderContextMenu from "../components/ReaderContextMenu";
 import HighlightToolbar from "../components/HighlightToolbar";
-import LookupPopover from "../components/LookupPopover";
-import ExplainPopover from "../components/ExplainPopover";
+import ExplainSelectionPopover from "../components/ExplainSelectionPopover";
 import DictionaryPanel from "../components/DictionaryPanel";
+import type { SelectionClassification } from "../utils/selectionRouting";
 import TranslationPopover from "../components/TranslationPopover";
 import TableOfContents from "../components/TableOfContents";
 import { getBook, updateBookStatus, updateReadingProgress, checkBookAvailable, checkBookReadable, type Book } from "../hooks/useBooks";
@@ -384,16 +384,7 @@ export default function Reader() {
   const [aiContext, setAiContext] = useState<AiQuoteContext | undefined>();
   const [initialChatNav, setInitialChatNav] = useState<{ chatId?: string; seq: number }>({ seq: 0 });
   const chatNavSeqRef = useRef(0);
-  const [lookup, setLookup] = useState<{
-    x: number;
-    y: number;
-    word: string;
-    sentence: string;
-    bookTitle?: string;
-    chapter?: string;
-    cfi?: string;
-  } | null>(null);
-  const [explain, setExplain] = useState<{
+  const [selectionPopover, setSelectionPopover] = useState<{
     x: number;
     y: number;
     text: string;
@@ -402,6 +393,7 @@ export default function Reader() {
     chapter?: string;
     cfi?: string;
     sectionIndex?: number;
+    classification: SelectionClassification;
   } | null>(null);
   const [translation, setTranslation] = useState<{
     x: number;
@@ -957,17 +949,20 @@ export default function Reader() {
               offsetX = rect.left;
               offsetY = rect.top;
             }
-            // Extract surrounding context centered on the exact DOM Range selection
+            // Extract surrounding context and CFI from the current DOM Range selection
             let sentence = text;
             let sentenceOffset = 0;
-            let cfiRange = selectedTextRef.current?.cfi;
+            let currentCfi: string | undefined;
             if (sel.rangeCount > 0) {
               const range = sel.getRangeAt(0);
               try {
-                cfiRange = view.getCFI(index, range);
-                selectedTextRef.current = { text, cfi: cfiRange };
+                const resolved = view.getCFI(index, range);
+                if (resolved) {
+                  currentCfi = resolved;
+                  selectedTextRef.current = { text, cfi: resolved };
+                }
               } catch {
-                // Keep last tracked CFI if range serialization fails
+                // Fall back to sentence-based identity when current range CFI is unavailable.
               }
               let node: Node | null = range.startContainer;
               // Walk up to the nearest block-level element
@@ -989,7 +984,7 @@ export default function Reader() {
               text,
               sentence,
               sentenceOffset,
-              cfiRange,
+              cfiRange: currentCfi,
               sectionIndex: typeof index === "number" ? index : undefined,
             });
           }
@@ -1372,7 +1367,7 @@ export default function Reader() {
         text,
         sentence,
         sentenceOffset,
-        cfiRange: selectedTextRef.current?.cfi || undefined,
+        cfiRange: undefined,
       });
     }
   }, []);
@@ -2042,11 +2037,11 @@ export default function Reader() {
             navigator.clipboard.writeText(contextMenu.text);
             setContextMenu(null);
           }}
-          onExplain={() => {
+          onInspect={(classification) => {
             const chapterTitle = currentChapterIndex >= 0 && currentChapterIndex < chapters.length
               ? chapters[currentChapterIndex].title
               : undefined;
-            setExplain({
+            setSelectionPopover({
               x: contextMenu.x,
               y: contextMenu.y,
               text: contextMenu.text,
@@ -2055,6 +2050,7 @@ export default function Reader() {
               chapter: chapterTitle,
               cfi: contextMenu.cfiRange,
               sectionIndex: contextMenu.sectionIndex,
+              classification,
             });
             setContextMenu(null);
           }}
@@ -2071,21 +2067,6 @@ export default function Reader() {
               }),
             });
             openSidePanel("ai");
-            setContextMenu(null);
-          }}
-          onLookup={() => {
-            const chapterTitle = currentChapterIndex >= 0 && currentChapterIndex < chapters.length
-              ? chapters[currentChapterIndex].title
-              : undefined;
-            setLookup({
-              x: contextMenu.x,
-              y: contextMenu.y,
-              word: contextMenu.text,
-              sentence: contextMenu.sentence,
-              bookTitle: book?.title,
-              chapter: chapterTitle,
-              cfi: contextMenu.cfiRange,
-            });
             setContextMenu(null);
           }}
           onTranslate={() => {
@@ -2117,47 +2098,36 @@ export default function Reader() {
         />
       )}
 
-      {lookup && (
-        <LookupPopover
-          x={lookup.x}
-          y={lookup.y}
-          word={lookup.word}
-          sentence={lookup.sentence}
-          bookTitle={lookup.bookTitle}
-          chapter={lookup.chapter}
+      {selectionPopover && (
+        <ExplainSelectionPopover
+          x={selectionPopover.x}
+          y={selectionPopover.y}
+          text={selectionPopover.text}
+          sentence={selectionPopover.sentence}
+          bookTitle={selectionPopover.bookTitle}
+          chapter={selectionPopover.chapter}
           bookId={bookId!}
-          cfi={lookup.cfi}
+          cfi={selectionPopover.cfi}
+          initialMode={selectionPopover.classification.mode}
+          grayZone={selectionPopover.classification.grayZone}
+          normalizedTerm={selectionPopover.classification.normalizedTerm}
           onSaved={() => setVocabVersion((v) => v + 1)}
-          onClose={() => setLookup(null)}
-        />
-      )}
-
-      {explain && (
-        <ExplainPopover
-          x={explain.x}
-          y={explain.y}
-          text={explain.text}
-          sentence={explain.sentence}
-          bookTitle={explain.bookTitle}
-          chapter={explain.chapter}
-          bookId={bookId!}
-          cfi={explain.cfi}
           onQuote={() => {
             setAiContext({
-              text: explain.text,
-              cfi: explain.cfi,
+              text: selectionPopover.text,
+              cfi: selectionPopover.cfi,
               page: resolveQuotedPage({
                 format: book.format,
-                cfi: explain.cfi,
-                sectionIndex: explain.sectionIndex,
+                cfi: selectionPopover.cfi,
+                sectionIndex: selectionPopover.sectionIndex,
                 sectionCount: viewRef.current?.book?.sections?.length ?? 0,
                 fallbackPage: pageInfo?.current ?? null,
               }),
             });
             openSidePanel("ai");
-            setExplain(null);
+            setSelectionPopover(null);
           }}
-          onClose={() => setExplain(null)}
+          onClose={() => setSelectionPopover(null)}
         />
       )}
 

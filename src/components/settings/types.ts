@@ -2,8 +2,9 @@ export type SettingsSection =
   | "general"
   | "appearance"
   | "reading"
-  | "ai"
+  | "dictionary"
   | "tools"
+  | "ai"
   | "librarySync"
   | "mcp"
   | "updates"
@@ -28,8 +29,9 @@ export function normalizeSettingsSection(section?: string, isMac = true): Settin
     section === "general" ||
     section === "appearance" ||
     section === "reading" ||
-    section === "ai" ||
+    section === "dictionary" ||
     section === "tools" ||
+    section === "ai" ||
     section === "librarySync" ||
     section === "mcp" ||
     section === "updates" ||

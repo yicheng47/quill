@@ -21,6 +21,7 @@ export interface NativeBundleSources {
   nodeAddon: string;
   mcpBinary: string;
   pdfiumLib: string;
+  dictDb: string;
 }
 
 /**
@@ -172,11 +173,27 @@ export function resolveNativeBundleSources(
   }
   assertBinaryArch(pdfiumLib, spec.expectedBinaryArch);
 
+  const dictCandidates = [
+    path.join(projectDir, "crates", "quill-core", "resources", "dict.db"),
+  ];
+  if (options.allowDebugFallback) {
+    dictCandidates.push(
+      path.join(projectDir, "crates", "quill-core", "resources", "dict-test.db"),
+    );
+  }
+  const dictDb = firstExisting(dictCandidates);
+  if (!dictDb) {
+    throw new Error(
+      `Missing built-in dictionary database (checked ${dictCandidates.join(", ")})`,
+    );
+  }
+
   return {
     spec,
     nodeAddon,
     mcpBinary,
     pdfiumLib,
+    dictDb,
   };
 }
 
@@ -206,4 +223,7 @@ export async function stageNativeResourcesIntoPack(context: AfterPackContext): P
 
   const pdfiumDest = path.join(resourcesDir, sources.spec.pdfiumDestName);
   fs.copyFileSync(sources.pdfiumLib, pdfiumDest);
+
+  const dictDest = path.join(resourcesDir, "dict.db");
+  fs.copyFileSync(sources.dictDb, dictDest);
 }

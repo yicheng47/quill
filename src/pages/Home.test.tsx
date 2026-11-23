@@ -550,13 +550,13 @@ describe("Home integration flows (R1, R2, R3, R6)", () => {
       "Home",
       "Library",
       "Highlights",
-      "Words",
+      "Vocab",
       "Chats",
     ]);
 
     for (const [label, selector] of [
       ["Highlights", '[data-testid="highlights-view"]'],
-      ["Words", '[data-testid="words-view"]'],
+      ["Vocab", '[data-testid="words-view"]'],
       ["Chats", '[data-testid="chats-view"]'],
     ] as const) {
       const btn = Array.from(
@@ -822,7 +822,7 @@ describe("Home integration flows (R1, R2, R3, R6)", () => {
     expect(container.querySelector('[data-testid="settings-view"]')).not.toBeNull();
 
     const wordsBtn = Array.from(container.querySelectorAll<HTMLButtonElement>("nav button")).find((b) =>
-      b.textContent?.includes("Words"),
+      b.textContent?.includes("Vocab"),
     );
     await act(async () => {
       wordsBtn?.click();

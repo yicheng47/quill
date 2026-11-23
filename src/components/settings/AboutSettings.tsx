@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { getAppVersion, getPlatformInfo, invoke, openUrl } from "../../platform";
-import { BookOpen, ExternalLink, FolderOpen, Github, Scale } from "lucide-react";
+import { BookA, BookOpen, ExternalLink, FolderOpen, Github, Scale } from "lucide-react";
 import QuillLogo from "../QuillLogo";
 import Button from "../ui/Button";
 import { SettingsGroup, SettingsOverline, SettingsRow } from "../ui/SettingsRow";
@@ -138,6 +138,18 @@ export default function AboutSettings() {
               </span>
             </div>
             <span className="font-mono text-[12px] text-text-tertiary">MIT</span>
+          </div>
+
+          <div className="w-full min-h-[52px] px-5 py-2.5 flex items-center justify-between gap-4">
+            <div className="flex items-center gap-2.5 shrink-0">
+              <BookA size={15} className="text-text-secondary shrink-0" />
+              <span className="text-[14px] font-medium text-text-primary">
+                {t("settings.about.dictionaryData")}
+              </span>
+            </div>
+            <span className="text-[12px] text-text-tertiary text-right">
+              {t("settings.about.dictionaryDataValue")}
+            </span>
           </div>
         </SettingsGroup>
       </section>

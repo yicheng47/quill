@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { resolveMcpBinaryPath } from "./paths";
+import { resolveDictPath, resolveMcpBinaryPath } from "./paths";
 
 const tempDirs: string[] = [];
 
@@ -58,5 +58,38 @@ describe("resolveMcpBinaryPath", () => {
         cargoTargetDir: customTarget,
       }),
     ).toBe(bin);
+  });
+});
+
+describe("resolveDictPath", () => {
+  it("resolves QUILL_DICT_PATH override before repo dict.db in dev mode", () => {
+    const repo = makeTempRepo();
+    const resourcesDir = path.join(repo, "crates", "quill-core", "resources");
+    fs.mkdirSync(resourcesDir, { recursive: true });
+    const repoDict = path.join(resourcesDir, "dict.db");
+    const overrideDict = path.join(repo, "custom-dict.db");
+    fs.writeFileSync(repoDict, "repo-dict");
+    fs.writeFileSync(overrideDict, "override-dict");
+
+    expect(
+      resolveDictPath(repo, { isPackaged: false, envDictPath: overrideDict }),
+    ).toBe(overrideDict);
+    expect(resolveDictPath(repo, { isPackaged: false })).toBe(repoDict);
+  });
+
+  it("returns undefined gracefully when dict.db is absent in dev or packaged mode", () => {
+    const repo = makeTempRepo();
+    expect(resolveDictPath(repo, { isPackaged: false })).toBeUndefined();
+    expect(resolveDictPath(repo, { isPackaged: true, resourcesPath: repo })).toBeUndefined();
+  });
+
+  it("resolves resources/dict.db in packaged mode", () => {
+    const resources = makeTempRepo();
+    const packagedDict = path.join(resources, "dict.db");
+    fs.writeFileSync(packagedDict, "packaged-dict");
+
+    expect(
+      resolveDictPath("/unused", { isPackaged: true, resourcesPath: resources }),
+    ).toBe(packagedDict);
   });
 });

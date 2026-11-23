@@ -1,6 +1,7 @@
 pub mod ai;
 pub mod commands;
 pub mod db;
+pub mod dictionary;
 pub mod dispatch;
 pub mod epub;
 pub mod error;

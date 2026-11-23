@@ -156,8 +156,16 @@ export default function HomeView({
     );
 
     const words = Array.isArray(wordsRes) ? wordsRes : [];
-    setWordsCount(words.length);
-    setRecentWords(words.slice(0, 6));
+    const uniqueWords: DictionaryWord[] = [];
+    const seenWordKeys = new Set<string>();
+    for (const w of words) {
+      const key = w.word.trim().toLowerCase();
+      if (!key || seenWordKeys.has(key)) continue;
+      seenWordKeys.add(key);
+      uniqueWords.push(w);
+    }
+    setWordsCount(uniqueWords.length);
+    setRecentWords(uniqueWords.slice(0, 6));
 
     const chats = Array.isArray(chatsRes?.chats) ? chatsRes.chats : [];
     setLastChat(chats[0] ?? null);

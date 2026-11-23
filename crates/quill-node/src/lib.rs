@@ -14,6 +14,7 @@ pub struct JsBootConfig {
     pub is_dev: bool,
     pub mcp_binary_path: String,
     pub pdfium_path: Option<String>,
+    pub dict_path: Option<String>,
 }
 
 #[napi(object)]
@@ -153,6 +154,7 @@ impl QuillCore {
             is_dev: config.is_dev,
             mcp_binary_path: PathBuf::from(config.mcp_binary_path),
             pdfium_path: config.pdfium_path.map(PathBuf::from),
+            dict_path: config.dict_path.map(PathBuf::from),
         };
         env.spawn_future(async move {
             let core = boot_blocking(boot_config, host).await?;
@@ -233,6 +235,7 @@ mod tests {
             is_dev: true,
             mcp_binary_path: dir.path().join("quill-mcp"),
             pdfium_path: None,
+            dict_path: None,
         };
         let err = boot_blocking(bad_config, Arc::new(NoopHost))
             .await
@@ -250,6 +253,7 @@ mod tests {
             is_dev: true,
             mcp_binary_path: dir.path().join("quill-mcp"),
             pdfium_path: None,
+            dict_path: None,
         };
         let core = boot_blocking(config, Arc::new(NoopHost)).await.unwrap();
 

@@ -17,7 +17,16 @@ const mocks = vi.hoisted(() => ({
   setTitlebarZoom: vi.fn<(zoom: number) => Promise<void>>(),
   setWindowBackgroundColor: vi.fn<(color: string) => Promise<void>>(),
   openUrl: vi.fn<(url: string) => Promise<void>>(),
+  openFileDialog: vi.fn<(opts?: unknown) => Promise<string | null>>(),
   settingsMap: {} as Record<string, string>,
+  dictionaries: [] as Array<{
+    id: string;
+    name: string;
+    format: string;
+    sizeBytes: number;
+    entryCount: number;
+    enabled: boolean;
+  }>,
 }));
 
 vi.mock("../../platform", () => ({
@@ -30,6 +39,7 @@ vi.mock("../../platform", () => ({
   setTitlebarZoom: (z: number) => mocks.setTitlebarZoom(z),
   setWindowBackgroundColor: (color: string) => mocks.setWindowBackgroundColor(color),
   openUrl: (url: string) => mocks.openUrl(url),
+  openFileDialog: (opts?: unknown) => mocks.openFileDialog(opts),
   listen: () => Promise.resolve(() => {}),
   listenCurrentWindow: () => Promise.resolve(() => {}),
 }));
@@ -151,8 +161,46 @@ describe("SettingsView and redesigned sections", () => {
       })),
     });
     mocks.openUrl.mockReset().mockResolvedValue(undefined);
+    mocks.openFileDialog.mockReset().mockResolvedValue(null);
+    mocks.dictionaries = [
+      {
+        id: "builtin",
+        name: "Quill Built-in (EN / ZH)",
+        format: "builtin",
+        sizeBytes: 18_500_000,
+        entryCount: 100_000,
+        enabled: true,
+      },
+    ];
     mocks.invoke.mockReset().mockImplementation(async (cmd, args) => {
       if (cmd === "get_all_settings") return { ...mocks.settingsMap };
+      if (cmd === "list_dictionaries") return [...mocks.dictionaries];
+      if (cmd === "import_dictionary" && args) {
+        const added = {
+          id: "dict-imported-1",
+          name: "Oxford Learner",
+          format: "mdx",
+          sizeBytes: 4_200_000,
+          entryCount: 35_000,
+          enabled: true,
+        };
+        mocks.dictionaries = [...mocks.dictionaries, added];
+        return added;
+      }
+      if (cmd === "update_dictionaries_config" && args && Array.isArray(args.items)) {
+        const byId = new Map(mocks.dictionaries.map((d) => [d.id, d]));
+        mocks.dictionaries = (args.items as Array<{ id: string; enabled: boolean }>)
+          .map((item) => {
+            const cur = byId.get(item.id);
+            return cur ? { ...cur, enabled: item.enabled } : null;
+          })
+          .filter((x): x is NonNullable<typeof x> => x !== null);
+        return null;
+      }
+      if (cmd === "remove_dictionary" && args) {
+        mocks.dictionaries = mocks.dictionaries.filter((d) => d.id !== args.id);
+        return null;
+      }
       if (cmd === "set_setting" && args) {
         mocks.settingsMap[String(args.key)] = String(args.value);
         return null;
@@ -220,7 +268,7 @@ describe("SettingsView and redesigned sections", () => {
     container.remove();
   });
 
-  it("shows all 9 tabs on macOS, hides iCloud Sync on Windows, and omits Reset All Data", async () => {
+  it("shows all 10 tabs in 4 groups on macOS, hides iCloud Sync on Windows, and omits Reset All Data", async () => {
     await renderView();
     const macTabs = Array.from(container.querySelectorAll("button[data-settings-tab]")).map((b) =>
       b.getAttribute("data-settings-tab"),
@@ -229,13 +277,21 @@ describe("SettingsView and redesigned sections", () => {
       "general",
       "appearance",
       "reading",
-      "ai",
+      "dictionary",
       "tools",
+      "ai",
       "librarySync",
       "mcp",
       "updates",
       "about",
     ]);
+    const navText = container.querySelector("aside")?.textContent ?? "";
+    expect(navText).toContain("App");
+    expect(navText).toContain("Tools");
+    expect(navText).toContain("Integrations");
+    expect(navText).toContain("System");
+    expect(navText).toContain("Dictionary");
+    expect(navText).toContain("Look Up & Translate");
     expect(container.textContent).not.toContain("Reset All Local Data");
     expect(container.textContent).toContain("Quill 2.0.0");
 
@@ -248,8 +304,112 @@ describe("SettingsView and redesigned sections", () => {
     const winTabs = Array.from(container.querySelectorAll("button[data-settings-tab]")).map((b) =>
       b.getAttribute("data-settings-tab"),
     );
-    expect(winTabs).not.toContain("librarySync");
+    expect(winTabs).toEqual([
+      "general",
+      "appearance",
+      "reading",
+      "dictionary",
+      "tools",
+      "ai",
+      "mcp",
+      "updates",
+      "about",
+    ]);
     expect(container.querySelector("h2")?.textContent).toBe("General");
+  });
+
+  it("manages Dictionary settings: import, reorder, toggle, remove, behavior switches, and Windows folder picker", async () => {
+    await renderView("dictionary");
+
+    expect(container.textContent).toContain("Quill Built-in (EN / ZH)");
+    expect(container.textContent).toContain("Built-in");
+    expect(container.textContent).toContain("CC-BY-SA 4.0");
+    // Built-in dictionary has no remove button
+    expect(container.querySelector('button[aria-label^="Remove "]')).toBeNull();
+
+    // Import dictionary via file picker
+    mocks.openFileDialog.mockResolvedValueOnce("/tmp/oxford.mdx");
+    const importBtn = Array.from(container.querySelectorAll("button")).find((b) =>
+      b.textContent?.includes("Import dictionary…"),
+    )!;
+    await act(async () => {
+      importBtn.click();
+    });
+    await flush();
+
+    expect(mocks.openFileDialog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        allowDirectory: true,
+        filters: [{ name: "Dictionaries", extensions: ["mdx", "ifo", "zip"] }],
+      }),
+    );
+    expect(mocks.invoke).toHaveBeenCalledWith("import_dictionary", { path: "/tmp/oxford.mdx" });
+    expect(container.textContent).toContain("Oxford Learner");
+
+    // Reorder Oxford above Built-in via Move up button
+    const moveUpBtn = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Move Oxford Learner up"]',
+    )!;
+    await act(async () => {
+      moveUpBtn.click();
+    });
+    await flush();
+    expect(mocks.invoke).toHaveBeenCalledWith("update_dictionaries_config", {
+      items: [
+        { id: "dict-imported-1", enabled: true },
+        { id: "builtin", enabled: true },
+      ],
+    });
+    const orderedRows = Array.from(container.querySelectorAll("[data-dictionary-row]")).map((el) =>
+      el.getAttribute("data-dictionary-row"),
+    );
+    expect(orderedRows).toEqual(["dict-imported-1", "builtin"]);
+
+    // Toggle lookup behavior switches
+    const lemmatizeSwitch = container.querySelector<HTMLButtonElement>(
+      'button[role="switch"][aria-label="Match inflected English forms"]',
+    )!;
+    const showAllSwitch = container.querySelector<HTMLButtonElement>(
+      'button[role="switch"][aria-label="Show all matching dictionaries"]',
+    )!;
+    await act(async () => {
+      lemmatizeSwitch.click();
+      showAllSwitch.click();
+    });
+    await flush();
+    expect(mocks.settingsMap.dictionary_lemmatize).toBe("false");
+    expect(mocks.settingsMap.dictionary_show_all_matches).toBe("false");
+
+    // Remove imported dictionary
+    const removeBtn = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Remove Oxford Learner"]',
+    )!;
+    await act(async () => {
+      removeBtn.click();
+    });
+    await flush();
+    expect(mocks.invoke).toHaveBeenCalledWith("remove_dictionary", { id: "dict-imported-1" });
+    expect(container.querySelector('[data-dictionary-row="dict-imported-1"]')).toBeNull();
+
+    // Windows exposes dedicated Import folder… button calling directoryOnly: true
+    await act(async () => {
+      root.unmount();
+    });
+    setOs("win");
+    root = createRoot(container);
+    await renderView("dictionary");
+    mocks.openFileDialog.mockResolvedValueOnce("C:\\dicts\\stardict-folder");
+    const folderBtn = Array.from(container.querySelectorAll("button")).find((b) =>
+      b.textContent?.includes("Import folder…"),
+    )!;
+    await act(async () => {
+      folderBtn.click();
+    });
+    await flush();
+    expect(mocks.openFileDialog).toHaveBeenCalledWith({ directoryOnly: true });
+    expect(mocks.invoke).toHaveBeenCalledWith("import_dictionary", {
+      path: "C:\\dicts\\stardict-folder",
+    });
   });
 
   it("saves Display name inline edit, ignores Esc while closing Select or inline input, then closes on outer Esc", async () => {
@@ -652,6 +812,9 @@ describe("SettingsView and redesigned sections", () => {
     expect(container.textContent).toContain("Sign in with ChatGPT");
 
     await clickTab("tools");
+    expect(container.textContent).toContain("Look Up & Explain");
+    expect(container.textContent).toContain("Response language");
+    expect(container.textContent).not.toContain("Explain language");
     const briefToggle = container.querySelector<HTMLButtonElement>(
       'button[role="switch"][aria-label="Brief translation"]',
     );
@@ -667,6 +830,7 @@ describe("SettingsView and redesigned sections", () => {
     await clickTab("about");
     expect(container.textContent).toContain("macOS · arm64");
     expect(container.textContent).toContain("Trace your thoughts as you read");
+    expect(container.textContent).toContain("CC-BY-SA 4.0");
 
     const revealBtn = Array.from(container.querySelectorAll("button")).find((b) =>
       b.textContent?.includes("Reveal in Finder"),

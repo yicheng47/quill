@@ -50,6 +50,7 @@ if (platform === "darwin") {
     path.join(resourcesDir, "icon.icns"),
     path.join(resourcesDir, "quill-mcp"),
     path.join(resourcesDir, "libpdfium.dylib"),
+    path.join(resourcesDir, "dict.db"),
     path.join(resourcesDir, "quill-node", "index.node"),
   ];
   for (const file of requiredFiles) {
@@ -70,8 +71,15 @@ if (platform === "darwin") {
     }
   }
 
+  const dictDbPath = path.join(resourcesDir, "dict.db");
   const appUpdateYmlPath = path.join(resourcesDir, "app-update.yml");
   if (args["require-app-update"] === "true") {
+    const dictBytes = fs.statSync(dictDbPath).size;
+    if (dictBytes < 1_000_000) {
+      throw new Error(
+        `Production bundle contains a stub/fixture dict.db (${dictBytes} bytes); expected full production dict.db`,
+      );
+    }
     if (!fs.existsSync(appUpdateYmlPath)) {
       throw new Error(`Missing ${appUpdateYmlPath}`);
     }
@@ -94,11 +102,21 @@ if (platform === "darwin") {
     path.join(resourcesDir, "app.asar"),
     path.join(resourcesDir, "quill-mcp.exe"),
     path.join(resourcesDir, "pdfium.dll"),
+    path.join(resourcesDir, "dict.db"),
     path.join(resourcesDir, "quill-node", "index.node"),
   ];
   for (const file of requiredFiles) {
     if (!fs.existsSync(file)) {
       throw new Error(`Missing expected packaged file: ${file}`);
+    }
+  }
+
+  if (args["require-app-update"] === "true") {
+    const dictBytes = fs.statSync(path.join(resourcesDir, "dict.db")).size;
+    if (dictBytes < 1_000_000) {
+      throw new Error(
+        `Production bundle contains a stub/fixture dict.db (${dictBytes} bytes); expected full production dict.db`,
+      );
     }
   }
 

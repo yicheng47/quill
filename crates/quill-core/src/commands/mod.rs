@@ -4,6 +4,7 @@ pub mod bookmarks;
 pub mod books;
 pub mod chats;
 pub mod collections;
+pub mod dictionary;
 pub mod mcp;
 pub mod settings;
 pub mod sync;

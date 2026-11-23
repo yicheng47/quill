@@ -11,6 +11,11 @@ import type { Highlight, HighlightCounts } from "../hooks/useBookmarks";
 import type { DictionaryWord } from "../hooks/useDictionary";
 import type { ChatSummary } from "../hooks/useChats";
 import type { Collection } from "../hooks/useCollections";
+import {
+  resolveBriefGloss,
+  synthesizeFallbackDefinition,
+  type DictionaryMatch,
+} from "../types/dictionary";
 
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn<(cmd: string, args?: Record<string, unknown>) => Promise<unknown>>(),
@@ -635,7 +640,7 @@ describe("Main Views (Home, Highlights, Words, Chats)", () => {
       });
       await flushMicrotasks();
 
-      expect(container.textContent).toContain("No saved words yet");
+      expect(container.textContent).toContain("No saved vocab yet");
       const cta = Array.from(container.querySelectorAll("button")).find((b) =>
         b.textContent?.includes("Browse Library"),
       );
@@ -695,7 +700,10 @@ describe("Main Views (Home, Highlights, Words, Chats)", () => {
 
       mocks.invoke.mockImplementation(async (cmd: string) => {
         if (cmd === "list_all_vocab_words") return [...words];
+        if (cmd === "get_all_settings") return {};
+        if (cmd === "lookup_dictionary") return null;
         if (cmd === "remove_vocab_word") return null;
+        if (cmd === "remove_vocab_lemma") return 1;
         return null;
       });
 
@@ -710,7 +718,7 @@ describe("Main Views (Home, Highlights, Words, Chats)", () => {
       await flushMicrotasks();
 
       // Scrollbar must remain visible (#322)
-      const leftRail = container.querySelector<HTMLElement>('aside[aria-label="Saved words"]')!;
+      const leftRail = container.querySelector<HTMLElement>('aside[aria-label="Saved vocab"]')!;
       expect(leftRail.className).not.toContain("scrollbar-none");
 
       // Speech button hidden when no voices available
@@ -744,7 +752,7 @@ describe("Main Views (Home, Highlights, Words, Chats)", () => {
       sel?.removeAllRanges();
 
       // Switch to A-Z sort and select "ponderous" (which has context + cfi)
-      const sortBtn = container.querySelector<HTMLButtonElement>('button[aria-label="Sort words"]');
+      const sortBtn = container.querySelector<HTMLButtonElement>('button[aria-label="Sort vocab"]');
       await act(async () => {
         sortBtn?.click();
       });
@@ -755,8 +763,8 @@ describe("Main Views (Home, Highlights, Words, Chats)", () => {
         azOption?.click();
       });
       expect(container.textContent).toContain("2 saved from 1 book");
-      expect(leftRail.textContent).toContain("E — 1");
-      expect(leftRail.textContent).toContain("P — 1");
+      expect(leftRail.textContent).toContain("E1");
+      expect(leftRail.textContent).toContain("P1");
 
       const ponderousBtn = Array.from(leftRail.querySelectorAll("button")).find((b) =>
         b.textContent?.includes("ponderous"),
@@ -783,12 +791,12 @@ describe("Main Views (Home, Highlights, Words, Chats)", () => {
       });
       expect(container.querySelector("h2")?.textContent).toBe("ponderous");
 
-      // Prefix search with 0 hits shows no-match in left rail while keeping detail pane visible
-      const searchInput = container.querySelector<HTMLInputElement>('input[placeholder="Filter words…"]')!;
+      // Search with 0 hits shows no-match in left rail while keeping detail pane visible
+      const searchInput = container.querySelector<HTMLInputElement>('input[placeholder="Filter vocab…"]')!;
       await act(async () => {
         setInputValue(searchInput, "zzz");
       });
-      expect(leftRail.textContent).toContain("No saved words match “zzz”");
+      expect(leftRail.textContent).toContain("No saved vocab matches “zzz”");
       expect(container.textContent).toContain("Go to passage");
 
       const clearBtn = Array.from(leftRail.querySelectorAll("button")).find((b) =>
@@ -811,19 +819,19 @@ describe("Main Views (Home, Highlights, Words, Chats)", () => {
       });
 
       // Two-click delete: first click arms pill; waiting 3000ms disarms without deleting
-      const deleteBtn = container.querySelector<HTMLButtonElement>('button[aria-label="Delete saved word"]')!;
+      const deleteBtn = container.querySelector<HTMLButtonElement>('button[aria-label="Delete saved vocab"]')!;
       await act(async () => {
         deleteBtn.click();
       });
       expect(container.textContent).toContain("Click again to delete");
-      expect(mocks.invoke).not.toHaveBeenCalledWith("remove_vocab_word", expect.anything());
+      expect(mocks.invoke).not.toHaveBeenCalledWith("remove_vocab_lemma", expect.anything());
 
       await act(async () => {
         vi.advanceTimersByTime(3000);
       });
       expect(container.textContent).not.toContain("Click again to delete");
 
-      // Re-arm and click confirmation pill within 3 seconds deletes word
+      // Re-arm and click confirmation pill within 3 seconds deletes whole lemma
       await act(async () => {
         deleteBtn.click();
       });
@@ -834,7 +842,509 @@ describe("Main Views (Home, Highlights, Words, Chats)", () => {
         confirmPill?.click();
       });
       await flushMicrotasks();
-      expect(mocks.invoke).toHaveBeenCalledWith("remove_vocab_word", { id: "w1" });
+      expect(mocks.invoke).toHaveBeenCalledWith("remove_vocab_lemma", { word: "ponderous" });
+    });
+
+    it("groups multi-encounter lemmas with live dictionary switcher, inflected-form highlighting, per-encounter delete, and unified Pinyin A-Z/search", async () => {
+      let rows = [
+        {
+          id: "m-2",
+          book_id: "b2",
+          word: "mortify",
+          definition: "/ˈmɔːr.tɪ.faɪ/ verb. Cause deep embarrassment.",
+          context_sentence: "She felt mortified when the room went silent.",
+          context_explanation: "Emphasizes sudden acute embarrassment.",
+          cfi: "epubcfi(/6/8!/4/2)",
+          created_at: new Date("2026-09-05T10:00:00Z").getTime(),
+          updated_at: new Date("2026-09-05T10:00:00Z").getTime(),
+          book_title: "Middlemarch",
+        },
+        {
+          id: "m-1",
+          book_id: "b1",
+          word: "mortify",
+          definition: "/ˈmɔːr.tɪ.faɪ/ verb. Cause deep embarrassment.",
+          context_sentence: "It was a mortifying oversight in the lecture hall.",
+          context_explanation: null,
+          cfi: "epubcfi(/6/4!/2/2)",
+          created_at: new Date("2026-09-01T10:00:00Z").getTime(),
+          updated_at: new Date("2026-09-01T10:00:00Z").getTime(),
+          book_title: "Stoner",
+        },
+        {
+          id: "zh-1",
+          book_id: "b1",
+          word: "潜移默化",
+          definition: "/qián yí mò huà/ 成语. 指人的思想或性格在不知不觉中受到影响。",
+          context_sentence: "书中的思想对他产生了潜移默化的影响。",
+          context_explanation: "形容长期温和而深刻的影响。",
+          cfi: "epubcfi(/6/6!/2/2)",
+          created_at: new Date("2026-09-02T10:00:00Z").getTime(),
+          updated_at: new Date("2026-09-02T10:00:00Z").getTime(),
+          book_title: "Stoner",
+        },
+      ];
+
+      mocks.invoke.mockImplementation(async (cmd: string, args?: Record<string, unknown>) => {
+        if (cmd === "list_all_vocab_words") return [...rows];
+        if (cmd === "get_all_settings") {
+          return { dictionary_show_all_matches: "true", show_translation: "false" };
+        }
+        if (cmd === "lookup_dictionary") {
+          if (args?.term === "mortify") {
+            return {
+              lemma: "mortify",
+              lang: "en",
+              inflected_from: null,
+              alternate_lemmas: [],
+              forms: ["mortify", "mortified", "mortifying"],
+              matches: [
+                {
+                  dictId: "dict-ox",
+                  dictName: "Oxford",
+                  format: "mdx",
+                  pronunciation: "/ˈmɔːtɪfaɪ/",
+                  senses: null,
+                  html: "<p>Oxford <b>mortify</b> sense.</p>",
+                  plainText: null,
+                  gloss_en: null,
+                  gloss_zh: null,
+                },
+                {
+                  dictId: "builtin",
+                  dictName: "Quill Built-in",
+                  format: "builtin",
+                  pronunciation: "/ˈmɔːr.tɪ.faɪ/",
+                  senses: [
+                    {
+                      pos: "verb",
+                      defs: ["Cause someone to feel deeply embarrassed."],
+                    },
+                  ],
+                  html: null,
+                  plainText: null,
+                  gloss_en: null,
+                  gloss_zh: "使难堪",
+                },
+              ],
+            };
+          }
+          return {
+            lemma: "潜移默化",
+            lang: "zh",
+            inflected_from: null,
+            alternate_lemmas: [],
+            forms: ["潜移默化"],
+            matches: [
+              {
+                dictId: "builtin",
+                dictName: "Quill Built-in",
+                format: "builtin",
+                pronunciation: "qián yí mò huà",
+                senses: [
+                  {
+                    pos: "成语",
+                    defs: ["指人的思想或性格在不知不觉中受到感染、影响而发生变化。"],
+                  },
+                ],
+                html: null,
+                plainText: null,
+                gloss_en: "subtle influence",
+                gloss_zh: null,
+              },
+            ],
+          };
+        }
+        if (cmd === "remove_vocab_word") {
+          rows = rows.filter((r) => r.id !== args?.id);
+          return null;
+        }
+        return null;
+      });
+
+      await act(async () => {
+        root.render(
+          <WordsView
+            booksById={
+              new Map([
+                ["b1", makeBook("b1", { title: "Stoner", author: "John Williams" })],
+                ["b2", makeBook("b2", { title: "Middlemarch", author: "George Eliot" })],
+              ])
+            }
+            onNavigateToLibrary={vi.fn()}
+          />,
+        );
+      });
+      await flushMicrotasks();
+
+      // Summary reflects 2 lemmas & 3 passages across 2 books, with ×2 badge on mortify
+      expect(container.textContent).toContain("2 saved · 3 passages from 2 books");
+      expect(container.querySelector('[data-testid="vocab-count-badge-mortify"]')?.textContent).toBe("×2");
+
+      // Source switcher displays Oxford and Quill Built-in
+      const tabs = Array.from(container.querySelectorAll<HTMLButtonElement>('[role="tab"]'));
+      expect(tabs.map((t) => t.textContent)).toEqual(["Oxford", "Quill Built-in"]);
+      expect(container.textContent).toContain("Oxford mortify sense.");
+      await act(async () => {
+        tabs[1]?.click();
+      });
+      expect(container.textContent).toContain("Cause someone to feel deeply embarrassed.");
+
+      // Both inflected forms are highlighted in IN YOUR READING · 2
+      expect(container.textContent).toContain("In Your Reading · 2");
+      const marks = Array.from(container.querySelectorAll("mark")).map((m) => m.textContent);
+      expect(marks).toEqual(["mortified", "mortifying"]);
+
+      // Per-encounter delete removes only one passage
+      const removeEncBtn = container.querySelector<HTMLButtonElement>(
+        '[data-testid="vocab-encounter-m-2"] button[aria-label="Remove passage"]',
+      )!;
+      await act(async () => {
+        removeEncBtn.click();
+      });
+      await flushMicrotasks();
+      expect(mocks.invoke).toHaveBeenCalledWith("remove_vocab_word", { id: "m-2" });
+      expect(container.querySelector('[data-testid="vocab-count-badge-mortify"]')).toBeNull();
+
+      // Switch to A-Z: 潜移默化 groups under Q alongside M
+      const sortBtn = container.querySelector<HTMLButtonElement>('button[aria-label="Sort vocab"]')!;
+      await act(async () => {
+        sortBtn.click();
+      });
+      const azOption = Array.from(container.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')).find(
+        (b) => b.textContent?.includes("A–Z"),
+      )!;
+      await act(async () => {
+        azOption.click();
+      });
+      const leftRail = container.querySelector<HTMLElement>('aside[aria-label="Saved vocab"]')!;
+      expect(leftRail.textContent).toContain("M1");
+      expect(leftRail.textContent).toContain("Q1");
+
+      // Search by pinyin initials qymh matches 潜移默化 and renders slash-free pinyin
+      const searchInput = container.querySelector<HTMLInputElement>('input[placeholder="Filter vocab…"]')!;
+      await act(async () => {
+        setInputValue(searchInput, "qymh");
+      });
+      expect(leftRail.textContent).toContain("潜移默化");
+      expect(leftRail.textContent).not.toContain("mortify");
+
+      const zhBtn = Array.from(leftRail.querySelectorAll("button")).find((b) =>
+        b.textContent?.includes("潜移默化"),
+      )!;
+      await act(async () => {
+        zhBtn.click();
+      });
+      await flushMicrotasks();
+      expect(container.querySelector("h2")?.textContent).toBe("潜移默化");
+      expect(container.textContent).toContain("qián yí mò huà");
+      expect(container.textContent).not.toContain("/qián yí mò huà/");
+      expect(container.textContent).toContain("成语");
+    });
+
+    it("preserves unseen book encounters on filtered delete, renders quote-less cards, aligns Oldest month headings, and guards stale lookup/gloss preferences", async () => {
+      let rows = [
+        {
+          id: "e-book-b",
+          book_id: "b2",
+          word: "abbreviate",
+          definition: "缩短\n/əˈbriː.vi.eɪt/ verb. Shorten a word or text.",
+          context_sentence: "The editor abbreviates long titles.",
+          context_explanation: null,
+          cfi: "epubcfi(/6/8!/2/2)",
+          created_at: new Date("2026-09-10T10:00:00Z").getTime(),
+          updated_at: new Date("2026-09-10T10:00:00Z").getTime(),
+          book_title: "Book B",
+        },
+        {
+          id: "e-book-a",
+          book_id: "b1",
+          word: "abbreviate",
+          definition: "缩短\n/əˈbriː.vi.eɪt/ verb. Shorten a word or text.",
+          context_sentence: null,
+          context_explanation: null,
+          cfi: "epubcfi(/6/2!/4/2)",
+          created_at: new Date("2026-01-15T10:00:00Z").getTime(),
+          updated_at: new Date("2026-01-15T10:00:00Z").getTime(),
+          book_title: "Book A",
+        },
+        {
+          id: "e-other",
+          book_id: "b1",
+          word: "ephemeral",
+          definition: "短暂的\n/ɪˈfɛm.ər.əl/ adj. Short-lived.",
+          context_sentence: "An ephemeral bloom.",
+          context_explanation: null,
+          cfi: "epubcfi(/6/4!/2/2)",
+          created_at: new Date("2026-05-05T10:00:00Z").getTime(),
+          updated_at: new Date("2026-05-05T10:00:00Z").getTime(),
+          book_title: "Book A",
+        },
+      ];
+
+      let resolveDeferredLookup: ((v: unknown) => void) | null = null;
+      mocks.invoke.mockImplementation(async (cmd: string, args?: Record<string, unknown>) => {
+        if (cmd === "list_all_vocab_words") return [...rows];
+        if (cmd === "get_all_settings") {
+          return {
+            show_translation: "false",
+            lookup_translation_language: "zh",
+            dictionary_show_all_matches: "true",
+          };
+        }
+        if (cmd === "lookup_dictionary") {
+          if (args?.term === "abbreviate") {
+            return {
+              lemma: "abbreviate",
+              lang: "en",
+              inflected_from: null,
+              alternate_lemmas: [],
+              forms: ["abbreviate", "abbreviated", "abbreviates"],
+              matches: [
+                {
+                  dictId: "builtin",
+                  dictName: "Quill Built-in",
+                  format: "builtin",
+                  pronunciation: "/əˈbriː.vi.eɪt/",
+                  senses: [{ pos: "verb", defs: ["Shorten a word or phrase."] }],
+                  html: null,
+                  plainText: null,
+                  gloss_en: null,
+                  gloss_zh: "缩写",
+                },
+              ],
+            };
+          }
+          if (args?.term === "ephemeral") {
+            return new Promise((resolve) => {
+              resolveDeferredLookup = resolve;
+            });
+          }
+          return null;
+        }
+        if (cmd === "remove_vocab_word") {
+          rows = rows.filter((r) => r.id !== args?.id);
+          return null;
+        }
+        return null;
+      });
+
+      await act(async () => {
+        root.render(
+          <WordsView
+            booksById={
+              new Map([
+                ["b1", makeBook("b1", { title: "Book A", author: "Author A" })],
+                ["b2", makeBook("b2", { title: "Book B", author: "Author B" })],
+              ])
+            }
+            onNavigateToLibrary={vi.fn()}
+          />,
+        );
+      });
+      await flushMicrotasks();
+
+      // Suffix-only surface form "abbreviates" is highlighted, and brief gloss is hidden when show_translation=false
+      expect(container.querySelector("h2")?.textContent).toBe("abbreviate");
+      expect(Array.from(container.querySelectorAll("mark")).map((m) => m.textContent)).toEqual([
+        "abbreviates",
+      ]);
+      expect(container.textContent).not.toContain("缩写");
+      expect(container.textContent).not.toContain("缩短");
+
+      // Quote-less and note-less encounter (e-book-a) still renders its card with Go to passage
+      const quotelessCard = container.querySelector('[data-testid="vocab-encounter-e-book-a"]')!;
+      expect(quotelessCard).not.toBeNull();
+      expect(quotelessCard.textContent).toContain("Book A");
+      expect(quotelessCard.textContent).toContain("Go to passage");
+
+      // Oldest sort uses oldestCreatedAt (January 2026) for month heading instead of latestCreatedAt (September 2026)
+      const sortBtn = container.querySelector<HTMLButtonElement>('button[aria-label="Sort vocab"]')!;
+      await act(async () => {
+        sortBtn.click();
+      });
+      const oldestOpt = Array.from(
+        container.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]'),
+      ).find((b) => b.textContent?.includes("Oldest"))!;
+      await act(async () => {
+        oldestOpt.click();
+      });
+      const leftRail = container.querySelector<HTMLElement>('aside[aria-label="Saved vocab"]')!;
+      expect(leftRail.textContent).toContain("JANUARY");
+      expect(leftRail.textContent).not.toContain("SEPTEMBER");
+
+      // Switching to ephemeral while lookup_dictionary is pending must NOT show abbreviate's definition/IPA
+      const ephBtn = Array.from(leftRail.querySelectorAll("button")).find((b) =>
+        b.textContent?.includes("ephemeral"),
+      )!;
+      await act(async () => {
+        ephBtn.click();
+      });
+      expect(container.querySelector("h2")?.textContent).toBe("ephemeral");
+      expect(container.textContent).not.toContain("Shorten a word or phrase.");
+      expect(container.textContent).not.toContain("/əˈbriː.vi.eɪt/");
+      // Fallback gloss also respects show_translation=false
+      expect(container.textContent).not.toContain("短暂的");
+
+      await act(async () => {
+        resolveDeferredLookup?.(null);
+      });
+      await flushMicrotasks();
+
+      // Switch back to abbreviate, filter to Book A, verify per-encounter delete remains and global warning shows all-books scope
+      const abbrBtn = Array.from(leftRail.querySelectorAll("button")).find((b) =>
+        b.textContent?.includes("abbreviate"),
+      )!;
+      await act(async () => {
+        abbrBtn.click();
+      });
+      await flushMicrotasks();
+
+      const bookFilterBtn = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+        (b) => b.textContent?.includes("All books"),
+      )!;
+      await act(async () => {
+        bookFilterBtn.click();
+      });
+      const bookAOpt = Array.from(
+        container.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]'),
+      ).find((b) => b.textContent?.includes("Book A"))!;
+      await act(async () => {
+        bookAOpt.click();
+      });
+      await flushMicrotasks();
+
+      // Arming whole-lemma Delete explicitly warns it removes all 2 across all books
+      const globalDeleteBtn = container.querySelector<HTMLButtonElement>(
+        'button[aria-label="Delete saved vocab"]',
+      )!;
+      await act(async () => {
+        globalDeleteBtn.click();
+      });
+      expect(container.textContent).toContain("Delete all 2 across all books");
+
+      // Book A's single filtered card STILL keeps per-encounter Remove passage and deleting it preserves Book B
+      const removeBookABtn = container.querySelector<HTMLButtonElement>(
+        '[data-testid="vocab-encounter-e-book-a"] button[aria-label="Remove passage"]',
+      )!;
+      expect(removeBookABtn).not.toBeNull();
+      await act(async () => {
+        removeBookABtn.click();
+      });
+      await flushMicrotasks();
+      expect(mocks.invoke).toHaveBeenCalledWith("remove_vocab_word", { id: "e-book-a" });
+      expect(rows.some((r) => r.id === "e-book-b")).toBe(true);
+      expect(rows.some((r) => r.id === "e-book-a")).toBe(false);
+    });
+
+    it("finds saved CEDICT-only entries by English definition even when duplicate display gloss is suppressed", async () => {
+      const cedictMatch: DictionaryMatch = {
+        dictId: "builtin",
+        dictName: "Quill Built-in",
+        format: "builtin",
+        pronunciation: "bù fēn shèng fù",
+        senses: [
+          {
+            pos: "成语",
+            defs: [
+              "unable to determine victory or defeat (idiom); evenly matched",
+              "to come out even",
+            ],
+          },
+        ],
+        html: null,
+        plainText: null,
+        gloss_en: "unable to determine victory or defeat (idiom); evenly matched",
+        gloss_zh: null,
+      };
+      const briefGloss = resolveBriefGloss(cedictMatch, true, "en", "zh");
+      expect(briefGloss).toBeNull();
+      const savedDefinition = synthesizeFallbackDefinition(cedictMatch, briefGloss);
+
+      const rows: DictionaryWord[] = [
+        {
+          id: "w-tie",
+          book_id: "b-1",
+          word: "不分胜负",
+          definition: savedDefinition,
+          context_sentence: "两人一时不分胜负。",
+          context_explanation: null,
+          cfi: "epubcfi(/6/4!/4/2)",
+          mastery: "new",
+          review_count: 0,
+          next_review_at: null,
+          created_at: Date.UTC(2026, 2, 10),
+          updated_at: Date.UTC(2026, 2, 10),
+          book_title: "Book A",
+        },
+        {
+          id: "w-other",
+          book_id: "b-1",
+          word: "ephemeral",
+          definition: "/ɪˈfɛmərəl/ adj. Lasting for a very short time.",
+          context_sentence: "An ephemeral bloom.",
+          context_explanation: null,
+          cfi: "epubcfi(/6/4!/4/4)",
+          mastery: "new",
+          review_count: 0,
+          next_review_at: null,
+          created_at: Date.UTC(2026, 2, 11),
+          updated_at: Date.UTC(2026, 2, 11),
+          book_title: "Book A",
+        },
+      ];
+
+      mocks.invoke.mockImplementation(async (cmd: string) => {
+        if (cmd === "list_all_vocab_words") return rows;
+        if (cmd === "get_all_settings") {
+          return {
+            show_translation: "true",
+            lookup_translation_language: "en",
+            dictionary_show_all_matches: "true",
+          };
+        }
+        if (cmd === "lookup_dictionary") {
+          return {
+            lemma: "不分胜负",
+            lang: "zh",
+            inflected_from: null,
+            alternate_lemmas: [],
+            forms: ["不分胜负", "不分勝負"],
+            matches: [cedictMatch],
+          };
+        }
+        return [];
+      });
+
+      const booksById = new Map<string, Book>([
+        ["b-1", makeBook("b-1", { title: "Book A" })],
+      ]);
+
+      await act(async () => {
+        root.render(
+          <WordsView
+            booksById={booksById}
+            onNavigateToLibrary={vi.fn()}
+          />,
+        );
+      });
+      await flushMicrotasks();
+
+      const searchInput = container.querySelector<HTMLInputElement>(
+        'input[aria-label="Filter vocab…"]',
+      )!;
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
+          searchInput,
+          "evenly matched",
+        );
+        searchInput.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      await flushMicrotasks();
+
+      const leftRail = container.querySelector<HTMLElement>('aside[aria-label="Saved vocab"]')!;
+      expect(leftRail.textContent).toContain("不分胜负");
+      expect(leftRail.textContent).not.toContain("ephemeral");
     });
   });
 

@@ -39,8 +39,33 @@ jobs:
           echo "release_title=Quill $tag" >> "$GITHUB_OUTPUT"
           echo "is_prerelease=$is_prerelease" >> "$GITHUB_OUTPUT"
 
-  build-macos:
+  build-dict:
     needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore cached production dictionary
+        id: dict-cache
+        uses: actions/cache@v4
+        with:
+          path: crates/quill-core/resources/dict.db
+          key: dict-db-v2-${{ hashFiles('scripts/build-dict.py', 'scripts/dict-sources.json') }}
+
+      - name: Fetch and verify pinned production offline dictionary
+        run: python3 scripts/build-dict.py --fetch-artifact --output crates/quill-core/resources/dict.db
+
+      - name: Upload production offline dictionary
+        uses: actions/upload-artifact@v4
+        with:
+          name: dict-db
+          path: crates/quill-core/resources/dict.db
+          retention-days: 1
+          if-no-files-found: error
+
+  build-macos:
+    needs: [prepare, build-dict]
     runs-on: macos-latest
     timeout-minutes: 90
     strategy:
@@ -110,6 +135,12 @@ jobs:
           printf '%s' "$PROVISIONING_PROFILE" | base64 --decode > build/embedded.provisionprofile
           test -s build/embedded.provisionprofile
           echo "CSC_CERT_PATH=$cert_path" >> "$GITHUB_ENV"
+
+      - name: Download production offline dictionary
+        uses: actions/download-artifact@v4
+        with:
+          name: dict-db
+          path: crates/quill-core/resources
 
       - name: Package, sign, and notarize macOS app (${{ matrix.arch }})
         env:
@@ -183,7 +214,7 @@ jobs:
           if-no-files-found: error
 
   build-windows:
-    needs: prepare
+    needs: [prepare, build-dict]
     runs-on: windows-latest
     timeout-minutes: 90
     defaults:
@@ -220,6 +251,12 @@ jobs:
 
       - name: Build Electron and renderer bundles
         run: npm run build
+
+      - name: Download production offline dictionary
+        uses: actions/download-artifact@v4
+        with:
+          name: dict-db
+          path: crates/quill-core/resources
 
       - name: Package unsigned Windows NSIS installer
         env:

@@ -41,6 +41,7 @@ pub struct BootConfig {
     pub is_dev: bool,
     pub mcp_binary_path: PathBuf,
     pub pdfium_path: Option<PathBuf>,
+    pub dict_path: Option<PathBuf>,
 }
 
 pub struct Core {
@@ -54,6 +55,7 @@ pub struct Core {
     pub sync_state: SyncState,
     pub codex: Arc<crate::ai::codex::Codex>,
     pub api_streams: crate::ai::dispatch::ApiStreams,
+    pub dictionary: crate::dictionary::DictionaryManager,
     pub host: Arc<dyn ShellHost>,
 }
 
@@ -142,6 +144,9 @@ pub fn boot(config: BootConfig, host: Arc<dyn ShellHost>) -> AppResult<Arc<Core>
     let codex = Arc::new(crate::ai::codex::Codex::new(local_dir.join("codex-workspace")));
     codex.set_host(Arc::clone(&host));
 
+    let dictionary =
+        crate::dictionary::DictionaryManager::new(config.dict_path, local_dir.join("dictionaries"));
+
     let core = Arc::new(Core {
         local_dir: local_dir.clone(),
         log_dir: config.log_dir,
@@ -153,6 +158,7 @@ pub fn boot(config: BootConfig, host: Arc<dyn ShellHost>) -> AppResult<Arc<Core>
         sync_state: SyncState::new(None, None),
         codex,
         api_streams: Default::default(),
+        dictionary,
         host,
     });
 

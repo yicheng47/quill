@@ -26,6 +26,9 @@ notify = "6"
 gethostname = "0.5"
 pdfium-render = "0.9"
 image = { version = "0.25", default-features = false, features = ["jpeg"] }
+flate2 = "1.1"
+zip = { version = "3", default-features = false, features = ["deflate"] }
+encoding_rs = "0.8"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

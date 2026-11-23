@@ -1,15 +1,13 @@
-import { useEffect, useRef } from "react";
-import {
-  Copy,
-  WandSparkles,
-  Quote,
-  Sparkles,
-  Highlighter,
-  Languages,
-} from "lucide-react";
+import { useEffect, useMemo, useRef } from "react";
+import { Copy, Quote, Highlighter, Languages } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { HIGHLIGHT_SWATCHES } from "./HighlightToolbar";
+import SmartLensIcon from "./ui/SmartLensIcon";
 import { shortcutModSymbol } from "../lib/platformEnv";
+import {
+  classifySelection,
+  type SelectionClassification,
+} from "../utils/selectionRouting";
 
 interface ReaderContextMenuProps {
   x: number;
@@ -17,9 +15,10 @@ interface ReaderContextMenuProps {
   text: string;
   onClose: () => void;
   onCopy: () => void;
-  onExplain: () => void;
+  onInspect?: (classification: SelectionClassification) => void;
+  onExplain?: () => void;
   onQuote: () => void;
-  onLookup: () => void;
+  onLookup?: () => void;
   onTranslate: () => void;
   onHighlight?: (color: string) => void;
 }
@@ -33,6 +32,7 @@ export default function ReaderContextMenu({
   text,
   onClose,
   onCopy,
+  onInspect,
   onExplain,
   onQuote,
   onLookup,
@@ -40,8 +40,8 @@ export default function ReaderContextMenu({
   onHighlight,
 }: ReaderContextMenuProps) {
   const { t } = useTranslation();
-  const wordCount = text.trim().split(/\s+/).length;
-  const showLookup = wordCount <= 5;
+  const classification = useMemo(() => classifySelection(text), [text]);
+  const isWord = classification.mode === "word";
   const menuRef = useRef<HTMLDivElement>(null);
   const mod = shortcutModSymbol();
 
@@ -77,6 +77,18 @@ export default function ReaderContextMenu({
     menuRef.current.style.top = `${top}px`;
   }, [x, y]);
 
+  const handlePrimaryAction = () => {
+    if (onInspect) {
+      onInspect(classification);
+      return;
+    }
+    if (isWord) {
+      onLookup?.();
+    } else {
+      onExplain?.();
+    }
+  };
+
   return (
     <div
       ref={menuRef}
@@ -84,18 +96,20 @@ export default function ReaderContextMenu({
       className="fixed z-50 w-[252px] reader-popover rounded-surface p-1.5 flex flex-col gap-0.5"
       style={{ left: x, top: y }}
     >
-      {showLookup && (
-        <button type="button" role="menuitem" onClick={onLookup} className={MENU_ROW_CLASS}>
-          <Sparkles size={15} className="text-text-secondary group-hover:text-accent-on-tint shrink-0" />
-          <span className="flex-1 text-[13.5px] font-medium truncate">
-            {t("contextMenu.lookUp")}
-          </span>
-        </button>
-      )}
-
-      <button type="button" role="menuitem" onClick={onExplain} className={MENU_ROW_CLASS}>
-        <WandSparkles size={15} className="text-text-secondary group-hover:text-accent-on-tint shrink-0" />
-        <span className="flex-1 text-[13.5px] truncate">{t("contextMenu.explain")}</span>
+      <button
+        type="button"
+        role="menuitem"
+        data-selection-mode={classification.mode}
+        onClick={handlePrimaryAction}
+        className={MENU_ROW_CLASS}
+      >
+        <SmartLensIcon
+          size={15}
+          className="text-text-secondary group-hover:text-accent-on-tint shrink-0"
+        />
+        <span className="flex-1 text-[13.5px] font-medium truncate">
+          {isWord ? t("contextMenu.lookUp") : t("contextMenu.explain")}
+        </span>
       </button>
 
       <button type="button" role="menuitem" onClick={onQuote} className={MENU_ROW_CLASS}>

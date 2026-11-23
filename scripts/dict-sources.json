@@ -1,0 +1,39 @@
+{
+  "version": "2026-11-23-v1",
+  "artifact": {
+    "filename": "dict-v1.db",
+    "url": "https://github.com/yicheng47/quill/releases/download/dict-data-v1/dict-v1.db",
+    "sha256": "1d3cadc4fb42c6374ba099c5258761b3309acd45323149aab46afc3da4ba42e5",
+    "license": "CC-BY-SA 4.0"
+  },
+  "sources": {
+    "en_kaikki": {
+      "url": "https://github.com/yicheng47/quill/releases/download/dict-data-v1/kaikki.org-dictionary-English.jsonl.gz",
+      "upstream_url": "https://kaikki.org/dictionary/English/kaikki.org-dictionary-English.jsonl.gz",
+      "filename": "kaikki.org-dictionary-English.jsonl.gz",
+      "sha256": "4d03b6cba283744756c57ff661c2c6cbfe34fcf8ff513a966576cf7d97e91a99",
+      "license": "CC-BY-SA 4.0"
+    },
+    "zh_kaikki": {
+      "url": "https://github.com/yicheng47/quill/releases/download/dict-data-v1/kaikki.org-dictionary-zh.jsonl.gz",
+      "upstream_url": "https://kaikki.org/zhwiktionary/%E6%BC%A2%E8%AA%9E/kaikki.org-dictionary-%E6%BC%A2%E8%AA%9E.jsonl.gz",
+      "filename": "kaikki.org-dictionary-zh.jsonl.gz",
+      "sha256": "2837938dd5e9c56324731f64c68de1cd7ee257e0887087c7c158fe712183227e",
+      "license": "CC-BY-SA 4.0"
+    },
+    "ecdict_zip": {
+      "url": "https://github.com/yicheng47/quill/releases/download/dict-data-v1/ecdict-sqlite-28.zip",
+      "upstream_url": "https://github.com/skywind3000/ECDICT/releases/download/1.0.28/ecdict-sqlite-28.zip",
+      "filename": "ecdict-sqlite-28.zip",
+      "sha256": "ea01f76a3b3351021ce47077e89234465cc9441c8793054495320d06c0c3f3f6",
+      "license": "MIT"
+    },
+    "cedict": {
+      "url": "https://github.com/yicheng47/quill/releases/download/dict-data-v1/cedict_1_0_ts_utf-8_mdbg.txt.gz",
+      "upstream_url": "https://www.mdbg.net/chinese/export/cedict/cedict_1_0_ts_utf-8_mdbg.txt.gz",
+      "filename": "cedict_1_0_ts_utf-8_mdbg.txt.gz",
+      "sha256": "32018f8a8a3a5ac62b9fdf55e8243741d83b92797060240a4707cddf39063810",
+      "license": "CC-BY-SA 4.0"
+    }
+  }
+}

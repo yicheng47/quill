@@ -7,12 +7,11 @@ import { SettingsGroup, SettingsOverline, SettingsRow } from "../ui/SettingsRow"
 import type { SettingsProps } from "./types";
 import { LANGUAGE_OPTIONS } from "./languageOptions";
 
-export default function ToolsSettings({ settings, loading, save }: SettingsProps) {
+export default function ToolsSettings({ settings, loading, save, saveBulk }: SettingsProps) {
   const { t } = useTranslation();
   const [lookupLanguage, setLookupLanguage] = useState("selection");
   const [showTranslation, setShowTranslation] = useState(false);
   const [lookupTranslationLanguage, setLookupTranslationLanguage] = useState("");
-  const [explainLanguage, setExplainLanguage] = useState("lookup");
   const [translationLanguage, setTranslationLanguage] = useState("");
 
   useEffect(() => {
@@ -22,7 +21,6 @@ export default function ToolsSettings({ settings, loading, save }: SettingsProps
       settings.lookup_translation_language || settings.language || "en",
     );
     setShowTranslation(settings.show_translation === "true");
-    setExplainLanguage(settings.explain_language || "lookup");
     setTranslationLanguage(settings.translation_language || settings.language || "en");
   }, [settings, loading]);
 
@@ -32,20 +30,16 @@ export default function ToolsSettings({ settings, loading, save }: SettingsProps
     { value: "selection", label: t("settings.tools.sameAsSelection") },
     ...LANGUAGE_OPTIONS,
   ];
-  const explainLanguageOptions = [
-    { value: "lookup", label: t("settings.tools.sameAsLookup") },
-    ...LANGUAGE_OPTIONS,
-  ];
 
   return (
     <div className="flex flex-col gap-7">
-      {/* LOOK UP */}
+      {/* LOOK UP & EXPLAIN */}
       <section className="flex flex-col gap-2.5">
-        <SettingsOverline>{t("settings.tools.lookupGroup")}</SettingsOverline>
+        <SettingsOverline>{t("settings.tools.lookupExplainGroup")}</SettingsOverline>
         <SettingsGroup>
           <SettingsRow
-            title={t("settings.tools.lookupLanguage")}
-            hint={t("settings.tools.lookupLanguageHint")}
+            title={t("settings.tools.responseLanguage")}
+            hint={t("settings.tools.responseLanguageHint")}
           >
             <Select
               className="w-[175px] shrink-0"
@@ -53,7 +47,7 @@ export default function ToolsSettings({ settings, loading, save }: SettingsProps
               value={lookupLanguage}
               onChange={(lang) => {
                 setLookupLanguage(lang);
-                void save("lookup_language", lang);
+                void saveBulk({ lookup_language: lang, explain_language: "lookup" });
               }}
               options={lookupLanguageOptions}
             />
@@ -83,27 +77,6 @@ export default function ToolsSettings({ settings, loading, save }: SettingsProps
                 void save("lookup_translation_language", lang);
               }}
               options={LANGUAGE_OPTIONS}
-            />
-          </SettingsRow>
-        </SettingsGroup>
-      </section>
-
-      {/* EXPLAIN */}
-      <section className="flex flex-col gap-2.5">
-        <SettingsOverline>{t("settings.tools.explainGroup")}</SettingsOverline>
-        <SettingsGroup>
-          <SettingsRow
-            title={t("settings.tools.explainLanguage")}
-            hint={t("settings.tools.explainLanguageHint")}
-          >
-            <Select
-              className="w-[175px] shrink-0"
-              value={explainLanguage}
-              onChange={(lang) => {
-                setExplainLanguage(lang);
-                void save("explain_language", lang);
-              }}
-              options={explainLanguageOptions}
             />
           </SettingsRow>
         </SettingsGroup>

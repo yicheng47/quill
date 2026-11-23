@@ -158,6 +158,8 @@ const bridge = {
 
   openFileDialog(options: {
     multiple?: boolean;
+    allowDirectory?: boolean;
+    directoryOnly?: boolean;
     filters?: Array<{ name: string; extensions: string[] }>;
   }): Promise<string | null> {
     return ipcRenderer.invoke("quill:open-file-dialog", options);
