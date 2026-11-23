@@ -635,7 +635,7 @@ describe("Main Views (Home, Highlights, Words, Chats)", () => {
       });
       await flushMicrotasks();
 
-      expect(container.textContent).toContain("No saved words yet");
+      expect(container.textContent).toContain("No saved vocab yet");
       const cta = Array.from(container.querySelectorAll("button")).find((b) =>
         b.textContent?.includes("Browse Library"),
       );
@@ -695,7 +695,10 @@ describe("Main Views (Home, Highlights, Words, Chats)", () => {
 
       mocks.invoke.mockImplementation(async (cmd: string) => {
         if (cmd === "list_all_vocab_words") return [...words];
+        if (cmd === "get_all_settings") return {};
+        if (cmd === "lookup_dictionary") return null;
         if (cmd === "remove_vocab_word") return null;
+        if (cmd === "remove_vocab_lemma") return 1;
         return null;
       });
 
@@ -710,7 +713,7 @@ describe("Main Views (Home, Highlights, Words, Chats)", () => {
       await flushMicrotasks();
 
       // Scrollbar must remain visible (#322)
-      const leftRail = container.querySelector<HTMLElement>('aside[aria-label="Saved words"]')!;
+      const leftRail = container.querySelector<HTMLElement>('aside[aria-label="Saved vocab"]')!;
       expect(leftRail.className).not.toContain("scrollbar-none");
 
       // Speech button hidden when no voices available
@@ -744,7 +747,7 @@ describe("Main Views (Home, Highlights, Words, Chats)", () => {
       sel?.removeAllRanges();
 
       // Switch to A-Z sort and select "ponderous" (which has context + cfi)
-      const sortBtn = container.querySelector<HTMLButtonElement>('button[aria-label="Sort words"]');
+      const sortBtn = container.querySelector<HTMLButtonElement>('button[aria-label="Sort vocab"]');
       await act(async () => {
         sortBtn?.click();
       });
@@ -755,8 +758,8 @@ describe("Main Views (Home, Highlights, Words, Chats)", () => {
         azOption?.click();
       });
       expect(container.textContent).toContain("2 saved from 1 book");
-      expect(leftRail.textContent).toContain("E — 1");
-      expect(leftRail.textContent).toContain("P — 1");
+      expect(leftRail.textContent).toContain("E1");
+      expect(leftRail.textContent).toContain("P1");
 
       const ponderousBtn = Array.from(leftRail.querySelectorAll("button")).find((b) =>
         b.textContent?.includes("ponderous"),
@@ -783,12 +786,12 @@ describe("Main Views (Home, Highlights, Words, Chats)", () => {
       });
       expect(container.querySelector("h2")?.textContent).toBe("ponderous");
 
-      // Prefix search with 0 hits shows no-match in left rail while keeping detail pane visible
-      const searchInput = container.querySelector<HTMLInputElement>('input[placeholder="Filter words…"]')!;
+      // Search with 0 hits shows no-match in left rail while keeping detail pane visible
+      const searchInput = container.querySelector<HTMLInputElement>('input[placeholder="Filter vocab…"]')!;
       await act(async () => {
         setInputValue(searchInput, "zzz");
       });
-      expect(leftRail.textContent).toContain("No saved words match “zzz”");
+      expect(leftRail.textContent).toContain("No saved vocab matches “zzz”");
       expect(container.textContent).toContain("Go to passage");
 
       const clearBtn = Array.from(leftRail.querySelectorAll("button")).find((b) =>
@@ -811,19 +814,19 @@ describe("Main Views (Home, Highlights, Words, Chats)", () => {
       });
 
       // Two-click delete: first click arms pill; waiting 3000ms disarms without deleting
-      const deleteBtn = container.querySelector<HTMLButtonElement>('button[aria-label="Delete saved word"]')!;
+      const deleteBtn = container.querySelector<HTMLButtonElement>('button[aria-label="Delete saved vocab"]')!;
       await act(async () => {
         deleteBtn.click();
       });
       expect(container.textContent).toContain("Click again to delete");
-      expect(mocks.invoke).not.toHaveBeenCalledWith("remove_vocab_word", expect.anything());
+      expect(mocks.invoke).not.toHaveBeenCalledWith("remove_vocab_lemma", expect.anything());
 
       await act(async () => {
         vi.advanceTimersByTime(3000);
       });
       expect(container.textContent).not.toContain("Click again to delete");
 
-      // Re-arm and click confirmation pill within 3 seconds deletes word
+      // Re-arm and click confirmation pill within 3 seconds deletes whole lemma
       await act(async () => {
         deleteBtn.click();
       });
@@ -834,7 +837,204 @@ describe("Main Views (Home, Highlights, Words, Chats)", () => {
         confirmPill?.click();
       });
       await flushMicrotasks();
-      expect(mocks.invoke).toHaveBeenCalledWith("remove_vocab_word", { id: "w1" });
+      expect(mocks.invoke).toHaveBeenCalledWith("remove_vocab_lemma", { word: "ponderous" });
+    });
+
+    it("groups multi-encounter lemmas with live dictionary switcher, inflected-form highlighting, per-encounter delete, and unified Pinyin A-Z/search", async () => {
+      let rows = [
+        {
+          id: "m-2",
+          book_id: "b2",
+          word: "mortify",
+          definition: "/ˈmɔːr.tɪ.faɪ/ verb. Cause deep embarrassment.",
+          context_sentence: "She felt mortified when the room went silent.",
+          context_explanation: "Emphasizes sudden acute embarrassment.",
+          cfi: "epubcfi(/6/8!/4/2)",
+          created_at: new Date("2026-09-05T10:00:00Z").getTime(),
+          updated_at: new Date("2026-09-05T10:00:00Z").getTime(),
+          book_title: "Middlemarch",
+        },
+        {
+          id: "m-1",
+          book_id: "b1",
+          word: "mortify",
+          definition: "/ˈmɔːr.tɪ.faɪ/ verb. Cause deep embarrassment.",
+          context_sentence: "It was a mortifying oversight in the lecture hall.",
+          context_explanation: null,
+          cfi: "epubcfi(/6/4!/2/2)",
+          created_at: new Date("2026-09-01T10:00:00Z").getTime(),
+          updated_at: new Date("2026-09-01T10:00:00Z").getTime(),
+          book_title: "Stoner",
+        },
+        {
+          id: "zh-1",
+          book_id: "b1",
+          word: "潜移默化",
+          definition: "/qián yí mò huà/ 成语. 指人的思想或性格在不知不觉中受到影响。",
+          context_sentence: "书中的思想对他产生了潜移默化的影响。",
+          context_explanation: "形容长期温和而深刻的影响。",
+          cfi: "epubcfi(/6/6!/2/2)",
+          created_at: new Date("2026-09-02T10:00:00Z").getTime(),
+          updated_at: new Date("2026-09-02T10:00:00Z").getTime(),
+          book_title: "Stoner",
+        },
+      ];
+
+      mocks.invoke.mockImplementation(async (cmd: string, args?: Record<string, unknown>) => {
+        if (cmd === "list_all_vocab_words") return [...rows];
+        if (cmd === "get_all_settings") {
+          return { dictionary_show_all_matches: "true", show_translation: "false" };
+        }
+        if (cmd === "lookup_dictionary") {
+          if (args?.term === "mortify") {
+            return {
+              lemma: "mortify",
+              lang: "en",
+              inflected_from: null,
+              alternate_lemmas: [],
+              forms: ["mortify", "mortified", "mortifying"],
+              matches: [
+                {
+                  dictId: "dict-ox",
+                  dictName: "Oxford",
+                  format: "mdx",
+                  pronunciation: "/ˈmɔːtɪfaɪ/",
+                  senses: null,
+                  html: "<p>Oxford <b>mortify</b> sense.</p>",
+                  plainText: null,
+                  gloss_en: null,
+                  gloss_zh: null,
+                },
+                {
+                  dictId: "builtin",
+                  dictName: "Quill Built-in",
+                  format: "builtin",
+                  pronunciation: "/ˈmɔːr.tɪ.faɪ/",
+                  senses: [
+                    {
+                      pos: "verb",
+                      defs: ["Cause someone to feel deeply embarrassed."],
+                    },
+                  ],
+                  html: null,
+                  plainText: null,
+                  gloss_en: null,
+                  gloss_zh: "使难堪",
+                },
+              ],
+            };
+          }
+          return {
+            lemma: "潜移默化",
+            lang: "zh",
+            inflected_from: null,
+            alternate_lemmas: [],
+            forms: ["潜移默化"],
+            matches: [
+              {
+                dictId: "builtin",
+                dictName: "Quill Built-in",
+                format: "builtin",
+                pronunciation: "qián yí mò huà",
+                senses: [
+                  {
+                    pos: "成语",
+                    defs: ["指人的思想或性格在不知不觉中受到感染、影响而发生变化。"],
+                  },
+                ],
+                html: null,
+                plainText: null,
+                gloss_en: "subtle influence",
+                gloss_zh: null,
+              },
+            ],
+          };
+        }
+        if (cmd === "remove_vocab_word") {
+          rows = rows.filter((r) => r.id !== args?.id);
+          return null;
+        }
+        return null;
+      });
+
+      await act(async () => {
+        root.render(
+          <WordsView
+            booksById={
+              new Map([
+                ["b1", makeBook("b1", { title: "Stoner", author: "John Williams" })],
+                ["b2", makeBook("b2", { title: "Middlemarch", author: "George Eliot" })],
+              ])
+            }
+            onNavigateToLibrary={vi.fn()}
+          />,
+        );
+      });
+      await flushMicrotasks();
+
+      // Summary reflects 2 lemmas & 3 passages across 2 books, with ×2 badge on mortify
+      expect(container.textContent).toContain("2 saved · 3 passages from 2 books");
+      expect(container.querySelector('[data-testid="vocab-count-badge-mortify"]')?.textContent).toBe("×2");
+
+      // Source switcher displays Oxford and Quill Built-in
+      const tabs = Array.from(container.querySelectorAll<HTMLButtonElement>('[role="tab"]'));
+      expect(tabs.map((t) => t.textContent)).toEqual(["Oxford", "Quill Built-in"]);
+      expect(container.textContent).toContain("Oxford mortify sense.");
+      await act(async () => {
+        tabs[1]?.click();
+      });
+      expect(container.textContent).toContain("Cause someone to feel deeply embarrassed.");
+
+      // Both inflected forms are highlighted in IN YOUR READING · 2
+      expect(container.textContent).toContain("In Your Reading · 2");
+      const marks = Array.from(container.querySelectorAll("mark")).map((m) => m.textContent);
+      expect(marks).toEqual(["mortified", "mortifying"]);
+
+      // Per-encounter delete removes only one passage
+      const removeEncBtn = container.querySelector<HTMLButtonElement>(
+        '[data-testid="vocab-encounter-m-2"] button[aria-label="Remove passage"]',
+      )!;
+      await act(async () => {
+        removeEncBtn.click();
+      });
+      await flushMicrotasks();
+      expect(mocks.invoke).toHaveBeenCalledWith("remove_vocab_word", { id: "m-2" });
+      expect(container.querySelector('[data-testid="vocab-count-badge-mortify"]')).toBeNull();
+
+      // Switch to A-Z: 潜移默化 groups under Q alongside M
+      const sortBtn = container.querySelector<HTMLButtonElement>('button[aria-label="Sort vocab"]')!;
+      await act(async () => {
+        sortBtn.click();
+      });
+      const azOption = Array.from(container.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')).find(
+        (b) => b.textContent?.includes("A–Z"),
+      )!;
+      await act(async () => {
+        azOption.click();
+      });
+      const leftRail = container.querySelector<HTMLElement>('aside[aria-label="Saved vocab"]')!;
+      expect(leftRail.textContent).toContain("M1");
+      expect(leftRail.textContent).toContain("Q1");
+
+      // Search by pinyin initials qymh matches 潜移默化 and renders slash-free pinyin
+      const searchInput = container.querySelector<HTMLInputElement>('input[placeholder="Filter vocab…"]')!;
+      await act(async () => {
+        setInputValue(searchInput, "qymh");
+      });
+      expect(leftRail.textContent).toContain("潜移默化");
+      expect(leftRail.textContent).not.toContain("mortify");
+
+      const zhBtn = Array.from(leftRail.querySelectorAll("button")).find((b) =>
+        b.textContent?.includes("潜移默化"),
+      )!;
+      await act(async () => {
+        zhBtn.click();
+      });
+      await flushMicrotasks();
+      expect(container.querySelector("h2")?.textContent).toBe("潜移默化");
+      expect(container.textContent).toContain("qián yí mò huà");
+      expect(container.textContent).not.toContain("/qián yí mò huà/");
+      expect(container.textContent).toContain("成语");
     });
   });
 

@@ -85,7 +85,7 @@ describe("CommandSearchModal", () => {
       "All",
       "Books",
       "Highlights",
-      "Words",
+      "Vocab",
       "Chats",
     ]);
     expect(container.textContent).toContain("Nothing saved to search yet");
@@ -94,7 +94,7 @@ describe("CommandSearchModal", () => {
     for (const expectedEmpty of [
       "No books in your library yet",
       "No highlights yet",
-      "No saved words yet",
+      "No saved vocab yet",
       "No conversations yet",
       "Nothing saved to search yet",
     ]) {
@@ -211,7 +211,7 @@ describe("CommandSearchModal", () => {
 
     expect(container.textContent).toContain("Books");
     expect(container.textContent).toContain("Highlights");
-    expect(container.textContent).toContain("Words & Chats");
+    expect(container.textContent).toContain("Vocab & Chats");
     expect(container.textContent).toContain("Invisible Cities");
     expect(container.textContent).toContain("cityscape");
     expect(container.textContent).toContain("City memory symbolism");

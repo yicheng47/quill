@@ -10,7 +10,8 @@ import type { MainNavigateOptions, MainRoute } from "./TopBar";
 import BookCover from "./ui/BookCover";
 import { openReaderWindow } from "../utils/openReaderWindow";
 import { getHighlightColorMeta } from "../utils/highlightColors";
-import { formatShortDate, parseDefinition } from "../utils/vocabParse";
+import { formatShortDate, parseSavedVocabDefinition } from "../utils/vocabParse";
+import { matchesVocabSearch } from "../utils/pinyin";
 import { parseChatMessageContextCfi } from "../hooks/useAiChat";
 import { shouldSuppressSelectionClick } from "../utils/selection";
 import { shortcutModSymbol } from "../lib/platformEnv";
@@ -265,16 +266,25 @@ export default function CommandSearchModal({
         const nextHighlights = Array.isArray(hlRes) ? hlRes : [];
         const rawWords = Array.isArray(vocabRes) ? vocabRes : [];
         const lower = trimmed.toLowerCase();
-        const nextWords = lower
-          ? rawWords.filter(
-              (w) =>
-                w.word.toLowerCase().includes(lower) ||
+        const filteredWords = lower
+          ? rawWords.filter((w) => {
+              const parsed = parseSavedVocabDefinition(w.definition);
+              return (
+                matchesVocabSearch(w.word, trimmed, parsed.gloss) ||
                 w.definition.toLowerCase().includes(lower) ||
                 (w.context_sentence?.toLowerCase().includes(lower) ?? false) ||
                 (w.context_explanation?.toLowerCase().includes(lower) ?? false) ||
-                (w.book_title?.toLowerCase().includes(lower) ?? false),
-            )
+                (w.book_title?.toLowerCase().includes(lower) ?? false)
+              );
+            })
           : rawWords;
+        const seenLemmas = new Set<string>();
+        const nextWords = filteredWords.filter((w) => {
+          const key = w.word.trim().toLowerCase();
+          if (seenLemmas.has(key)) return false;
+          seenLemmas.add(key);
+          return true;
+        });
         const nextChats = Array.isArray(chatRes?.chats) ? chatRes.chats : [];
         const nextChatsTotal =
           typeof chatRes?.total === "number" ? chatRes.total : nextChats.length;
@@ -750,10 +760,15 @@ export default function CommandSearchModal({
 
                   if (hit.kind === "word") {
                     const { word } = hit;
-                    const parsed = parseDefinition(word.definition);
-                    const defSnippet = parsed.partOfSpeech
-                      ? `${parsed.partOfSpeech} · ${parsed.definition}`
-                      : parsed.definition;
+                    const parsed = parseSavedVocabDefinition(word.definition);
+                    const defSnippet = [
+                      parsed.gloss,
+                      parsed.partOfSpeech
+                        ? `${parsed.partOfSpeech} · ${parsed.definition}`
+                        : parsed.definition,
+                    ]
+                      .filter(Boolean)
+                      .join(" — ");
                     return (
                       <button
                         key={hit.key}

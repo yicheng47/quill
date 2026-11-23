@@ -1,17 +1,18 @@
+import type { ComponentType } from "react";
 import {
   SlidersHorizontal,
   Palette,
   BookOpen,
+  BookA,
   Bot,
-  WandSparkles,
   Cloud,
   Terminal,
   RefreshCw,
   Info,
-  type LucideIcon,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import QuillLogo from "../QuillLogo";
+import SmartLensIcon from "../ui/SmartLensIcon";
 import type { SettingsSection } from "./types";
 
 interface SettingsNavProps {
@@ -24,7 +25,7 @@ interface SettingsNavProps {
 interface NavItemDef {
   id: SettingsSection;
   labelKey: string;
-  icon: LucideIcon;
+  icon: ComponentType<{ size?: number; className?: string }>;
   macOnly?: boolean;
 }
 
@@ -45,17 +46,18 @@ const NAV_GROUPS: NavGroupDef[] = [
     ],
   },
   {
-    id: "ai",
-    titleKey: "settings.groups.ai",
+    id: "tools",
+    titleKey: "settings.groups.tools",
     items: [
-      { id: "ai", labelKey: "settings.ai.shortTitle", icon: Bot },
-      { id: "tools", labelKey: "settings.tools.title", icon: WandSparkles },
+      { id: "dictionary", labelKey: "settings.dictionary.title", icon: BookA },
+      { id: "tools", labelKey: "settings.tools.title", icon: SmartLensIcon },
     ],
   },
   {
     id: "integrations",
     titleKey: "settings.groups.integrations",
     items: [
+      { id: "ai", labelKey: "settings.ai.shortTitle", icon: Bot },
       { id: "librarySync", labelKey: "settings.librarySync.title", icon: Cloud, macOnly: true },
       { id: "mcp", labelKey: "settings.mcp.title", icon: Terminal },
     ],

@@ -198,16 +198,16 @@ vi.mock("react-i18next", () => ({
       if (key === "contextMenu.translate") return "Translate";
       if (key === "contextMenu.highlight") return "Highlight";
       if (key === "contextMenu.copy") return "Copy";
-      if (key === "vocab.title") return "Words in Book";
-      if (key === "vocab.searchPanel") return "Search saved words…";
+      if (key === "vocab.title") return "Vocab in Book";
+      if (key === "vocab.searchPanel") return "Search saved vocab…";
       if (key === "vocab.wordCountInBook") {
         const count = Number(opts?.count ?? 0);
-        return count === 1 ? "1 word in this book" : `${count} words in this book`;
+        return count === 1 ? "1 entry in this book" : `${count} entries in this book`;
       }
       if (key === "vocab.matchCountInBook") {
-        return `${String(opts?.count ?? 0)} of ${String(opts?.total ?? 0)} words matching`;
+        return `${String(opts?.count ?? 0)} of ${String(opts?.total ?? 0)} matching`;
       }
-      if (key === "vocab.openInWords") return "Open in Words";
+      if (key === "vocab.openInWords") return "Open in Vocab";
       if (key === "ai.newChat") return "New conversation";
       if (key === "ai.startChat") return "Think alongside the book";
       if (key === "ai.startChatSub") return `Explore ${String(opts?.title ?? "Book")}.`;
@@ -1026,7 +1026,7 @@ describe("M7 reader AI and word surfaces", () => {
     );
   });
 
-  it("DictionaryPanel (Words in Book) filters words, omits null page labels, navigates on click, deletes, and triggers Open in Words", async () => {
+  it("DictionaryPanel (Vocab in Book) filters English and Chinese pinyin, omits null page labels, navigates on click, deletes, and triggers Open in Vocab", async () => {
     vocabRows = [
       {
         id: "v-1",
@@ -1040,9 +1040,9 @@ describe("M7 reader AI and word surfaces", () => {
       {
         id: "v-2",
         book_id: "b-1",
-        word: "zenith",
-        definition: "/ˈziːnɪθ/ noun. The highest point.",
-        context_sentence: null,
+        word: "潜移默化",
+        definition: "/qián yí mò huà/ 成语. 指人的思想或性格在不知不觉中受到影响。",
+        context_sentence: "环境的影响往往是潜移默化的。",
         cfi: "epubcfi(/6/4!/2/2)",
         created_at: 1_700_000_100,
       },
@@ -1063,13 +1063,13 @@ describe("M7 reader AI and word surfaces", () => {
     });
     await flushMicrotasks();
 
-    expect(container.textContent).toContain("Words in Book");
-    expect(container.textContent).toContain("2 words in this book");
+    expect(container.textContent).toContain("Vocab in Book");
+    expect(container.textContent).toContain("2 entries in this book");
     expect(container.textContent).toContain("短暂的");
     expect(container.textContent).not.toContain("p. ");
 
     const searchInput = container.querySelector<HTMLInputElement>(
-      'input[placeholder="Search saved words…"]',
+      'input[placeholder="Search saved vocab…"]',
     )!;
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
@@ -1078,7 +1078,18 @@ describe("M7 reader AI and word surfaces", () => {
       );
       searchInput.dispatchEvent(new Event("input", { bubbles: true }));
     });
-    expect(container.textContent).toContain("1 of 2 words matching");
+    expect(container.textContent).toContain("1 of 2 matching");
+
+    // Pinyin initials search finds Chinese vocab entry
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
+        searchInput,
+        "qymh",
+      );
+      searchInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(container.textContent).toContain("1 of 2 matching");
+    expect(container.textContent).toContain("潜移默化");
 
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
@@ -1087,7 +1098,7 @@ describe("M7 reader AI and word surfaces", () => {
       );
       searchInput.dispatchEvent(new Event("input", { bubbles: true }));
     });
-    expect(container.textContent).toContain("2 words in this book");
+    expect(container.textContent).toContain("2 entries in this book");
 
     const wordBtn = container.querySelector('[role="button"]');
     expect(wordBtn).toBeTruthy();
@@ -1097,7 +1108,7 @@ describe("M7 reader AI and word surfaces", () => {
     expect(onNavigate).toHaveBeenCalledWith("epubcfi(/6/2!/4/2)");
 
     await act(async () => {
-      findButton(container, "Open in Words").click();
+      findButton(container, "Open in Vocab").click();
     });
     expect(onOpenInWords).toHaveBeenCalledWith("v-1");
 
@@ -1107,7 +1118,7 @@ describe("M7 reader AI and word surfaces", () => {
     });
     await flushMicrotasks();
     expect(invokeMock).toHaveBeenCalledWith("remove_vocab_word", { id: "v-1" });
-    expect(container.textContent).toContain("1 word in this book");
+    expect(container.textContent).toContain("1 entry in this book");
   });
 
   it("DictionaryPanel shows each word's own resolved page, hides labels while resolving or unresolved, and keeps them stable across re-renders", async () => {

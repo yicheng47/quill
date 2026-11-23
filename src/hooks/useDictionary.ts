@@ -39,7 +39,7 @@ export function useDictionary(bookId: string) {
       definition: string,
       contextSentence?: string,
       cfi?: string,
-      contextExplanation?: string
+      contextExplanation?: string,
     ) => {
       const dictionaryWord = await invoke<DictionaryWord>("add_vocab_word", {
         bookId,
@@ -49,10 +49,10 @@ export function useDictionary(bookId: string) {
         contextExplanation: contextExplanation || null,
         cfi: cfi || null,
       });
-      setWords((prev) => [dictionaryWord, ...prev]);
+      setWords((prev) => [dictionaryWord, ...prev.filter((w) => w.id !== dictionaryWord.id)]);
       return dictionaryWord;
     },
-    [bookId]
+    [bookId],
   );
 
   const remove = useCallback(async (id: string) => {
@@ -64,7 +64,7 @@ export function useDictionary(bookId: string) {
     async (word: string): Promise<string | null> => {
       return invoke<string | null>("check_vocab_exists", { bookId, word });
     },
-    [bookId]
+    [bookId],
   );
 
   return { words, refresh, add, remove, checkExists };
@@ -94,5 +94,11 @@ export function useAllDictionary() {
     setWords((prev) => prev.filter((w) => w.id !== id));
   }, []);
 
-  return { words, loading, refresh, remove };
+  const removeLemma = useCallback(async (word: string) => {
+    const target = word.trim().toLowerCase();
+    await invoke<number>("remove_vocab_lemma", { word });
+    setWords((prev) => prev.filter((w) => w.word.trim().toLowerCase() !== target));
+  }, []);
+
+  return { words, loading, refresh, remove, removeLemma };
 }

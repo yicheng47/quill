@@ -14,6 +14,7 @@ import SettingsNav from "./SettingsNav";
 import GeneralSettings from "./GeneralSettings";
 import AppearanceSettings from "./AppearanceSettings";
 import ReadingSettings from "./ReadingSettings";
+import DictionarySettings from "./DictionarySettings";
 import AiSettings from "./AiSettings";
 import ToolsSettings from "./ToolsSettings";
 import LibrarySyncSettings from "./LibrarySyncSettings";
@@ -45,13 +46,17 @@ const SECTION_META: Record<SettingsSection, { titleKey: string; subtitleKey: str
     titleKey: "settings.reading.title",
     subtitleKey: "settings.reading.subtitle",
   },
-  ai: {
-    titleKey: "settings.ai.shortTitle",
-    subtitleKey: "settings.ai.subtitle",
+  dictionary: {
+    titleKey: "settings.dictionary.title",
+    subtitleKey: "settings.dictionary.subtitle",
   },
   tools: {
     titleKey: "settings.tools.title",
     subtitleKey: "settings.tools.subtitle",
+  },
+  ai: {
+    titleKey: "settings.ai.shortTitle",
+    subtitleKey: "settings.ai.subtitle",
   },
   librarySync: {
     titleKey: "settings.librarySync.title",
@@ -202,6 +207,8 @@ export default function SettingsView({
             {activeSection === "general" && <GeneralSettings {...sectionProps} />}
             {activeSection === "appearance" && <AppearanceSettings {...sectionProps} />}
             {activeSection === "reading" && <ReadingSettings {...sectionProps} />}
+            {activeSection === "dictionary" && <DictionarySettings {...sectionProps} />}
+            {activeSection === "tools" && <ToolsSettings {...sectionProps} />}
             {activeSection === "ai" && (
               <AiSettings
                 {...sectionProps}
@@ -209,7 +216,6 @@ export default function SettingsView({
                 initialConnection={initialAiConnection}
               />
             )}
-            {activeSection === "tools" && <ToolsSettings {...sectionProps} />}
             {activeSection === "librarySync" && (
               <LibrarySyncSettings
                 {...sectionProps}

@@ -7,6 +7,7 @@ import type { ResolveSavedItemPages } from "../utils/savedItemPages";
 import { shouldSuppressSelectionClick } from "../utils/selection";
 import { timeAgo } from "../utils/timeAgo";
 import { parseSavedVocabDefinition } from "../utils/vocabParse";
+import { matchesVocabSearch } from "../utils/pinyin";
 
 interface DictionaryPanelProps {
   bookId: string;
@@ -42,9 +43,10 @@ export default function DictionaryPanel({
   }, [vocabVersion, refresh]);
 
   const filteredWords = words.filter((w) => {
-    const q = dictSearch.trim().toLowerCase();
+    const q = dictSearch.trim();
     if (!q) return true;
-    return w.word.toLowerCase().startsWith(q);
+    const parsed = parseSavedVocabDefinition(w.definition);
+    return matchesVocabSearch(w.word, q, parsed.gloss);
   });
 
   return (
