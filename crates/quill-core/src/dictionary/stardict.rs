@@ -16,6 +16,14 @@ use super::sanitize::{pango_to_html, sanitize_dictionary_html, xdxf_to_html};
 use super::{DictionaryMatch, ImportedDictMeta};
 use crate::error::{AppError, AppResult};
 
+const MAX_ZIP_FILES: usize = 64;
+const MAX_ZIP_SINGLE_FILE_BYTES: u64 = 256 * 1024 * 1024; // 256 MB
+const MAX_ZIP_TOTAL_BYTES: u64 = 512 * 1024 * 1024; // 512 MB
+const MAX_IDX_BYTES: u64 = 128 * 1024 * 1024; // 128 MB
+const MAX_PLAIN_DICT_INFLATE_BYTES: u64 = 512 * 1024 * 1024; // 512 MB
+const MAX_SINGLE_RECORD_BYTES: usize = 8 * 1024 * 1024; // 8 MB
+const MAX_DICTZIP_CHUNKS_PER_READ: usize = 256;
+
 struct TempExtractGuard(PathBuf);
 
 impl TempExtractGuard {
@@ -61,7 +69,7 @@ pub(crate) fn import_stardict(source_path: &Path, dest_dir: &Path) -> AppResult<
         .map_err(|e| AppError::Other(format!("Failed to read StarDict .ifo: {e}")))?;
     let ifo = parse_ifo(&ifo_text)?;
 
-    let idx_bytes = read_plain_or_gz(&files.idx_path)?;
+    let idx_bytes = read_plain_or_gz_bounded(&files.idx_path, MAX_IDX_BYTES)?;
     let entries = parse_idx(&idx_bytes, ifo.idx_offset_bits)?;
     if entries.is_empty() {
         return Err(AppError::Other(
@@ -71,7 +79,7 @@ pub(crate) fn import_stardict(source_path: &Path, dest_dir: &Path) -> AppResult<
 
     let mut synonyms: Vec<(String, u64, u32)> = Vec::new();
     if let Some(ref syn_path) = files.syn_path {
-        if let Ok(syn_bytes) = read_plain_or_gz(syn_path) {
+        if let Ok(syn_bytes) = read_plain_or_gz_bounded(syn_path, MAX_IDX_BYTES) {
             for (syn_word, orig_idx) in parse_syn(&syn_bytes) {
                 if let Some((_, off, sz)) = entries.get(orig_idx as usize) {
                     synonyms.push((syn_word, *off, *sz));
@@ -90,19 +98,53 @@ pub(crate) fn import_stardict(source_path: &Path, dest_dir: &Path) -> AppResult<
         .and_then(|s| s.to_str())
         .is_some_and(|n| n.to_ascii_lowercase().ends_with(".dz"));
 
-    let (data_file_name, is_dictzip) = if is_dz_ext && parse_dictzip_header(&files.dict_path).is_ok() {
-        fs::copy(&files.dict_path, dest_dir.join("data.dict.dz"))?;
-        ("data.dict.dz", true)
-    } else if is_dz_ext {
-        // Plain gzip without dictzip RA chunks — inflate once at import time.
-        let mut decoder = GzDecoder::new(File::open(&files.dict_path)?);
-        let mut out = File::create(dest_dir.join("data.dict"))?;
-        std::io::copy(&mut decoder, &mut out)?;
-        ("data.dict", false)
+    let (data_file_name, is_dictzip, logical_data_len) = if is_dz_ext {
+        match parse_dictzip_header(&files.dict_path) {
+            Ok(dz_hdr) => {
+                let logical_len = (dz_hdr.chunk_len as u64)
+                    .checked_mul(dz_hdr.chunk_offsets.len() as u64)
+                    .ok_or_else(|| AppError::Other("StarDict dictzip size overflow".into()))?;
+                fs::copy(&files.dict_path, dest_dir.join("data.dict.dz"))?;
+                ("data.dict.dz", true, logical_len)
+            }
+            Err(_) => {
+                // Plain gzip without dictzip RA chunks — inflate bounded once at import time.
+                let mut decoder =
+                    GzDecoder::new(File::open(&files.dict_path)?).take(MAX_PLAIN_DICT_INFLATE_BYTES + 1);
+                let mut out = File::create(dest_dir.join("data.dict"))?;
+                let written = std::io::copy(&mut decoder, &mut out)?;
+                if written > MAX_PLAIN_DICT_INFLATE_BYTES {
+                    return Err(AppError::Other(
+                        "StarDict gzipped dictionary exceeds maximum supported size".into(),
+                    ));
+                }
+                ("data.dict", false, written)
+            }
+        }
     } else {
+        let len = fs::metadata(&files.dict_path)?.len();
         fs::copy(&files.dict_path, dest_dir.join("data.dict"))?;
-        ("data.dict", false)
+        ("data.dict", false, len)
     };
+
+    // Validate all index record ranges against the actual data payload length so
+    // corrupt offsets/sizes cannot survive import.
+    for (_word, offset, size) in &entries {
+        let sz = *size as u64;
+        if (*size as usize) > MAX_SINGLE_RECORD_BYTES {
+            return Err(AppError::Other(
+                "Corrupt StarDict index: single record size exceeds safety limit".into(),
+            ));
+        }
+        let end = offset
+            .checked_add(sz)
+            .ok_or_else(|| AppError::Other("Corrupt StarDict index: offset overflow".into()))?;
+        if end > logical_data_len {
+            return Err(AppError::Other(format!(
+                "Corrupt StarDict index: record range [{offset}..{end}] exceeds dictionary data size ({logical_data_len})"
+            )));
+        }
+    }
 
     let entry_count = entries.len() as u64;
     let index_path = dest_dir.join("index.db");
@@ -200,11 +242,11 @@ pub fn query_stardict(
     let sts = get_meta("sametypesequence");
     let data_file = get_meta("data_file");
     let is_dictzip = get_meta("is_dictzip") == "1";
-    let data_path = dict_dir.join(if data_file.is_empty() {
-        "data.dict"
-    } else {
-        &data_file
-    });
+    let safe_name = match data_file.as_str() {
+        "data.dict.dz" => "data.dict.dz",
+        _ => "data.dict",
+    };
+    let data_path = dict_dir.join(safe_name);
 
     let mut html_parts: Vec<String> = Vec::new();
     let mut text_parts: Vec<String> = Vec::new();
@@ -293,7 +335,7 @@ fn decode_stardict_record(
             } else if pos + 4 <= payload.len() {
                 let len = u32::from_be_bytes(payload[pos..pos + 4].try_into().unwrap()) as usize;
                 pos += 4;
-                let end = (pos + len).min(payload.len());
+                let end = pos.saturating_add(len).min(payload.len());
                 let s = &payload[pos..end];
                 pos = end;
                 s
@@ -314,12 +356,12 @@ fn decode_stardict_record(
                     .map(|n| pos + n)
                     .unwrap_or(payload.len());
                 let slice = &payload[pos..end];
-                pos = (end + 1).min(payload.len());
+                pos = end.saturating_add(1).min(payload.len());
                 push_typed_field(ty, slice, html_parts, text_parts, pronunciation);
             } else if pos + 4 <= payload.len() {
                 let len = u32::from_be_bytes(payload[pos..pos + 4].try_into().unwrap()) as usize;
                 pos += 4;
-                let end = (pos + len).min(payload.len());
+                let end = pos.saturating_add(len).min(payload.len());
                 let slice = &payload[pos..end];
                 pos = end;
                 push_typed_field(ty, slice, html_parts, text_parts, pronunciation);
@@ -372,6 +414,26 @@ fn push_typed_field(
     }
 }
 
+fn is_relevant_stardict_zip_path(path: &Path) -> bool {
+    for comp in path.components() {
+        let name = comp.as_os_str().to_string_lossy();
+        if name == "__MACOSX" || name.starts_with('.') {
+            return false;
+        }
+    }
+    let Some(file_name) = path.file_name().and_then(|s| s.to_str()) else {
+        return false;
+    };
+    let lower = file_name.to_ascii_lowercase();
+    lower.ends_with(".ifo")
+        || lower.ends_with(".idx")
+        || lower.ends_with(".idx.gz")
+        || lower.ends_with(".dict")
+        || lower.ends_with(".dict.dz")
+        || lower.ends_with(".syn")
+        || lower.ends_with(".syn.gz")
+}
+
 fn locate_stardict_files(source_path: &Path) -> AppResult<StarDictFiles> {
     if source_path.is_dir() {
         let ifo = find_ifo_in_dir(source_path)?;
@@ -390,23 +452,44 @@ fn locate_stardict_files(source_path: &Path) -> AppResult<StarDictFiles> {
         let mut archive = zip::ZipArchive::new(file)
             .map_err(|e| AppError::Other(format!("Invalid StarDict .zip archive: {e}")))?;
 
+        let mut extracted_files = 0usize;
+        let mut total_bytes = 0u64;
+
         for i in 0..archive.len() {
-            let mut entry = archive
+            let entry = archive
                 .by_index(i)
                 .map_err(|e| AppError::Other(format!("Failed reading zip entry: {e}")))?;
+            if entry.is_dir() {
+                continue;
+            }
             let Some(enclosed) = entry.enclosed_name().map(|p| p.to_path_buf()) else {
                 continue;
             };
-            let out_path = tmp.path().join(enclosed);
-            if entry.is_dir() {
-                fs::create_dir_all(&out_path)?;
-            } else {
-                if let Some(parent) = out_path.parent() {
-                    fs::create_dir_all(parent)?;
-                }
-                let mut out_file = File::create(&out_path)?;
-                std::io::copy(&mut entry, &mut out_file)?;
+            if !is_relevant_stardict_zip_path(&enclosed) {
+                continue;
             }
+            extracted_files += 1;
+            if extracted_files > MAX_ZIP_FILES {
+                return Err(AppError::Other(
+                    "StarDict .zip archive contains too many dictionary files".into(),
+                ));
+            }
+            let remaining_total = MAX_ZIP_TOTAL_BYTES.saturating_sub(total_bytes);
+            let file_limit = remaining_total.min(MAX_ZIP_SINGLE_FILE_BYTES);
+
+            let out_path = tmp.path().join(enclosed);
+            if let Some(parent) = out_path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            let mut out_file = File::create(&out_path)?;
+            let mut limited = entry.take(file_limit + 1);
+            let written = std::io::copy(&mut limited, &mut out_file)?;
+            if written > file_limit {
+                return Err(AppError::Other(
+                    "StarDict .zip archive exceeds maximum supported extracted size".into(),
+                ));
+            }
+            total_bytes = total_bytes.saturating_add(written);
         }
         let ifo = find_ifo_in_dir(tmp.path())?;
         return resolve_siblings_from_ifo(ifo, Some(tmp));
@@ -543,17 +626,28 @@ fn parse_ifo(text: &str) -> AppResult<IfoMeta> {
     })
 }
 
-fn read_plain_or_gz(path: &Path) -> AppResult<Vec<u8>> {
+fn read_plain_or_gz_bounded(path: &Path, max_bytes: u64) -> AppResult<Vec<u8>> {
     let mut raw = Vec::new();
     let is_gz = path
         .extension()
         .and_then(|s| s.to_str())
         .is_some_and(|e| e.eq_ignore_ascii_case("gz"));
     if is_gz {
-        let mut gz = GzDecoder::new(File::open(path)?);
+        let mut gz = GzDecoder::new(File::open(path)?).take(max_bytes + 1);
         gz.read_to_end(&mut raw)?;
     } else {
-        File::open(path)?.read_to_end(&mut raw)?;
+        let file = File::open(path)?;
+        if file.metadata()?.len() > max_bytes {
+            return Err(AppError::Other(
+                "StarDict index file exceeds maximum supported size".into(),
+            ));
+        }
+        file.take(max_bytes + 1).read_to_end(&mut raw)?;
+    }
+    if (raw.len() as u64) > max_bytes {
+        return Err(AppError::Other(
+            "StarDict index file exceeds maximum supported size".into(),
+        ));
     }
     Ok(raw)
 }
@@ -605,7 +699,24 @@ fn parse_syn(bytes: &[u8]) -> Vec<(String, u32)> {
 }
 
 fn read_plain_slice(path: &Path, offset: u64, size: usize) -> AppResult<Vec<u8>> {
+    if size == 0 {
+        return Ok(Vec::new());
+    }
+    if size > MAX_SINGLE_RECORD_BYTES {
+        return Err(AppError::Other(
+            "StarDict record size exceeds safety limit".into(),
+        ));
+    }
     let mut file = File::open(path)?;
+    let file_len = file.metadata()?.len();
+    let end = offset
+        .checked_add(size as u64)
+        .ok_or_else(|| AppError::Other("StarDict record offset overflow".into()))?;
+    if end > file_len {
+        return Err(AppError::Other(
+            "StarDict record range exceeds dictionary data file".into(),
+        ));
+    }
     file.seek(SeekFrom::Start(offset))?;
     let mut buf = vec![0u8; size];
     file.read_exact(&mut buf)?;
@@ -614,6 +725,7 @@ fn read_plain_slice(path: &Path, offset: u64, size: usize) -> AppResult<Vec<u8>>
 
 fn parse_dictzip_header(path: &Path) -> AppResult<DictzipHeader> {
     let mut file = File::open(path)?;
+    let file_len = file.metadata()?.len();
     let mut hdr = [0u8; 10];
     file.read_exact(&mut hdr)?;
     if hdr[0] != 0x1F || hdr[1] != 0x8B || hdr[2] != 8 {
@@ -662,7 +774,6 @@ fn parse_dictzip_header(path: &Path) -> AppResult<DictzipHeader> {
         return Err(AppError::Other("Invalid dictzip RA subfield".into()));
     }
 
-    // Skip optional FNAME, FCOMMENT, FHCRC
     if (flags & 0x08) != 0 {
         skip_cstring(&mut file)?;
     }
@@ -678,8 +789,16 @@ fn parse_dictzip_header(path: &Path) -> AppResult<DictzipHeader> {
     let mut chunk_offsets = Vec::with_capacity(comp_lens.len());
     for clen in comp_lens {
         let cl = clen as u64;
+        let next = cur_offset
+            .checked_add(cl)
+            .ok_or_else(|| AppError::Other("Dictzip chunk offset overflow".into()))?;
+        if next > file_len {
+            return Err(AppError::Other(
+                "Dictzip chunk table points past end of file".into(),
+            ));
+        }
         chunk_offsets.push((cur_offset, cl));
-        cur_offset += cl;
+        cur_offset = next;
     }
 
     Ok(DictzipHeader {
@@ -690,38 +809,76 @@ fn parse_dictzip_header(path: &Path) -> AppResult<DictzipHeader> {
 
 fn skip_cstring(file: &mut File) -> AppResult<()> {
     let mut b = [0u8; 1];
-    loop {
+    for _ in 0..4096 {
         file.read_exact(&mut b)?;
         if b[0] == 0 {
             return Ok(());
         }
     }
+    Err(AppError::Other("Unterminated gzip header string".into()))
 }
 
 fn read_dictzip_slice(path: &Path, offset: u64, size: usize) -> AppResult<Vec<u8>> {
     if size == 0 {
         return Ok(Vec::new());
     }
+    if size > MAX_SINGLE_RECORD_BYTES {
+        return Err(AppError::Other(
+            "StarDict dictzip record size exceeds safety limit".into(),
+        ));
+    }
     let header = parse_dictzip_header(path)?;
-    let start_chunk = (offset as usize) / header.chunk_len;
-    let end_byte = (offset as usize).saturating_add(size);
-    let end_chunk = (end_byte.saturating_sub(1)) / header.chunk_len;
-    if end_chunk >= header.chunk_offsets.len() {
+    let chunk_len_u64 = header.chunk_len as u64;
+    let end_byte = offset
+        .checked_add(size as u64)
+        .ok_or_else(|| AppError::Other("Dictzip offset overflow".into()))?;
+    let start_chunk_u64 = offset / chunk_len_u64;
+    let end_chunk_u64 = (end_byte - 1) / chunk_len_u64;
+    if end_chunk_u64 >= header.chunk_offsets.len() as u64 {
         return Err(AppError::Other("Dictzip offset out of range".into()));
+    }
+    let start_chunk = start_chunk_u64 as usize;
+    let end_chunk = end_chunk_u64 as usize;
+    let span = end_chunk - start_chunk + 1;
+    if span > MAX_DICTZIP_CHUNKS_PER_READ {
+        return Err(AppError::Other(
+            "Dictzip record spans too many chunks".into(),
+        ));
     }
 
     let mut file = File::open(path)?;
-    let mut decompressed = Vec::with_capacity((end_chunk - start_chunk + 1) * header.chunk_len);
-    for idx in start_chunk..=end_chunk {
-        let (file_off, comp_len) = header.chunk_offsets[idx];
+    let max_total_decomp = span
+        .checked_mul(header.chunk_len)
+        .and_then(|n| n.checked_add(header.chunk_len))
+        .ok_or_else(|| AppError::Other("Dictzip buffer size overflow".into()))?
+        .min(MAX_SINGLE_RECORD_BYTES + header.chunk_len * 2);
+    let mut decompressed = Vec::with_capacity(max_total_decomp.min(256 * 1024));
+
+    for &(file_off, comp_len) in &header.chunk_offsets[start_chunk..=end_chunk] {
         file.seek(SeekFrom::Start(file_off))?;
         let mut comp_buf = vec![0u8; comp_len as usize];
         file.read_exact(&mut comp_buf)?;
-        let mut decoder = DeflateDecoder::new(&comp_buf[..]);
+        let before = decompressed.len();
+        let remaining_cap = max_total_decomp.saturating_sub(before);
+        let mut decoder = DeflateDecoder::new(&comp_buf[..]).take((remaining_cap as u64) + 1);
         decoder.read_to_end(&mut decompressed)?;
+        if decompressed.len() > max_total_decomp {
+            return Err(AppError::Other(
+                "Dictzip chunk decompression exceeded expected chunk size".into(),
+            ));
+        }
     }
 
-    let local_start = (offset as usize) - start_chunk * header.chunk_len;
-    let local_end = (local_start + size).min(decompressed.len());
+    let local_start_u64 = offset - start_chunk_u64 * chunk_len_u64;
+    let local_start = usize::try_from(local_start_u64)
+        .map_err(|_| AppError::Other("Dictzip slice start overflow".into()))?;
+    let local_end = local_start
+        .checked_add(size)
+        .ok_or_else(|| AppError::Other("Dictzip slice end overflow".into()))?;
+    if local_start > decompressed.len() || local_end > decompressed.len() {
+        return Err(AppError::Other(
+            "Corrupt dictzip chunk: decompressed stream shorter than indexed record".into(),
+        ));
+    }
     Ok(decompressed[local_start..local_end].to_vec())
 }

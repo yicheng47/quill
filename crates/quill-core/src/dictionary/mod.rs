@@ -102,6 +102,12 @@ pub struct DictionaryManager {
     builtin_path: Option<PathBuf>,
     imported_dir: PathBuf,
     builtin_cache: Mutex<Option<Option<BuiltinDict>>>,
+    registry_lock: Mutex<()>,
+}
+
+fn is_valid_imported_id(id: &str) -> bool {
+    id.strip_prefix("dict-")
+        .is_some_and(|rest| uuid::Uuid::parse_str(rest).is_ok())
 }
 
 impl DictionaryManager {
@@ -110,6 +116,7 @@ impl DictionaryManager {
             builtin_path,
             imported_dir,
             builtin_cache: Mutex::new(None),
+            registry_lock: Mutex::new(()),
         }
     }
 
@@ -150,6 +157,14 @@ impl DictionaryManager {
     }
 
     pub fn list_dictionaries(&self, db: &Db) -> AppResult<Vec<DictionaryDescriptor>> {
+        let _guard = self
+            .registry_lock
+            .lock()
+            .map_err(|e| AppError::Other(format!("dictionary registry mutex: {e}")))?;
+        self.list_dictionaries_locked(db)
+    }
+
+    fn list_dictionaries_locked(&self, db: &Db) -> AppResult<Vec<DictionaryDescriptor>> {
         let (builtin_size, builtin_entries) = self.builtin_metadata();
         let raw_cfg = read_setting(db, SETTING_DICTIONARIES_CONFIG)?;
         let parsed: Vec<DictionaryDescriptor> = raw_cfg
@@ -172,7 +187,7 @@ impl DictionaryManager {
                 item.entry_count = builtin_entries;
                 has_builtin = true;
                 list.push(item);
-            } else {
+            } else if is_valid_imported_id(&item.id) {
                 let dir = self.imported_dir.join(&item.id);
                 if dir.join("index.db").exists() {
                     list.push(item);
@@ -202,9 +217,13 @@ impl DictionaryManager {
         db: &Db,
         items: Vec<DictionaryConfigItem>,
     ) -> AppResult<Vec<DictionaryDescriptor>> {
-        let current = self.list_dictionaries(db)?;
+        let _guard = self
+            .registry_lock
+            .lock()
+            .map_err(|e| AppError::Other(format!("dictionary registry mutex: {e}")))?;
+        let current = self.list_dictionaries_locked(db)?;
         let by_id: std::collections::HashMap<String, DictionaryDescriptor> =
-            current.into_iter().map(|d| (d.id.clone(), d)).collect();
+            current.iter().map(|d| (d.id.clone(), d.clone())).collect();
 
         let mut next: Vec<DictionaryDescriptor> = Vec::new();
         let mut seen = HashSet::new();
@@ -217,10 +236,11 @@ impl DictionaryManager {
                 next.push(existing);
             }
         }
-        // Guarantee built-in cannot be dropped by a partial config update.
-        if !seen.contains(BUILTIN_DICT_ID) {
-            if let Some(builtin) = by_id.get(BUILTIN_DICT_ID).cloned() {
-                next.push(builtin);
+        // Preserve every currently installed dictionary (built-in and any
+        // concurrently imported dictionaries omitted from a stale reorder).
+        for existing in current {
+            if !seen.contains(&existing.id) {
+                next.push(existing);
             }
         }
 
@@ -274,9 +294,16 @@ impl DictionaryManager {
             enabled: true,
         };
 
-        let mut list = self.list_dictionaries(db)?;
+        let _guard = self
+            .registry_lock
+            .lock()
+            .map_err(|e| AppError::Other(format!("dictionary registry mutex: {e}")))?;
+        let mut list = self.list_dictionaries_locked(db)?;
         list.push(descriptor.clone());
-        write_dictionaries_config(db, &list)?;
+        if let Err(err) = write_dictionaries_config(db, &list) {
+            let _ = fs::remove_dir_all(&dest_dir);
+            return Err(err);
+        }
         Ok(descriptor)
     }
 
@@ -286,18 +313,38 @@ impl DictionaryManager {
                 "The built-in dictionary cannot be removed; disable it instead.".into(),
             ));
         }
+        if !is_valid_imported_id(id) {
+            return Err(AppError::Other(format!("Invalid dictionary id: {id}")));
+        }
 
-        let mut list = self.list_dictionaries(db)?;
+        let _guard = self
+            .registry_lock
+            .lock()
+            .map_err(|e| AppError::Other(format!("dictionary registry mutex: {e}")))?;
+        let mut list = self.list_dictionaries_locked(db)?;
+        if !list.iter().any(|d| d.id == id) {
+            return Err(AppError::Other(format!("Dictionary not found: {id}")));
+        }
+
+        let dir = self.imported_dir.join(id);
+        if dir.parent() != Some(self.imported_dir.as_path()) {
+            return Err(AppError::Other(format!("Invalid dictionary path for id: {id}")));
+        }
+        match fs::symlink_metadata(&dir) {
+            Ok(meta) => {
+                if meta.file_type().is_symlink() {
+                    return Err(AppError::Other(
+                        "Refusing to remove symlinked dictionary directory".into(),
+                    ));
+                }
+                fs::remove_dir_all(&dir)?;
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => return Err(err.into()),
+        }
+
         list.retain(|d| d.id != id);
         write_dictionaries_config(db, &list)?;
-
-        // Guard against path traversal: only delete direct child under imported_dir.
-        if !id.is_empty() && !id.contains('/') && !id.contains('\\') && !id.contains("..") {
-            let dir = self.imported_dir.join(id);
-            if dir.exists() {
-                let _ = fs::remove_dir_all(&dir);
-            }
-        }
         Ok(list)
     }
 
@@ -336,7 +383,8 @@ impl DictionaryManager {
                 matched_entry_id: None,
             });
 
-        // 2. Query enabled dictionaries in priority order.
+        // 2. Query enabled dictionaries in priority order, isolating failures in any
+        //    individual imported source so healthy sources and built-in still return.
         let dicts = self.list_dictionaries(db)?;
         let mut matches = Vec::new();
         for dict in dicts {
@@ -349,11 +397,18 @@ impl DictionaryManager {
                         matches.push(m);
                     }
                 }
-            } else {
+            } else if is_valid_imported_id(&dict.id) {
                 let dir = self.imported_dir.join(&dict.id);
-                let found = self.query_imported(&dir, &dict, &lem.lemma, trimmed)?;
-                if let Some(m) = found {
-                    matches.push(m);
+                match self.query_imported(&dir, &dict, &lem.lemma, trimmed) {
+                    Ok(Some(m)) => matches.push(m),
+                    Ok(None) => {}
+                    Err(err) => {
+                        log::warn!(
+                            "dictionary: lookup failed for imported dictionary {} ({}): {err}",
+                            dict.id,
+                            dict.name
+                        );
+                    }
                 }
             }
         }
@@ -846,5 +901,175 @@ mod tests {
         let res = mgr.lookup_dictionary(&db, "mortified", None).unwrap();
         assert_eq!(res.lemma, "mortified");
         assert!(res.matches.is_empty());
+    }
+
+    #[test]
+    fn suffix_fallback_query_plan_uses_forms_index() {
+        let dict = BuiltinDict::open(&fixture_dict_path()).unwrap();
+        let plan = dict.suffix_fallback_query_plan().join(" | ");
+        assert!(
+            plan.contains("idx_forms_form_lang") || plan.contains("PRIMARY KEY (form=? AND lang=?)"),
+            "expected suffix fallback query to use indexed forms(form, lang) lookup, got: {plan}"
+        );
+    }
+
+    #[test]
+    fn participial_adjective_resolves_to_base_verb_while_preserving_left_and_saw() {
+        let dir = TempDir::new().unwrap();
+        let custom_db = dir.path().join("dict-participle.db");
+        fs::copy(fixture_dict_path(), &custom_db).unwrap();
+
+        // Add a standalone `mortified` participial adjective entry mirroring upstream Kaikki
+        let conn = rusqlite::Connection::open(&custom_db).unwrap();
+        conn.execute(
+            "INSERT INTO entries(id, lang, lemma, pron, senses_json, gloss_en, gloss_zh)
+             VALUES (999, 'en', 'mortified', '/ˈmɔːrtɪfaɪd/', '[{\"pos\":\"adj.\",\"defs\":[\"Acutely embarrassed.\"]}]', NULL, '窘迫的')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO forms(form, lang, entry_id, is_lemma, relation)
+             VALUES ('mortified', 'en', 999, 1, 'participial adjective')",
+            [],
+        )
+        .unwrap();
+        drop(conn);
+
+        let db = Db::init(dir.path()).unwrap();
+        let mgr = DictionaryManager::new(Some(custom_db), dir.path().join("dictionaries"));
+
+        // With lemmatization enabled, `mortified` resolves to `mortify` (not self-looping)
+        let res = mgr.lookup_dictionary(&db, "mortified", None).unwrap();
+        assert_eq!(res.lemma, "mortify");
+        assert_eq!(res.inflected_from.as_deref(), Some("mortified"));
+        assert!(
+            !res.alternate_lemmas
+                .iter()
+                .any(|a| a.lemma.eq_ignore_ascii_case("mortified")),
+            "unexpected self-loop alternate: {:?}",
+            res.alternate_lemmas
+        );
+
+        // Independent homographs `left` and `saw` stay primary with verb alternates
+        let left = mgr.lookup_dictionary(&db, "left", None).unwrap();
+        assert_eq!(left.lemma, "left");
+        assert!(left.alternate_lemmas.iter().any(|a| a.lemma == "leave"));
+
+        let saw = mgr.lookup_dictionary(&db, "saw", None).unwrap();
+        assert_eq!(saw.lemma, "saw");
+        assert!(saw.alternate_lemmas.iter().any(|a| a.lemma == "see"));
+    }
+
+    #[test]
+    fn remove_rejects_invalid_or_unregistered_ids_and_stale_reorder_preserves_new_imports() {
+        let (dir, db, mgr) = setup_manager(true);
+
+        let sd1 = dir.path().join("sd1");
+        fs::create_dir_all(&sd1).unwrap();
+        let ifo1 = create_stardict_dir(&sd1, "First Dict", "m", &[("mortify", "First sense")], false);
+        let d1 = mgr.import_dictionary(&db, &ifo1).unwrap();
+
+        let sd2 = dir.path().join("sd2");
+        fs::create_dir_all(&sd2).unwrap();
+        let ifo2 = create_stardict_dir(&sd2, "Second Dict", "m", &[("mortify", "Second sense")], false);
+        let d2 = mgr.import_dictionary(&db, &ifo2).unwrap();
+
+        // Invalid & alias IDs must error and leave all imported dirs intact
+        for bad in [
+            "",
+            ".",
+            "..",
+            "../dictionaries",
+            "dict-not-a-uuid",
+            &format!("dict-{}", uuid::Uuid::new_v4()), // valid format but unregistered
+        ] {
+            assert!(mgr.remove_dictionary(&db, bad).is_err(), "expected error for {bad:?}");
+        }
+        assert!(dir.path().join("dictionaries").join(&d1.id).exists());
+        assert!(dir.path().join("dictionaries").join(&d2.id).exists());
+
+        // Stale reorder omitting d2 must preserve d2 instead of dropping/orphaning it
+        let updated = mgr
+            .update_dictionaries_config(
+                &db,
+                vec![
+                    DictionaryConfigItem {
+                        id: d1.id.clone(),
+                        name: None,
+                        format: None,
+                        size_bytes: None,
+                        entry_count: None,
+                        enabled: true,
+                    },
+                    DictionaryConfigItem {
+                        id: BUILTIN_DICT_ID.to_string(),
+                        name: None,
+                        format: None,
+                        size_bytes: None,
+                        entry_count: None,
+                        enabled: true,
+                    },
+                ],
+            )
+            .unwrap();
+        let ids: Vec<&str> = updated.iter().map(|d| d.id.as_str()).collect();
+        assert_eq!(ids, vec![d1.id.as_str(), BUILTIN_DICT_ID, d2.id.as_str()]);
+        assert!(dir.path().join("dictionaries").join(&d2.id).exists());
+    }
+
+    #[test]
+    fn rejects_corrupt_dictionaries_and_isolates_broken_source_during_lookup() {
+        let (dir, db, mgr) = setup_manager(true);
+
+        // 1. Corrupt MDict with huge declared key_block_info size past EOF must return Err, never panic/OOM
+        let bad_mdx = dir.path().join("corrupt.mdx");
+        let hdr_xml = r#"<Dictionary GeneratedByEngineVersion="2.0" Encrypted="0" Encoding="UTF-8" Title="Bad"/>"#;
+        let mut raw = Vec::new();
+        let mut utf16 = Vec::new();
+        for u in hdr_xml.encode_utf16() {
+            utf16.extend_from_slice(&u.to_le_bytes());
+        }
+        utf16.extend_from_slice(&[0, 0]);
+        raw.extend_from_slice(&(utf16.len() as u32).to_be_bytes());
+        raw.extend_from_slice(&utf16);
+        raw.extend_from_slice(&[0u8; 4]);
+        // 40-byte v2 key header declaring huge key_block_info_size = 0x7FFF_FFFF
+        raw.extend_from_slice(&1u64.to_be_bytes());
+        raw.extend_from_slice(&1u64.to_be_bytes());
+        raw.extend_from_slice(&100u64.to_be_bytes());
+        raw.extend_from_slice(&0x7FFF_FFFFu64.to_be_bytes());
+        raw.extend_from_slice(&100u64.to_be_bytes());
+        raw.extend_from_slice(&[0u8; 4]);
+        fs::write(&bad_mdx, raw).unwrap();
+        assert!(mgr.import_dictionary(&db, &bad_mdx).is_err());
+
+        // 2. Corrupt StarDict whose .idx points past end of .dict must be rejected on import
+        let bad_sd = dir.path().join("bad-sd");
+        fs::create_dir_all(&bad_sd).unwrap();
+        let mut bad_idx = Vec::new();
+        bad_idx.extend_from_slice(b"mortify\0");
+        bad_idx.extend_from_slice(&500u32.to_be_bytes()); // offset 500 > 5 byte dict!
+        bad_idx.extend_from_slice(&10u32.to_be_bytes());
+        fs::write(
+            bad_sd.join("bad.ifo"),
+            "StarDict's dict ifo file\nversion=2.4.2\nwordcount=1\nidxfilesize=16\nbookname=Bad\nsametypesequence=m\n",
+        )
+        .unwrap();
+        fs::write(bad_sd.join("bad.idx"), bad_idx).unwrap();
+        fs::write(bad_sd.join("bad.dict"), b"short").unwrap();
+        assert!(mgr.import_dictionary(&db, &bad_sd.join("bad.ifo")).is_err());
+
+        // 3. Valid imported dictionary that later gets corrupted on disk must NOT break built-in lookup
+        let good_sd = dir.path().join("good-sd");
+        fs::create_dir_all(&good_sd).unwrap();
+        let ifo = create_stardict_dir(&good_sd, "Breakable", "m", &[("mortify", "Original sense")], false);
+        let imported = mgr.import_dictionary(&db, &ifo).unwrap();
+        // Truncate its data.dict to simulate on-disk corruption
+        fs::write(dir.path().join("dictionaries").join(&imported.id).join("data.dict"), b"").unwrap();
+
+        let res = mgr.lookup_dictionary(&db, "mortified", None).unwrap();
+        assert_eq!(res.lemma, "mortify");
+        assert_eq!(res.matches.len(), 1);
+        assert_eq!(res.matches[0].dict_id, BUILTIN_DICT_ID);
     }
 }

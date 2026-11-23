@@ -3,25 +3,21 @@
 Build Quill's read-only offline dictionary SQLite database (`dict.db`) or
 the checked-in deterministic test fixture (`dict-test.db`).
 
-Data sources & licenses (open, redistributable):
+Data sources & licenses (open, redistributable, checksummed in scripts/dict-sources.json):
   - English Wiktionary via kaikki.org wiktextract (CC-BY-SA 4.0)
-  - ECDICT (MIT) — English->Chinese brief glosses and word-frequency ranking
-  - Chinese Wiktionary via kaikki.org wiktextract (CC-BY-SA 4.0)
-  - CC-CEDICT (CC-BY-SA 4.0) — Simplified/Traditional Chinese headwords, pinyin, EN glosses
+  - ECDICT 1.0.28 (MIT) — English->Chinese brief glosses and word-frequency ranking
+  - Chinese-edition Wiktionary via kaikki.org/zhwiktionary wiktextract (CC-BY-SA 4.0)
+  - CC-CEDICT (CC-BY-SA 4.0) — Simplified/Traditional headwords, pinyin, EN glosses
 
 Usage:
   # Regenerate the checked-in deterministic test fixture (~32 KB):
   python3 scripts/build-dict.py --fixture
 
-  # Download open sources (cached) and build full <= 20 MB dict.db:
+  # Download verified sources (cached) and build full <= 20 MB dict.db:
   python3 scripts/build-dict.py
 
-  # Build from pre-downloaded local source files:
-  python3 scripts/build-dict.py \
-      --en-kaikki path/to/kaikki.org-dictionary-English.jsonl \
-      --ecdict path/to/ecdict.csv \
-      --zh-kaikki path/to/kaikki.org-dictionary-Chinese.jsonl \
-      --cedict path/to/cedict_1_0_ts_utf-8_mdbg.txt.gz
+  # Verify an existing production dict.db:
+  python3 scripts/build-dict.py --verify crates/quill-core/resources/dict.db
 """
 
 from __future__ import annotations
@@ -29,7 +25,7 @@ from __future__ import annotations
 import argparse
 import csv
 import gzip
-import io
+import hashlib
 import json
 import os
 import re
@@ -46,17 +42,10 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_OUT = REPO_ROOT / "crates" / "quill-core" / "resources" / "dict.db"
 FIXTURE_OUT = REPO_ROOT / "crates" / "quill-core" / "resources" / "dict-test.db"
 DEFAULT_CACHE = REPO_ROOT / ".cache" / "dict-sources"
-
-URLS = {
-    "en_kaikki": "https://kaikki.org/dictionary/English/kaikki.org-dictionary-English.jsonl",
-    "zh_kaikki": "https://kaikki.org/dictionary/Chinese/kaikki.org-dictionary-Chinese.jsonl",
-    "cedict": "https://www.mdbg.net/chinese/export/cedict/cedict_1_0_ts_utf-8_mdbg.txt.gz",
-    "ecdict_zip": "https://github.com/skywind3000/ECDICT/releases/download/1.0.28/ecdict-sqlite-28.zip",
-    "ecdict_csv": "https://raw.githubusercontent.com/skywind3000/ECDICT/master/ecdict.mini.csv",
-    "ecdict_full_csv": "https://raw.githubusercontent.com/skywind3000/ECDICT/master/ecdict.csv",
-}
+SOURCES_MANIFEST = Path(__file__).resolve().parent / "dict-sources.json"
 
 MAX_TARGET_BYTES = 20 * 1024 * 1024  # 20 MB hard cap
+PARTICIPIAL_ADJ_RELATION = "participial adjective"
 
 # Tone-number pinyin -> tone-marked pinyin converter (for CC-CEDICT)
 TONE_VOWELS = {
@@ -101,10 +90,29 @@ POS_MAP_ZH = {
     "proverb": "谚语",
     "phrase": "短语",
     "name": "专有名词",
+    "character": "字",
 }
 
 HANZI_RE = re.compile(r"^[\u3400-\u4dbf\u4e00-\u9fff]+$")
+HANZI_ANY_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
 ASCII_WORD_RE = re.compile(r"^[A-Za-z][A-Za-z'-]{0,39}$")
+ASCII_LETTER_RE = re.compile(r"[A-Za-z]")
+
+
+def load_sources_manifest() -> dict[str, Any]:
+    with open(SOURCES_MANIFEST, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        while True:
+            chunk = f.read(1024 * 1024)
+            if not chunk:
+                break
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def convert_pinyin_syllable(syllable: str) -> str:
@@ -184,7 +192,6 @@ def build_senses_zdict(sample_payloads: list[bytes]) -> bytes:
         if len(buf) + len(payload) > 32768:
             break
         buf.extend(payload)
-    # zlib deflate dictionary uses at most the last 32768 bytes
     return bytes(buf[-32768:])
 
 
@@ -196,6 +203,24 @@ def compress_senses(raw_json: bytes, zdict: bytes | None) -> bytes:
     if len(compressed) + 1 < len(raw_json):
         return b"\x02" + compressed
     return raw_json
+
+
+def decompress_senses(raw: bytes | str, zdict: bytes | None) -> list[dict[str, Any]]:
+    if isinstance(raw, str):
+        return json.loads(raw)
+    if not raw:
+        return []
+    if raw[0] == ord("["):
+        return json.loads(raw.decode("utf-8"))
+    if raw[0] == 0x02:
+        if zdict is None:
+            raise ValueError("Missing senses_zdict metadata")
+        d = zlib.decompressobj(wbits=-15, zdict=zdict)
+        return json.loads((d.decompress(raw[1:]) + d.flush()).decode("utf-8"))
+    if raw[0] == 0x01:
+        d = zlib.decompressobj(wbits=-15)
+        return json.loads((d.decompress(raw[1:]) + d.flush()).decode("utf-8"))
+    return json.loads(zlib.decompress(raw).decode("utf-8"))
 
 
 def write_sqlite_db(
@@ -250,8 +275,9 @@ def write_sqlite_db(
                 lang TEXT NOT NULL,
                 entry_id INTEGER NOT NULL,
                 is_lemma INTEGER NOT NULL,
-                relation TEXT
-            );
+                relation TEXT,
+                PRIMARY KEY (form, lang, entry_id)
+            ) WITHOUT ROWID;
             """
         )
 
@@ -271,7 +297,11 @@ def write_sqlite_db(
 
         entry_rows = []
         for idx, e in enumerate(entries, start=1):
-            payload = compress_senses(serialized[idx - 1], zdict) if compress else serialized[idx - 1].decode("utf-8")
+            payload = (
+                compress_senses(serialized[idx - 1], zdict)
+                if compress
+                else serialized[idx - 1].decode("utf-8")
+            )
             entry_rows.append(
                 (
                     idx,
@@ -304,9 +334,7 @@ def write_sqlite_db(
             "INSERT INTO forms(form, lang, entry_id, is_lemma, relation) VALUES (?, ?, ?, ?, ?)",
             deduped_forms,
         )
-        conn.execute("CREATE INDEX idx_forms_form_lang ON forms(form, lang);")
         conn.execute("CREATE INDEX idx_forms_entry_id ON forms(entry_id);")
-        conn.execute("CREATE INDEX idx_entries_lang_lemma ON entries(lang, lemma);")
         conn.commit()
         conn.execute("VACUUM;")
     finally:
@@ -323,7 +351,6 @@ def write_sqlite_db(
 def build_fixture(out_path: Path) -> None:
     """Generate the small deterministic dict-test.db checked into git."""
     fixture_specs = [
-        # English entries
         {
             "lang": "en",
             "lemma": "mortify",
@@ -449,7 +476,9 @@ def build_fixture(out_path: Path) -> None:
             "senses": [
                 {
                     "pos": "adj.",
-                    "defs": ["On, toward, or relating to the side of a human body or of a thing that is to the west when facing north."],
+                    "defs": [
+                        "On, toward, or relating to the side of a human body or of a thing that is to the west when facing north."
+                    ],
                 },
                 {
                     "pos": "noun",
@@ -484,13 +513,14 @@ def build_fixture(out_path: Path) -> None:
             "senses": [
                 {
                     "pos": "noun",
-                    "defs": ["A hand tool for cutting wood or other hard materials, typically with a serrated metal blade."],
+                    "defs": [
+                        "A hand tool for cutting wood or other hard materials, typically with a serrated metal blade."
+                    ],
                 }
             ],
             "forms": [("saws", "plural")],
         },
         {
-            # Deliberately omits inflections to exercise suffix-rule fallback (-ied/-ies -> -y)
             "lang": "en",
             "lemma": "study",
             "pron": "/ˈstʌd.i/",
@@ -508,7 +538,6 @@ def build_fixture(out_path: Path) -> None:
             "forms": [],
         },
         {
-            # Deliberately omits inflections to exercise suffix-rule fallback (-ed/-ing/-s)
             "lang": "en",
             "lemma": "walk",
             "pron": "/wɔːk/",
@@ -522,7 +551,6 @@ def build_fixture(out_path: Path) -> None:
             "forms": [],
         },
         {
-            # Deliberately omits -es plural to exercise suffix fallback (-es)
             "lang": "en",
             "lemma": "box",
             "pron": "/bɒks/",
@@ -564,7 +592,6 @@ def build_fixture(out_path: Path) -> None:
             ],
             "forms": [],
         },
-        # Chinese entries (Simplified canonical + Traditional mapping)
         {
             "lang": "zh",
             "lemma": "潜移默化",
@@ -646,21 +673,45 @@ def build_fixture(out_path: Path) -> None:
     write_sqlite_db(out_path, entries, forms, compress=False, built_at="fixture")
 
 
-def download_cached(url: str, dest: Path) -> Path:
+def download_verified(
+    url: str,
+    dest: Path,
+    expected_sha256: str | None,
+    *,
+    verify_checksum: bool = True,
+) -> Path:
     if dest.exists() and dest.stat().st_size > 0:
-        print(f"Using cached {dest}")
-        return dest
+        if verify_checksum and expected_sha256:
+            actual = sha256_file(dest)
+            if actual == expected_sha256:
+                print(f"Using verified cached {dest}")
+                return dest
+            print(
+                f"Cached {dest} checksum mismatch ({actual[:12]} != {expected_sha256[:12]}); re-downloading"
+            )
+        else:
+            print(f"Using cached {dest}")
+            return dest
+
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_suffix(dest.suffix + ".part")
     print(f"Downloading {url} -> {dest}")
     req = urllib.request.Request(url, headers={"User-Agent": "Quill-Dict-Builder/1.0"})
-    with urllib.request.urlopen(req, timeout=180) as resp, open(tmp, "wb") as out:
+    with urllib.request.urlopen(req, timeout=300) as resp, open(tmp, "wb") as out:
         while True:
             chunk = resp.read(1024 * 256)
             if not chunk:
                 break
             out.write(chunk)
     os.replace(tmp, dest)
+
+    if verify_checksum and expected_sha256:
+        actual = sha256_file(dest)
+        if actual != expected_sha256:
+            raise RuntimeError(
+                f"Checksum mismatch for {dest.name}: expected {expected_sha256}, got {actual}. "
+                f"Upstream file may have changed; update scripts/dict-sources.json after reviewing the new dump."
+            )
     return dest
 
 
@@ -670,33 +721,34 @@ def load_ecdict(path: Path) -> dict[str, dict[str, Any]]:
     if path.suffix == ".zip":
         with zipfile.ZipFile(path) as zf:
             db_names = [n for n in zf.namelist() if n.endswith(".db")]
-            if db_names:
-                extracted = path.with_suffix(".db")
-                if not extracted.exists():
-                    with zf.open(db_names[0]) as src, open(extracted, "wb") as dst:
-                        dst.write(src.read())
-                conn = sqlite3.connect(str(extracted))
-                try:
-                    cur = conn.execute(
-                        "SELECT word, phonetic, definition, translation, collins, oxford, bnc, frq, exchange FROM stardict"
-                    )
-                    for word, phonetic, definition, translation, collins, oxford, bnc, frq, exchange in cur:
-                        if not word or not ASCII_WORD_RE.match(word):
-                            continue
-                        low = word.lower()
-                        rank = compute_ecdict_rank(collins, oxford, bnc, frq)
-                        if low not in result or rank < result[low]["rank"]:
-                            result[low] = {
-                                "word": word,
-                                "phonetic": (phonetic or "").strip(),
-                                "definition": (definition or "").strip(),
-                                "translation": (translation or "").strip(),
-                                "rank": rank,
-                                "exchange": (exchange or "").strip(),
-                            }
-                finally:
-                    conn.close()
-                return result
+            if not db_names:
+                raise RuntimeError(f"No .db file found inside ECDICT zip {path}")
+            extracted = path.with_suffix(".db")
+            if not extracted.exists():
+                with zf.open(db_names[0]) as src, open(extracted, "wb") as dst:
+                    dst.write(src.read())
+            conn = sqlite3.connect(str(extracted))
+            try:
+                cur = conn.execute(
+                    "SELECT word, phonetic, definition, translation, collins, oxford, bnc, frq, exchange FROM stardict"
+                )
+                for word, phonetic, definition, translation, collins, oxford, bnc, frq, exchange in cur:
+                    if not word or not ASCII_WORD_RE.match(word):
+                        continue
+                    low = word.lower()
+                    rank = compute_ecdict_rank(collins, oxford, bnc, frq)
+                    if low not in result or rank < result[low]["rank"]:
+                        result[low] = {
+                            "word": word,
+                            "phonetic": (phonetic or "").strip(),
+                            "definition": (definition or "").strip(),
+                            "translation": (translation or "").strip(),
+                            "rank": rank,
+                            "exchange": (exchange or "").strip(),
+                        }
+            finally:
+                conn.close()
+            return result
 
     with open(path, "r", encoding="utf-8", errors="replace", newline="") as f:
         reader = csv.DictReader(f)
@@ -750,7 +802,6 @@ def compact_zh_gloss_from_ecdict(raw: str) -> str | None:
         line = line.strip()
         if not line:
             continue
-        # Strip leading POS tag like "vt. " / "n. "
         cleaned = re.sub(r"^[a-z]+\.\s*", "", line)
         for piece in re.split(r"[,，;；]", cleaned):
             p = piece.strip()
@@ -764,7 +815,6 @@ def compact_zh_gloss_from_ecdict(raw: str) -> str | None:
 
 
 def parse_ecdict_exchange(exchange: str) -> list[tuple[str, str]]:
-    """Parse ECDICT exchange field like 'p:mortified/d:mortified/i:mortifying/3:mortifies'."""
     tag_map = {
         "p": "past tense",
         "d": "past participle",
@@ -795,9 +845,17 @@ def parse_ecdict_senses(raw_def: str) -> list[dict[str, Any]]:
         m = re.match(r"^([a-z]+)\.\s+(.*)$", line)
         if m:
             pos_raw, text = m.group(1), m.group(2)
-            pos = {"n": "noun", "v": "verb", "vt": "verb", "vi": "verb", "a": "adj.", "adj": "adj.", "r": "adv.", "adv": "adv.", "s": "adj."}.get(
-                pos_raw, pos_raw + "."
-            )
+            pos = {
+                "n": "noun",
+                "v": "verb",
+                "vt": "verb",
+                "vi": "verb",
+                "a": "adj.",
+                "adj": "adj.",
+                "r": "adv.",
+                "adv": "adv.",
+                "s": "adj.",
+            }.get(pos_raw, pos_raw + ".")
         else:
             pos, text = "def", line
         text = clean_gloss(text, 150)
@@ -820,10 +878,12 @@ def load_cedict(path: Path) -> list[dict[str, Any]]:
             trad, simp, pinyin_num, glosses = m.groups()
             if not HANZI_RE.match(simp) or len(simp) > 6:
                 continue
+            raw_parts = [g.strip() for g in glosses.split("/") if g.strip()]
+            is_idiom = any("(idiom)" in g.lower() for g in raw_parts)
             defs = [
                 clean_gloss(g, 120)
-                for g in glosses.split("/")
-                if g.strip() and not g.strip().startswith("CL:") and not g.strip().startswith("variant of")
+                for g in raw_parts
+                if not g.startswith("CL:") and not g.startswith("variant of")
             ]
             if not defs:
                 continue
@@ -832,8 +892,9 @@ def load_cedict(path: Path) -> list[dict[str, Any]]:
                     "simp": simp,
                     "trad": trad,
                     "pron": numbered_pinyin_to_marked(pinyin_num),
-                    "gloss_en": "; ".join(defs[:2])[:96],
-                    "defs": defs[:3],
+                    "gloss_en": "; ".join(defs[:2])[:64],
+                    "defs": defs[:2],
+                    "is_idiom": is_idiom,
                 }
             )
     return entries
@@ -845,14 +906,37 @@ def open_text_or_gz(path: Path):
     return open(path, "r", encoding="utf-8", errors="replace")
 
 
+def infer_inflection_relation(tags: list[str]) -> str:
+    tset = set(tags)
+    if "past" in tset and "participle" in tset:
+        return "past participle"
+    if "past" in tset:
+        return "past tense"
+    if "present" in tset and "participle" in tset:
+        return "present participle"
+    if "third-person" in tset:
+        return "third-person singular"
+    if "plural" in tset:
+        return "plural"
+    if "comparative" in tset:
+        return "comparative"
+    if "superlative" in tset:
+        return "superlative"
+    return "inflected form"
+
+
 def parse_en_kaikki(
     path: Path,
     ecdict: dict[str, dict[str, Any]],
     max_lemmas: int = 85_000,
-) -> tuple[list[dict[str, Any]], list[tuple[str, str, str]]]:
-    """Stream Kaikki EN JSONL and collect ranked canonical lemmas + form_of links."""
+) -> tuple[list[dict[str, Any]], list[tuple[str, str, str]], set[str]]:
+    """
+    Stream Kaikki EN JSONL and collect ranked canonical lemmas, form_of links,
+    and participial-only adjective headwords whose canonical lemma is a kept verb.
+    """
     by_lemma: dict[str, dict[str, Any]] = {}
-    inflection_links: list[tuple[str, str, str]] = []  # (form_lower, target_lemma_lower, relation)
+    inflection_links: list[tuple[str, str, str]] = []
+    verb_participle_targets: dict[str, set[str]] = defaultdict(set)
 
     with open_text_or_gz(path) as f:
         for line in f:
@@ -872,26 +956,31 @@ def parse_en_kaikki(
                 continue
 
             senses = obj.get("senses") or []
-            glosses: list[str] = []
+            modern_glosses: list[str] = []
+            dated_glosses: list[str] = []
             for s in senses:
+                tags = s.get("tags") or []
                 form_of = s.get("form_of") or []
                 if form_of:
-                    rel = infer_inflection_relation(s.get("tags") or [])
+                    rel = infer_inflection_relation(tags)
                     for target in form_of:
                         tw = (target.get("word") or "").strip().lower()
                         if tw and tw != low and ASCII_WORD_RE.match(tw):
                             inflection_links.append((low, tw, rel))
+                            if pos_raw == "verb" or "participle" in tags or "past" in tags:
+                                verb_participle_targets[low].add(tw)
                     continue
+                is_dated = any(t in tags for t in ("obsolete", "archaic", "historical"))
+                bucket = dated_glosses if is_dated else modern_glosses
                 for g in s.get("glosses") or []:
-                    g = clean_gloss(g, 150)
-                    if g and g not in glosses:
-                        glosses.append(g)
-                    if len(glosses) >= 4:
+                    g = clean_gloss(g, 120)
+                    if g and g not in modern_glosses and g not in dated_glosses:
+                        bucket.append(g)
+                    if len(modern_glosses) >= 4:
                         break
-                if len(glosses) >= 4:
-                    break
+            glosses = (modern_glosses + dated_glosses)[:4]
 
-            # Also pull explicit forms table on the lemma entry itself
+            # Pull explicit forms table on the lemma entry itself
             for fobj in obj.get("forms") or []:
                 fw = (fobj.get("form") or "").strip().lower()
                 tags = fobj.get("tags") or []
@@ -903,10 +992,20 @@ def parse_en_kaikki(
                     and "inflection-template" not in tags
                     and any(
                         t in tags
-                        for t in ("past", "participle", "plural", "third-person", "comparative", "superlative")
+                        for t in (
+                            "past",
+                            "participle",
+                            "plural",
+                            "third-person",
+                            "comparative",
+                            "superlative",
+                        )
                     )
                 ):
-                    inflection_links.append((fw, low, infer_inflection_relation(tags)))
+                    rel = infer_inflection_relation(tags)
+                    inflection_links.append((fw, low, rel))
+                    if pos_raw == "verb" and ("participle" in tags or "past" in tags):
+                        verb_participle_targets[fw].add(low)
 
             if not glosses:
                 continue
@@ -935,9 +1034,16 @@ def parse_en_kaikki(
                 if len(rec["senses_map"][pos]) < 4 and g not in rec["senses_map"][pos]:
                     rec["senses_map"][pos].append(g)
 
-    # Supplement from ECDICT for frequent lemmas absent from Kaikki
+    # Supplement from ECDICT for frequent lemmas absent from Kaikki, skipping
+    # forms that Kaikki already linked as inflections or that ECDICT marks with
+    # a `0:<lemma>` inflection pointer (e.g. `children` -> `0:child`).
+    inflected_forms_set = {fw for fw, _, _ in inflection_links}
     for low, ec in ecdict.items():
         if low in by_lemma or ec["rank"] > 80_000:
+            continue
+        if low in inflected_forms_set:
+            continue
+        if any(seg.startswith("0:") for seg in ec["exchange"].split("/")):
             continue
         senses = parse_ecdict_senses(ec["definition"])
         if not senses:
@@ -954,12 +1060,19 @@ def parse_en_kaikki(
     ranked = sorted(by_lemma.items(), key=lambda kv: (kv[1]["rank"], kv[0]))[:max_lemmas]
     kept_keys = {k for k, _ in ranked}
     en_entries: list[dict[str, Any]] = []
-    for k, rec in ranked:
+    participial_adjs: set[str] = set()
+
+    for idx_rank, (k, rec) in enumerate(ranked):
+        max_pos = 3 if idx_rank < 12_000 else 2
+        max_defs = 3 if idx_rank < 12_000 else (2 if idx_rank < 25_000 else 1)
         senses_list = [
-            {"pos": p, "defs": d[:3]} for p, d in list(rec["senses_map"].items())[:3] if d
+            {"pos": p, "defs": d[:max_defs]}
+            for p, d in list(rec["senses_map"].items())[:max_pos]
+            if d
         ]
         if not senses_list:
             continue
+        pos_set = {s["pos"] for s in senses_list}
         en_entries.append(
             {
                 "lang": "en",
@@ -974,40 +1087,93 @@ def parse_en_kaikki(
         if ec and ec["exchange"]:
             for fw, rel in parse_ecdict_exchange(ec["exchange"]):
                 inflection_links.append((fw, k, rel))
+                if rel in ("past tense", "past participle", "present participle"):
+                    verb_participle_targets[fw].add(k)
 
-    filtered_links = [
-        (fw, tw, rel) for fw, tw, rel in inflection_links if tw in kept_keys and fw != tw
-    ]
-    return en_entries, filtered_links
+        # Participial -ed/-ing adjectives (including those with a secondary
+        # verbal-noun/gerund sense like `mortifying`) whose base verb (`mortify`)
+        # is in the kept lemma set resolve to the verb lemma first, while true
+        # independent homographs (`left` adj/adv/noun, `saw` noun/verb,
+        # `building` noun, `meeting` noun) keep primary lemma priority.
+        if (
+            k.endswith(("ed", "ing"))
+            and "adj." in pos_set
+            and pos_set <= {"adj.", "noun"}
+            and any(t in kept_keys and t != k for t in verb_participle_targets.get(k, ()))
+        ):
+            participial_adjs.add(k)
+
+    # Keep all explicit inflections for the top 15k English lemmas, all irregular
+    # forms, and every inflection whose surface form is itself a kept lemma
+    # (homographs & participial adjectives). For rare long-tail lemmas (>15k),
+    # omit trivial regular -s/-ed/-ing/-es suffixes that builtin.rs's indexed
+    # suffix fallback already resolves.
+    top_en_keys = {k for k, _ in ranked[:15_000]}
+    filtered_links = []
+    for fw, tw, rel in inflection_links:
+        if tw not in kept_keys or fw == tw:
+            continue
+        if tw not in top_en_keys and fw not in kept_keys and is_regular_suffix_form(fw, tw):
+            continue
+        filtered_links.append((fw, tw, rel))
+    return en_entries, filtered_links, participial_adjs
 
 
-def infer_inflection_relation(tags: list[str]) -> str:
-    tset = set(tags)
-    if "past" in tset and "participle" in tset:
-        return "past participle"
-    if "past" in tset:
-        return "past tense"
-    if "present" in tset and "participle" in tset:
-        return "present participle"
-    if "third-person" in tset:
-        return "third-person singular"
-    if "plural" in tset:
-        return "plural"
-    if "comparative" in tset:
-        return "comparative"
-    if "superlative" in tset:
-        return "superlative"
-    return "inflected form"
+def is_regular_suffix_form(form: str, lemma: str) -> bool:
+    if form == lemma + "s" or form == lemma + "es" or form == lemma + "ed" or form == lemma + "ing":
+        return True
+    if lemma.endswith("e") and (form == lemma + "d" or form == lemma[:-1] + "ing"):
+        return True
+    if lemma.endswith("y") and (form == lemma[:-1] + "ies" or form == lemma[:-1] + "ied"):
+        return True
+    return False
+
+
+def extract_zh_categories(obj: dict[str, Any], senses: list[dict[str, Any]]) -> list[str]:
+    names: list[str] = []
+    for raw in obj.get("categories") or []:
+        if isinstance(raw, str):
+            names.append(raw)
+        elif isinstance(raw, dict) and raw.get("name"):
+            names.append(str(raw["name"]))
+    for s in senses:
+        for raw in s.get("categories") or []:
+            if isinstance(raw, str):
+                names.append(raw)
+            elif isinstance(raw, dict) and raw.get("name"):
+                names.append(str(raw["name"]))
+    return names
+
+
+def infer_zh_pos(
+    pos_raw: str,
+    entry_tags: list[str],
+    sense_tags: list[str],
+    categories: list[str],
+) -> str | None:
+    if (
+        pos_raw == "idiom"
+        or "idiomatic" in entry_tags
+        or "idiomatic" in sense_tags
+        or any("成語" in c or "成语" in c for c in categories)
+    ):
+        return "成语"
+    return POS_MAP_ZH.get(pos_raw)
 
 
 def parse_zh_entries(
-    zh_kaikki_path: Path | None,
+    zh_kaikki_path: Path,
     cedict_path: Path,
-    max_entries: int = 75_000,
+    max_entries: int = 70_000,
 ) -> tuple[list[dict[str, Any]], list[tuple[str, str]]]:
-    """Merge CC-CEDICT + optional Chinese Kaikki Wiktionary into Simplified canonical ZH entries."""
+    """
+    Merge CC-CEDICT + Chinese-edition Kaikki Wiktionary (zhwiktionary) into
+    Simplified canonical ZH entries with Chinese definitions, upstream idiom
+    metadata, Traditional->Simplified links, and separate English glosses.
+    """
     cedict_rows = load_cedict(cedict_path)
     by_simp: dict[str, dict[str, Any]] = {}
+    trad_to_simp: dict[str, str] = {}
     trad_map: dict[str, set[str]] = defaultdict(set)
 
     for row in cedict_rows:
@@ -1015,8 +1181,8 @@ def parse_zh_entries(
         trad = row["trad"]
         if trad != simp:
             trad_map[simp].add(trad)
+            trad_to_simp.setdefault(trad, simp)
         if simp not in by_simp:
-            pos = "成语" if len(simp) == 4 else "词"
             by_simp[simp] = {
                 "lang": "zh",
                 "lemma": simp,
@@ -1025,65 +1191,96 @@ def parse_zh_entries(
                 "gloss_zh": None,
                 "senses_map": defaultdict(list),
                 "cedict_defs": row["defs"],
-                "priority": 1 if len(simp) == 4 else (0 if len(simp) == 2 else 2),
+                "cedict_is_idiom": row["is_idiom"],
+                "priority": 1 if row["is_idiom"] else (2 if len(simp) == 2 else 3),
             }
+        elif row["is_idiom"]:
+            by_simp[simp]["cedict_is_idiom"] = True
 
-    if zh_kaikki_path and zh_kaikki_path.exists():
-        with open_text_or_gz(zh_kaikki_path) as f:
-            for line in f:
-                if not line.strip():
+    with open_text_or_gz(zh_kaikki_path) as f:
+        for line in f:
+            if not line.strip():
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            word = (obj.get("word") or "").strip()
+            if not word or not HANZI_RE.match(word) or len(word) > 6:
+                continue
+
+            senses = obj.get("senses") or []
+            entry_tags = [str(t) for t in (obj.get("tags") or [])]
+            sense_tags: list[str] = []
+            glosses: list[str] = []
+            for s in senses:
+                if s.get("form_of") or s.get("alt_of"):
                     continue
-                try:
-                    obj = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                word = (obj.get("word") or "").strip()
-                if not word or not HANZI_RE.match(word) or len(word) > 6:
-                    continue
-                pos = POS_MAP_ZH.get(obj.get("pos") or "")
-                if not pos:
-                    continue
-                glosses: list[str] = []
-                for s in obj.get("senses") or []:
-                    for g in s.get("glosses") or []:
-                        g = clean_gloss(g, 140)
-                        if g and g not in glosses:
-                            glosses.append(g)
-                        if len(glosses) >= 3:
-                            break
+                st = [str(t) for t in (s.get("tags") or [])]
+                sense_tags.extend(st)
+                for g in s.get("glosses") or []:
+                    g = clean_gloss(g, 110)
+                    # Require Chinese-edition definitions (must contain Hanzi)
+                    if g and HANZI_ANY_RE.search(g) and g not in glosses:
+                        glosses.append(g)
                     if len(glosses) >= 3:
                         break
-                if not glosses:
-                    continue
-                rec = by_simp.get(word)
-                if rec is None:
-                    # Try mapping traditional headword to simplified if forms specify it
-                    simp_target = None
-                    for fm in obj.get("forms") or []:
-                        if "Simplified" in (fm.get("tags") or []):
-                            cand = (fm.get("form") or "").strip()
-                            if cand in by_simp:
-                                simp_target = cand
-                                trad_map[cand].add(word)
-                                break
-                    if simp_target:
-                        rec = by_simp[simp_target]
-                if rec is not None:
-                    rec["priority"] = -1  # boost entries with real definitions
-                    for g in glosses:
-                        if len(rec["senses_map"][pos]) < 3 and g not in rec["senses_map"][pos]:
-                            rec["senses_map"][pos].append(g)
+                if len(glosses) >= 3:
+                    break
+            if not glosses:
+                continue
 
-    ranked = sorted(by_simp.items(), key=lambda kv: (kv[1]["priority"], len(kv[0]), kv[0]))[:max_entries]
+            categories = extract_zh_categories(obj, senses)
+            pos = infer_zh_pos(
+                (obj.get("pos") or "").strip().lower(),
+                entry_tags,
+                sense_tags,
+                categories,
+            )
+            if not pos:
+                continue
+
+            # Resolve Traditional or Simplified headword to canonical Simplified entry
+            rec = by_simp.get(word)
+            if rec is None:
+                mapped_simp = trad_to_simp.get(word)
+                if mapped_simp and mapped_simp in by_simp:
+                    rec = by_simp[mapped_simp]
+                    trad_map[mapped_simp].add(word)
+
+            if rec is None:
+                for fm in obj.get("forms") or []:
+                    ftags = [str(t).lower() for t in (fm.get("tags") or [])]
+                    if any("simplified" in t for t in ftags):
+                        cand = (fm.get("form") or "").strip()
+                        if cand in by_simp:
+                            rec = by_simp[cand]
+                            if word != cand:
+                                trad_map[cand].add(word)
+                            break
+
+            if rec is not None:
+                # Prioritize entries backed by real Chinese Wiktionary senses
+                rec["priority"] = -2 if pos == "成语" else -1
+                for g in glosses:
+                    if len(rec["senses_map"][pos]) < 3 and g not in rec["senses_map"][pos]:
+                        rec["senses_map"][pos].append(g)
+
+    ranked = sorted(by_simp.items(), key=lambda kv: (kv[1]["priority"], len(kv[0]), kv[0]))[
+        :max_entries
+    ]
     zh_entries: list[dict[str, Any]] = []
     trad_links: list[tuple[str, str]] = []
-    for simp, rec in ranked:
+    for idx_rank, (simp, rec) in enumerate(ranked):
+        max_defs = 2 if idx_rank < 12_000 else 1
         senses_list = [
-            {"pos": p, "defs": d[:3]} for p, d in list(rec["senses_map"].items())[:2] if d
+            {"pos": p, "defs": d[:max_defs]}
+            for p, d in list(rec["senses_map"].items())[: (2 if idx_rank < 12_000 else 1)]
+            if d
         ]
         if not senses_list:
-            fallback_pos = "成语" if len(simp) == 4 else "词语"
-            senses_list = [{"pos": fallback_pos, "defs": rec["cedict_defs"][:2]}]
+            fallback_pos = "成语" if rec["cedict_is_idiom"] else "词语"
+            senses_list = [{"pos": fallback_pos, "defs": rec["cedict_defs"][:1]}]
         zh_entries.append(
             {
                 "lang": "zh",
@@ -1094,89 +1291,25 @@ def parse_zh_entries(
                 "senses": senses_list,
             }
         )
-        for trad in trad_map.get(simp, ()):
-            trad_links.append((trad, simp))
+        for trad in sorted(trad_map.get(simp, ())):
+            if trad != simp:
+                trad_links.append((trad, simp))
 
     return zh_entries, trad_links
 
 
-def build_full(args: argparse.Namespace) -> None:
-    cache_dir = Path(args.cache_dir)
-    cedict_path = Path(args.cedict) if args.cedict else download_cached(
-        URLS["cedict"], cache_dir / "cedict_1_0_ts_utf-8_mdbg.txt.gz"
-    )
-    if args.ecdict:
-        ecdict_path = Path(args.ecdict)
-    else:
-        try:
-            ecdict_path = download_cached(URLS["ecdict_zip"], cache_dir / "ecdict-sqlite-28.zip")
-        except Exception as err:
-            print(f"Warning: ECDICT release zip unavailable ({err}), falling back to ecdict.csv")
-            ecdict_path = download_cached(URLS["ecdict_csv"], cache_dir / "ecdict.mini.csv")
-
-    en_kaikki_path = Path(args.en_kaikki) if args.en_kaikki else None
-    if en_kaikki_path is None and not args.skip_kaikki:
-        try:
-            en_kaikki_path = download_cached(
-                URLS["en_kaikki"], cache_dir / "kaikki.org-dictionary-English.jsonl"
-            )
-        except Exception as err:
-            print(f"Warning: EN Kaikki unavailable ({err}), falling back to ECDICT-only English")
-
-    zh_kaikki_path = Path(args.zh_kaikki) if args.zh_kaikki else None
-    if zh_kaikki_path is None and not args.skip_kaikki:
-        try:
-            zh_kaikki_path = download_cached(
-                URLS["zh_kaikki"], cache_dir / "kaikki.org-dictionary-Chinese.jsonl"
-            )
-        except Exception as err:
-            print(f"Warning: ZH Kaikki unavailable ({err}), falling back to CC-CEDICT Chinese")
-
-    print("Loading ECDICT…")
-    ecdict = load_ecdict(ecdict_path)
-    print(f"Loaded {len(ecdict):,} ECDICT headwords")
-
-    en_limit = args.max_en
-    zh_limit = args.max_zh
-
-    if en_kaikki_path and en_kaikki_path.exists():
-        print(f"Parsing EN Kaikki ({en_kaikki_path})…")
-        en_entries, en_links = parse_en_kaikki(en_kaikki_path, ecdict, max_lemmas=en_limit)
-    else:
-        print("Building EN entries from ECDICT…")
-        ranked_ec = sorted(ecdict.items(), key=lambda kv: (kv[1]["rank"], kv[0]))[:en_limit]
-        kept = {k for k, _ in ranked_ec}
-        en_entries = []
-        en_links = []
-        for k, ec in ranked_ec:
-            senses = parse_ecdict_senses(ec["definition"])
-            if not senses:
-                continue
-            en_entries.append(
-                {
-                    "lang": "en",
-                    "lemma": ec["word"],
-                    "pron": f"/{ec['phonetic']}/" if ec["phonetic"] else None,
-                    "gloss_en": None,
-                    "gloss_zh": compact_zh_gloss_from_ecdict(ec["translation"]),
-                    "senses": senses,
-                }
-            )
-            for fw, rel in parse_ecdict_exchange(ec["exchange"]):
-                if fw != k:
-                    en_links.append((fw, k, rel))
-        en_links = [(fw, tw, rel) for fw, tw, rel in en_links if tw in kept]
-
-    print(f"Prepared {len(en_entries):,} EN entries and {len(en_links):,} EN form links")
-
-    print(f"Parsing ZH entries ({cedict_path})…")
-    zh_entries, zh_trad_links = parse_zh_entries(zh_kaikki_path, cedict_path, max_entries=zh_limit)
-    print(f"Prepared {len(zh_entries):,} ZH entries and {len(zh_trad_links):,} traditional mappings")
-
-    # Assemble entries + forms with automatic trim loop if > 20 MB
-    out_path = Path(args.output)
+def assemble_and_write_production_db(
+    out_path: Path,
+    en_entries: list[dict[str, Any]],
+    en_links: list[tuple[str, str, str]],
+    participial_adjs: set[str],
+    zh_entries: list[dict[str, Any]],
+    zh_trad_links: list[tuple[str, str]],
+    *,
+    built_at: str,
+) -> None:
     scale = 1.0
-    for attempt in range(4):
+    for attempt in range(5):
         cur_en = en_entries[: int(len(en_entries) * scale)]
         cur_zh = zh_entries[: int(len(zh_entries) * scale)]
         all_entries = cur_en + cur_zh
@@ -1188,7 +1321,8 @@ def build_full(args: argparse.Namespace) -> None:
             if e["lang"] == "en":
                 low = e["lemma"].lower()
                 en_id_by_lower[low] = idx
-                forms.append((low, "en", idx, 1, None))
+                rel = PARTICIPIAL_ADJ_RELATION if low in participial_adjs else None
+                forms.append((low, "en", idx, 1, rel))
             else:
                 zh_id_by_lemma[e["lemma"]] = idx
                 forms.append((e["lemma"], "zh", idx, 1, None))
@@ -1207,31 +1341,230 @@ def build_full(args: argparse.Namespace) -> None:
             all_entries,
             forms,
             compress=True,
-            built_at="open-build-v1",
+            built_at=built_at,
         )
         size = out_path.stat().st_size
         if size <= MAX_TARGET_BYTES:
             return
-        scale *= (MAX_TARGET_BYTES * 0.92) / size
-        print(f"Output {size / (1024 * 1024):.2f} MB exceeds 20 MB cap; scaling to {scale:.2f} (attempt {attempt + 2})")
+        scale *= (MAX_TARGET_BYTES * 0.96) / size
+        print(
+            f"Output {size / (1024 * 1024):.2f} MB exceeds 20 MB cap; "
+            f"scaling to {scale:.2f} (attempt {attempt + 2})"
+        )
 
     if out_path.stat().st_size > MAX_TARGET_BYTES:
         sys.exit(f"Error: dict.db ({out_path.stat().st_size} bytes) still exceeds 20 MB cap")
 
 
+def verify_production_db(db_path: Path, *, min_en: int = 50_000, min_zh: int = 40_000) -> None:
+    if not db_path.exists():
+        raise RuntimeError(f"Dictionary DB not found: {db_path}")
+    size = db_path.stat().st_size
+    if size > MAX_TARGET_BYTES:
+        raise RuntimeError(f"Dictionary DB exceeds 20 MB cap: {size:,} bytes")
+    if min_en >= 1000 and size < 1_000_000:
+        raise RuntimeError(f"Dictionary DB looks like a test fixture ({size:,} bytes)")
+
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    try:
+        zdict_row = conn.execute("SELECT value FROM meta WHERE key = 'senses_zdict'").fetchone()
+        zdict = bytes(zdict_row[0]) if zdict_row else None
+
+        en_count = conn.execute("SELECT COUNT(*) FROM entries WHERE lang = 'en'").fetchone()[0]
+        zh_count = conn.execute("SELECT COUNT(*) FROM entries WHERE lang = 'zh'").fetchone()[0]
+        if en_count < min_en:
+            raise RuntimeError(f"Too few EN entries: {en_count:,} < {min_en:,}")
+        if zh_count < min_zh:
+            raise RuntimeError(f"Too few ZH entries: {zh_count:,} < {min_zh:,}")
+
+        def lookup_en(term: str):
+            rows = conn.execute(
+                """
+                SELECT f.entry_id, f.is_lemma, f.relation, e.lemma, e.pron, e.senses_json, e.gloss_zh
+                FROM forms f
+                JOIN entries e ON e.id = f.entry_id
+                WHERE f.form = ? AND f.lang = 'en'
+                ORDER BY
+                  CASE
+                    WHEN f.is_lemma = 1 AND COALESCE(f.relation, '') != ? THEN 0
+                    WHEN f.is_lemma = 0 THEN 1
+                    ELSE 2
+                  END ASC,
+                  f.entry_id ASC
+                """,
+                (term.lower(), PARTICIPIAL_ADJ_RELATION),
+            ).fetchall()
+            if not rows:
+                raise RuntimeError(f"Missing EN lookup for {term!r}")
+            primary = rows[0]
+            senses = decompress_senses(primary[5], zdict)
+            alts = [r[3] for r in rows[1:] if r[3].lower() != term.lower()]
+            return {
+                "lemma": primary[3],
+                "is_lemma": primary[1],
+                "pron": primary[4],
+                "senses": senses,
+                "gloss_zh": primary[6],
+                "alternates": alts,
+            }
+
+        def lookup_zh(term: str):
+            rows = conn.execute(
+                """
+                SELECT f.entry_id, f.is_lemma, e.lemma, e.pron, e.senses_json, e.gloss_en
+                FROM forms f
+                JOIN entries e ON e.id = f.entry_id
+                WHERE f.form = ? AND f.lang = 'zh'
+                ORDER BY f.is_lemma DESC, f.entry_id ASC
+                """,
+                (term,),
+            ).fetchall()
+            if not rows:
+                raise RuntimeError(f"Missing ZH lookup for {term!r}")
+            primary = rows[0]
+            senses = decompress_senses(primary[4], zdict)
+            return {
+                "lemma": primary[2],
+                "is_lemma": primary[1],
+                "pron": primary[3],
+                "senses": senses,
+                "gloss_en": primary[5],
+            }
+
+        # Verify participial lemmatization (mortified / mortifying -> mortify)
+        for form in ("mortified", "mortifying"):
+            r = lookup_en(form)
+            if r["lemma"] != "mortify" or r["is_lemma"] != 0:
+                raise RuntimeError(f"Expected {form!r} -> 'mortify' (inflected), got {r}")
+            if not r["senses"] or not r["gloss_zh"]:
+                raise RuntimeError(f"Expected senses + gloss_zh for 'mortify', got {r}")
+
+        # Verify independent homographs (left -> left + alt leave; saw -> saw + alt see)
+        left = lookup_en("left")
+        if left["lemma"] != "left" or "leave" not in left["alternates"]:
+            raise RuntimeError(f"Expected 'left' primary with alt 'leave', got {left}")
+        saw = lookup_en("saw")
+        if saw["lemma"] != "saw" or "see" not in saw["alternates"]:
+            raise RuntimeError(f"Expected 'saw' primary with alt 'see', got {saw}")
+
+        if min_en >= 1000:
+            for form, expected in (("went", "go"), ("ran", "run"), ("children", "child")):
+                r = lookup_en(form)
+                if r["lemma"] != expected:
+                    raise RuntimeError(f"Expected {form!r} -> {expected!r}, got {r}")
+            better = lookup_en("better")
+            if better["lemma"] != "good" and "good" not in better["alternates"]:
+                raise RuntimeError(f"Expected 'better' to link to 'good', got {better}")
+
+        # Verify Chinese idiom (Simplified + Traditional) has Chinese sense, 成语, and EN gloss
+        for form in ("潜移默化", "潛移默化"):
+            r = lookup_zh(form)
+            if r["lemma"] != "潜移默化":
+                raise RuntimeError(f"Expected {form!r} -> '潜移默化', got {r}")
+            if not r["senses"] or r["senses"][0]["pos"] != "成语":
+                raise RuntimeError(f"Expected 成语 POS for {form!r}, got {r}")
+            first_def = r["senses"][0]["defs"][0]
+            if not HANZI_ANY_RE.search(first_def):
+                raise RuntimeError(f"Expected Chinese definition for {form!r}, got {first_def!r}")
+            if not r["gloss_en"] or not ASCII_LETTER_RE.search(r["gloss_en"]):
+                raise RuntimeError(f"Expected separate English gloss for {form!r}, got {r}")
+
+        print(
+            f"Verified {db_path}: {size / (1024 * 1024):.2f} MB, "
+            f"{en_count:,} EN entries, {zh_count:,} ZH entries, all acceptance checks passed."
+        )
+    finally:
+        conn.close()
+
+
+def build_full(args: argparse.Namespace) -> None:
+    manifest = load_sources_manifest()
+    sources = manifest["sources"]
+    cache_dir = Path(args.cache_dir)
+    verify_ck = not args.skip_checksum
+
+    def resolve_source(arg_val: str | None, key: str) -> Path:
+        if arg_val:
+            p = Path(arg_val)
+            if not p.exists():
+                raise RuntimeError(f"Specified {key} file does not exist: {p}")
+            return p
+        spec = sources[key]
+        return download_verified(
+            spec["url"],
+            cache_dir / spec["filename"],
+            spec.get("sha256"),
+            verify_checksum=verify_ck,
+        )
+
+    en_kaikki_path = resolve_source(args.en_kaikki, "en_kaikki")
+    zh_kaikki_path = resolve_source(args.zh_kaikki, "zh_kaikki")
+    ecdict_path = resolve_source(args.ecdict, "ecdict_zip")
+    cedict_path = resolve_source(args.cedict, "cedict")
+
+    print("Loading ECDICT…")
+    ecdict = load_ecdict(ecdict_path)
+    print(f"Loaded {len(ecdict):,} ECDICT headwords")
+
+    print(f"Parsing EN Kaikki ({en_kaikki_path})…")
+    en_entries, en_links, participial_adjs = parse_en_kaikki(
+        en_kaikki_path, ecdict, max_lemmas=args.max_en
+    )
+    print(
+        f"Prepared {len(en_entries):,} EN entries, {len(en_links):,} EN form links, "
+        f"{len(participial_adjs):,} participial-only adjectives"
+    )
+
+    print(f"Parsing ZH Wiktionary + CC-CEDICT ({zh_kaikki_path}, {cedict_path})…")
+    zh_entries, zh_trad_links = parse_zh_entries(
+        zh_kaikki_path, cedict_path, max_entries=args.max_zh
+    )
+    print(
+        f"Prepared {len(zh_entries):,} ZH entries and {len(zh_trad_links):,} traditional mappings"
+    )
+
+    out_path = Path(args.output)
+    assemble_and_write_production_db(
+        out_path,
+        en_entries,
+        en_links,
+        participial_adjs,
+        zh_entries,
+        zh_trad_links,
+        built_at=manifest.get("version", "open-build-v1"),
+    )
+
+    # Run acceptance checks automatically on full default builds
+    if not (args.en_kaikki or args.zh_kaikki or args.ecdict or args.cedict):
+        verify_production_db(out_path)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Build Quill offline dictionary SQLite DB")
-    parser.add_argument("--fixture", action="store_true", help="Build deterministic dict-test.db fixture")
+    parser.add_argument(
+        "--fixture", action="store_true", help="Build deterministic dict-test.db fixture"
+    )
+    parser.add_argument(
+        "--verify", type=str, default=None, help="Verify an existing production dict.db"
+    )
     parser.add_argument("--output", "-o", type=str, default=None, help="Output SQLite file path")
     parser.add_argument("--cache-dir", type=str, default=str(DEFAULT_CACHE))
     parser.add_argument("--en-kaikki", type=str, default=None)
     parser.add_argument("--ecdict", type=str, default=None)
     parser.add_argument("--zh-kaikki", type=str, default=None)
     parser.add_argument("--cedict", type=str, default=None)
-    parser.add_argument("--skip-kaikki", action="store_true", help="Skip large Kaikki downloads (use ECDICT + CC-CEDICT)")
-    parser.add_argument("--max-en", type=int, default=85_000)
-    parser.add_argument("--max-zh", type=int, default=70_000)
+    parser.add_argument(
+        "--skip-checksum",
+        action="store_true",
+        help="Skip SHA-256 verification against scripts/dict-sources.json (for manual refreshes only)",
+    )
+    parser.add_argument("--max-en", type=int, default=72_000)
+    parser.add_argument("--max-zh", type=int, default=56_000)
     args = parser.parse_args()
+
+    if args.verify:
+        verify_production_db(Path(args.verify))
+        return
 
     if args.fixture:
         out = Path(args.output) if args.output else FIXTURE_OUT

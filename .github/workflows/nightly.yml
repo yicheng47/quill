@@ -54,8 +54,40 @@ jobs:
           echo "version=${base_version}-nightly.${stamp}" >> "$GITHUB_OUTPUT"
           echo "release_title=Quill Nightly" >> "$GITHUB_OUTPUT"
 
-  build-macos:
+  build-dict:
     needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out dispatch commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+
+      - name: Restore cached production dictionary
+        id: dict-cache
+        uses: actions/cache@v4
+        with:
+          path: crates/quill-core/resources/dict.db
+          key: dict-db-v1-${{ hashFiles('scripts/build-dict.py', 'scripts/dict-sources.json') }}
+
+      - name: Build production offline dictionary
+        if: steps.dict-cache.outputs.cache-hit != 'true'
+        run: python3 scripts/build-dict.py --output crates/quill-core/resources/dict.db
+
+      - name: Verify production offline dictionary
+        run: python3 scripts/build-dict.py --verify crates/quill-core/resources/dict.db
+
+      - name: Upload production offline dictionary
+        uses: actions/upload-artifact@v4
+        with:
+          name: dict-db
+          path: crates/quill-core/resources/dict.db
+          retention-days: 1
+          if-no-files-found: error
+
+  build-macos:
+    needs: [prepare, build-dict]
     if: inputs.platform == 'all' || inputs.platform == 'both' || inputs.platform == 'macos'
     runs-on: macos-latest
     timeout-minutes: 90
@@ -142,6 +174,12 @@ jobs:
           test -s build/embedded.provisionprofile
           echo "CSC_CERT_PATH=$cert_path" >> "$GITHUB_ENV"
 
+      - name: Download production offline dictionary
+        uses: actions/download-artifact@v4
+        with:
+          name: dict-db
+          path: crates/quill-core/resources
+
       - name: Package, sign, and notarize macOS nightly (${{ matrix.arch }})
         env:
           QUILL_RUST_TARGET: ${{ matrix.rust_target }}
@@ -214,7 +252,7 @@ jobs:
           if-no-files-found: error
 
   build-windows:
-    needs: prepare
+    needs: [prepare, build-dict]
     if: inputs.platform == 'all' || inputs.platform == 'both' || inputs.platform == 'windows'
     runs-on: windows-latest
     timeout-minutes: 90
@@ -267,6 +305,12 @@ jobs:
 
       - name: Build Electron and renderer bundles
         run: npm run build
+
+      - name: Download production offline dictionary
+        uses: actions/download-artifact@v4
+        with:
+          name: dict-db
+          path: crates/quill-core/resources
 
       - name: Package unsigned Windows nightly NSIS installer
         env:

@@ -18,6 +18,7 @@ export interface OpenDialogFilter {
 export interface OpenFileDialogOptions {
   multiple?: boolean;
   allowDirectory?: boolean;
+  directoryOnly?: boolean;
   filters?: OpenDialogFilter[];
 }
 

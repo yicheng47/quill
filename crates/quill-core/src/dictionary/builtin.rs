@@ -5,13 +5,16 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use flate2::{Decompress, FlushDecompress, Status};
-use rusqlite::{params, Connection, OpenFlags, types::ValueRef};
+use rusqlite::{params, types::ValueRef, Connection, OpenFlags};
 
 use super::{AlternateLemma, DictionaryMatch, DictionarySenseGroup};
 use crate::error::{AppError, AppResult};
 
 pub const BUILTIN_DICT_ID: &str = "builtin";
 pub const BUILTIN_DICT_NAME: &str = "Quill Built-in (EN / ZH)";
+pub const PARTICIPIAL_ADJ_RELATION: &str = "participial adjective";
+
+const MAX_DECOMPRESSED_SENSES_BYTES: usize = 2 * 1024 * 1024;
 
 pub struct BuiltinDict {
     pub path: PathBuf,
@@ -169,15 +172,26 @@ impl BuiltinDict {
             });
         }
 
+        // Rank independent non-participial lemmas first (preserving homographs like
+        // `left` adj/noun and `saw` noun ahead of `leave`/`see`), then verb/noun
+        // inflections (`mortified` -> `mortify`), then participial-only adjectives
+        // (`relation = 'participial adjective'`) last so participial lookups resolve
+        // to the canonical verb lemma.
         let mut stmt = self.conn.prepare(
             "SELECT f.entry_id, f.is_lemma, f.relation, e.lemma
              FROM forms f
              JOIN entries e ON e.id = f.entry_id
              WHERE f.form = ?1 AND f.lang = 'en'
-             ORDER BY f.is_lemma DESC, f.entry_id ASC",
+             ORDER BY
+               CASE
+                 WHEN f.is_lemma = 1 AND COALESCE(f.relation, '') != ?2 THEN 0
+                 WHEN f.is_lemma = 0 THEN 1
+                 ELSE 2
+               END ASC,
+               f.entry_id ASC",
         )?;
         let rows: Vec<(i64, i64, Option<String>, String)> = stmt
-            .query_map(params![lower], |r| {
+            .query_map(params![lower, PARTICIPIAL_ADJ_RELATION], |r| {
                 Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -192,6 +206,9 @@ impl BuiltinDict {
             let mut seen_alt = std::collections::HashSet::new();
             seen_alt.insert(primary_lemma.to_lowercase());
             for (_eid, _is_l, rel, alt_lemma) in rows.iter().skip(1) {
+                if alt_lemma.eq_ignore_ascii_case(trimmed) {
+                    continue;
+                }
                 let key = alt_lemma.to_lowercase();
                 if seen_alt.insert(key) {
                     alternate_lemmas.push(AlternateLemma {
@@ -214,7 +231,7 @@ impl BuiltinDict {
             });
         }
 
-        // Suffix-rule fallback validated against known English lemmas in entries
+        // Suffix-rule fallback validated against known English lemmas via indexed forms(form, lang)
         if let Some((entry_id, lemma)) = self.try_english_suffix_fallback(&lower)? {
             let inflected_from = (!lemma.eq_ignore_ascii_case(trimmed)).then(|| trimmed.to_string());
             let forms = self.load_forms(entry_id, &lemma, inflected_from.as_deref())?;
@@ -292,7 +309,7 @@ impl BuiltinDict {
                 candidates.push(stem.to_string());
             }
         }
-        // -ier / -iest -> -y, -er / -est
+        // -ier / -iest -> -y
         if let Some(stem) = lower.strip_suffix("ier") {
             if stem.len() >= 2 {
                 candidates.push(format!("{stem}y"));
@@ -304,8 +321,15 @@ impl BuiltinDict {
             }
         }
 
+        // Uses idx_forms_form_lang (form, lang) directly in O(log N) instead of a
+        // COLLATE NOCASE scan over entries(lang, lemma).
         let mut stmt = self.conn.prepare(
-            "SELECT id, lemma FROM entries WHERE lang = 'en' AND lemma = ?1 COLLATE NOCASE LIMIT 1",
+            "SELECT f.entry_id, e.lemma
+             FROM forms f
+             JOIN entries e ON e.id = f.entry_id
+             WHERE f.form = ?1 AND f.lang = 'en' AND f.is_lemma = 1
+             ORDER BY f.entry_id ASC
+             LIMIT 1",
         )?;
         for cand in candidates {
             if let Ok(hit) = stmt.query_row(params![cand], |r| {
@@ -315,6 +339,26 @@ impl BuiltinDict {
             }
         }
         Ok(None)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn suffix_fallback_query_plan(&self) -> Vec<String> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "EXPLAIN QUERY PLAN
+                 SELECT f.entry_id, e.lemma
+                 FROM forms f
+                 JOIN entries e ON e.id = f.entry_id
+                 WHERE f.form = ?1 AND f.lang = 'en' AND f.is_lemma = 1
+                 ORDER BY f.entry_id ASC
+                 LIMIT 1",
+            )
+            .unwrap();
+        stmt.query_map(params!["walk"], |r| r.get::<_, String>(3))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
     }
 
     fn load_forms(
@@ -397,11 +441,14 @@ impl BuiltinDict {
             return inflate_raw_with_dict(&raw[1..], None);
         }
         // Standard zlib stream fallback (0x78 ...)
-        let mut decoder = flate2::read::ZlibDecoder::new(raw);
+        let mut decoder = flate2::read::ZlibDecoder::new(raw).take((MAX_DECOMPRESSED_SENSES_BYTES + 1) as u64);
         let mut out = String::new();
         decoder
             .read_to_string(&mut out)
             .map_err(|e| AppError::Other(format!("Failed to decompress senses: {e}")))?;
+        if out.len() > MAX_DECOMPRESSED_SENSES_BYTES {
+            return Err(AppError::Other("Decompressed senses exceed safety limit".into()));
+        }
         Ok(out)
     }
 }
@@ -413,7 +460,7 @@ fn inflate_raw_with_dict(input: &[u8], zdict: Option<&[u8]>) -> AppResult<String
             .set_dictionary(dict)
             .map_err(|e| AppError::Other(format!("set_dictionary failed: {e}")))?;
     }
-    let mut out = Vec::with_capacity(input.len().saturating_mul(3).max(256));
+    let mut out = Vec::with_capacity(input.len().saturating_mul(3).clamp(256, 65536));
     let mut buf = [0u8; 4096];
     let mut offset = 0;
     loop {
@@ -425,6 +472,9 @@ fn inflate_raw_with_dict(input: &[u8], zdict: Option<&[u8]>) -> AppResult<String
         let consumed = (decompressor.total_in() - before_in) as usize;
         let produced = (decompressor.total_out() - before_out) as usize;
         offset += consumed;
+        if out.len().saturating_add(produced) > MAX_DECOMPRESSED_SENSES_BYTES {
+            return Err(AppError::Other("Decompressed senses exceed safety limit".into()));
+        }
         out.extend_from_slice(&buf[..produced]);
         match status {
             Status::StreamEnd => break,

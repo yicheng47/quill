@@ -71,8 +71,15 @@ if (platform === "darwin") {
     }
   }
 
+  const dictDbPath = path.join(resourcesDir, "dict.db");
   const appUpdateYmlPath = path.join(resourcesDir, "app-update.yml");
   if (args["require-app-update"] === "true") {
+    const dictBytes = fs.statSync(dictDbPath).size;
+    if (dictBytes < 1_000_000) {
+      throw new Error(
+        `Production bundle contains a stub/fixture dict.db (${dictBytes} bytes); expected full production dict.db`,
+      );
+    }
     if (!fs.existsSync(appUpdateYmlPath)) {
       throw new Error(`Missing ${appUpdateYmlPath}`);
     }
@@ -101,6 +108,15 @@ if (platform === "darwin") {
   for (const file of requiredFiles) {
     if (!fs.existsSync(file)) {
       throw new Error(`Missing expected packaged file: ${file}`);
+    }
+  }
+
+  if (args["require-app-update"] === "true") {
+    const dictBytes = fs.statSync(path.join(resourcesDir, "dict.db")).size;
+    if (dictBytes < 1_000_000) {
+      throw new Error(
+        `Production bundle contains a stub/fixture dict.db (${dictBytes} bytes); expected full production dict.db`,
+      );
     }
   }
 
