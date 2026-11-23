@@ -816,7 +816,7 @@ describe("M7 reader AI and word surfaces", () => {
         <DictionaryPanel
           bookId="b-1"
           onNavigate={onNavigate}
-          getPageFromCfi={() => null}
+          resolvePages={async () => new Map()}
           onClose={vi.fn()}
           onOpenInWords={onOpenInWords}
         />,
@@ -869,6 +869,95 @@ describe("M7 reader AI and word surfaces", () => {
     await flushMicrotasks();
     expect(invokeMock).toHaveBeenCalledWith("remove_vocab_word", { id: "v-1" });
     expect(container.textContent).toContain("1 word in this book");
+  });
+
+  it("DictionaryPanel shows each word's own resolved page, hides labels while resolving or unresolved, and keeps them stable across re-renders", async () => {
+    vocabRows = [
+      {
+        id: "v-1",
+        book_id: "b-1",
+        word: "ephemeral",
+        definition: "Short-lived.",
+        context_sentence: null,
+        cfi: "epubcfi(/6/4!/4/2/1:0)",
+        created_at: 1_700_000_000,
+      },
+      {
+        id: "v-2",
+        book_id: "b-1",
+        word: "zenith",
+        definition: "The highest point.",
+        context_sentence: null,
+        cfi: "epubcfi(/6/12!/4/8/1:0)",
+        created_at: 1_700_000_100,
+      },
+      {
+        id: "v-3",
+        book_id: "b-1",
+        word: "unanchored",
+        definition: "No resolvable CFI.",
+        context_sentence: null,
+        cfi: "broken-cfi",
+        created_at: 1_700_000_200,
+      },
+    ];
+
+    let settleResolve!: (value: Map<string, number>) => void;
+    const resolvePages = vi.fn(
+      () =>
+        new Promise<Map<string, number>>((resolve) => {
+          settleResolve = resolve;
+        }),
+    );
+
+    await act(async () => {
+      root.render(
+        <DictionaryPanel
+          bookId="b-1"
+          bookTitle="Frankenstein"
+          resolvePages={resolvePages}
+          onClose={vi.fn()}
+        />,
+      );
+    });
+    await flushMicrotasks();
+
+    // Hidden while resolving
+    expect(resolvePages).toHaveBeenCalledTimes(1);
+    expect(container.textContent).not.toContain("p. ");
+
+    await act(async () => {
+      settleResolve(
+        new Map([
+          ["epubcfi(/6/4!/4/2/1:0)", 12],
+          ["epubcfi(/6/12!/4/8/1:0)", 47],
+        ]),
+      );
+    });
+    await flushMicrotasks();
+
+    const cards = Array.from(container.querySelectorAll<HTMLElement>('[role="button"]'));
+    expect(cards).toHaveLength(3);
+    expect(cards[0].textContent).toContain("p. 12");
+    expect(cards[1].textContent).toContain("p. 47");
+    expect(cards[2].textContent).not.toContain("p. ");
+
+    // Re-rendering (e.g. reader turns pages) keeps labels fixed and does not re-resolve
+    await act(async () => {
+      root.render(
+        <DictionaryPanel
+          bookId="b-1"
+          bookTitle="Frankenstein"
+          resolvePages={resolvePages}
+          onClose={vi.fn()}
+        />,
+      );
+    });
+    await flushMicrotasks();
+
+    expect(resolvePages).toHaveBeenCalledTimes(1);
+    expect(cards[0].textContent).toContain("p. 12");
+    expect(cards[1].textContent).toContain("p. 47");
   });
 
   it("AiPanel (Ask Quill) renders starter & follow-up prompts, paginated message counts, active thread delete, pending quote Esc, 16px/15px text sizing, errors and prompt cards", async () => {

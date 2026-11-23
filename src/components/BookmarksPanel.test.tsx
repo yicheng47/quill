@@ -6,6 +6,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../i18n";
+import type { ResolveSavedItemPages } from "../utils/savedItemPages";
 import BookmarksPanel from "./BookmarksPanel";
 
 const mockInvoke = vi.fn();
@@ -240,5 +241,137 @@ describe("BookmarksPanel nested action keyboard isolation", () => {
       bookmarksTab.click();
     });
     checkScrollBox();
+  });
+
+  it("shows each highlight and bookmark's own resolved page, hides labels while resolving or unresolved, and stays stable across navigation", async () => {
+    const multiHighlights = [
+      { ...sampleHighlights[0], id: "hl-1", cfi_range: "cfi-h1", text_content: "First passage." },
+      { ...sampleHighlights[0], id: "hl-2", cfi_range: "cfi-h2", text_content: "Second passage." },
+      { ...sampleHighlights[0], id: "hl-3", cfi_range: "cfi-h-bad", text_content: "Broken passage." },
+    ];
+    const multiBookmarks = [
+      { ...sampleBookmarks[0], id: "bm-1", cfi: "cfi-b1", label: "Chapter III" },
+      { ...sampleBookmarks[0], id: "bm-2", cfi: "cfi-b2", label: "Chapter V" },
+      { ...sampleBookmarks[0], id: "bm-3", cfi: "cfi-b-bad", label: "Unknown" },
+    ];
+    mockInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "list_highlights") return multiHighlights;
+      if (cmd === "list_bookmarks") return multiBookmarks;
+      return null;
+    });
+
+    let settleResolve!: (value: Map<string, number>) => void;
+    const resolvePages = vi.fn<ResolveSavedItemPages>(
+      () =>
+        new Promise<Map<string, number>>((resolve) => {
+          settleResolve = resolve;
+        }),
+    );
+
+    const onAsk = vi.fn();
+    await act(async () => {
+      root.render(
+        <BookmarksPanel
+          bookId="book-1"
+          bookTitle="Frankenstein"
+          currentCfi="cfi-b1"
+          onAsk={onAsk}
+          resolvePages={resolvePages}
+        />,
+      );
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // While resolving, no page labels render
+    expect(resolvePages).toHaveBeenCalledTimes(1);
+    expect(container.textContent).not.toContain("p. ");
+
+    await act(async () => {
+      settleResolve(
+        new Map([
+          ["cfi-h1", 14],
+          ["cfi-h2", 42],
+          ["cfi-b1", 19],
+          ["cfi-b2", 37],
+        ]),
+      );
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const highlightCards = Array.from(container.querySelectorAll<HTMLElement>('[role="button"]'));
+    expect(highlightCards).toHaveLength(3);
+    expect(highlightCards[0].textContent).toContain("p. 14");
+    expect(highlightCards[1].textContent).toContain("p. 42");
+    expect(highlightCards[2].textContent).not.toContain("p. ");
+
+    // Clicking Ask on a resolved highlight forwards its resolved page; unresolved omits it
+    const firstAsk = Array.from(highlightCards[0].querySelectorAll("button")).find((el) =>
+      el.textContent?.includes("Ask"),
+    )!;
+    await act(async () => {
+      firstAsk.click();
+    });
+    expect(onAsk).toHaveBeenLastCalledWith("First passage.", "cfi-h1", 14);
+
+    const unresolvedAsk = Array.from(highlightCards[2].querySelectorAll("button")).find((el) =>
+      el.textContent?.includes("Ask"),
+    )!;
+    await act(async () => {
+      unresolvedAsk.click();
+    });
+    expect(onAsk).toHaveBeenLastCalledWith("Broken passage.", "cfi-h-bad");
+
+    // Reader turns pages (currentCfi changes): highlight labels stay fixed without re-resolving
+    await act(async () => {
+      root.render(
+        <BookmarksPanel
+          bookId="book-1"
+          bookTitle="Frankenstein"
+          currentCfi="cfi-b2"
+          onAsk={onAsk}
+          resolvePages={resolvePages}
+        />,
+      );
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(resolvePages).toHaveBeenCalledTimes(1);
+    expect(highlightCards[0].textContent).toContain("p. 14");
+    expect(highlightCards[1].textContent).toContain("p. 42");
+
+    // Switch to Bookmarks tab: each bookmark shows its own Page N label and omits unresolved CFIs
+    const bookmarksTab = container.querySelectorAll<HTMLButtonElement>('[role="tab"]')[1];
+    await act(async () => {
+      bookmarksTab.click();
+    });
+
+    const bookmarkCards = Array.from(container.querySelectorAll<HTMLElement>('[role="button"]'));
+    expect(bookmarkCards).toHaveLength(3);
+    expect(bookmarkCards[0].textContent).toContain("Page 19");
+    expect(bookmarkCards[1].textContent).toContain("Page 37");
+    expect(bookmarkCards[2].textContent).not.toContain("Page ");
+
+    // Turn page again on Bookmarks tab: bookmark labels stay fixed
+    await act(async () => {
+      root.render(
+        <BookmarksPanel
+          bookId="book-1"
+          bookTitle="Frankenstein"
+          currentCfi="cfi-chapter-10"
+          resolvePages={resolvePages}
+        />,
+      );
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(bookmarkCards[0].textContent).toContain("Page 19");
+    expect(bookmarkCards[1].textContent).toContain("Page 37");
   });
 });

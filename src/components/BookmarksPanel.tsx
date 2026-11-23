@@ -9,7 +9,9 @@ import {
   Trash2,
 } from "lucide-react";
 import { useBookmarks, useHighlights } from "../hooks/useBookmarks";
+import { useSavedItemPages } from "../hooks/useSavedItemPages";
 import { HIGHLIGHT_SWATCHES } from "./HighlightToolbar";
+import type { ResolveSavedItemPages } from "../utils/savedItemPages";
 import { shouldSuppressSelectionClick } from "../utils/selection";
 import { timeAgo } from "../utils/timeAgo";
 
@@ -19,11 +21,11 @@ interface BookmarksPanelProps {
   currentCfi?: string | null;
   highlightVersion?: number;
   onNavigate?: (cfi: string) => void;
-  onAsk?: (text: string, cfi?: string) => void;
+  onAsk?: (text: string, cfi?: string, page?: number | null) => void;
   onRemoveHighlight?: (cfiRange: string) => void;
   getCurrentCfi?: () => string | null;
   getCurrentLabel?: () => string;
-  getPageFromCfi?: (cfi: string) => number | null;
+  resolvePages?: ResolveSavedItemPages;
 }
 
 type Tab = "highlights" | "bookmarks";
@@ -42,7 +44,7 @@ export default function BookmarksPanel({
   onRemoveHighlight,
   getCurrentCfi,
   getCurrentLabel,
-  getPageFromCfi,
+  resolvePages,
 }: BookmarksPanelProps) {
   const { t } = useTranslation();
   const [tab, setTab] = useState<Tab>("highlights");
@@ -57,6 +59,10 @@ export default function BookmarksPanel({
     refresh: refreshHighlights,
     remove: removeHighlight,
   } = useHighlights(bookId);
+  const pageByCfi = useSavedItemPages(
+    [...highlights.map((h) => h.cfi_range), ...bookmarks.map((b) => b.cfi)],
+    resolvePages,
+  );
 
   useEffect(() => {
     if (highlightVersion !== undefined && highlightVersion > 0) {
@@ -237,7 +243,7 @@ export default function BookmarksPanel({
               </p>
             ) : (
               filteredHighlights.map((highlight) => {
-                const page = getPageFromCfi?.(highlight.cfi_range) ?? null;
+                const page = pageByCfi.get(highlight.cfi_range) ?? null;
                 const metaParts = [
                   page != null ? t("bookmarks.shortPage", { page }) : null,
                   timeAgo(highlight.created_at),
@@ -284,7 +290,11 @@ export default function BookmarksPanel({
                               type="button"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                onAsk(highlight.text_content!, highlight.cfi_range);
+                                if (page != null) {
+                                  onAsk(highlight.text_content!, highlight.cfi_range, page);
+                                } else {
+                                  onAsk(highlight.text_content!, highlight.cfi_range);
+                                }
                               }}
                               className="inline-flex items-center gap-1 px-2 py-[3px] rounded-full bg-surface-inset border border-border-subtle text-[11px] font-medium text-text-secondary hover:bg-accent-tint hover:text-accent-on-tint hover:border-accent/35 cursor-pointer transition-colors"
                             >
@@ -336,7 +346,7 @@ export default function BookmarksPanel({
               </p>
             ) : (
               bookmarks.map((bookmark) => {
-                const page = getPageFromCfi?.(bookmark.cfi) ?? null;
+                const page = pageByCfi.get(bookmark.cfi) ?? null;
                 const metaParts = [
                   page != null ? t("bookmarks.page", { page }) : null,
                   timeAgo(bookmark.created_at),

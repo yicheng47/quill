@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { BookOpen, Search, Trash2, X } from "lucide-react";
 import { useDictionary } from "../hooks/useDictionary";
+import { useSavedItemPages } from "../hooks/useSavedItemPages";
+import type { ResolveSavedItemPages } from "../utils/savedItemPages";
 import { shouldSuppressSelectionClick } from "../utils/selection";
 import { timeAgo } from "../utils/timeAgo";
 import { parseSavedVocabDefinition } from "../utils/vocabParse";
@@ -11,7 +13,7 @@ interface DictionaryPanelProps {
   bookTitle?: string;
   vocabVersion?: number;
   onNavigate?: (cfi: string) => void;
-  getPageFromCfi?: (cfi: string) => number | null;
+  resolvePages?: ResolveSavedItemPages;
   onClose?: () => void;
   onOpenInWords?: (wordId?: string) => void;
 }
@@ -20,7 +22,7 @@ export default function DictionaryPanel({
   bookId,
   vocabVersion,
   onNavigate,
-  getPageFromCfi,
+  resolvePages,
   onClose,
   onOpenInWords,
 }: DictionaryPanelProps) {
@@ -28,6 +30,10 @@ export default function DictionaryPanel({
   const [dictSearch, setDictSearch] = useState("");
   const [selectedWordId, setSelectedWordId] = useState<string | null>(null);
   const { words, refresh, remove: removeWord } = useDictionary(bookId);
+  const pageByCfi = useSavedItemPages(
+    words.map((w) => w.cfi),
+    resolvePages,
+  );
 
   useEffect(() => {
     if (vocabVersion !== undefined && vocabVersion > 0) {
@@ -110,7 +116,7 @@ export default function DictionaryPanel({
           </div>
         ) : (
           filteredWords.map((word) => {
-            const page = getPageFromCfi && word.cfi ? getPageFromCfi(word.cfi) : null;
+            const page = word.cfi ? (pageByCfi.get(word.cfi) ?? null) : null;
             const parsed = parseSavedVocabDefinition(word.definition);
             const selected = selectedWordId === word.id;
             const metaParts = [
