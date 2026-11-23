@@ -2,7 +2,7 @@ import { createRequire } from "node:module";
 import fs from "node:fs";
 import path from "node:path";
 import { app, shell } from "electron";
-import { findRepoRoot, resolveMcpBinaryPath, resolvePdfiumPath } from "./paths";
+import { findRepoRoot, resolveDictPath, resolveMcpBinaryPath, resolvePdfiumPath } from "./paths";
 import { isSafeHttpUrl } from "./urlSecurity";
 
 export { findRepoRoot };
@@ -13,6 +13,7 @@ export interface JsBootConfig {
   isDev: boolean;
   mcpBinaryPath: string;
   pdfiumPath?: string;
+  dictPath?: string;
 }
 
 export interface JsHostEvent {
@@ -102,6 +103,11 @@ export async function bootQuillCore(callbacks: HostCallbacks): Promise<QuillCore
     pdfiumPath: resolvePdfiumPath(repoRoot, {
       isPackaged: app.isPackaged,
       resourcesPath: process.resourcesPath,
+    }),
+    dictPath: resolveDictPath(repoRoot, {
+      isPackaged: app.isPackaged,
+      resourcesPath: process.resourcesPath,
+      envDictPath: process.env.QUILL_DICT_PATH,
     }),
   };
 

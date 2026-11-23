@@ -35,4 +35,6 @@ build/embedded.provisionprofile
 .nvmrc
 /target/
 /crates/quill-core/binaries/
+/crates/quill-core/resources/dict.db
+/.cache/
 crates/quill-node/index.d.ts

@@ -85,3 +85,25 @@ export function resolvePdfiumPath(
   }
   return undefined;
 }
+
+export function resolveDictPath(
+  repoRoot: string,
+  opts: { isPackaged: boolean; resourcesPath?: string; envDictPath?: string },
+): string | undefined {
+  if (opts.isPackaged) {
+    const packaged = opts.resourcesPath ? path.join(opts.resourcesPath, "dict.db") : "";
+    return packaged && fs.existsSync(packaged) ? packaged : undefined;
+  }
+
+  const candidates = [
+    opts.envDictPath?.trim() ? path.resolve(opts.envDictPath.trim()) : "",
+    path.join(repoRoot, "crates/quill-core/resources/dict.db"),
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return undefined;
+}

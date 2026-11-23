@@ -28,6 +28,7 @@ export type InvokeResult =
 
 interface OpenFileDialogOptions {
   multiple?: boolean;
+  allowDirectory?: boolean;
   filters?: Array<{ name: string; extensions: string[] }>;
 }
 
@@ -222,8 +223,14 @@ export function registerIpcHandlers(
     "quill:open-file-dialog",
     async (event, options: OpenFileDialogOptions): Promise<string | null> => {
       const owner = BrowserWindow.fromWebContents(event.sender) ?? getWindow("main");
+      const properties: Electron.OpenDialogOptions["properties"] = options.multiple
+        ? ["openFile", "multiSelections"]
+        : ["openFile"];
+      if (options.allowDirectory && process.platform === "darwin") {
+        properties.push("openDirectory");
+      }
       const dialogOptions: Electron.OpenDialogOptions = {
-        properties: options.multiple ? ["openFile", "multiSelections"] : ["openFile"],
+        properties,
         filters: options.filters,
       };
       const res = owner

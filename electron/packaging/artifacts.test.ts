@@ -76,8 +76,9 @@ describe("resolveNativeBundleSources", () => {
       "macos",
       "libpdfium.dylib",
     );
+    const dictDb = path.join(repo, "crates", "quill-core", "resources", "dict.db");
 
-    for (const p of [x64Node, x64Mcp, x64Pdfium, arm64Pdfium]) {
+    for (const p of [x64Node, x64Mcp, x64Pdfium, arm64Pdfium, dictDb]) {
       fs.mkdirSync(path.dirname(p), { recursive: true });
     }
     fs.writeFileSync(x64Node, makeMachoHeader(0x01000007));
@@ -85,6 +86,7 @@ describe("resolveNativeBundleSources", () => {
     fs.writeFileSync(x64Pdfium, makeMachoHeader(0x01000007));
     // Even if `binaries/macos/libpdfium.dylib` holds arm64 from a prior build, x64 must ignore it.
     fs.writeFileSync(arm64Pdfium, makeMachoHeader(0x0100000c));
+    fs.writeFileSync(dictDb, "SQLite format 3\0");
 
     const resolved = resolveNativeBundleSources(repo, "darwin", "x64", {
       hostPlatform: "darwin",
@@ -93,6 +95,7 @@ describe("resolveNativeBundleSources", () => {
     expect(resolved.nodeAddon).toBe(x64Node);
     expect(resolved.mcpBinary).toBe(x64Mcp);
     expect(resolved.pdfiumLib).toBe(x64Pdfium);
+    expect(resolved.dictDb).toBe(dictDb);
 
     // If `macos-x86_64/libpdfium.dylib` is overwritten by arm64, resolution fails loudly.
     fs.writeFileSync(x64Pdfium, makeMachoHeader(0x0100000c));
@@ -129,6 +132,43 @@ describe("resolveNativeBundleSources", () => {
         hostArch: "arm64",
       }),
     ).toThrow(/Missing quill-mcp binary for x86_64-apple-darwin/);
+  });
+
+  it("allows dict-test.db fallback only when allowDebugFallback is true", () => {
+    const repo = makeTempDir();
+    const arm64Node = path.join(repo, "crates", "quill-node", "index.node");
+    const arm64Mcp = path.join(repo, "target", "release", "quill-mcp");
+    const arm64Pdfium = path.join(
+      repo,
+      "crates",
+      "quill-core",
+      "binaries",
+      "macos-aarch64",
+      "libpdfium.dylib",
+    );
+    const dictTestDb = path.join(repo, "crates", "quill-core", "resources", "dict-test.db");
+
+    for (const p of [arm64Node, arm64Mcp, arm64Pdfium, dictTestDb]) {
+      fs.mkdirSync(path.dirname(p), { recursive: true });
+    }
+    fs.writeFileSync(arm64Node, makeMachoHeader(0x0100000c));
+    fs.writeFileSync(arm64Mcp, makeMachoHeader(0x0100000c));
+    fs.writeFileSync(arm64Pdfium, makeMachoHeader(0x0100000c));
+    fs.writeFileSync(dictTestDb, "fixture");
+
+    expect(() =>
+      resolveNativeBundleSources(repo, "darwin", "arm64", {
+        hostPlatform: "darwin",
+        hostArch: "arm64",
+      }),
+    ).toThrow(/Missing built-in dictionary database/);
+
+    const resolved = resolveNativeBundleSources(repo, "darwin", "arm64", {
+      hostPlatform: "darwin",
+      hostArch: "arm64",
+      allowDebugFallback: true,
+    });
+    expect(resolved.dictDb).toBe(dictTestDb);
   });
 });
 

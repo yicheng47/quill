@@ -407,6 +407,26 @@ struct AiCancelArgs {
     channel: String,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LookupDictionaryArgs {
+    term: String,
+    #[serde(default)]
+    lang_hint: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ImportDictionaryArgs {
+    path: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateDictionariesConfigArgs {
+    items: Vec<crate::dictionary::DictionaryConfigItem>,
+}
+
 macro_rules! command_table {
     (
         sync {
@@ -723,6 +743,35 @@ command_table! {
             run_blocking(core, commands::vocab::get_vocab_stats)
         },
 
+        // Offline Dictionaries
+        "lookup_dictionary" => |core, args| {
+            let a: LookupDictionaryArgs = parse_args(args)?;
+            run_blocking(core, move |c| {
+                commands::dictionary::lookup_dictionary(c, a.term, a.lang_hint)
+            })
+        },
+        "list_dictionaries" => |core, _args| {
+            run_blocking(core, commands::dictionary::list_dictionaries)
+        },
+        "import_dictionary" => |core, args| {
+            let a: ImportDictionaryArgs = parse_args(args)?;
+            run_blocking(core, move |c| {
+                commands::dictionary::import_dictionary(c, a.path)
+            })
+        },
+        "update_dictionaries_config" => |core, args| {
+            let a: UpdateDictionariesConfigArgs = parse_args(args)?;
+            run_blocking(core, move |c| {
+                commands::dictionary::update_dictionaries_config(c, a.items)
+            })
+        },
+        "remove_dictionary" => |core, args| {
+            let a: IdArgs = parse_args(args)?;
+            run_blocking(core, move |c| {
+                commands::dictionary::remove_dictionary(c, a.id)
+            })
+        },
+
         // Chats
         "create_chat" => |core, args| {
             let a: CreateChatArgs = parse_args(args)?;
@@ -1028,6 +1077,7 @@ mod tests {
             is_dev: true,
             mcp_binary_path: dir.path().join("quill-mcp"),
             pdfium_path: None,
+            dict_path: None,
         };
         let core = boot(config, host.clone()).expect("boot core");
         (dir, host, core)
@@ -1924,7 +1974,7 @@ mod tests {
             CORE_COMMAND_NAMES.len(),
             "duplicate entries in CORE_COMMAND_NAMES"
         );
-        assert_eq!(CORE_COMMAND_NAMES.len(), 81);
+        assert_eq!(CORE_COMMAND_NAMES.len(), 86);
 
         let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()

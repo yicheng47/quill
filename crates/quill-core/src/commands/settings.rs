@@ -492,6 +492,7 @@ mod tests {
                 is_dev: true,
                 mcp_binary_path: dir.path().join("quill-mcp"),
                 pdfium_path: None,
+                dict_path: None,
             },
             Arc::new(NoopHost),
         )
@@ -566,6 +567,7 @@ mod tests {
                 is_dev: true,
                 mcp_binary_path: dir.path().join("quill-mcp"),
                 pdfium_path: None,
+                dict_path: None,
             },
             Arc::new(NoopHost),
         )

@@ -1776,8 +1776,10 @@ dependencies = [
  "base64",
  "block2",
  "chrono",
+ "encoding_rs",
  "epub",
  "fern",
+ "flate2",
  "futures",
  "gethostname",
  "image",
@@ -1800,6 +1802,7 @@ dependencies = [
  "toml_edit",
  "ulid",
  "uuid",
+ "zip",
 ]
 
 [[package]]
