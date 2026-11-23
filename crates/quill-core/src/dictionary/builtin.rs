@@ -29,6 +29,8 @@ struct CompactEntryPayload {
     #[serde(default)]
     s: Option<Vec<(String, Vec<String>)>>,
     #[serde(default)]
+    m: Option<u16>,
+    #[serde(default)]
     f: Option<Vec<String>>,
     #[serde(default)]
     ci: Option<u8>,
@@ -41,6 +43,7 @@ struct DecodedEntry {
     senses: Vec<DictionarySenseGroup>,
     gloss_en: Option<String>,
     gloss_zh: Option<String>,
+    morph_mask: u16,
     extra_forms: Vec<String>,
 }
 
@@ -161,23 +164,6 @@ impl BuiltinDict {
                 alternate_lemmas: Vec::new(),
                 forms,
                 matched_entry_id: Some(*entry_id),
-            });
-        }
-
-        // Direct check in entries table in case forms row wasn't populated
-        if let Ok((entry_id, lemma)) = self.conn.query_row(
-            "SELECT id, lemma FROM entries WHERE lang = 'zh' AND lemma = ?1 LIMIT 1",
-            params![trimmed],
-            |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)),
-        ) {
-            let forms = self.load_forms(entry_id, "zh", &lemma, None)?;
-            return Ok(LemmatizeOutput {
-                lemma,
-                lang: "zh".to_string(),
-                inflected_from: None,
-                alternate_lemmas: Vec::new(),
-                forms,
-                matched_entry_id: Some(entry_id),
             });
         }
 
@@ -413,6 +399,25 @@ impl BuiltinDict {
             .unwrap()
     }
 
+    #[cfg(test)]
+    pub(crate) fn zh_lookup_query_plan(&self, term: &str) -> Vec<String> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "EXPLAIN QUERY PLAN
+                 SELECT f.entry_id, f.is_lemma, f.relation, e.lemma
+                 FROM forms f
+                 JOIN entries e ON e.id = f.entry_id
+                 WHERE f.form = ?1 AND f.lang = 'zh'
+                 ORDER BY f.is_lemma DESC, f.entry_id ASC",
+            )
+            .unwrap();
+        stmt.query_map(params![term], |r| r.get::<_, String>(3))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+    }
+
     fn load_forms(
         &self,
         entry_id: i64,
@@ -423,6 +428,9 @@ impl BuiltinDict {
         let mut forms: Vec<String> = vec![lemma.to_string()];
 
         if let Some(decoded) = self.fetch_decoded_entry(entry_id)? {
+            if lang == "en" && decoded.morph_mask != 0 {
+                expand_en_morph_mask(lemma, decoded.morph_mask, &mut forms);
+            }
             for f in decoded.extra_forms {
                 push_unique_form(&mut forms, &f);
             }
@@ -442,10 +450,6 @@ impl BuiltinDict {
 
         if let Some(inf) = inflected_from {
             push_unique_form(&mut forms, inf);
-        }
-
-        if lang == "en" {
-            append_regular_en_forms(lemma, &mut forms);
         }
 
         Ok(forms)
@@ -508,6 +512,7 @@ impl BuiltinDict {
                 senses,
                 gloss_en,
                 gloss_zh,
+                morph_mask: compact.m.unwrap_or(0),
                 extra_forms: compact.f.unwrap_or_default(),
             }));
         }
@@ -520,6 +525,7 @@ impl BuiltinDict {
             senses,
             gloss_en: col_gloss_en,
             gloss_zh: col_gloss_zh,
+            morph_mask: 0,
             extra_forms: Vec::new(),
         }))
     }
@@ -624,71 +630,69 @@ fn push_unique_form(forms: &mut Vec<String>, candidate: &str) {
     }
 }
 
-/// Synthesizes standard regular English inflectional surface forms for quote
-/// highlighting so long-tail lemmas whose regular suffixes were omitted from
-/// `forms` (resolved via suffix fallback on lookup) still highlight accurately
-/// when reopening Vocab detail.
-fn append_regular_en_forms(lemma: &str, forms: &mut Vec<String>) {
+/// Expands source-attested compact English morphology bits emitted by
+/// `scripts/build-dict.py` so only attested inflected surface forms (plus any
+/// irregular exceptions in `f`) are returned for quote highlighting.
+fn expand_en_morph_mask(lemma: &str, mask: u16, forms: &mut Vec<String>) {
     let lower = lemma.trim().to_lowercase();
-    if lower.len() < 2 || !lower.is_ascii() || !lower.bytes().all(|b| b.is_ascii_alphabetic()) {
+    if lower.is_empty() || !lower.is_ascii() {
         return;
     }
-
-    if lower.ends_with("s")
-        || lower.ends_with("x")
-        || lower.ends_with("z")
-        || lower.ends_with("ch")
-        || lower.ends_with("sh")
-    {
-        push_unique_form(forms, &format!("{lower}es"));
-    } else if lower.ends_with('y') && lower.len() >= 2 && !is_ascii_vowel(lower.as_bytes()[lower.len() - 2]) {
-        let stem = &lower[..lower.len() - 1];
-        push_unique_form(forms, &format!("{stem}ies"));
-        push_unique_form(forms, &format!("{stem}ied"));
-        push_unique_form(forms, &format!("{stem}ier"));
-        push_unique_form(forms, &format!("{stem}iest"));
-    } else {
+    if mask & (1 << 0) != 0 {
         push_unique_form(forms, &format!("{lower}s"));
     }
-
-    if lower.ends_with("ie") && lower.len() >= 3 {
-        let stem = &lower[..lower.len() - 2];
-        push_unique_form(forms, &format!("{lower}d"));
-        push_unique_form(forms, &format!("{stem}ying"));
-    } else if lower.ends_with('e') && !lower.ends_with("ee") && lower.len() >= 3 {
-        let stem = &lower[..lower.len() - 1];
-        push_unique_form(forms, &format!("{lower}d"));
-        push_unique_form(forms, &format!("{stem}ing"));
-        push_unique_form(forms, &format!("{lower}r"));
-        push_unique_form(forms, &format!("{lower}st"));
-    } else {
+    if mask & (1 << 1) != 0 {
+        push_unique_form(forms, &format!("{lower}es"));
+    }
+    if mask & (1 << 2) != 0 {
         push_unique_form(forms, &format!("{lower}ed"));
+    }
+    if mask & (1 << 3) != 0 && lower.ends_with('e') {
+        push_unique_form(forms, &format!("{lower}d"));
+    }
+    if mask & (1 << 4) != 0 {
         push_unique_form(forms, &format!("{lower}ing"));
+    }
+    if mask & (1 << 5) != 0 && lower.len() >= 2 && lower.ends_with('e') {
+        let stem = &lower[..lower.len() - 1];
+        push_unique_form(forms, &format!("{stem}ing"));
+    }
+    if mask & (1 << 6) != 0 && lower.len() >= 2 && lower.ends_with('y') {
+        let stem = &lower[..lower.len() - 1];
+        push_unique_form(forms, &format!("{stem}ies"));
+    }
+    if mask & (1 << 7) != 0 && lower.len() >= 2 && lower.ends_with('y') {
+        let stem = &lower[..lower.len() - 1];
+        push_unique_form(forms, &format!("{stem}ied"));
+    }
+    if mask & (1 << 8) != 0 {
         push_unique_form(forms, &format!("{lower}er"));
+    }
+    if mask & (1 << 9) != 0 {
         push_unique_form(forms, &format!("{lower}est"));
-        // Single-syllable / trailing CVC doubling (e.g. stop -> stopped/stopping)
-        let b = lower.as_bytes();
-        if b.len() >= 3 {
-            let last = b[b.len() - 1];
-            let mid = b[b.len() - 2];
-            let prev = b[b.len() - 3];
-            if !is_ascii_vowel(last)
-                && !matches!(last, b'w' | b'x' | b'y')
-                && is_ascii_vowel(mid)
-                && !is_ascii_vowel(prev)
-            {
-                let doubled = format!("{lower}{}", last as char);
-                push_unique_form(forms, &format!("{doubled}ed"));
-                push_unique_form(forms, &format!("{doubled}ing"));
-                push_unique_form(forms, &format!("{doubled}er"));
-                push_unique_form(forms, &format!("{doubled}est"));
-            }
+    }
+    if mask & (1 << 10) != 0 && lower.ends_with('e') {
+        push_unique_form(forms, &format!("{lower}r"));
+    }
+    if mask & (1 << 11) != 0 && lower.ends_with('e') {
+        push_unique_form(forms, &format!("{lower}st"));
+    }
+    if mask & (1 << 12) != 0 && lower.len() >= 2 && lower.ends_with('y') {
+        let stem = &lower[..lower.len() - 1];
+        push_unique_form(forms, &format!("{stem}ier"));
+    }
+    if mask & (1 << 13) != 0 && lower.len() >= 2 && lower.ends_with('y') {
+        let stem = &lower[..lower.len() - 1];
+        push_unique_form(forms, &format!("{stem}iest"));
+    }
+    if let Some(last) = lower.bytes().last().filter(|b| b.is_ascii_alphabetic()) {
+        if mask & (1 << 14) != 0 {
+            push_unique_form(forms, &format!("{lower}{}ed", last as char));
+        }
+        if mask & (1 << 15) != 0 {
+            push_unique_form(forms, &format!("{lower}{}ing", last as char));
         }
     }
-}
-
-fn is_ascii_vowel(b: u8) -> bool {
-    matches!(b, b'a' | b'e' | b'i' | b'o' | b'u')
 }
 
 fn ends_with_double_consonant(s: &str) -> bool {

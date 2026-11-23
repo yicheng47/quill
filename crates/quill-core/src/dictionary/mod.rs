@@ -716,20 +716,6 @@ mod tests {
         assert_eq!(mgr.lookup_dictionary(&db, "walking", None).unwrap().lemma, "walk");
         assert_eq!(mgr.lookup_dictionary(&db, "boxes", None).unwrap().lemma, "box");
 
-        // Canonical lookup recovers regular surface forms even when forms table has
-        // zero suffix rows (ensuring Vocab quote highlighting works after reopening).
-        let walk_canon = mgr.lookup_dictionary(&db, "walk", None).unwrap();
-        assert!(walk_canon.forms.iter().any(|f| f == "walks"));
-        assert!(walk_canon.forms.iter().any(|f| f == "walked"));
-        assert!(walk_canon.forms.iter().any(|f| f == "walking"));
-
-        let study_canon = mgr.lookup_dictionary(&db, "study", None).unwrap();
-        assert!(study_canon.forms.iter().any(|f| f == "studies"));
-        assert!(study_canon.forms.iter().any(|f| f == "studied"));
-
-        let box_canon = mgr.lookup_dictionary(&db, "box", None).unwrap();
-        assert!(box_canon.forms.iter().any(|f| f == "boxes"));
-
         // Homograph: `left` is both an independent lemma AND past tense of `leave`
         let left = mgr.lookup_dictionary(&db, "left", None).unwrap();
         assert_eq!(left.lemma, "left");
@@ -925,6 +911,96 @@ mod tests {
             plan.contains("idx_forms_form_lang") || plan.contains("PRIMARY KEY (form=? AND lang=?)"),
             "expected suffix fallback query to use indexed forms(form, lang) lookup, got: {plan}"
         );
+    }
+
+    #[test]
+    fn zh_lookup_and_miss_query_plan_uses_forms_primary_key_without_scan() {
+        let dict = BuiltinDict::open(&fixture_dict_path()).unwrap();
+        let plan = dict.zh_lookup_query_plan("湖畔夜读社").join(" | ");
+        assert!(
+            plan.contains("PRIMARY KEY (form=? AND lang=?)") || plan.contains("idx_forms_form_lang"),
+            "expected ZH lookup/miss to use indexed forms lookup, got: {plan}"
+        );
+        assert!(
+            !plan.contains("SCAN"),
+            "expected zero table scans on ZH lookup/miss, got: {plan}"
+        );
+        let miss = dict.lemmatize("湖畔夜读社", Some("zh"), true).unwrap();
+        assert!(miss.matched_entry_id.is_none());
+        assert_eq!(miss.lemma, "湖畔夜读社");
+    }
+
+    #[test]
+    fn source_attested_morph_mask_preserves_abbreviates_and_shoeing_without_generating_reader() {
+        let dir = TempDir::new().unwrap();
+        let custom_db = dir.path().join("dict-morph.db");
+        let conn = rusqlite::Connection::open(&custom_db).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE meta (key TEXT PRIMARY KEY, value BLOB NOT NULL);
+             CREATE TABLE entries (
+               id INTEGER PRIMARY KEY,
+               lang TEXT NOT NULL,
+               lemma TEXT NOT NULL,
+               pron TEXT,
+               senses_json BLOB NOT NULL,
+               gloss_en TEXT,
+               gloss_zh TEXT
+             );
+             CREATE TABLE forms (
+               form TEXT NOT NULL,
+               lang TEXT NOT NULL,
+               entry_id INTEGER NOT NULL,
+               is_lemma INTEGER NOT NULL,
+               relation TEXT,
+               PRIMARY KEY (form, lang, entry_id)
+             ) WITHOUT ROWID;",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO meta(key, value) VALUES ('schema_version', X'32'), ('entry_count', X'33')",
+            [],
+        )
+        .unwrap();
+
+        // abbreviate: bits 0 (+s), 3 (+d), 5 (drop e + ing) => 1 + 8 + 32 = 41
+        // shoe: bits 0 (+s), 3 (+d), 4 (+ing -> shoeing!) => 1 + 8 + 16 = 25, plus f=["shod"]
+        // read: bits 0 (+s), 4 (+ing) => 1 + 16 = 17 (NOT bit 8 -> no "reader"!)
+        conn.execute(
+            "INSERT INTO entries(id, lang, lemma, pron, senses_json, gloss_en, gloss_zh) VALUES
+              (1, 'en', 'abbreviate', NULL, '{\"s\":[[\"verb\",[\"Shorten a word.\"]]],\"m\":41}', NULL, NULL),
+              (2, 'en', 'shoe', NULL, '{\"s\":[[\"verb\",[\"Fit with shoes.\"]]],\"m\":25,\"f\":[\"shod\"]}', NULL, NULL),
+              (3, 'en', 'read', NULL, '{\"s\":[[\"verb\",[\"Look at and comprehend.\"]]],\"m\":17}', NULL, NULL)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO forms(form, lang, entry_id, is_lemma, relation) VALUES
+              ('abbreviate', 'en', 1, 1, NULL),
+              ('shoe', 'en', 2, 1, NULL),
+              ('shoeing', 'en', 2, 0, 'i'),
+              ('read', 'en', 3, 1, NULL)",
+            [],
+        )
+        .unwrap();
+        drop(conn);
+
+        let dict = BuiltinDict::open(&custom_db).unwrap();
+
+        let abbr = dict.lemmatize("abbreviate", Some("en"), true).unwrap();
+        assert!(abbr.forms.contains(&"abbreviates".to_string()), "{:?}", abbr.forms);
+        assert!(abbr.forms.contains(&"abbreviated".to_string()), "{:?}", abbr.forms);
+        assert!(abbr.forms.contains(&"abbreviating".to_string()), "{:?}", abbr.forms);
+        assert!(!abbr.forms.contains(&"abbreviater".to_string()), "{:?}", abbr.forms);
+
+        let shoe = dict.lemmatize("shoe", Some("en"), true).unwrap();
+        assert!(shoe.forms.contains(&"shoeing".to_string()), "{:?}", shoe.forms);
+        assert!(shoe.forms.contains(&"shod".to_string()), "{:?}", shoe.forms);
+        assert!(!shoe.forms.contains(&"shoing".to_string()), "{:?}", shoe.forms);
+
+        let read = dict.lemmatize("read", Some("en"), true).unwrap();
+        assert!(read.forms.contains(&"reads".to_string()), "{:?}", read.forms);
+        assert!(read.forms.contains(&"reading".to_string()), "{:?}", read.forms);
+        assert!(!read.forms.contains(&"reader".to_string()), "{:?}", read.forms);
     }
 
     #[test]

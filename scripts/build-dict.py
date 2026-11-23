@@ -111,7 +111,23 @@ POS_MAP_ZH = {
     "phrase": "短语",
     "name": "专有名词",
     "character": "字",
+    "postp": "方位词",
+    "det": "限定词",
 }
+
+ZH_REDIRECT_MARKERS = (
+    "__NOTITLECONVERT__",
+    "請見「",
+    "请见「",
+    "參見「",
+    "参见「",
+    "的簡化字",
+    "的简化字",
+    "的繁體字",
+    "的繁体字",
+    "異體字",
+    "异体字",
+)
 
 HANZI_RE = re.compile(r"^[\u3400-\u4dbf\u4e00-\u9fff]+$")
 HANZI_ANY_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
@@ -182,6 +198,140 @@ def clean_gloss(text: str, max_len: int = 160) -> str:
     return text
 
 
+def compact_brief_gloss(parts: list[str], max_len: int = 64, sep: str = "; ") -> str | None:
+    """Join complete senses/clauses up to max_len without ever cutting mid-word."""
+    clauses: list[str] = []
+    for part in parts:
+        cleaned = re.sub(r"\s+", " ", part).strip()
+        if not cleaned:
+            continue
+        if sep == "; " and ";" in cleaned:
+            for sub in cleaned.split(";"):
+                s = sub.strip()
+                if s and s not in clauses:
+                    clauses.append(s)
+        else:
+            if cleaned not in clauses:
+                clauses.append(cleaned)
+    if not clauses:
+        return None
+
+    chosen: list[str] = []
+    for clause in clauses:
+        candidate = sep.join(chosen + [clause])
+        if len(candidate) <= max_len:
+            chosen.append(clause)
+        elif chosen:
+            break
+        else:
+            # First clause alone exceeds max_len: trim cleanly at a word/punctuation boundary.
+            if " " in clause:
+                trimmed = clause[: max_len - 1].rsplit(" ", 1)[0].rstrip(" ,;:/(-")
+                if trimmed:
+                    chosen.append(trimmed + "…")
+                    break
+            chosen.append(clause[: max_len - 1].rstrip(" ,;；，、") + "…")
+            break
+    return sep.join(chosen) if chosen else None
+
+
+def en_morph_bit_for_form(lemma_lower: str, form_lower: str) -> int | None:
+    """Map an attested English inflected surface form to its exact 16-bit morph flag."""
+    if not lemma_lower or not lemma_lower.isascii() or not form_lower.isascii():
+        return None
+    if form_lower == lemma_lower + "s":
+        return 0
+    if form_lower == lemma_lower + "es":
+        return 1
+    if form_lower == lemma_lower + "ed":
+        return 2
+    if lemma_lower.endswith("e") and form_lower == lemma_lower + "d":
+        return 3
+    if form_lower == lemma_lower + "ing":
+        return 4
+    if len(lemma_lower) >= 2 and lemma_lower.endswith("e") and form_lower == lemma_lower[:-1] + "ing":
+        return 5
+    if len(lemma_lower) >= 2 and lemma_lower.endswith("y") and form_lower == lemma_lower[:-1] + "ies":
+        return 6
+    if len(lemma_lower) >= 2 and lemma_lower.endswith("y") and form_lower == lemma_lower[:-1] + "ied":
+        return 7
+    if form_lower == lemma_lower + "er":
+        return 8
+    if form_lower == lemma_lower + "est":
+        return 9
+    if lemma_lower.endswith("e") and form_lower == lemma_lower + "r":
+        return 10
+    if lemma_lower.endswith("e") and form_lower == lemma_lower + "st":
+        return 11
+    if len(lemma_lower) >= 2 and lemma_lower.endswith("y") and form_lower == lemma_lower[:-1] + "ier":
+        return 12
+    if len(lemma_lower) >= 2 and lemma_lower.endswith("y") and form_lower == lemma_lower[:-1] + "iest":
+        return 13
+    last = lemma_lower[-1]
+    if last.isalpha():
+        if form_lower == lemma_lower + last + "ed":
+            return 14
+        if form_lower == lemma_lower + last + "ing":
+            return 15
+    return None
+
+
+def encode_en_morphology(lemma_lower: str, attested_forms: set[str]) -> tuple[int, list[str]]:
+    mask = 0
+    exceptions: list[str] = []
+    for form in sorted(attested_forms):
+        low = form.strip().lower()
+        if not low or low == lemma_lower:
+            continue
+        bit = en_morph_bit_for_form(lemma_lower, low)
+        if bit is not None:
+            mask |= 1 << bit
+        elif low not in exceptions:
+            exceptions.append(low)
+    return mask, exceptions
+
+
+def expand_en_morph_mask(lemma: str, mask: int) -> list[str]:
+    lower = lemma.strip().lower()
+    if not lower or not lower.isascii():
+        return []
+    out: list[str] = []
+    if mask & (1 << 0):
+        out.append(lower + "s")
+    if mask & (1 << 1):
+        out.append(lower + "es")
+    if mask & (1 << 2):
+        out.append(lower + "ed")
+    if (mask & (1 << 3)) and lower.endswith("e"):
+        out.append(lower + "d")
+    if mask & (1 << 4):
+        out.append(lower + "ing")
+    if (mask & (1 << 5)) and len(lower) >= 2 and lower.endswith("e"):
+        out.append(lower[:-1] + "ing")
+    if (mask & (1 << 6)) and len(lower) >= 2 and lower.endswith("y"):
+        out.append(lower[:-1] + "ies")
+    if (mask & (1 << 7)) and len(lower) >= 2 and lower.endswith("y"):
+        out.append(lower[:-1] + "ied")
+    if mask & (1 << 8):
+        out.append(lower + "er")
+    if mask & (1 << 9):
+        out.append(lower + "est")
+    if (mask & (1 << 10)) and lower.endswith("e"):
+        out.append(lower + "r")
+    if (mask & (1 << 11)) and lower.endswith("e"):
+        out.append(lower + "st")
+    if (mask & (1 << 12)) and len(lower) >= 2 and lower.endswith("y"):
+        out.append(lower[:-1] + "ier")
+    if (mask & (1 << 13)) and len(lower) >= 2 and lower.endswith("y"):
+        out.append(lower[:-1] + "iest")
+    if lower[-1].isalpha():
+        if mask & (1 << 14):
+            out.append(lower + lower[-1] + "ed")
+        if mask & (1 << 15):
+            out.append(lower + lower[-1] + "ing")
+    return out
+
+
 def build_senses_zdict(sample_payloads: list[bytes]) -> bytes:
     """Build a deterministic <= 32 KB preset deflate dictionary from common tokens + samples."""
     seed = (
@@ -197,6 +347,7 @@ def build_senses_zdict(sample_payloads: list[bytes]) -> bytes:
         '","s":[["形容词",["'
         '","s":[["副词",["'
         '"]]],'
+        '"],"m":'
         '"],"f":["'
         '","ge":"'
         '","cw":1}'
@@ -237,6 +388,7 @@ def decompress_entry_payload(
     col_pron: str | None = None,
     col_gloss_en: str | None = None,
     col_gloss_zh: str | None = None,
+    lemma: str | None = None,
 ) -> dict[str, Any]:
     if isinstance(raw, str):
         parsed = json.loads(raw)
@@ -266,12 +418,20 @@ def decompress_entry_payload(
             senses = [{"pos": pos, "defs": [ge]}] if ge else []
         else:
             senses = []
+        morph_mask = int(parsed.get("m") or 0)
+        forms_out: list[str] = []
+        if lemma and morph_mask:
+            forms_out.extend(expand_en_morph_mask(lemma, morph_mask))
+        for f in parsed.get("f") or []:
+            if f not in forms_out:
+                forms_out.append(f)
         return {
             "pron": pron,
             "senses": senses,
             "gloss_en": ge,
             "gloss_zh": gz,
-            "forms": parsed.get("f") or [],
+            "morph_mask": morph_mask,
+            "forms": forms_out,
         }
 
     return {
@@ -279,6 +439,7 @@ def decompress_entry_payload(
         "senses": parsed,
         "gloss_en": col_gloss_en,
         "gloss_zh": col_gloss_zh,
+        "morph_mask": 0,
         "forms": [],
     }
 
@@ -303,7 +464,10 @@ def write_sqlite_db(
     # Deduplicate forms preserving is_lemma=1 first
     seen_forms: set[tuple[str, str, int]] = set()
     deduped_forms: list[tuple[str, str, int, int, str | None]] = []
-    extra_forms_by_eid: dict[int, list[str]] = defaultdict(list)
+    attested_forms_by_eid: dict[int, set[str]] = defaultdict(set)
+    for idx, e in enumerate(entries, start=1):
+        for af in e.get("attested_forms") or ():
+            attested_forms_by_eid[idx].add(af)
     for form, lang, entry_id, is_lemma, relation in sorted(
         forms, key=lambda r: (r[1], r[0], -r[3], r[2])
     ):
@@ -316,10 +480,7 @@ def write_sqlite_db(
         )
         deduped_forms.append((form, lang, entry_id, is_lemma, stored_rel))
         if compress and is_lemma == 0:
-            lemma_str = entries[entry_id - 1]["lemma"]
-            if lang == "zh" or not is_regular_suffix_form(form, lemma_str.lower()):
-                if form not in extra_forms_by_eid[entry_id]:
-                    extra_forms_by_eid[entry_id].append(form)
+            attested_forms_by_eid[entry_id].add(form)
 
     serialized: list[bytes] = []
     for idx, e in enumerate(entries, start=1):
@@ -343,9 +504,18 @@ def write_sqlite_db(
                 obj["ci" if senses[0]["pos"] == "成语" else "cw"] = 1
             else:
                 obj["s"] = [[g["pos"], g["defs"]] for g in senses]
-            xf = extra_forms_by_eid.get(idx)
-            if xf:
-                obj["f"] = xf
+            attested = attested_forms_by_eid.get(idx)
+            if attested:
+                if e["lang"] == "en":
+                    morph_mask, exceptions = encode_en_morphology(e["lemma"].lower(), attested)
+                    if morph_mask:
+                        obj["m"] = morph_mask
+                    if exceptions:
+                        obj["f"] = exceptions
+                else:
+                    zh_forms = sorted(f for f in attested if f != e["lemma"])
+                    if zh_forms:
+                        obj["f"] = zh_forms
             serialized.append(json.dumps(obj, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
         else:
             serialized.append(
@@ -779,8 +949,9 @@ def download_verified(
     expected_sha256: str | None,
     *,
     verify_checksum: bool = True,
+    force_download: bool = False,
 ) -> Path:
-    if dest.exists() and dest.stat().st_size > 0:
+    if not force_download and dest.exists() and dest.stat().st_size > 0:
         if verify_checksum and expected_sha256:
             actual = sha256_file(dest)
             if actual == expected_sha256:
@@ -852,7 +1023,7 @@ def load_ecdict(path: Path) -> dict[str, dict[str, Any]]:
             if not db_names:
                 raise RuntimeError(f"No .db file found inside ECDICT zip {path}")
             extracted = path.with_suffix(".db")
-            if not extracted.exists():
+            if not extracted.exists() or extracted.stat().st_mtime < path.stat().st_mtime:
                 with zf.open(db_names[0]) as src, open(extracted, "wb") as dst:
                     dst.write(src.read())
             conn = sqlite3.connect(str(extracted))
@@ -939,7 +1110,7 @@ def compact_zh_gloss_from_ecdict(raw: str) -> str | None:
                 break
         if len(parts) >= 3:
             break
-    return "；".join(parts)[:64] if parts else None
+    return compact_brief_gloss(parts, max_len=64, sep="；")
 
 
 def parse_ecdict_exchange(exchange: str) -> list[tuple[str, str]]:
@@ -996,6 +1167,13 @@ def load_cedict(path: Path) -> list[dict[str, Any]]:
     opener = gzip.open if path.suffix == ".gz" else open
     entries: list[dict[str, Any]] = []
     line_re = re.compile(r"^(\S+)\s+(\S+)\s+\[([^\]]+)\]\s+/(.+)/\s*$")
+    skip_prefixes = (
+        "CL:",
+        "variant of",
+        "old variant of",
+        "archaic variant of",
+        "erhua variant of",
+    )
     with opener(path, "rt", encoding="utf-8", errors="replace") as f:
         for line in f:
             if not line or line.startswith("#"):
@@ -1009,18 +1187,20 @@ def load_cedict(path: Path) -> list[dict[str, Any]]:
             raw_parts = [g.strip() for g in glosses.split("/") if g.strip()]
             is_idiom = any("(idiom)" in g.lower() for g in raw_parts)
             defs = [
-                clean_gloss(g, 120)
+                clean_gloss(g, 160)
                 for g in raw_parts
-                if not g.startswith("CL:") and not g.startswith("variant of")
+                if not g.lower().startswith(skip_prefixes) and not g.startswith("CL:")
             ]
             if not defs:
                 continue
+            brief = compact_brief_gloss(defs[:2], max_len=64, sep="; ")
             entries.append(
                 {
                     "simp": simp,
                     "trad": trad,
+                    "pron_raw": pinyin_num.strip(),
                     "pron": numbered_pinyin_to_marked(pinyin_num),
-                    "gloss_en": "; ".join(defs[:2])[:64],
+                    "gloss_en": brief,
                     "defs": defs[:2],
                     "is_idiom": is_idiom,
                 }
@@ -1090,6 +1270,8 @@ def parse_en_kaikki(
                 tags = s.get("tags") or []
                 form_of = s.get("form_of") or []
                 if form_of:
+                    if "obsolete" in tags or "archaic" in tags:
+                        continue
                     rel = infer_inflection_relation(tags)
                     for target in form_of:
                         tw = (target.get("word") or "").strip().lower()
@@ -1118,6 +1300,8 @@ def parse_en_kaikki(
                     and ASCII_WORD_RE.match(fw)
                     and "table-tags" not in tags
                     and "inflection-template" not in tags
+                    and "obsolete" not in tags
+                    and "archaic" not in tags
                     and any(
                         t in tags
                         for t in (
@@ -1235,15 +1419,24 @@ def parse_en_kaikki(
     # forms, and every inflection whose surface form is itself a kept lemma
     # (homographs & participial adjectives). For rare long-tail lemmas (>15k),
     # omit trivial regular -s/-ed/-ing/-es suffixes that builtin.rs's indexed
-    # suffix fallback already resolves.
+    # suffix fallback already resolves, while preserving EVERY source-attested
+    # inflection on the entry itself so write_sqlite_db encodes exact `m` flags.
     top_en_keys = {k for k, _ in ranked[:15_000]}
+    attested_by_lemma: dict[str, set[str]] = defaultdict(set)
     filtered_links = []
     for fw, tw, rel in inflection_links:
         if tw not in kept_keys or fw == tw:
             continue
+        attested_by_lemma[tw].add(fw)
         if tw not in top_en_keys and fw not in kept_keys and is_regular_suffix_form(fw, tw):
             continue
         filtered_links.append((fw, tw, rel))
+
+    for entry in en_entries:
+        attested = attested_by_lemma.get(entry["lemma"].lower())
+        if attested:
+            entry["attested_forms"] = sorted(attested)
+
     return en_entries, filtered_links, participial_adjs
 
 
@@ -1273,6 +1466,10 @@ def extract_zh_categories(obj: dict[str, Any], senses: list[dict[str, Any]]) -> 
     return names
 
 
+def is_zh_wiktionary_redirect_gloss(gloss: str) -> bool:
+    return any(marker in gloss for marker in ZH_REDIRECT_MARKERS)
+
+
 def infer_zh_pos(
     pos_raw: str,
     entry_tags: list[str],
@@ -1286,7 +1483,12 @@ def infer_zh_pos(
         or any("成語" in c or "成语" in c for c in categories)
     ):
         return "成语"
-    return POS_MAP_ZH.get(pos_raw)
+    mapped = POS_MAP_ZH.get(pos_raw)
+    if mapped:
+        return mapped
+    if pos_raw == "unknown":
+        return "__unknown__"
+    return None
 
 
 def is_cedict_proper_or_variant(gloss_en: str) -> bool:
@@ -1351,17 +1553,23 @@ def parse_zh_entries(
         if trad != simp:
             trad_map[simp].add(trad)
             trad_to_simp.setdefault(trad, simp)
-        if simp not in by_simp:
-            is_proper = is_cedict_proper_or_variant(row["gloss_en"])
-            ec_rank = zh_freq_ranks.get(simp, 10_000_000)
-            if row["is_idiom"]:
-                prio = 1
-            elif not is_proper and len(simp) <= 4 and ec_rank < 10_000_000:
-                prio = 2
-            elif not is_proper and len(simp) <= 4:
-                prio = 3
-            else:
-                prio = 4
+
+        is_proper = is_cedict_proper_or_variant(row["gloss_en"] or "") or (
+            bool(row.get("pron_raw")) and row["pron_raw"][0].isupper()
+        )
+        reading_rank = 1 if is_proper else 0
+        ec_rank = zh_freq_ranks.get(simp, 10_000_000)
+        if row["is_idiom"]:
+            prio = 1
+        elif not is_proper and (len(simp) == 1 or (len(simp) <= 4 and ec_rank < 10_000_000)):
+            prio = 2
+        elif not is_proper and len(simp) <= 4:
+            prio = 3
+        else:
+            prio = 4
+
+        existing = by_simp.get(simp)
+        if existing is None:
             by_simp[simp] = {
                 "lang": "zh",
                 "lemma": simp,
@@ -1369,15 +1577,26 @@ def parse_zh_entries(
                 "gloss_en": row["gloss_en"],
                 "gloss_zh": None,
                 "senses_map": defaultdict(list),
+                "unknown_glosses": [],
                 "cedict_defs": row["defs"],
                 "cedict_is_idiom": row["is_idiom"],
+                "reading_rank": reading_rank,
                 "priority": prio,
                 "ec_rank": ec_rank,
             }
-        elif row["is_idiom"]:
-            by_simp[simp]["cedict_is_idiom"] = True
-            if by_simp[simp]["priority"] > 1:
-                by_simp[simp]["priority"] = 1
+        else:
+            if reading_rank < existing["reading_rank"]:
+                # Upgrade surname / proper-noun / abbreviation reading to the everyday reading.
+                existing["pron"] = row["pron"]
+                existing["gloss_en"] = row["gloss_en"]
+                existing["cedict_defs"] = row["defs"]
+                existing["reading_rank"] = reading_rank
+                if prio < existing["priority"]:
+                    existing["priority"] = prio
+            if row["is_idiom"]:
+                existing["cedict_is_idiom"] = True
+                if existing["priority"] > 1:
+                    existing["priority"] = 1
 
     with open_text_or_gz(zh_kaikki_path) as f:
         for line in f:
@@ -1402,8 +1621,13 @@ def parse_zh_entries(
                 sense_tags.extend(st)
                 for g in s.get("glosses") or []:
                     g = clean_gloss(g, 110)
-                    # Require Chinese-edition definitions (must contain Hanzi)
-                    if g and HANZI_ANY_RE.search(g) and g not in glosses:
+                    # Require real Chinese-edition definitions (Hanzi, excluding redirect stubs)
+                    if (
+                        g
+                        and HANZI_ANY_RE.search(g)
+                        and not is_zh_wiktionary_redirect_gloss(g)
+                        and g not in glosses
+                    ):
                         glosses.append(g)
                     if len(glosses) >= 3:
                         break
@@ -1443,10 +1667,17 @@ def parse_zh_entries(
 
             if rec is not None:
                 # Prioritize entries backed by real Chinese Wiktionary senses
-                rec["priority"] = -2 if pos == "成语" else (-1 if len(rec["lemma"]) <= 4 else 0)
-                for g in glosses:
-                    if len(rec["senses_map"][pos]) < 3 and g not in rec["senses_map"][pos]:
-                        rec["senses_map"][pos].append(g)
+                target_prio = -2 if pos == "成语" else (-1 if len(rec["lemma"]) <= 4 else 0)
+                if target_prio < rec["priority"]:
+                    rec["priority"] = target_prio
+                if pos == "__unknown__":
+                    for g in glosses:
+                        if len(rec["unknown_glosses"]) < 3 and g not in rec["unknown_glosses"]:
+                            rec["unknown_glosses"].append(g)
+                else:
+                    for g in glosses:
+                        if len(rec["senses_map"][pos]) < 3 and g not in rec["senses_map"][pos]:
+                            rec["senses_map"][pos].append(g)
 
     def zh_sort_key(kv: tuple[str, dict[str, Any]]) -> tuple[int, int, int, int, str]:
         simp, rec = kv
@@ -1463,9 +1694,12 @@ def parse_zh_entries(
             for p, d in list(rec["senses_map"].items())[: (2 if idx_rank < 12_000 else 1)]
             if d
         ]
+        if not senses_list and rec["unknown_glosses"]:
+            neutral_pos = "成语" if rec["cedict_is_idiom"] else ("字" if len(simp) == 1 else "词语")
+            senses_list = [{"pos": neutral_pos, "defs": rec["unknown_glosses"][:max_defs]}]
         if not senses_list:
             fallback_pos = "成语" if rec["cedict_is_idiom"] else "词语"
-            senses_list = [{"pos": fallback_pos, "defs": [rec["gloss_en"] or rec["cedict_defs"][0]]}]
+            senses_list = [{"pos": fallback_pos, "defs": rec["cedict_defs"][:2]}]
         zh_entries.append(
             {
                 "lang": "zh",
@@ -1562,6 +1796,23 @@ def verify_production_db(db_path: Path, *, min_en: int = 80_000, min_zh: int = 6
         if zh_count < min_zh:
             raise RuntimeError(f"Too few ZH entries: {zh_count:,} < {min_zh:,}")
 
+        # Guarantee every built-in entry has an indexed is_lemma=1 row in forms
+        # so runtime lookup never needs a full-table scan on `entries`.
+        missing_forms = conn.execute(
+            """
+            SELECT COUNT(*) FROM entries e
+            WHERE NOT EXISTS (
+              SELECT 1 FROM forms f
+              WHERE f.form = CASE WHEN e.lang = 'en' THEN lower(e.lemma) ELSE e.lemma END
+                AND f.lang = e.lang
+                AND f.entry_id = e.id
+                AND f.is_lemma = 1
+            )
+            """
+        ).fetchone()[0]
+        if missing_forms != 0:
+            raise RuntimeError(f"Found {missing_forms} entries without an indexed lemma form row")
+
         def lookup_en(term: str):
             rows = conn.execute(
                 """
@@ -1583,7 +1834,11 @@ def verify_production_db(db_path: Path, *, min_en: int = 80_000, min_zh: int = 6
                 raise RuntimeError(f"Missing EN lookup for {term!r}")
             primary = rows[0]
             decoded = decompress_entry_payload(
-                primary[5], zdict, col_pron=primary[4], col_gloss_zh=primary[6]
+                primary[5],
+                zdict,
+                col_pron=primary[4],
+                col_gloss_zh=primary[6],
+                lemma=primary[3],
             )
             alts = [r[3] for r in rows[1:] if r[3].lower() != term.lower()]
             return {
@@ -1592,6 +1847,7 @@ def verify_production_db(db_path: Path, *, min_en: int = 80_000, min_zh: int = 6
                 "pron": decoded["pron"],
                 "senses": decoded["senses"],
                 "gloss_zh": decoded["gloss_zh"],
+                "forms": decoded["forms"],
                 "alternates": alts,
             }
 
@@ -1649,6 +1905,52 @@ def verify_production_db(db_path: Path, *, min_en: int = 80_000, min_zh: int = 6
                 if comp["lemma"] != "计算机" or not comp["gloss_en"] or "computer" not in comp["gloss_en"].lower():
                     raise RuntimeError(f"Expected {form!r} -> '计算机' (computer), got {comp}")
 
+            # Verify basic everyday Chinese headwords are present with non-surname readings
+            for basic in ("和", "还", "白", "都", "书", "也", "能", "水", "钱", "去", "中"):
+                r = lookup_zh(basic)
+                if r["lemma"] != basic:
+                    raise RuntimeError(f"Expected basic ZH word {basic!r}, got {r}")
+                if (r["gloss_en"] or "").lower().startswith("surname "):
+                    raise RuntimeError(f"Basic ZH word {basic!r} kept surname reading: {r}")
+                for grp in r["senses"]:
+                    for d in grp["defs"]:
+                        if "__NOTITLECONVERT__" in d:
+                            raise RuntimeError(f"Redirect boilerplate leaked into {basic!r}: {d!r}")
+
+            # Verify Chinese Wiktionary `unknown` POS definitions were retained
+            for zh_with_cn_def in ("去", "中", "和", "水", "书", "钱"):
+                r = lookup_zh(zh_with_cn_def)
+                first_def = r["senses"][0]["defs"][0] if r["senses"] else ""
+                if not HANZI_ANY_RE.search(first_def):
+                    raise RuntimeError(
+                        f"Expected Chinese-edition definition for {zh_with_cn_def!r}, got {r}"
+                    )
+
+            # Verify CEDICT-only entries preserve complete senses without mid-word truncation
+            for idiom, expected_substr in (
+                ("不分胜负", "evenly matched"),
+                ("成群结队", "as a large crowd"),
+            ):
+                r = lookup_zh(idiom)
+                joined = " ".join(d for g in r["senses"] for d in g["defs"])
+                if expected_substr not in joined.lower():
+                    raise RuntimeError(
+                        f"Expected complete CEDICT sense containing {expected_substr!r} for {idiom!r}, got {r}"
+                    )
+                if r["gloss_en"] and (r["gloss_en"].endswith("; t") or r["gloss_en"].endswith("; a")):
+                    raise RuntimeError(f"Mid-word truncated gloss_en for {idiom!r}: {r['gloss_en']!r}")
+
+            # Verify source-attested English morphology (shoeing preserved, no shoing/reader, abbreviates preserved)
+            shoe = lookup_en("shoe")
+            if "shoeing" not in shoe["forms"] or "shoing" in shoe["forms"]:
+                raise RuntimeError(f"Unexpected forms for 'shoe': {shoe['forms']}")
+            read = lookup_en("read")
+            if "reader" in read["forms"] or "reading" not in read["forms"]:
+                raise RuntimeError(f"Unexpected forms for 'read': {read['forms']}")
+            abbr = lookup_en("abbreviate")
+            if "abbreviates" not in abbr["forms"]:
+                raise RuntimeError(f"Expected 'abbreviates' in attested forms for 'abbreviate': {abbr['forms']}")
+
         # Verify Chinese idiom (Simplified + Traditional) has Chinese sense, 成语, and EN gloss
         for form in ("潜移默化", "潛移默化"):
             r = lookup_zh(form)
@@ -1673,7 +1975,10 @@ def verify_production_db(db_path: Path, *, min_en: int = 80_000, min_zh: int = 6
 def build_full(args: argparse.Namespace) -> None:
     manifest = load_sources_manifest()
     sources = manifest["sources"]
-    cache_dir = Path(args.cache_dir)
+    if args.use_upstream and args.cache_dir == str(DEFAULT_CACHE):
+        cache_dir = REPO_ROOT / ".cache" / "dict-sources-upstream"
+    else:
+        cache_dir = Path(args.cache_dir)
     verify_ck = not args.skip_checksum
 
     def resolve_source(arg_val: str | None, key: str) -> Path:
@@ -1689,6 +1994,7 @@ def build_full(args: argparse.Namespace) -> None:
             cache_dir / spec["filename"],
             spec.get("sha256"),
             verify_checksum=verify_ck,
+            force_download=args.use_upstream,
         )
 
     en_kaikki_path = resolve_source(args.en_kaikki, "en_kaikki")

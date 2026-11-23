@@ -706,6 +706,149 @@ describe("M7 reader AI and word surfaces", () => {
     );
   });
 
+  it("ExplainSelectionPopover persists a captured mid-stream save with null context if dismissed before done", async () => {
+    const aiLookupCalls: Array<Record<string, unknown>> = [];
+    onAiLookupImpl = async (args) => {
+      aiLookupCalls.push(args);
+    };
+    onLookupDictionaryImpl = async () => ({
+      lemma: "mortify",
+      lang: "en",
+      inflected_from: "mortified",
+      alternate_lemmas: [],
+      forms: ["mortify", "mortified", "mortifying"],
+      matches: [
+        {
+          dictId: "builtin",
+          dictName: "Quill Built-in",
+          format: "builtin",
+          pronunciation: "/ˈmɔːrtɪfaɪ/",
+          senses: [{ pos: "verb", defs: ["Cause deep embarrassment."] }],
+          html: null,
+          plainText: null,
+          gloss_en: null,
+          gloss_zh: "使羞愧",
+        },
+      ],
+    });
+    onCheckVocabLemmaImpl = async () => ({ total_count: 0, matches_this_passage: false });
+
+    const onSaved = vi.fn();
+    await act(async () => {
+      root.render(
+        <ExplainSelectionPopover
+          x={40}
+          y={40}
+          text="mortified"
+          sentence="She felt mortified at the remark."
+          bookId="b-1"
+          cfi="epubcfi(/6/2!/4/4)"
+          onSaved={onSaved}
+          onClose={vi.fn()}
+        />,
+      );
+    });
+    await flushMicrotasks();
+
+    const ctxReqId = String(aiLookupCalls[0].requestId);
+    // Partial AI delta arrives without done:true
+    await act(async () => {
+      emitChunks("ai-lookup-chunk-", ctxReqId, ["She felt deeply "], false);
+    });
+    await flushMicrotasks();
+
+    // User clicks Save while stream is still open, then immediately dismisses/unmounts popover
+    const saveBtn = findButton(container, "Save to Vocab");
+    await act(async () => {
+      saveBtn.click();
+    });
+    await act(async () => {
+      root.unmount();
+    });
+    await flushMicrotasks();
+
+    // The captured save must survive dismissal and persist ONCE with null context (never dropped, never partial)
+    const addCalls = invokeMock.mock.calls.filter(([cmd]) => cmd === "add_vocab_word");
+    expect(addCalls).toHaveLength(1);
+    expect(addCalls[0][1]).toEqual(
+      expect.objectContaining({
+        bookId: "b-1",
+        word: "mortify",
+        contextSentence: "She felt mortified at the remark.",
+        contextExplanation: null,
+        cfi: "epubcfi(/6/2!/4/4)",
+      }),
+    );
+    expect(onSaved).toHaveBeenCalledTimes(1);
+
+    // Re-create root so afterEach unmount stays clean
+    root = createRoot(container);
+  });
+
+  it("ExplainSelectionPopover avoids duplicating English text on CEDICT-only Chinese entries when English gloss is enabled", async () => {
+    settingsMap = {
+      ...settingsMap,
+      show_translation: "true",
+      lookup_translation_language: "en",
+      dictionary_show_all_matches: "true",
+    };
+    onLookupDictionaryImpl = async () => ({
+      lemma: "不分胜负",
+      lang: "zh",
+      inflected_from: null,
+      alternate_lemmas: [],
+      forms: ["不分胜负", "不分勝負"],
+      matches: [
+        {
+          dictId: "builtin",
+          dictName: "Quill Built-in",
+          format: "builtin",
+          pronunciation: "bù fēn shèng fù",
+          senses: [
+            {
+              pos: "成语",
+              defs: [
+                "unable to determine victory or defeat (idiom); evenly matched",
+                "to come out even",
+              ],
+            },
+          ],
+          html: null,
+          plainText: null,
+          gloss_en: "unable to determine victory or defeat (idiom); evenly matched",
+          gloss_zh: null,
+        },
+      ],
+    });
+    onAiLookupImpl = async () => {
+      throw new Error("AI_NOT_CONFIGURED");
+    };
+    onCheckVocabLemmaImpl = async () => ({ total_count: 0, matches_this_passage: false });
+
+    await act(async () => {
+      root.render(
+        <ExplainSelectionPopover
+          x={40}
+          y={40}
+          text="不分胜负"
+          sentence="两人棋逢对手，一时不分胜负。"
+          bookId="b-1"
+          cfi="epubcfi(/6/2!/4/6)"
+          onSaved={vi.fn()}
+          onClose={vi.fn()}
+        />,
+      );
+    });
+    await flushMicrotasks();
+
+    const fullText = container.textContent ?? "";
+    const needle = "unable to determine victory or defeat (idiom); evenly matched";
+    expect(fullText).toContain(needle);
+    expect(fullText).toContain("to come out even");
+    // Rendered ONCE in the numbered sense list — never duplicated as a separate accent gloss header
+    expect(fullText.split(needle).length - 1).toBe(1);
+  });
+
   it("LookupPopover renders streaming, done with In this passage + Save to Vocab, error, and AI auth prompt cards", async () => {
     const defReqs: string[] = [];
     const ctxReqs: string[] = [];

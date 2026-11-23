@@ -43,6 +43,51 @@ export interface VocabLemmaCheck {
   matches_this_passage: boolean;
 }
 
+const HAN_CHAR_RE = /\p{Script=Han}/u;
+const LATIN_LETTER_RE = /[a-z]/i;
+
+function normalizeGlossComparison(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/\u2026|\.\.\./g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isBriefGlossRedundantWithSenses(
+  gloss: string,
+  senses: DictionarySenseGroup[] | null | undefined,
+  target: string,
+): boolean {
+  if (!senses || senses.length === 0) return false;
+  const defs = senses
+    .flatMap((group) => group.defs)
+    .map((d) => d.trim())
+    .filter(Boolean);
+  if (defs.length === 0) return false;
+
+  // For CEDICT-only Chinese entries whose numbered senses are already English
+  // (no Hanzi definitions), showing gloss_en above the same English senses
+  // duplicates the definition.
+  if (
+    target.startsWith("en") &&
+    defs.every((d) => !HAN_CHAR_RE.test(d) && LATIN_LETTER_RE.test(d))
+  ) {
+    return true;
+  }
+
+  const normGloss = normalizeGlossComparison(gloss);
+  if (!normGloss) return false;
+  return defs.some((d) => {
+    const normDef = normalizeGlossComparison(d);
+    return (
+      normDef === normGloss ||
+      normDef.includes(normGloss) ||
+      normGloss.includes(normDef)
+    );
+  });
+}
+
 export function resolveBriefGloss(
   match: DictionaryMatch | null | undefined,
   showTranslation: boolean,
@@ -54,15 +99,19 @@ export function resolveBriefGloss(
   const entry = entryLang.trim().toLowerCase();
   if (!target) return null;
 
+  let candidate: string | null = null;
   if (target.startsWith("zh")) {
     if (entry.startsWith("zh")) return null;
-    return match.gloss_zh?.trim() || null;
-  }
-  if (target.startsWith("en")) {
+    candidate = match.gloss_zh?.trim() || null;
+  } else if (target.startsWith("en")) {
     if (entry.startsWith("en")) return null;
-    return match.gloss_en?.trim() || null;
+    candidate = match.gloss_en?.trim() || null;
   }
-  return null;
+  if (!candidate) return null;
+  if (isBriefGlossRedundantWithSenses(candidate, match.senses, target)) {
+    return null;
+  }
+  return candidate;
 }
 
 function htmlToCompactPlainText(html: string): string {

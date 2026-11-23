@@ -454,6 +454,7 @@ export default function ExplainSelectionPopover({
   const [saving, setSaving] = useState(false);
   const [copied, setCopied] = useState(false);
   const vocabStatusEpochRef = useRef(0);
+  const savingEpochRef = useRef<number | null>(null);
   const mountedRef = useRef(true);
   useEffect(() => {
     mountedRef.current = true;
@@ -469,6 +470,8 @@ export default function ExplainSelectionPopover({
     setActiveDictIdx(0);
     setExpandedSenses(false);
     setVocabStatus(null);
+    savingEpochRef.current = null;
+    setSaving(false);
     setCopied(false);
   }, [text, resolvedInitialMode, resolvedNormalizedTerm]);
 
@@ -531,6 +534,8 @@ export default function ExplainSelectionPopover({
   // Check whether canonical lemma is already in Vocab across all books + this passage.
   useEffect(() => {
     const epoch = ++vocabStatusEpochRef.current;
+    savingEpochRef.current = null;
+    setSaving(false);
     if (mode !== "word" || !dictSettled || !canonicalLemma) {
       setVocabStatus(null);
       return;
@@ -645,72 +650,86 @@ export default function ExplainSelectionPopover({
   const existingVocabCount = vocabStatus?.total_count ?? 0;
 
   const handleSave = async () => {
-    if (saving || isPassageAlreadySaved) return;
-    setSaving(true);
+    if (savingEpochRef.current !== null || isPassageAlreadySaved) return;
     const saveEpoch = ++vocabStatusEpochRef.current;
-    const lemmaToSave = canonicalLemma;
-    try {
-      const defToSave =
-        hasDictMatch && activeMatch
-          ? synthesizeFallbackDefinition(activeMatch, briefGloss)
-          : displayedDefinitionContent(definition.contentRef.current ?? "");
+    savingEpochRef.current = saveEpoch;
+    setSaving(true);
+    // Capture the original encounter synchronously so dismissing the popover
+    // or switching mode/lemma mid-stream still persists this encounter once.
+    const capturedBookId = bookId;
+    const capturedLemma = canonicalLemma;
+    const capturedSentence = sentence || null;
+    const capturedCfi = cfi || null;
+    const capturedOnSaved = onSaved;
+    const defToSave =
+      hasDictMatch && activeMatch
+        ? synthesizeFallbackDefinition(activeMatch, briefGloss)
+        : displayedDefinitionContent(definition.contentRef.current ?? "");
+    const shouldAwaitContext = hasDictMatch && context.streaming;
+    const initialCtxNote =
+      contextError || context.sentinel ? null : context.contentRef.current.trim() || null;
 
+    try {
       let ctxToSave: string | null;
-      if (hasDictMatch && context.streaming) {
-        // Wait for the in-flight context stream so we never persist a half-streamed note.
+      if (shouldAwaitContext) {
+        // Wait for the in-flight context stream so we persist either the complete
+        // note (if it finishes) or null (if dismissed/cancelled/failed), never a partial delta.
         const settledCtx = await context.waitUntilSettled();
-        if (!mountedRef.current || settledCtx.cancelled || vocabStatusEpochRef.current !== saveEpoch) {
-          return;
-        }
-        ctxToSave = settledCtx.failed ? null : settledCtx.content.trim() || null;
-      } else {
         ctxToSave =
-          contextError || context.sentinel ? null : context.contentRef.current.trim() || null;
+          settledCtx.failed || settledCtx.cancelled
+            ? null
+            : settledCtx.content.trim() || null;
+      } else {
+        ctxToSave = initialCtxNote;
       }
 
       await invoke("add_vocab_word", {
-        bookId,
-        word: lemmaToSave,
+        bookId: capturedBookId,
+        word: capturedLemma,
         definition: defToSave,
-        contextSentence: sentence || null,
+        contextSentence: capturedSentence,
         contextExplanation: ctxToSave,
-        cfi: cfi || null,
+        cfi: capturedCfi,
       });
 
-      let authoritativeStatus: VocabLemmaCheck | null = null;
-      try {
-        const refreshed = await invoke<VocabLemmaCheck | null>("check_vocab_lemma", {
-          lemma: lemmaToSave,
-          bookId,
-          cfi: cfi || null,
-          contextSentence: sentence || null,
-        });
-        if (refreshed && typeof refreshed.total_count === "number") {
-          authoritativeStatus = {
-            total_count: Math.max(refreshed.total_count, 1),
-            matches_this_passage: true,
-          };
-        }
-      } catch {
-        // Fall back to monotonic local floor below.
-      }
+      capturedOnSaved?.();
 
       if (mountedRef.current && vocabStatusEpochRef.current === saveEpoch) {
-        setVocabStatus((prev) =>
-          authoritativeStatus ?? {
-            total_count: Math.max(
-              (prev?.total_count ?? 0) + (prev?.matches_this_passage ? 0 : 1),
-              1,
-            ),
-            matches_this_passage: true,
-          },
-        );
+        let authoritativeStatus: VocabLemmaCheck | null = null;
+        try {
+          const refreshed = await invoke<VocabLemmaCheck | null>("check_vocab_lemma", {
+            lemma: capturedLemma,
+            bookId: capturedBookId,
+            cfi: capturedCfi,
+            contextSentence: capturedSentence,
+          });
+          if (refreshed && typeof refreshed.total_count === "number") {
+            authoritativeStatus = {
+              total_count: Math.max(refreshed.total_count, 1),
+              matches_this_passage: true,
+            };
+          }
+        } catch {
+          // Fall back to monotonic local floor below.
+        }
+
+        if (mountedRef.current && vocabStatusEpochRef.current === saveEpoch) {
+          setVocabStatus((prev) =>
+            authoritativeStatus ?? {
+              total_count: Math.max(
+                (prev?.total_count ?? 0) + (prev?.matches_this_passage ? 0 : 1),
+                1,
+              ),
+              matches_this_passage: true,
+            },
+          );
+        }
       }
-      onSaved?.();
     } catch (err) {
       console.error("Failed to save vocab word:", err);
     } finally {
-      if (mountedRef.current) {
+      if (mountedRef.current && savingEpochRef.current === saveEpoch) {
+        savingEpochRef.current = null;
         setSaving(false);
       }
     }

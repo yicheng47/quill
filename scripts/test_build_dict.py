@@ -286,6 +286,183 @@ class BuildDictTests(unittest.TestCase):
             self.assertFalse(bad_dest.exists())
             self.assertFalse(bad_dest.with_suffix(".db.part").exists())
 
+    def test_zh_surname_upgrade_unknown_pos_cedict_boundaries_and_attested_en_morph(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            en_jsonl = root / "en.jsonl"
+            zh_jsonl = root / "zh.jsonl"
+            ecdict_csv = root / "ecdict.csv"
+            cedict_txt = root / "cedict.txt"
+            out_db = root / "dict.db"
+
+            en_records = [
+                {
+                    "word": "shoe",
+                    "pos": "verb",
+                    "forms": [
+                        {"form": "shoes", "tags": ["present", "singular", "third-person"]},
+                        {"form": "shoeing", "tags": ["participle", "present"]},
+                        {"form": "shoed", "tags": ["past"]},
+                        {"form": "shod", "tags": ["past"]},
+                        {"form": "shoon", "tags": ["archaic", "plural"]},
+                    ],
+                    "senses": [{"glosses": ["To fit with shoes."]}],
+                },
+                {
+                    "word": "read",
+                    "pos": "verb",
+                    "forms": [
+                        {"form": "reads", "tags": ["present", "singular", "third-person"]},
+                        {"form": "reading", "tags": ["participle", "present"]},
+                    ],
+                    "senses": [{"glosses": ["To look at and comprehend written text."]}],
+                },
+                {
+                    "word": "reader",
+                    "pos": "noun",
+                    "forms": [{"form": "readers", "tags": ["plural"]}],
+                    "senses": [{"glosses": ["A person who reads."]}],
+                },
+                {
+                    "word": "abbreviate",
+                    "pos": "verb",
+                    "forms": [
+                        {"form": "abbreviates", "tags": ["present", "singular", "third-person"]},
+                        {"form": "abbreviated", "tags": ["past"]},
+                        {"form": "abbreviating", "tags": ["participle", "present"]},
+                    ],
+                    "senses": [{"glosses": ["To shorten a word or phrase."]}],
+                },
+            ]
+            en_jsonl.write_text(
+                "\n".join(json.dumps(r, ensure_ascii=False) for r in en_records) + "\n",
+                encoding="utf-8",
+            )
+            ecdict_csv.write_text(
+                "word,phonetic,definition,translation,collins,oxford,bnc,frq,exchange\n"
+                "shoe,ʃu:,v. fit with shoes,n. 鞋,4,1,1500,1500,s:shoes/i:shoeing/p:shod/d:shod\n"
+                "read,ri:d,v. read,v. 读,5,1,200,200,i:reading/3:reads\n"
+                "reader,ˈri:də,n. person who reads,n. 读者,4,1,900,900,s:readers\n"
+                "abbreviate,əˈbri:vieɪt,v. shorten,v. 缩写,2,0,25000,26000,3:abbreviates/p:abbreviated/i:abbreviating\n",
+                encoding="utf-8",
+            )
+
+            zh_records = [
+                {
+                    "word": "去",
+                    "pos": "unknown",
+                    "senses": [{"glosses": ["離開", "前往，離開所在地到另一地方"]}],
+                },
+                {
+                    "word": "书",
+                    "pos": "unknown",
+                    "senses": [
+                        {"glosses": ["__NOTITLECONVERT__\n關於「书」的發音和釋義，請見「書」。\n（此字是「書」的簡化字。）"]}
+                    ],
+                },
+                {
+                    "word": "書",
+                    "pos": "unknown",
+                    "senses": [{"glosses": ["書寫，記錄，記載。", "圖書，書籍。"]}],
+                },
+            ]
+            zh_jsonl.write_text(
+                "\n".join(json.dumps(r, ensure_ascii=False) for r in zh_records) + "\n",
+                encoding="utf-8",
+            )
+
+            cedict_txt.write_text(
+                "咊 和 [he2] /old variant of 和[he2]/\n"
+                "和 和 [He2] /surname He/\n"
+                "和 和 [he2] /(joining two nouns) and; together with; with/\n"
+                "書 书 [Shu1] /abbr. for 書經|书经[Shu1 jing1]/\n"
+                "書 书 [shu1] /book/letter/document/\n"
+                "去 去 [qu4] /to go/to leave/\n"
+                "不分勝負 不分胜负 [bu4 fen1 sheng4 fu4] /unable to determine victory or defeat (idiom); evenly matched/to come out even/to tie/\n"
+                "成群結隊 成群结队 [cheng2 qun2 jie2 dui4] /(idiom) making up a group; forming a troupe; in large numbers; as a large crowd/\n",
+                encoding="utf-8",
+            )
+
+            ecdict = build_dict.load_ecdict(ecdict_csv)
+            en_entries, en_links, participial_adjs = build_dict.parse_en_kaikki(
+                en_jsonl, ecdict, max_lemmas=100
+            )
+            zh_entries, zh_trad_links = build_dict.parse_zh_entries(
+                zh_jsonl, cedict_txt, max_entries=100
+            )
+            build_dict.assemble_and_write_production_db(
+                out_db,
+                en_entries,
+                en_links,
+                participial_adjs,
+                zh_entries,
+                zh_trad_links,
+                built_at="test",
+            )
+
+            conn = sqlite3.connect(str(out_db))
+            try:
+                zdict = bytes(
+                    conn.execute("SELECT value FROM meta WHERE key = 'senses_zdict'").fetchone()[0]
+                )
+
+                def decode(lang: str, lemma: str) -> dict:
+                    row = conn.execute(
+                        "SELECT lemma, pron, senses_json, gloss_en, gloss_zh FROM entries WHERE lang = ? AND lemma = ?",
+                        (lang, lemma),
+                    ).fetchone()
+                    self.assertIsNotNone(row, f"Missing {lang}:{lemma}")
+                    return build_dict.decompress_entry_payload(
+                        row[2], zdict, col_pron=row[1], col_gloss_en=row[3], col_gloss_zh=row[4], lemma=row[0]
+                    )
+
+                # Surname/variant-first CEDICT rows upgrade cleanly to everyday reading
+                he = decode("zh", "和")
+                self.assertEqual(he["pron"], "hé")
+                self.assertNotIn("surname", (he["gloss_en"] or "").lower())
+                self.assertIn("and", (he["gloss_en"] or "").lower())
+
+                # Redirect stub on `书` is skipped; `unknown` POS sense on `書` is retained cleanly
+                shu = decode("zh", "书")
+                self.assertEqual(shu["pron"], "shū")
+                self.assertEqual(shu["senses"][0]["pos"], "字")
+                self.assertIn("書寫", shu["senses"][0]["defs"][0])
+                self.assertNotIn("__NOTITLECONVERT__", shu["senses"][0]["defs"][0])
+
+                qu = decode("zh", "去")
+                self.assertEqual(qu["senses"][0]["pos"], "字")
+                self.assertIn("離開", qu["senses"][0]["defs"][0])
+
+                # CEDICT-only idioms keep complete source senses and never truncate mid-word
+                tie = decode("zh", "不分胜负")
+                self.assertEqual(tie["senses"][0]["pos"], "成语")
+                self.assertIn("evenly matched", tie["senses"][0]["defs"][0])
+                self.assertIn("to come out even", tie["senses"][0]["defs"][1])
+                self.assertFalse((tie["gloss_en"] or "").endswith("; t"))
+
+                crowd = decode("zh", "成群结队")
+                self.assertIn("as a large crowd", crowd["senses"][0]["defs"][0])
+                self.assertFalse((crowd["gloss_en"] or "").endswith("; a"))
+
+                # Source-attested English morphology flags
+                shoe = decode("en", "shoe")
+                self.assertIn("shoeing", shoe["forms"])
+                self.assertIn("shod", shoe["forms"])
+                self.assertNotIn("shoing", shoe["forms"])
+                self.assertNotIn("shoon", shoe["forms"])
+
+                read = decode("en", "read")
+                self.assertIn("reads", read["forms"])
+                self.assertIn("reading", read["forms"])
+                self.assertNotIn("reader", read["forms"])
+
+                abbr = decode("en", "abbreviate")
+                self.assertIn("abbreviates", abbr["forms"])
+                self.assertIn("abbreviated", abbr["forms"])
+                self.assertIn("abbreviating", abbr["forms"])
+            finally:
+                conn.close()
+
 
 if __name__ == "__main__":
     unittest.main()

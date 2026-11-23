@@ -3,7 +3,7 @@
   "artifact": {
     "filename": "dict-v1.db",
     "url": "https://github.com/yicheng47/quill/releases/download/dict-data-v1/dict-v1.db",
-    "sha256": "54b774ca48d659a56bcee7d17f6eaeb9972100b3b6b4b986e7d4ded303dab1a3",
+    "sha256": "1d3cadc4fb42c6374ba099c5258761b3309acd45323149aab46afc3da4ba42e5",
     "license": "CC-BY-SA 4.0"
   },
   "sources": {
