@@ -18,11 +18,26 @@ let onAiLookupImpl: ((args: Record<string, unknown>) => Promise<void>) | null = 
 let onAiExplainImpl: ((args: Record<string, unknown>) => Promise<void>) | null = null;
 let onAiTranslateImpl: ((args: Record<string, unknown>) => Promise<void>) | null = null;
 let onAiChatImpl: ((args: Record<string, unknown>) => Promise<void>) | null = null;
+let onLookupDictionaryImpl: ((args: Record<string, unknown>) => Promise<unknown>) | null = null;
+let onCheckVocabLemmaImpl: ((args: Record<string, unknown>) => Promise<unknown>) | null = null;
 
 const invokeMock = vi.fn(async (cmd: string, args: Record<string, unknown> = {}) => {
   switch (cmd) {
     case "get_all_settings":
       return { ...settingsMap };
+    case "lookup_dictionary":
+      if (onLookupDictionaryImpl) return onLookupDictionaryImpl(args);
+      return {
+        lemma: String(args.term ?? ""),
+        lang: "en",
+        inflected_from: null,
+        alternate_lemmas: [],
+        forms: [],
+        matches: [],
+      };
+    case "check_vocab_lemma":
+      if (onCheckVocabLemmaImpl) return onCheckVocabLemmaImpl(args);
+      return { total_count: 0, matches_this_passage: false };
     case "ai_lookup":
       if (onAiLookupImpl) return onAiLookupImpl(args);
       return null;
@@ -139,10 +154,26 @@ vi.mock("react-i18next", () => ({
       if (key === "lookup.lookingUp") return "Looking up…";
       if (key === "lookup.analyzing") return "Analyzing…";
       if (key === "lookup.inContext") return "In this passage";
-      if (key === "lookup.saveToDict") return "Save to Words";
+      if (key === "lookup.saveToDict") return "Save to Vocab";
+      if (key === "lookup.addPassageToVocab") return "Add passage to Vocab";
+      if (key === "lookup.inVocabCount") return `In Vocab · ${String(opts?.count ?? 0)}`;
       if (key === "lookup.saved") return "Saved";
+      if (key === "lookup.quote") return "Quote";
       if (key === "lookup.copy") return "Copy";
       if (key === "lookup.copied") return "Copied";
+      if (key === "lookup.inflectedFrom") return `from “${String(opts?.form ?? "")}”`;
+      if (key === "lookup.alsoFormOf") {
+        return `Also ${String(opts?.relation ?? "")} of “${String(opts?.lemma ?? "")}”`;
+      }
+      if (key === "lookup.dictionarySource") return "Dictionary source";
+      if (key === "lookup.moreSenses") {
+        const count = Number(opts?.count ?? 0);
+        return count === 1 ? "+ 1 more sense" : `+ ${count} more senses`;
+      }
+      if (key === "lookup.showLessSenses") return "Show fewer senses";
+      if (key === "lookup.connectAiForContext") return "Connect AI for in-context explanation";
+      if (key === "lookup.aiSettingsLink") return "AI Settings";
+      if (key === "lookup.switchToExplain") return "Explain passage";
       if (key === "lookup.translationLanguageNotConfigured") {
         return "Set a lookup translation language in Settings first";
       }
@@ -150,6 +181,7 @@ vi.mock("react-i18next", () => ({
       if (key === "explain.title") return "Explain";
       if (key === "explain.thinking") return "Explaining…";
       if (key === "explain.copy") return "Copy";
+      if (key === "explain.switchToLookup") return "Look up";
       if (key === "translation.title") return "Translate";
       if (key === "translation.translating") return "Translating…";
       if (key === "translation.showSurroundingContext") return "Show surrounding context";
@@ -224,6 +256,7 @@ vi.mock("../platform", () => ({
 }));
 
 import ReaderContextMenu from "./ReaderContextMenu";
+import ExplainSelectionPopover from "./ExplainSelectionPopover";
 import LookupPopover from "./LookupPopover";
 import ExplainPopover from "./ExplainPopover";
 import TranslationPopover from "./TranslationPopover";
@@ -286,6 +319,8 @@ describe("M7 reader AI and word surfaces", () => {
     onAiExplainImpl = null;
     onAiTranslateImpl = null;
     onAiChatImpl = null;
+    onLookupDictionaryImpl = null;
+    onCheckVocabLemmaImpl = null;
     invokeMock.mockClear();
     focusWindowMock.mockClear();
 
@@ -306,9 +341,10 @@ describe("M7 reader AI and word surfaces", () => {
     container.remove();
   });
 
-  it("ReaderContextMenu hides Look Up for long passages and exposes highlight swatches + mod+C", () => {
+  it("ReaderContextMenu shows one adaptive Smart Lens top row for EN/ZH words vs passages + highlight swatches + mod+C", () => {
     const onHighlight = vi.fn();
     const onLookup = vi.fn();
+    const onExplain = vi.fn();
 
     act(() => {
       root.render(
@@ -318,7 +354,7 @@ describe("M7 reader AI and word surfaces", () => {
           text="ephemeral"
           onClose={vi.fn()}
           onCopy={vi.fn()}
-          onExplain={vi.fn()}
+          onExplain={onExplain}
           onQuote={vi.fn()}
           onLookup={onLookup}
           onTranslate={vi.fn()}
@@ -329,6 +365,7 @@ describe("M7 reader AI and word surfaces", () => {
 
     expect(container.querySelector('[role="menu"]')?.className).toContain("reader-popover");
     expect(container.textContent).toContain("Look Up");
+    expect(container.textContent).not.toContain("Explain");
     expect(container.textContent).toContain("Quote in Chat");
     expect(container.textContent).toContain("Translate");
     expect(container.querySelectorAll('button[aria-label^="highlights.color."]').length).toBe(5);
@@ -339,6 +376,26 @@ describe("M7 reader AI and word surfaces", () => {
     });
     expect(onLookup).toHaveBeenCalledTimes(1);
 
+    // 4-char Chinese idiom routes to Look Up (never both Look Up & Explain)
+    act(() => {
+      root.render(
+        <ReaderContextMenu
+          x={20}
+          y={20}
+          text="潜移默化"
+          onClose={vi.fn()}
+          onCopy={vi.fn()}
+          onExplain={onExplain}
+          onQuote={vi.fn()}
+          onLookup={onLookup}
+          onTranslate={vi.fn()}
+        />,
+      );
+    });
+    expect(container.textContent).toContain("Look Up");
+    expect(container.textContent).not.toContain("Explain");
+
+    // Multi-word passage routes to Explain (never Look Up)
     act(() => {
       root.render(
         <ReaderContextMenu
@@ -347,7 +404,7 @@ describe("M7 reader AI and word surfaces", () => {
           text="this selected passage has seven distinct words"
           onClose={vi.fn()}
           onCopy={vi.fn()}
-          onExplain={vi.fn()}
+          onExplain={onExplain}
           onQuote={vi.fn()}
           onLookup={onLookup}
           onTranslate={vi.fn()}
@@ -355,9 +412,191 @@ describe("M7 reader AI and word surfaces", () => {
       );
     });
     expect(container.textContent).not.toContain("Look Up");
+    expect(container.textContent).toContain("Explain");
+    act(() => {
+      findButton(container, "Explain").click();
+    });
+    expect(onExplain).toHaveBeenCalledTimes(1);
   });
 
-  it("LookupPopover renders streaming, done with In this passage + Save to Words, error, and AI auth prompt cards", async () => {
+  it("ExplainSelectionPopover renders offline dictionary + lemma + multi-dict tabs, degrades offline, and switches gray-zone modes cleanly", async () => {
+    const aiLookupCalls: Array<Record<string, unknown>> = [];
+    const aiExplainCalls: Array<Record<string, unknown>> = [];
+    onAiLookupImpl = async (args) => {
+      aiLookupCalls.push(args);
+    };
+    onAiExplainImpl = async (args) => {
+      aiExplainCalls.push(args);
+    };
+    settingsMap = {
+      ...settingsMap,
+      show_translation: "true",
+      lookup_translation_language: "zh",
+      dictionary_show_all_matches: "true",
+    };
+    onLookupDictionaryImpl = async (args) => {
+      if (args.term === "mortified") {
+        return {
+          lemma: "mortify",
+          lang: "en",
+          inflected_from: "mortified",
+          alternate_lemmas: [{ lemma: "mort", relation: "root" }],
+          forms: ["mortify", "mortified", "mortifying"],
+          matches: [
+            {
+              dictId: "oxford",
+              dictName: "Oxford",
+              format: "mdx",
+              pronunciation: "/ˈmɔːtɪfaɪ/",
+              senses: null,
+              html: "<p><b>mortify</b>: cause great embarrassment.</p>",
+              plainText: null,
+              gloss_en: null,
+              gloss_zh: null,
+            },
+            {
+              dictId: "builtin",
+              dictName: "Quill Built-in",
+              format: "builtin",
+              pronunciation: "/ˈmɔːrtɪfaɪ/",
+              senses: [
+                {
+                  pos: "verb",
+                  defs: [
+                    "Cause (someone) to feel very embarrassed or ashamed.",
+                    "Subdue (the body or its needs) by self-denial.",
+                    "Sense three.",
+                    "Sense four.",
+                  ],
+                },
+              ],
+              html: null,
+              plainText: null,
+              gloss_en: null,
+              gloss_zh: "使羞愧；克制",
+            },
+          ],
+        };
+      }
+      return {
+        lemma: String(args.term ?? ""),
+        lang: "en",
+        inflected_from: null,
+        alternate_lemmas: [],
+        forms: [],
+        matches: [],
+      };
+    };
+    onCheckVocabLemmaImpl = async () => ({ total_count: 1, matches_this_passage: false });
+
+    const onQuote = vi.fn();
+    const onSaved = vi.fn();
+    await act(async () => {
+      root.render(
+        <ExplainSelectionPopover
+          x={40}
+          y={40}
+          text="mortified"
+          sentence="She felt mortified at the remark."
+          bookId="b-1"
+          cfi="epubcfi(/6/2!/4/4)"
+          onQuote={onQuote}
+          onSaved={onSaved}
+          onClose={vi.fn()}
+        />,
+      );
+    });
+    await flushMicrotasks();
+
+    // Only ai_lookup(context) runs when dictionary matched — never ai_lookup(definition)
+    expect(aiLookupCalls.map((c) => c.kind)).toEqual(["context"]);
+    expect(container.textContent).toContain("mortify");
+    expect(container.textContent).toContain("from “mortified”");
+    expect(container.textContent).toContain("In Vocab · 1");
+    expect(container.textContent).toContain("Add passage to Vocab");
+    expect(container.textContent).toContain("cause great embarrassment.");
+
+    // Source switcher switches to Quill Built-in and exposes + 1 more sense
+    await act(async () => {
+      findButton(container, "Quill Built-in").click();
+    });
+    expect(container.textContent).toContain("使羞愧；克制");
+    expect(container.textContent).toContain("+ 1 more sense");
+    await act(async () => {
+      findButton(container, "+ 1 more sense").click();
+    });
+    expect(container.textContent).toContain("Sense four.");
+
+    // Offline / AI_NOT_CONFIGURED on context keeps dictionary + Add passage to Vocab working
+    await act(async () => {
+      emitChunks("ai-lookup-chunk-", String(aiLookupCalls[0].requestId), ["AI_NOT_CONFIGURED"]);
+    });
+    await flushMicrotasks();
+    expect(container.querySelector('[data-testid="lookup-ai-optional-note"]')).not.toBeNull();
+    expect(container.textContent).toContain("Connect AI for in-context explanation");
+    expect(container.textContent).toContain("Add passage to Vocab");
+
+    // Quote + Save to Vocab both work
+    act(() => {
+      findButton(container, "Quote").click();
+    });
+    expect(onQuote).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      findButton(container, "Add passage to Vocab").click();
+    });
+    await flushMicrotasks();
+    expect(invokeMock).toHaveBeenCalledWith(
+      "add_vocab_word",
+      expect.objectContaining({
+        bookId: "b-1",
+        word: "mortify",
+        contextSentence: "She felt mortified at the remark.",
+        contextExplanation: null,
+      }),
+    );
+    expect(onSaved).toHaveBeenCalledTimes(1);
+    expect(container.textContent).toContain("In Vocab · 2");
+    expect(container.textContent).toContain("Saved");
+
+    // Gray-zone switch cancels active ai_lookup channel(s) and opens ephemeral Explain
+    aiLookupCalls.length = 0;
+    aiExplainCalls.length = 0;
+    invokeMock.mockClear();
+    await act(async () => {
+      root.render(
+        <ExplainSelectionPopover
+          x={40}
+          y={40}
+          text="Crystal Palace"
+          sentence="We visited the Crystal Palace."
+          bookId="b-1"
+          onClose={vi.fn()}
+        />,
+      );
+    });
+    await flushMicrotasks();
+    expect(aiLookupCalls.length).toBe(2);
+    const switchBtn = container.querySelector<HTMLButtonElement>(
+      '[data-testid="selection-mode-switch"]',
+    )!;
+    expect(switchBtn.textContent).toBe("Explain passage");
+
+    await act(async () => {
+      switchBtn.click();
+    });
+    await flushMicrotasks();
+    expect(invokeMock).toHaveBeenCalledWith("ai_cancel", {
+      channel: `ai-lookup-chunk-${String(aiLookupCalls[0].requestId)}`,
+    });
+    expect(aiExplainCalls.length).toBe(1);
+    expect(container.textContent).toContain("Explaining…");
+    expect(container.querySelector('[data-testid="selection-mode-switch"]')?.textContent).toBe(
+      "Look up",
+    );
+  });
+
+  it("LookupPopover renders streaming, done with In this passage + Save to Vocab, error, and AI auth prompt cards", async () => {
     const defReqs: string[] = [];
     const ctxReqs: string[] = [];
     onAiLookupImpl = async (args) => {
@@ -411,7 +650,7 @@ describe("M7 reader AI and word surfaces", () => {
     expect(container.textContent).toContain("In this passage");
     expect(container.textContent).toContain("Here it highlights fleeting human moments.");
 
-    const saveBtn = findButton(container, "Save to Words");
+    const saveBtn = findButton(container, "Save to Vocab");
     expect(saveBtn.className).toContain("rounded-control");
     await act(async () => {
       saveBtn.click();

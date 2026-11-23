@@ -9,6 +9,7 @@ interface ReaderPopoverProps {
   title: string;
   icon: ReactNode;
   headerExtra?: ReactNode;
+  headerRight?: ReactNode;
   footer?: ReactNode;
   suppressDismiss?: boolean;
   onClose: () => void;
@@ -22,6 +23,7 @@ export default function ReaderPopover({
   title,
   icon,
   headerExtra,
+  headerRight,
   footer,
   suppressDismiss = false,
   onClose,
@@ -96,14 +98,17 @@ export default function ReaderPopover({
             </span>
             {headerExtra}
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label={t("common.dismiss")}
-            className="size-6 rounded-control flex items-center justify-center text-text-tertiary hover:text-text-primary hover:bg-border-subtle cursor-pointer transition-colors shrink-0"
-          >
-            <X size={14} />
-          </button>
+          <div className="flex items-center gap-1.5 shrink-0">
+            {headerRight}
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label={t("common.dismiss")}
+              className="size-6 rounded-control flex items-center justify-center text-text-tertiary hover:text-text-primary hover:bg-border-subtle cursor-pointer transition-colors shrink-0"
+            >
+              <X size={14} />
+            </button>
+          </div>
         </div>
 
         {children}
