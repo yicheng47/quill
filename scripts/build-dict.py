@@ -13,8 +13,14 @@ Usage:
   # Regenerate the checked-in deterministic test fixture (~32 KB):
   python3 scripts/build-dict.py --fixture
 
-  # Download verified sources (cached) and build full <= 20 MB dict.db:
+  # Fetch and verify the pinned immutable production dict.db artifact (used by release/nightly CI):
+  python3 scripts/build-dict.py --fetch-artifact --output crates/quill-core/resources/dict.db
+
+  # Rebuild full <= 20 MB dict.db from pinned immutable source snapshots (cached):
   python3 scripts/build-dict.py
+
+  # Refresh from rolling upstream dumps when cutting a new dict-data-vN release:
+  python3 scripts/build-dict.py --use-upstream --skip-checksum
 
   # Verify an existing production dict.db:
   python3 scripts/build-dict.py --verify crates/quill-core/resources/dict.db
@@ -791,22 +797,50 @@ def download_verified(
     tmp = dest.with_suffix(dest.suffix + ".part")
     print(f"Downloading {url} -> {dest}")
     req = urllib.request.Request(url, headers={"User-Agent": "Quill-Dict-Builder/1.0"})
-    with urllib.request.urlopen(req, timeout=300) as resp, open(tmp, "wb") as out:
-        while True:
-            chunk = resp.read(1024 * 256)
-            if not chunk:
-                break
-            out.write(chunk)
-    os.replace(tmp, dest)
+    try:
+        with urllib.request.urlopen(req, timeout=300) as resp, open(tmp, "wb") as out:
+            while True:
+                chunk = resp.read(1024 * 256)
+                if not chunk:
+                    break
+                out.write(chunk)
 
-    if verify_checksum and expected_sha256:
-        actual = sha256_file(dest)
-        if actual != expected_sha256:
-            raise RuntimeError(
-                f"Checksum mismatch for {dest.name}: expected {expected_sha256}, got {actual}. "
-                f"Upstream file may have changed; update scripts/dict-sources.json after reviewing the new dump."
-            )
+        if verify_checksum and expected_sha256:
+            actual = sha256_file(tmp)
+            if actual != expected_sha256:
+                raise RuntimeError(
+                    f"Checksum mismatch for {dest.name}: expected {expected_sha256}, got {actual}. "
+                    f"Source artifact may have changed; update scripts/dict-sources.json after reviewing the new dump."
+                )
+        os.replace(tmp, dest)
+    except Exception:
+        if tmp.exists():
+            tmp.unlink()
+        raise
     return dest
+
+
+def fetch_artifact(
+    out_path: Path,
+    *,
+    manifest: dict[str, Any] | None = None,
+    verify_db: bool = True,
+) -> Path:
+    manifest = manifest if manifest is not None else load_sources_manifest()
+    artifact = manifest.get("artifact")
+    if not isinstance(artifact, dict) or not artifact.get("url") or not artifact.get("sha256"):
+        raise RuntimeError(
+            "Missing pinned `artifact` (url + sha256) in scripts/dict-sources.json"
+        )
+    download_verified(
+        artifact["url"],
+        out_path,
+        artifact["sha256"],
+        verify_checksum=True,
+    )
+    if verify_db:
+        verify_production_db(out_path)
+    return out_path
 
 
 def load_ecdict(path: Path) -> dict[str, dict[str, Any]]:
@@ -1649,8 +1683,9 @@ def build_full(args: argparse.Namespace) -> None:
                 raise RuntimeError(f"Specified {key} file does not exist: {p}")
             return p
         spec = sources[key]
+        url = spec.get("upstream_url", spec["url"]) if args.use_upstream else spec["url"]
         return download_verified(
-            spec["url"],
+            url,
             cache_dir / spec["filename"],
             spec.get("sha256"),
             verify_checksum=verify_ck,
@@ -1705,6 +1740,11 @@ def main() -> None:
         "--fixture", action="store_true", help="Build deterministic dict-test.db fixture"
     )
     parser.add_argument(
+        "--fetch-artifact",
+        action="store_true",
+        help="Fetch and verify the pinned production dict.db artifact from scripts/dict-sources.json",
+    )
+    parser.add_argument(
         "--verify", type=str, default=None, help="Verify an existing production dict.db"
     )
     parser.add_argument("--output", "-o", type=str, default=None, help="Output SQLite file path")
@@ -1713,6 +1753,11 @@ def main() -> None:
     parser.add_argument("--ecdict", type=str, default=None)
     parser.add_argument("--zh-kaikki", type=str, default=None)
     parser.add_argument("--cedict", type=str, default=None)
+    parser.add_argument(
+        "--use-upstream",
+        action="store_true",
+        help="Download rolling upstream dumps instead of immutable release snapshots (for manual refreshes)",
+    )
     parser.add_argument(
         "--skip-checksum",
         action="store_true",
@@ -1724,6 +1769,11 @@ def main() -> None:
 
     if args.verify:
         verify_production_db(Path(args.verify))
+        return
+
+    if args.fetch_artifact:
+        out = Path(args.output) if args.output else DEFAULT_OUT
+        fetch_artifact(out)
         return
 
     if args.fixture:

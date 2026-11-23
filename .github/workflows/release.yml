@@ -51,14 +51,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: crates/quill-core/resources/dict.db
-          key: dict-db-v1-${{ hashFiles('scripts/build-dict.py', 'scripts/dict-sources.json') }}
+          key: dict-db-v2-${{ hashFiles('scripts/build-dict.py', 'scripts/dict-sources.json') }}
 
-      - name: Build production offline dictionary
-        if: steps.dict-cache.outputs.cache-hit != 'true'
-        run: python3 scripts/build-dict.py --output crates/quill-core/resources/dict.db
-
-      - name: Verify production offline dictionary
-        run: python3 scripts/build-dict.py --verify crates/quill-core/resources/dict.db
+      - name: Fetch and verify pinned production offline dictionary
+        run: python3 scripts/build-dict.py --fetch-artifact --output crates/quill-core/resources/dict.db
 
       - name: Upload production offline dictionary
         uses: actions/upload-artifact@v4

@@ -255,6 +255,37 @@ class BuildDictTests(unittest.TestCase):
             finally:
                 conn.close()
 
+    def test_fetch_artifact_verifies_checksum_and_rejects_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src_artifact = root / "dict-v1.db"
+            build_dict.build_fixture(src_artifact)
+            good_sha = build_dict.sha256_file(src_artifact)
+
+            dest = root / "fetched.db"
+            manifest = {
+                "artifact": {
+                    "url": src_artifact.as_uri(),
+                    "sha256": good_sha,
+                }
+            }
+            fetched = build_dict.fetch_artifact(dest, manifest=manifest, verify_db=False)
+            self.assertEqual(fetched, dest)
+            self.assertEqual(build_dict.sha256_file(dest), good_sha)
+
+            # Corrupting the manifest checksum must reject the download without writing dest
+            bad_dest = root / "bad.db"
+            bad_manifest = {
+                "artifact": {
+                    "url": src_artifact.as_uri(),
+                    "sha256": "0" * 64,
+                }
+            }
+            with self.assertRaises(RuntimeError):
+                build_dict.fetch_artifact(bad_dest, manifest=bad_manifest, verify_db=False)
+            self.assertFalse(bad_dest.exists())
+            self.assertFalse(bad_dest.with_suffix(".db.part").exists())
+
 
 if __name__ == "__main__":
     unittest.main()
