@@ -33,6 +33,16 @@ pub struct VocabStats {
     pub due_for_review: i64,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct VocabLemmaCheck {
+    pub total_count: i64,
+    pub matches_this_passage: bool,
+}
+
+fn non_empty_trimmed(val: Option<&str>) -> Option<&str> {
+    val.map(str::trim).filter(|s| !s.is_empty())
+}
+
 fn row_to_vocab(row: &rusqlite::Row) -> rusqlite::Result<VocabWord> {
     Ok(VocabWord {
         id: row.get(0)?,
@@ -84,24 +94,47 @@ pub fn add_vocab_word(
     let now = chrono::Utc::now().timestamp_millis();
     let device = core.sync_writer.self_device().to_string();
 
+    let word = word.trim().to_string();
+    let cfi = non_empty_trimmed(cfi.as_deref()).map(str::to_string);
+    let context_sentence = non_empty_trimmed(context_sentence.as_deref()).map(str::to_string);
+
     log::debug!("vocab: add_vocab_word book_id={book_id} word={word:?}");
 
-    // Dedup happens inside the sync transaction so two concurrent adds
-    // can't both observe "missing" and insert duplicates. There's no
-    // unique index on (book_id, word) — the conn mutex serializes the
-    // whole tx, so the second writer's check sees the first writer's
-    // committed row.
+    // Dedup happens inside the sync transaction by (book_id, word, cfi) —
+    // falling back to (book_id, word, context_sentence) when cfi is absent —
+    // so multiple distinct encounters of the same canonical lemma save cleanly
+    // while duplicate clicks on the same passage remain idempotent.
     let vocab = core.sync_writer.with_tx(&core.db, now, |tx, events| {
-        let existing: Option<VocabWord> = {
+        let existing: Option<VocabWord> = if let Some(cfi_val) = cfi.as_deref() {
             let mut stmt = tx.prepare(&format!(
-                "SELECT {} FROM vocab_words WHERE book_id = ?1 AND word = ?2 COLLATE NOCASE LIMIT 1",
+                "SELECT {} FROM vocab_words WHERE book_id = ?1 AND TRIM(word) = ?2 COLLATE NOCASE AND TRIM(cfi) = ?3 LIMIT 1",
                 SELECT_COLS
             ))?;
-            let row = stmt
+            let found = stmt
+                .query_map(params![book_id, word, cfi_val], row_to_vocab)?
+                .next()
+                .transpose()?;
+            found
+        } else if let Some(ctx_val) = context_sentence.as_deref() {
+            let mut stmt = tx.prepare(&format!(
+                "SELECT {} FROM vocab_words WHERE book_id = ?1 AND TRIM(word) = ?2 COLLATE NOCASE AND (cfi IS NULL OR TRIM(cfi) = '') AND TRIM(context_sentence) = ?3 LIMIT 1",
+                SELECT_COLS
+            ))?;
+            let found = stmt
+                .query_map(params![book_id, word, ctx_val], row_to_vocab)?
+                .next()
+                .transpose()?;
+            found
+        } else {
+            let mut stmt = tx.prepare(&format!(
+                "SELECT {} FROM vocab_words WHERE book_id = ?1 AND TRIM(word) = ?2 COLLATE NOCASE AND (cfi IS NULL OR TRIM(cfi) = '') AND (context_sentence IS NULL OR TRIM(context_sentence) = '') LIMIT 1",
+                SELECT_COLS
+            ))?;
+            let found = stmt
                 .query_map(params![book_id, word], row_to_vocab)?
                 .next()
                 .transpose()?;
-            row
+            found
         };
         if let Some(existing) = existing {
             // Existing match → no SQL write, no event published. The
@@ -182,6 +215,83 @@ pub fn check_vocab_exists(core: &Core, book_id: String, word: String) -> AppResu
         .next()
         .transpose()?;
     Ok(id)
+}
+
+pub fn check_vocab_lemma(
+    core: &Core,
+    lemma: String,
+    book_id: Option<String>,
+    cfi: Option<String>,
+    context_sentence: Option<String>,
+) -> AppResult<VocabLemmaCheck> {
+    let trimmed = lemma.trim();
+    if trimmed.is_empty() {
+        return Ok(VocabLemmaCheck {
+            total_count: 0,
+            matches_this_passage: false,
+        });
+    }
+
+    let conn = core.db.reader();
+    let total_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM vocab_words WHERE TRIM(word) = ?1 COLLATE NOCASE",
+        params![trimmed],
+        |row| row.get(0),
+    )?;
+
+    let matches_this_passage = if total_count == 0 {
+        false
+    } else if let Some(bid) = non_empty_trimmed(book_id.as_deref()) {
+        if let Some(cfi_val) = non_empty_trimmed(cfi.as_deref()) {
+            conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM vocab_words WHERE book_id = ?1 AND TRIM(word) = ?2 COLLATE NOCASE AND TRIM(cfi) = ?3)",
+                params![bid, trimmed, cfi_val],
+                |row| row.get::<_, i64>(0),
+            )? != 0
+        } else if let Some(ctx_val) = non_empty_trimmed(context_sentence.as_deref()) {
+            conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM vocab_words WHERE book_id = ?1 AND TRIM(word) = ?2 COLLATE NOCASE AND (cfi IS NULL OR TRIM(cfi) = '') AND TRIM(context_sentence) = ?3)",
+                params![bid, trimmed, ctx_val],
+                |row| row.get::<_, i64>(0),
+            )? != 0
+        } else {
+            conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM vocab_words WHERE book_id = ?1 AND TRIM(word) = ?2 COLLATE NOCASE AND (cfi IS NULL OR TRIM(cfi) = '') AND (context_sentence IS NULL OR TRIM(context_sentence) = ''))",
+                params![bid, trimmed],
+                |row| row.get::<_, i64>(0),
+            )? != 0
+        }
+    } else {
+        false
+    };
+
+    Ok(VocabLemmaCheck {
+        total_count,
+        matches_this_passage,
+    })
+}
+
+pub fn remove_vocab_lemma(core: &Core, word: String) -> AppResult<usize> {
+    let trimmed = word.trim().to_string();
+    if trimmed.is_empty() {
+        return Ok(0);
+    }
+    let now = chrono::Utc::now().timestamp_millis();
+    core.sync_writer.with_tx(&core.db, now, |tx, events| {
+        let ids: Vec<String> = {
+            let mut stmt =
+                tx.prepare("SELECT id FROM vocab_words WHERE TRIM(word) = ?1 COLLATE NOCASE")?;
+            let rows = stmt
+                .query_map(params![trimmed], |row| row.get::<_, String>(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            rows
+        };
+        for id in &ids {
+            tx.execute("DELETE FROM vocab_words WHERE id = ?1", params![id])?;
+            events.push(EventBody::VocabDelete { id: id.clone() });
+        }
+        Ok(ids.len())
+    })
 }
 
 pub fn list_all_vocab_words(core: &Core) -> AppResult<Vec<VocabWord>> {
@@ -280,4 +390,200 @@ pub(crate) fn query_vocab_stats(db: &Db) -> AppResult<VocabStats> {
 
 pub fn get_vocab_stats(core: &Core) -> AppResult<VocabStats> {
     query_vocab_stats(&core.db)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::host::{boot, BootConfig, ShellHost};
+    use std::path::Path;
+    use std::sync::Arc;
+    use tempfile::TempDir;
+
+    struct NoopHost;
+    impl ShellHost for NoopHost {
+        fn emit(&self, _event: &str, _payload: serde_json::Value) {}
+        fn emit_to(&self, _window: &str, _event: &str, _payload: serde_json::Value) {}
+        fn open_url(&self, _url: &str) -> AppResult<()> {
+            Ok(())
+        }
+        fn reveal_path(&self, _path: &Path) -> AppResult<()> {
+            Ok(())
+        }
+    }
+
+    fn setup_core() -> (TempDir, Arc<Core>) {
+        let dir = TempDir::new().unwrap();
+        let core = boot(
+            BootConfig {
+                app_data_base_dir: dir.path().join("appdata"),
+                log_dir: dir.path().join("logs"),
+                is_dev: true,
+                mcp_binary_path: dir.path().join("quill-mcp"),
+                pdfium_path: None,
+                dict_path: None,
+            },
+            Arc::new(NoopHost),
+        )
+        .unwrap();
+
+        let conn = core.db.conn.lock().unwrap();
+        let now = chrono::Utc::now().timestamp_millis();
+        for bid in ["b1", "b2"] {
+            conn.execute(
+                "INSERT INTO books (id, title, author, file_path, format, status, progress, created_at, updated_at)
+                 VALUES (?1, ?2, 'Author', 'books/test.epub', 'epub', 'reading', 0, ?3, ?3)",
+                params![bid, format!("Book {bid}"), now],
+            )
+            .unwrap();
+        }
+        drop(conn);
+        (dir, core)
+    }
+
+    #[test]
+    fn allows_multiple_encounters_under_one_lemma_and_dedupes_identical_passage() {
+        let (_dir, core) = setup_core();
+
+        let e1 = add_vocab_word(
+            &core,
+            "b1".into(),
+            "mortify".into(),
+            "/ˈmɔːr.tɪ.faɪ/ verb. Humiliate.".into(),
+            Some("I am mortifying myself.".into()),
+            Some("Note 1".into()),
+            Some("epubcfi(/6/4!/4/2)".into()),
+        )
+        .unwrap();
+
+        // Identical (book_id, word, cfi) is idempotent
+        let dup = add_vocab_word(
+            &core,
+            "b1".into(),
+            "Mortify".into(),
+            "Other def".into(),
+            Some("I am mortifying myself.".into()),
+            None,
+            Some("epubcfi(/6/4!/4/2)".into()),
+        )
+        .unwrap();
+        assert_eq!(dup.id, e1.id);
+
+        // Different CFI in same book inserts a second encounter
+        let e2 = add_vocab_word(
+            &core,
+            "b1".into(),
+            "mortify".into(),
+            "/ˈmɔːr.tɪ.faɪ/ verb. Humiliate.".into(),
+            Some("She felt mortified.".into()),
+            Some("Note 2".into()),
+            Some("epubcfi(/6/8!/4/6)".into()),
+        )
+        .unwrap();
+        assert_ne!(e2.id, e1.id);
+
+        // Different book with no CFI falls back to context_sentence dedup
+        let e3 = add_vocab_word(
+            &core,
+            "b2".into(),
+            "mortify".into(),
+            "/ˈmɔːr.tɪ.faɪ/ verb. Humiliate.".into(),
+            Some("Utterly mortified on the landing.".into()),
+            None,
+            None,
+        )
+        .unwrap();
+        let dup_ctx = add_vocab_word(
+            &core,
+            "b2".into(),
+            "mortify".into(),
+            "/ˈmɔːr.tɪ.faɪ/ verb. Humiliate.".into(),
+            Some("Utterly mortified on the landing.".into()),
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(dup_ctx.id, e3.id);
+
+        // Different context_sentence when cfi is None inserts cleanly
+        let e4 = add_vocab_word(
+            &core,
+            "b2".into(),
+            "mortify".into(),
+            "/ˈmɔːr.tɪ.faɪ/ verb. Humiliate.".into(),
+            Some("Another mortifying scene.".into()),
+            None,
+            None,
+        )
+        .unwrap();
+        assert_ne!(e4.id, e3.id);
+
+        // check_vocab_lemma reports total across all books + passage-level match
+        let hit_cfi = check_vocab_lemma(
+            &core,
+            "mortify".into(),
+            Some("b1".into()),
+            Some("epubcfi(/6/4!/4/2)".into()),
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            hit_cfi,
+            VocabLemmaCheck {
+                total_count: 4,
+                matches_this_passage: true,
+            }
+        );
+
+        let miss_cfi = check_vocab_lemma(
+            &core,
+            "mortify".into(),
+            Some("b1".into()),
+            Some("epubcfi(/6/99!/4/2)".into()),
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            miss_cfi,
+            VocabLemmaCheck {
+                total_count: 4,
+                matches_this_passage: false,
+            }
+        );
+
+        let hit_ctx = check_vocab_lemma(
+            &core,
+            "mortify".into(),
+            Some("b2".into()),
+            None,
+            Some("Utterly mortified on the landing.".into()),
+        )
+        .unwrap();
+        assert_eq!(
+            hit_ctx,
+            VocabLemmaCheck {
+                total_count: 4,
+                matches_this_passage: true,
+            }
+        );
+
+        // Keep unrelated word intact when removing lemma
+        add_vocab_word(
+            &core,
+            "b1".into(),
+            "palimpsest".into(),
+            "noun. Reused manuscript.".into(),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let removed = remove_vocab_lemma(&core, "MORTIFY".into()).unwrap();
+        assert_eq!(removed, 4);
+
+        let remaining = list_all_vocab_words(&core).unwrap();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].word, "palimpsest");
+    }
 }

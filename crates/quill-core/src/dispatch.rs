@@ -298,6 +298,24 @@ struct CheckVocabExistsArgs {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct CheckVocabLemmaArgs {
+    lemma: String,
+    #[serde(default)]
+    book_id: Option<String>,
+    #[serde(default)]
+    cfi: Option<String>,
+    #[serde(default)]
+    context_sentence: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RemoveVocabLemmaArgs {
+    word: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct UpdateVocabMasteryArgs {
     id: String,
     mastery: String,
@@ -726,6 +744,22 @@ command_table! {
             run_blocking(core, move |c| {
                 commands::vocab::check_vocab_exists(c, a.book_id, a.word)
             })
+        },
+        "check_vocab_lemma" => |core, args| {
+            let a: CheckVocabLemmaArgs = parse_args(args)?;
+            run_blocking(core, move |c| {
+                commands::vocab::check_vocab_lemma(
+                    c,
+                    a.lemma,
+                    a.book_id,
+                    a.cfi,
+                    a.context_sentence,
+                )
+            })
+        },
+        "remove_vocab_lemma" => |core, args| {
+            let a: RemoveVocabLemmaArgs = parse_args(args)?;
+            run_blocking(core, move |c| commands::vocab::remove_vocab_lemma(c, a.word))
         },
         "list_all_vocab_words" => |core, _args| {
             run_blocking(core, commands::vocab::list_all_vocab_words)
@@ -1974,7 +2008,7 @@ mod tests {
             CORE_COMMAND_NAMES.len(),
             "duplicate entries in CORE_COMMAND_NAMES"
         );
-        assert_eq!(CORE_COMMAND_NAMES.len(), 86);
+        assert_eq!(CORE_COMMAND_NAMES.len(), 88);
 
         let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()

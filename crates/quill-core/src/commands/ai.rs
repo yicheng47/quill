@@ -378,9 +378,9 @@ fn lookup_system_prompt(
     let ctx_prefix = &context_language_prefix;
 
     match kind {
-        "definition" => format!("{}You are a reading assistant embedded in an ebook reader. The user selected a word or phrase and wants a dictionary-style definition.\n\nGive: pronunciation in IPA (if English), part of speech, and a concise definition in 1–2 sentences.\n\nIf the selection is a proper noun (person, place, historical event), give a brief factual identification instead.\n\nBe concise. No headers or labels.", def_prefix),
+        "definition" => format!("{}You are a reading assistant embedded in an ebook reader. The user selected a word or phrase and wants a dictionary-style definition.\n\nGive: pronunciation in /IPA/ (if English) or /pīnyīn/ (if Chinese, e.g. /qián yí mò huà/), part of speech (e.g. verb. for English, or 词性. such as 成语. / 名词. / 动词. / 形容词. for Chinese — formatted as `/pīnyīn/ 词性.`), and a concise definition in 1–2 sentences.\n\nIf the selection is a proper noun (person, place, historical event), give a brief factual identification instead.\n\nBe concise. No headers or labels.", def_prefix),
         "context" => format!("{}You are a reading assistant embedded in an ebook reader. The user selected a word or phrase and wants to understand how it's used in the surrounding passage.\n\nExplain how the word is used in context. Consider the author's intent, tone, or any literary/idiomatic significance. Keep it to 2–3 sentences.\n\nBe concise. No headers or labels.", ctx_prefix),
-        _ => format!("{}You are a reading assistant embedded in an ebook reader. The user selected a word or phrase and wants to understand it.\n\nRespond in two parts:\n\n1. **Definition** — Give a dictionary-style entry: the word, pronunciation in IPA (if it's an English word), part of speech, and a concise definition in one sentence.\n\n2. **In context** — Explain how the word is used in the given passage. Consider the author's intent, tone, or any literary/idiomatic significance. Keep it to 2–3 sentences.\n\nIf the selection is a proper noun (person, place, historical event), replace the dictionary definition with a brief factual identification, then explain its relevance in context.\n\nDo not use headers or labels like \"Definition:\" or \"In context:\". Separate the two parts with a line break. Be concise.", def_prefix),
+        _ => format!("{}You are a reading assistant embedded in an ebook reader. The user selected a word or phrase and wants to understand it.\n\nRespond in two parts:\n\n1. **Definition** — Give a dictionary-style entry: the word, pronunciation in /IPA/ (if English) or /pīnyīn/ (if Chinese), part of speech (e.g. verb. for English, or 词性. formatted as `/pīnyīn/ 词性.` for Chinese), and a concise definition in one sentence.\n\n2. **In context** — Explain how the word is used in the given passage. Consider the author's intent, tone, or any literary/idiomatic significance. Keep it to 2–3 sentences.\n\nIf the selection is a proper noun (person, place, historical event), replace the dictionary definition with a brief factual identification, then explain its relevance in context.\n\nDo not use headers or labels like \"Definition:\" or \"In context:\". Separate the two parts with a line break. Be concise.", def_prefix),
     }
 }
 
@@ -746,6 +746,20 @@ mod tests {
         assert!(p.contains(
             "After that first line, respond entirely in the same language as the selected word/phrase."
         ));
+    }
+
+    #[test]
+    fn lookup_definition_prompt_specifies_bilingual_ipa_and_pinyin_pos_format() {
+        let def = lookup_system_prompt("definition", "selection", "", false);
+        assert!(def.contains("/IPA/"));
+        assert!(def.contains("/pīnyīn/ 词性."));
+
+        let full = lookup_system_prompt("full", "selection", "", false);
+        assert!(full.contains("/IPA/"));
+        assert!(full.contains("/pīnyīn/ 词性."));
+
+        let ctx = lookup_system_prompt("context", "selection", "", false);
+        assert!(!ctx.contains("/pīnyīn/ 词性."));
     }
 
     #[test]
