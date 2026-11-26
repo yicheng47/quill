@@ -4,7 +4,6 @@ use serde::{Deserialize, Serialize};
 use crate::db::Db;
 use crate::error::AppResult;
 use crate::host::Core;
-use crate::sync::events::{ChatMessagePayload, EventBody};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Chat {
@@ -138,7 +137,6 @@ pub fn create_chat(
     let id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().timestamp_millis();
     let title = title.unwrap_or_else(|| "New chat".to_string());
-    let device = core.sync_writer.self_device().to_string();
 
     let chat = Chat {
         id: id.clone(),
@@ -154,18 +152,12 @@ pub fn create_chat(
         last_message: None,
     };
 
-    core.sync_writer.with_tx(&core.db, now, |tx, events| {
+    core.db.with_tx(|tx| {
         tx.execute(
-            "INSERT INTO chats (id, book_id, title, model, pinned, metadata, created_at, updated_at, updated_by_device)
-             VALUES (?1, ?2, ?3, ?4, 0, NULL, ?5, ?5, ?6)",
-            params![id, book_id, title, model, now, device],
+            "INSERT INTO chats (id, book_id, title, model, pinned, metadata, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, 0, NULL, ?5, ?5)",
+            params![id, book_id, title, model, now],
         )?;
-        events.push(EventBody::ChatCreate {
-            id: id.clone(),
-            book: book_id.clone(),
-            title: title.clone(),
-            model: model.clone(),
-        });
         Ok(())
     })?;
 
@@ -340,16 +332,12 @@ pub fn get_chat(core: &Core, chat_id: String) -> AppResult<Chat> {
 }
 
 pub fn delete_chat(core: &Core, chat_id: String) -> AppResult<()> {
-    let now = chrono::Utc::now().timestamp_millis();
-    core.sync_writer.with_tx(&core.db, now, |tx, events| {
+    core.db.with_tx(|tx| {
         tx.execute(
             "DELETE FROM chat_messages WHERE chat_id = ?1",
             params![chat_id],
         )?;
         tx.execute("DELETE FROM chats WHERE id = ?1", params![chat_id])?;
-        events.push(EventBody::ChatDelete {
-            id: chat_id.clone(),
-        });
         Ok(())
     })?;
     core.codex.forget_chat(&chat_id);
@@ -358,16 +346,11 @@ pub fn delete_chat(core: &Core, chat_id: String) -> AppResult<()> {
 
 pub fn rename_chat(core: &Core, chat_id: String, title: String) -> AppResult<()> {
     let now = chrono::Utc::now().timestamp_millis();
-    let device = core.sync_writer.self_device().to_string();
-    core.sync_writer.with_tx(&core.db, now, |tx, events| {
+    core.db.with_tx(|tx| {
         tx.execute(
-            "UPDATE chats SET title = ?1, updated_at = ?2, updated_by_device = ?3 WHERE id = ?4",
-            params![title, now, device, chat_id],
+            "UPDATE chats SET title = ?1, updated_at = ?2 WHERE id = ?3",
+            params![title, now, chat_id],
         )?;
-        events.push(EventBody::ChatRename {
-            id: chat_id.clone(),
-            title: title.clone(),
-        });
         Ok(())
     })
 }
@@ -399,7 +382,6 @@ pub fn save_chat_message(
 ) -> AppResult<ChatMsg> {
     let id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().timestamp_millis();
-    let device = core.sync_writer.self_device().to_string();
 
     let msg = ChatMsg {
         id: id.clone(),
@@ -412,29 +394,16 @@ pub fn save_chat_message(
         updated_at: now,
     };
 
-    core.sync_writer.with_tx(&core.db, now, |tx, events| {
+    core.db.with_tx(|tx| {
         tx.execute(
             "INSERT INTO chat_messages (id, chat_id, role, content, context, metadata, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
             params![id, chat_id, role, content, context, metadata, now],
         )?;
-        // Bump the parent chat's updated_at — same pattern the merge engine
-        // uses on `chat.message.add` (LWW guard avoids dragging chats
-        // backward when older peer messages replay).
         tx.execute(
-            "UPDATE chats SET updated_at = ?1, updated_by_device = ?2
-             WHERE id = ?3
-               AND (updated_at < ?1 OR (updated_at = ?1 AND updated_by_device < ?2))",
-            params![now, device, chat_id],
+            "UPDATE chats SET updated_at = MAX(updated_at, ?1) WHERE id = ?2",
+            params![now, chat_id],
         )?;
-        events.push(EventBody::ChatMessageAdd(ChatMessagePayload {
-            id: id.clone(),
-            chat_id: chat_id.clone(),
-            role: role.clone(),
-            content: content.clone(),
-            context: context.clone(),
-            metadata: metadata.clone(),
-        }));
         Ok(())
     })?;
 

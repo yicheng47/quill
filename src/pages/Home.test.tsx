@@ -104,22 +104,14 @@ vi.mock("../components/settings/SettingsView", () => ({
     section,
     onSelectSection,
     onClose,
-    onBlockingChange,
   }: {
     section: string;
     onSelectSection: (s: string) => void;
     onClose: () => void;
-    onBlockingChange?: (b: boolean) => void;
   }) => (
     <div data-testid="settings-view" data-section={section}>
       <button type="button" onClick={() => onSelectSection("updates")}>
         mock-tab-updates
-      </button>
-      <button type="button" onClick={() => onBlockingChange?.(true)}>
-        mock-block
-      </button>
-      <button type="button" onClick={() => onBlockingChange?.(false)}>
-        mock-unblock
       </button>
       <button type="button" onClick={onClose}>
         mock-close-settings
@@ -799,43 +791,14 @@ describe("Home integration flows (R1, R2, R3, R6)", () => {
     });
     expect(container.querySelector('[data-testid="settings-view"]')?.getAttribute("data-section")).toBe("tools");
 
-    // Blocking sync marks the background shell inert and blocks TopBar actions + shortcuts
-    const blockBtn = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
-      (b) => b.textContent === "mock-block",
-    );
     await act(async () => {
-      blockBtn?.click();
+      window.dispatchEvent(new CustomEvent("open-settings", { detail: { section: "librarySync" } }));
     });
-    expect(container.firstElementChild?.hasAttribute("inert")).toBe(true);
-
-    const searchBtn = container.querySelector<HTMLButtonElement>('button[aria-label="Search Quill"]');
-    const importBtn = container.querySelector<HTMLButtonElement>('button[aria-label="Import book"]');
-    await act(async () => {
-      searchBtn?.click();
-      importBtn?.click();
-      window.dispatchEvent(new KeyboardEvent("keydown", { key: ",", metaKey: true, bubbles: true }));
-      window.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true, bubbles: true }));
-      gearBtn?.click();
-    });
-    expect(container.querySelector('[role="dialog"]')).toBeNull();
-    expect(mocks.openFileDialog).not.toHaveBeenCalled();
-    expect(container.querySelector('[data-testid="settings-view"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="settings-view"]')?.getAttribute("data-section")).toBe("general");
 
     const wordsBtn = Array.from(container.querySelectorAll<HTMLButtonElement>("nav button")).find((b) =>
       b.textContent?.includes("Vocab"),
     );
-    await act(async () => {
-      wordsBtn?.click();
-    });
-    expect(container.querySelector('[data-testid="settings-view"]')).not.toBeNull();
-
-    const unblockBtn = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
-      (b) => b.textContent === "mock-unblock",
-    );
-    await act(async () => {
-      unblockBtn?.click();
-    });
-    expect(container.firstElementChild?.hasAttribute("inert")).toBe(false);
     await act(async () => {
       wordsBtn?.click();
     });

@@ -18,7 +18,6 @@ import WindowControls from "../components/WindowControls";
 import AiPanel, { type AiQuoteContext } from "../components/AiPanel";
 import BookmarksPanel from "../components/BookmarksPanel";
 import ReaderBottomPills from "../components/ReaderBottomPills";
-import ReaderCloudState from "../components/ReaderCloudState";
 import ReaderSettings, {
   getFontFamily,
   getStoredReaderSettings,
@@ -34,7 +33,7 @@ import DictionaryPanel from "../components/DictionaryPanel";
 import type { SelectionClassification } from "../utils/selectionRouting";
 import TranslationPopover from "../components/TranslationPopover";
 import TableOfContents from "../components/TableOfContents";
-import { getBook, updateBookStatus, updateReadingProgress, checkBookAvailable, checkBookReadable, type Book } from "../hooks/useBooks";
+import { getBook, updateBookStatus, updateReadingProgress, type Book } from "../hooks/useBooks";
 import { getAllSettings } from "../hooks/useSettings";
 import type { Highlight } from "../hooks/useBookmarks";
 import {
@@ -365,11 +364,7 @@ export default function Reader() {
   const forwardPageStackRef = useRef<number[]>([]);
   const pendingHistoryActionRef = useRef<"back" | "forward" | null>(null);
   const pendingJumpFromPageRef = useRef<number | null>(null);
-  const [icloudDownloading, setIcloudDownloading] = useState(false);
-  const [icloudTimeout, setIcloudTimeout] = useState(false);
-  const [icloudRetryTick, setIcloudRetryTick] = useState(0);
-  const [foliateRetryTick, setFoliateRetryTick] = useState(0);
-  const [initError, setInitError] = useState<"icloud" | "generic" | null>(null);
+  const [initError, setInitError] = useState(false);
   const [highlightVersion, setHighlightVersion] = useState(0);
   const [vocabVersion, setVocabVersion] = useState(0);
   const [contextMenu, setContextMenu] = useState<{
@@ -603,38 +598,6 @@ export default function Reader() {
     };
   }, [bookId]);
 
-  // Wait for iCloud download if book is not locally available
-  useEffect(() => {
-    if (!book || book.available !== false) return;
-
-    setIcloudDownloading(true);
-    setIcloudTimeout(false);
-    let cancelled = false;
-    const startTime = Date.now();
-
-    const poll = async () => {
-      while (!cancelled) {
-        if (Date.now() - startTime > 60_000) {
-          setIcloudTimeout(true);
-          return;
-        }
-        const available = await checkBookAvailable(book.id).catch(() => false);
-        if (available) {
-          // Re-fetch book to get updated available flag
-          const updated = await getBook(book.id).catch(() => null);
-          if (updated) setBook(updated);
-          emitTo("main", "book-availability-changed", book.id).catch(() => {});
-          setIcloudDownloading(false);
-          return;
-        }
-        await new Promise((r) => setTimeout(r, 2000));
-      }
-    };
-
-    poll();
-    return () => { cancelled = true; };
-  }, [book?.id, book?.available, icloudRetryTick]);
-
   const goBackInHistory = useCallback(() => {
     if (!viewRef.current?.history.canGoBack) return;
     pendingHistoryActionRef.current = "back";
@@ -647,28 +610,6 @@ export default function Reader() {
     viewRef.current.history.forward();
   }, []);
 
-  const handleCloudDownloadRetry = useCallback(async () => {
-    if (!book) return;
-    if (initError === "icloud") {
-      const available = await checkBookAvailable(book.id).catch(() => false);
-      const updated = await getBook(book.id).catch(() => null);
-      if (updated) {
-        setBook(updated);
-      }
-      setInitError(null);
-      if (!available) {
-        setIcloudDownloading(true);
-        setIcloudTimeout(false);
-        setIcloudRetryTick((n) => n + 1);
-      } else {
-        setFoliateRetryTick((n) => n + 1);
-      }
-      return;
-    }
-    setIcloudTimeout(false);
-    setIcloudRetryTick((n) => n + 1);
-  }, [book, initError]);
-
   const handleToolbarLibraryClick = useCallback(() => {
     if (isStandaloneWindow) {
       void focusWindow("main");
@@ -677,7 +618,7 @@ export default function Reader() {
     }
   }, [navigate]);
 
-  const handleCloudBackToLibrary = useCallback(() => {
+  const handleBackToLibrary = useCallback(() => {
     if (isStandaloneWindow) {
       void focusWindow("main").finally(() => window.close());
     } else {
@@ -704,15 +645,36 @@ export default function Reader() {
 
   // Initialize foliate-js when book data is loaded
   useEffect(() => {
-    if (!book || !viewerRef.current || book.available === false) return;
+    if (!book || !viewerRef.current) return;
 
     const container = viewerRef.current;
     container.innerHTML = "";
     setBookReady(false);
     setResolveSavedItemPages(undefined);
-    setInitError(null);
+
+    if (book.available === false) {
+      setInitError(true);
+      return;
+    }
+
+    setInitError(false);
 
     let cancelled = false;
+    let effectView: FoliateView | null = null;
+
+    const disposeEffectView = () => {
+      const target = effectView;
+      if (!target) return;
+      if (viewRef.current === target) {
+        viewRef.current = null;
+      }
+      try {
+        target.close?.();
+      } catch {
+        // Uninitialized foliate-view has no renderer yet.
+      }
+      target.remove();
+    };
 
     const initFoliate = async () => {
       // Load foliate-js web components (from public/ dir, loaded as native ES module)
@@ -731,6 +693,18 @@ export default function Reader() {
 
       if (cancelled) return;
 
+      // Fetch EPUB/PDF as blob before attaching foliate-view so a missing or
+      // unreadable file never leaves a partial element mounted.
+      const fileUrl = convertFileSrc(book.file_path);
+      const response = await fetch(fileUrl);
+      if (response.ok === false) {
+        throw new Error(`Failed to fetch book file (${response.status})`);
+      }
+      const ext = book.format === "pdf" ? "pdf" : "epub";
+      const blob = new File([await response.blob()], `book.${ext}`);
+
+      if (cancelled) return;
+
       const view = document.createElement("foliate-view") as FoliateView;
       view.style.display = "block";
       view.style.width = "100%";
@@ -740,17 +714,16 @@ export default function Reader() {
       if (book.format === "pdf" && readerSettings.readingMode === "scrolling") {
         view.setAttribute("pdf-mode", "scroll");
       }
+      effectView = view;
       container.appendChild(view);
       viewRef.current = view;
 
-      // Fetch EPUB as blob for foliate-js
-      const fileUrl = convertFileSrc(book.file_path);
-      const response = await fetch(fileUrl);
-      const ext = book.format === "pdf" ? "pdf" : "epub";
-      const blob = new File([await response.blob()], `book.${ext}`);
       await view.open(blob);
 
-      if (cancelled) return;
+      if (cancelled) {
+        disposeEffectView();
+        return;
+      }
 
       // Set reading mode and layout
       const isScrolling = readerSettings.readingMode === "scrolling";
@@ -1103,20 +1076,20 @@ export default function Reader() {
       }
       await view.init({ lastLocation: startLocation, showTextStart: !startLocation });
 
-      if (cancelled) return;
+      if (cancelled) {
+        disposeEffectView();
+        return;
+      }
 
       setResolveSavedItemPages(() => createSavedItemPageResolver(view, book.format));
       setBookReady(true);
     };
 
-    initFoliate().catch(async (err) => {
+    initFoliate().catch((err) => {
       console.error("Failed to initialize foliate-js:", err);
-      // Distinguish "file can't be read" (broken iCloud sync/download)
-      // from a parse/render failure — the probe also nudges iCloud to
-      // re-download when the file is unreadable.
-      const readable = await checkBookReadable(book.id).catch(() => true);
+      disposeEffectView();
       if (cancelled) return;
-      setInitError(readable ? "generic" : "icloud");
+      setInitError(true);
     });
 
     return () => {
@@ -1132,11 +1105,7 @@ export default function Reader() {
       setCanGoBack(false);
       setJumpBackPage(null);
       setResolveSavedItemPages(undefined);
-      if (viewRef.current) {
-        viewRef.current.close();
-        viewRef.current.remove();
-        viewRef.current = null;
-      }
+      disposeEffectView();
     };
     // PDFs need a fresh `view` element when reading mode flips because
     // `pdf-mode="scroll"` is read once inside view.js's renderer pick.
@@ -1144,7 +1113,7 @@ export default function Reader() {
     // below, so the derived dep stays `null` for them and the effect won't
     // re-run.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [book, foliateRetryTick, book?.format === "pdf" ? readerSettings.readingMode : null]);
+  }, [book, book?.format === "pdf" ? readerSettings.readingMode : null]);
 
   // Apply reader settings reactively
   useEffect(() => {
@@ -1332,8 +1301,9 @@ export default function Reader() {
       if (!isMainWindow && book?.format && handleReaderZoomShortcut(e, book.format)) return;
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA") return;
-      if (e.key === "ArrowLeft") viewRef.current?.prev();
-      else if (e.key === "ArrowRight") viewRef.current?.next();
+      if (!viewRef.current?.renderer) return;
+      if (e.key === "ArrowLeft") viewRef.current.prev();
+      else if (e.key === "ArrowRight") viewRef.current.next();
     };
     document.addEventListener("keydown", handleKeyDown);
     return () => {
@@ -1643,7 +1613,7 @@ export default function Reader() {
           ) : (
             <>
               <p className="text-[15px] font-medium text-text-primary">{t("reader.bookNotFound")}</p>
-              <Button appearance="dawn" variant="secondary" size="md" onClick={handleCloudBackToLibrary}>
+              <Button appearance="dawn" variant="secondary" size="md" onClick={handleBackToLibrary}>
                 <ArrowLeft size={16} />
                 <span>{t("reader.backToLibrary")}</span>
               </Button>
@@ -1654,11 +1624,8 @@ export default function Reader() {
     );
   }
 
-  const isCloudScreen = icloudDownloading || initError === "icloud";
-
-  const toolbarSubtitle = isCloudScreen
-    ? t("reader.notOnThisMac")
-    : book.format === "pdf"
+  const toolbarSubtitle =
+    book.format === "pdf"
       ? ["PDF", currentChapter?.title, pdfPageRangeLabel].filter(Boolean).join(" · ")
       : currentChapter?.breadcrumb || book.author;
 
@@ -1719,7 +1686,6 @@ export default function Reader() {
 
           <IconButton
             active={tocOpen}
-            disabled={isCloudScreen}
             aria-label={t(tocOpen ? "reader.tocClose" : "reader.tocOpen")}
             aria-expanded={tocOpen}
             title={t(tocOpen ? "reader.tocClose" : "reader.tocOpen")}
@@ -1752,7 +1718,6 @@ export default function Reader() {
           <IconButton
             ref={settingsAnchorRef}
             active={settingsOpen}
-            disabled={isCloudScreen}
             aria-label={t("readerSettings.typography")}
             title={t("readerSettings.typography")}
             className={isWin ? "max-sm:size-8" : undefined}
@@ -1774,7 +1739,6 @@ export default function Reader() {
 
           <IconButton
             active={sidePanel === "bookmarks"}
-            disabled={isCloudScreen}
             aria-label={t("reader.bookmarksAndHighlights")}
             title={t("reader.bookmarksAndHighlights")}
             className={isWin ? "max-sm:size-8" : undefined}
@@ -1785,7 +1749,6 @@ export default function Reader() {
 
           <IconButton
             active={sidePanel === "vocab"}
-            disabled={isCloudScreen}
             aria-label={t("vocab.title")}
             title={t("vocab.title")}
             className={isWin ? "max-sm:size-8" : undefined}
@@ -1796,7 +1759,6 @@ export default function Reader() {
 
           <IconButton
             active={sidePanel === "ai"}
-            disabled={isCloudScreen}
             aria-label={t("reader.aiAssistant")}
             title={t("reader.aiAssistant")}
             className={isWin ? "max-sm:size-8" : undefined}
@@ -1810,90 +1772,83 @@ export default function Reader() {
 
       {/* Body workspace */}
       <div ref={workspaceRef} className="flex-1 min-h-0 flex gap-4 px-5 pb-5 pt-0">
-        {isCloudScreen ? (
-          <ReaderCloudState
-            book={book}
-            state={initError === "icloud" ? "failed" : icloudTimeout ? "timedOut" : "downloading"}
-            onDownloadRetry={handleCloudDownloadRetry}
-            onBackToLibrary={handleCloudBackToLibrary}
-          />
-        ) : (
-          <>
-            <TableOfContents
-              open={tocOpen}
-              chapters={tocChapters}
-              currentPage={currentChapterIndex + 1}
-              onNavigate={handleTocNavigate}
-              onClose={() => setTocOpen(false)}
+        <TableOfContents
+          open={tocOpen}
+          chapters={tocChapters}
+          currentPage={currentChapterIndex + 1}
+          onNavigate={handleTocNavigate}
+          onClose={() => setTocOpen(false)}
+        />
+
+        {/* Floating Paper Island */}
+        <main
+          className="flex-1 min-w-0 h-full relative rounded-surface border shadow-glass overflow-hidden @container/paper"
+          style={paperSurfaceStyle}
+          onContextMenu={handleContextMenu}
+          onClick={() => {
+            setSettingsOpen(false);
+            // Clicks inside the iframe (text content) don't bubble out
+            // through the sandbox boundary, so this fires only for clicks
+            // on the margins/white space around the page — i.e. "anywhere
+            // else" from the reader's perspective. Drop the in-iframe text
+            // selection so the highlight doesn't linger.
+            if (viewRef.current?.renderer) {
+              viewRef.current.deselect?.();
+            }
+            setHighlightToolbar(null);
+          }}
+        >
+          {/* Reserve 72px (or 108px below 700px Paper width where jump-back stacks
+              above the pill) so content never sits behind floating controls and
+              viewport height stays constant when jump-back appears or disappears. */}
+          <div
+            className="w-full h-full flex flex-col pb-[108px] @[700px]/paper:pb-[72px]"
+            style={{
+              backgroundColor:
+                book.format === "pdf"
+                  ? readerSettings.theme === "original"
+                    ? "#EFEBF7"
+                    : "#ffffff"
+                  : paperStyles.body,
+              filter: `brightness(${readerSettings.brightness / 100})`,
+            }}
+          >
+            <div
+              ref={viewerRef}
+              className="w-full flex-1 min-h-0"
+              style={
+                book.format === "pdf"
+                  ? { backgroundColor: readerSettings.theme === "original" ? "#EFEBF7" : "#ffffff" }
+                  : undefined
+              }
             />
-
-            {/* Floating Paper Island */}
-            <main
-              className="flex-1 min-w-0 h-full relative rounded-surface border shadow-glass overflow-hidden @container/paper"
-              style={paperSurfaceStyle}
-              onContextMenu={handleContextMenu}
-              onClick={() => {
-                setSettingsOpen(false);
-                // Clicks inside the iframe (text content) don't bubble out
-                // through the sandbox boundary, so this fires only for clicks
-                // on the margins/white space around the page — i.e. "anywhere
-                // else" from the reader's perspective. Drop the in-iframe text
-                // selection so the highlight doesn't linger.
-                viewRef.current?.deselect?.();
-                setHighlightToolbar(null);
-              }}
-            >
-              {/* Reserve 72px (or 108px below 700px Paper width where jump-back stacks
-                  above the pill) so content never sits behind floating controls and
-                  viewport height stays constant when jump-back appears or disappears. */}
+          </div>
+          {book.format === "pdf" && (() => {
+            const overlay = getPdfOverlays(readerSettings.theme);
+            if (!overlay) return null;
+            return overlay.layers.map((style, i) => (
               <div
-                className="w-full h-full flex flex-col pb-[108px] @[700px]/paper:pb-[72px]"
-                style={{
-                  backgroundColor:
-                    book.format === "pdf"
-                      ? readerSettings.theme === "original"
-                        ? "#EFEBF7"
-                        : "#ffffff"
-                      : paperStyles.body,
-                  filter: `brightness(${readerSettings.brightness / 100})`,
-                }}
-              >
-                <div
-                  ref={viewerRef}
-                  className="w-full flex-1 min-h-0"
-                  style={
-                    book.format === "pdf"
-                      ? { backgroundColor: readerSettings.theme === "original" ? "#EFEBF7" : "#ffffff" }
-                      : undefined
-                  }
-                />
-              </div>
-              {book.format === "pdf" && (() => {
-                const overlay = getPdfOverlays(readerSettings.theme);
-                if (!overlay) return null;
-                return overlay.layers.map((style, i) => (
-                  <div
-                    key={i}
-                    className="z-10 pointer-events-none absolute inset-0"
-                    style={style}
-                  />
-                ));
-              })()}
+                key={i}
+                className="z-10 pointer-events-none absolute inset-0"
+                style={style}
+              />
+            ));
+          })()}
 
-              {initError && (
-                <div className="absolute inset-0 z-20 flex items-center justify-center bg-paper/95">
-                  <div className="flex flex-col items-center gap-3 max-w-[420px] px-8 text-center">
-                    <AlertCircle size={24} className="text-danger" />
-                    <span className="text-[15px] font-medium text-text-primary">
-                      {t("reader.openFailed")}
-                    </span>
-                    <Button appearance="dawn" variant="secondary" size="sm" onClick={handleCloudBackToLibrary}>
-                      <ArrowLeft size={14} />
-                      <span>{t("reader.backToLibrary")}</span>
-                    </Button>
-                  </div>
-                </div>
-              )}
+          {initError && (
+            <div className="absolute inset-0 z-20 flex items-center justify-center bg-paper/95">
+              <div className="flex flex-col items-center gap-3 max-w-[420px] px-8 text-center">
+                <AlertCircle size={24} className="text-danger" />
+                <span className="text-[15px] font-medium text-text-primary">
+                  {t("reader.openFailed")}
+                </span>
+                <Button appearance="dawn" variant="secondary" size="sm" onClick={handleBackToLibrary}>
+                  <ArrowLeft size={14} />
+                  <span>{t("reader.backToLibrary")}</span>
+                </Button>
+              </div>
+            </div>
+          )}
 
               {!bookReady && !initError && (
                 <div
@@ -2022,8 +1977,6 @@ export default function Reader() {
                 </div>
               )}
             </div>
-          </>
-        )}
       </div>
 
       {/* Context Menu */}

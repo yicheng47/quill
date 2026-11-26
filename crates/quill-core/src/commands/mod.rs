@@ -7,6 +7,5 @@ pub mod collections;
 pub mod dictionary;
 pub mod mcp;
 pub mod settings;
-pub mod sync;
 pub mod translation;
 pub mod vocab;

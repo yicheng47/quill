@@ -5,7 +5,7 @@ use napi::bindgen_prelude::*;
 use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use napi_derive::napi;
 use quill_core::error::{AppError, AppResult};
-use quill_core::{boot, icloud, paths, BootConfig, Core, ShellHost};
+use quill_core::{boot, paths, BootConfig, Core, ShellHost};
 
 #[napi(object)]
 pub struct JsBootConfig {
@@ -102,7 +102,7 @@ async fn boot_blocking(config: BootConfig, host: Arc<dyn ShellHost>) -> Result<A
         .map_err(|e| Error::from_reason(e.to_string()))
 }
 
-fn collect_media_roots(core: &Core) -> AppResult<Vec<String>> {
+fn collect_media_roots(core: &Core) -> Vec<String> {
     let mut roots = Vec::new();
     let mut push_root = |path: PathBuf| {
         for candidate in [std::fs::canonicalize(&path).ok(), Some(path)]
@@ -117,17 +117,8 @@ fn collect_media_roots(core: &Core) -> AppResult<Vec<String>> {
     };
 
     push_root(core.local_dir.clone());
-    let data_dir = core
-        .db
-        .data_dir
-        .lock()
-        .map_err(|e| AppError::Other(format!("data_dir mutex: {e}")))?
-        .clone();
-    push_root(data_dir);
-    if let Some(icloud_dir) = icloud::icloud_data_dir() {
-        push_root(icloud_dir);
-    }
-    Ok(roots)
+    push_root(core.db.data_dir.clone());
+    roots
 }
 
 #[napi]
@@ -176,8 +167,7 @@ impl QuillCore {
         let core = Arc::clone(&self.inner);
         tokio::task::spawn_blocking(move || collect_media_roots(&core))
             .await
-            .map_err(|e| Error::from_reason(format!("Media roots task failed: {e}")))?
-            .map_err(|e| Error::from_reason(e.to_string()))
+            .map_err(|e| Error::from_reason(format!("Media roots task failed: {e}")))
     }
 
     #[napi]
@@ -207,7 +197,6 @@ pub fn resolve_default_log_dir(is_dev: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
     use tempfile::TempDir;
 
     struct NoopHost;
@@ -245,7 +234,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn collect_media_roots_waits_for_data_dir_lock_on_blocking_pool() {
+    async fn collect_media_roots_includes_local_app_data_only() {
         let dir = TempDir::new().unwrap();
         let config = BootConfig {
             app_data_base_dir: dir.path().join("appdata"),
@@ -257,16 +246,14 @@ mod tests {
         };
         let core = boot_blocking(config, Arc::new(NoopHost)).await.unwrap();
 
-        let guard = core.db.data_dir.lock().unwrap();
         let core_clone = Arc::clone(&core);
-        let handle = tokio::task::spawn_blocking(move || collect_media_roots(&core_clone));
-
-        // Async tasks on the Tokio runtime keep progressing while the blocking worker waits on data_dir.
-        tokio::time::sleep(Duration::from_millis(25)).await;
-        assert!(!handle.is_finished());
-        drop(guard);
-
-        let roots = handle.await.unwrap().unwrap();
+        let roots = tokio::task::spawn_blocking(move || collect_media_roots(&core_clone))
+            .await
+            .unwrap();
         assert!(roots.iter().any(|r| r.contains("com.wycstudios.quill-dev")));
+        assert!(
+            roots.iter().all(|r| !r.contains("Mobile Documents")),
+            "media roots must not include iCloud Mobile Documents: {roots:?}"
+        );
     }
 }

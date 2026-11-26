@@ -6,8 +6,6 @@ use serde::{Deserialize, Serialize};
 use crate::db::Db;
 use crate::error::AppResult;
 use crate::host::Core;
-use crate::sync::events::EventBody;
-use crate::sync::writer::SyncWriter;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Collection {
@@ -47,16 +45,11 @@ pub fn list_collections(core: &Core) -> AppResult<Vec<Collection>> {
     query_collections(&core.db)
 }
 
-pub(crate) fn do_create_collection(
-    name: &str,
-    db: &Db,
-    sync: &SyncWriter,
-) -> AppResult<Collection> {
+pub(crate) fn do_create_collection(name: &str, db: &Db) -> AppResult<Collection> {
     let id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().timestamp_millis();
-    let device = sync.self_device().to_string();
 
-    sync.with_tx(db, now, |tx, events| {
+    db.with_tx(|tx| {
         let max_order: i32 = tx
             .query_row(
                 "SELECT COALESCE(MAX(sort_order), -1) FROM collections",
@@ -66,14 +59,9 @@ pub(crate) fn do_create_collection(
             .unwrap_or(-1);
         let sort_order = max_order + 1;
         tx.execute(
-            "INSERT INTO collections (id, name, sort_order, created_at, updated_at, updated_by_device) VALUES (?1, ?2, ?3, ?4, ?4, ?5)",
-            params![id, name, sort_order, now, device],
+            "INSERT INTO collections (id, name, sort_order, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4)",
+            params![id, name, sort_order, now],
         )?;
-        events.push(EventBody::CollectionCreate {
-            id: id.clone(),
-            name: name.to_string(),
-            sort_order,
-        });
         Ok(Collection {
             id: id.clone(),
             name: name.to_string(),
@@ -86,67 +74,48 @@ pub(crate) fn do_create_collection(
 }
 
 pub fn create_collection(core: &Core, name: String) -> AppResult<Collection> {
-    do_create_collection(&name, &core.db, &core.sync_writer)
+    do_create_collection(&name, &core.db)
 }
 
-pub(crate) fn do_rename_collection(
-    id: &str,
-    name: &str,
-    db: &Db,
-    sync: &SyncWriter,
-) -> AppResult<()> {
+pub(crate) fn do_rename_collection(id: &str, name: &str, db: &Db) -> AppResult<()> {
     let now = chrono::Utc::now().timestamp_millis();
-    let device = sync.self_device().to_string();
-    sync.with_tx(db, now, |tx, events| {
+    db.with_tx(|tx| {
         tx.execute(
-            "UPDATE collections SET name = ?1, updated_at = ?2, updated_by_device = ?3 WHERE id = ?4",
-            params![name, now, device, id],
+            "UPDATE collections SET name = ?1, updated_at = ?2 WHERE id = ?3",
+            params![name, now, id],
         )?;
-        events.push(EventBody::CollectionRename {
-            id: id.to_string(),
-            name: name.to_string(),
-        });
         Ok(())
     })
 }
 
 pub fn rename_collection(core: &Core, id: String, name: String) -> AppResult<()> {
-    do_rename_collection(&id, &name, &core.db, &core.sync_writer)
+    do_rename_collection(&id, &name, &core.db)
 }
 
-pub(crate) fn do_delete_collection(id: &str, db: &Db, sync: &SyncWriter) -> AppResult<()> {
-    let now = chrono::Utc::now().timestamp_millis();
-    sync.with_tx(db, now, |tx, events| {
+pub(crate) fn do_delete_collection(id: &str, db: &Db) -> AppResult<()> {
+    db.with_tx(|tx| {
         tx.execute(
             "DELETE FROM collection_books WHERE collection_id = ?1",
             params![id],
         )?;
         tx.execute("DELETE FROM collections WHERE id = ?1", params![id])?;
-        events.push(EventBody::CollectionDelete {
-            id: id.to_string(),
-        });
         Ok(())
     })
 }
 
 pub fn delete_collection(core: &Core, id: String) -> AppResult<()> {
-    do_delete_collection(&id, &core.db, &core.sync_writer)
+    do_delete_collection(&id, &core.db)
 }
 
 pub fn reorder_collections(core: &Core, ids: Vec<String>) -> AppResult<()> {
     let now = chrono::Utc::now().timestamp_millis();
-    let device = core.sync_writer.self_device().to_string();
-    core.sync_writer.with_tx(&core.db, now, |tx, events| {
+    core.db.with_tx(|tx| {
         for (i, id) in ids.iter().enumerate() {
             let sort_order = i as i32;
             tx.execute(
-                "UPDATE collections SET sort_order = ?1, updated_at = ?2, updated_by_device = ?3 WHERE id = ?4",
-                params![sort_order, now, device, id],
+                "UPDATE collections SET sort_order = ?1, updated_at = ?2 WHERE id = ?3",
+                params![sort_order, now, id],
             )?;
-            events.push(EventBody::CollectionReorder {
-                id: id.clone(),
-                sort_order,
-            });
         }
         Ok(())
     })
@@ -156,19 +125,13 @@ pub(crate) fn do_add_book_to_collection(
     collection_id: &str,
     book_id: &str,
     db: &Db,
-    sync: &SyncWriter,
 ) -> AppResult<()> {
     let now = chrono::Utc::now().timestamp_millis();
-    let device = sync.self_device().to_string();
-    sync.with_tx(db, now, |tx, events| {
+    db.with_tx(|tx| {
         tx.execute(
-            "INSERT OR IGNORE INTO collection_books (collection_id, book_id, created_at, updated_at, updated_by_device) VALUES (?1, ?2, ?3, ?3, ?4)",
-            params![collection_id, book_id, now, device],
+            "INSERT OR IGNORE INTO collection_books (collection_id, book_id, created_at, updated_at) VALUES (?1, ?2, ?3, ?3)",
+            params![collection_id, book_id, now],
         )?;
-        events.push(EventBody::CollectionBookAdd {
-            collection: collection_id.to_string(),
-            book: book_id.to_string(),
-        });
         Ok(())
     })
 }
@@ -178,25 +141,19 @@ pub fn add_book_to_collection(
     collection_id: String,
     book_id: String,
 ) -> AppResult<()> {
-    do_add_book_to_collection(&collection_id, &book_id, &core.db, &core.sync_writer)
+    do_add_book_to_collection(&collection_id, &book_id, &core.db)
 }
 
 pub(crate) fn do_remove_book_from_collection(
     collection_id: &str,
     book_id: &str,
     db: &Db,
-    sync: &SyncWriter,
 ) -> AppResult<()> {
-    let now = chrono::Utc::now().timestamp_millis();
-    sync.with_tx(db, now, |tx, events| {
+    db.with_tx(|tx| {
         tx.execute(
             "DELETE FROM collection_books WHERE collection_id = ?1 AND book_id = ?2",
             params![collection_id, book_id],
         )?;
-        events.push(EventBody::CollectionBookRemove {
-            collection: collection_id.to_string(),
-            book: book_id.to_string(),
-        });
         Ok(())
     })
 }
@@ -206,7 +163,7 @@ pub fn remove_book_from_collection(
     collection_id: String,
     book_id: String,
 ) -> AppResult<()> {
-    do_remove_book_from_collection(&collection_id, &book_id, &core.db, &core.sync_writer)
+    do_remove_book_from_collection(&collection_id, &book_id, &core.db)
 }
 
 pub fn list_books_in_collection(core: &Core, collection_id: String) -> AppResult<Vec<String>> {
@@ -243,16 +200,21 @@ pub(crate) fn do_add_books_to_collection(
     collection_id: &str,
     book_ids: &[String],
     db: &Db,
-    sync: &SyncWriter,
 ) -> AppResult<()> {
+    let now = chrono::Utc::now().timestamp_millis();
     let mut seen = HashSet::with_capacity(book_ids.len());
-    for book_id in book_ids {
-        if !seen.insert(book_id.as_str()) {
-            continue;
+    db.with_tx(|tx| {
+        for book_id in book_ids {
+            if !seen.insert(book_id.as_str()) {
+                continue;
+            }
+            tx.execute(
+                "INSERT OR IGNORE INTO collection_books (collection_id, book_id, created_at, updated_at) VALUES (?1, ?2, ?3, ?3)",
+                params![collection_id, book_id, now],
+            )?;
         }
-        do_add_book_to_collection(collection_id, book_id, db, sync)?;
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 pub fn add_books_to_collection(
@@ -260,7 +222,7 @@ pub fn add_books_to_collection(
     collection_id: String,
     book_ids: Vec<String>,
 ) -> AppResult<()> {
-    do_add_books_to_collection(&collection_id, &book_ids, &core.db, &core.sync_writer)
+    do_add_books_to_collection(&collection_id, &book_ids, &core.db)
 }
 
 #[cfg(test)]
@@ -269,11 +231,10 @@ mod tests {
     use rusqlite::params;
     use tempfile::TempDir;
 
-    fn setup() -> (TempDir, Db, SyncWriter) {
+    fn setup() -> (TempDir, Db) {
         let dir = TempDir::new().unwrap();
         let db = Db::init(dir.path()).unwrap();
-        let sync = SyncWriter::new("dev-1".to_string());
-        (dir, db, sync)
+        (dir, db)
     }
 
     fn seed_book(db: &Db, id: &str) {
@@ -289,83 +250,39 @@ mod tests {
 
     #[test]
     fn list_book_collections_returns_sorted_membership() {
-        let (_dir, db, sync) = setup();
+        let (_dir, db) = setup();
         seed_book(&db, "b1");
         seed_book(&db, "b2");
 
-        let c1 = do_create_collection("First", &db, &sync).unwrap();
-        let c2 = do_create_collection("Second", &db, &sync).unwrap();
+        let c1 = do_create_collection("First", &db).unwrap();
+        let c2 = do_create_collection("Second", &db).unwrap();
 
         assert!(query_book_collections(&db, "b1").unwrap().is_empty());
 
-        do_add_book_to_collection(&c2.id, "b1", &db, &sync).unwrap();
-        do_add_book_to_collection(&c1.id, "b1", &db, &sync).unwrap();
+        do_add_book_to_collection(&c2.id, "b1", &db).unwrap();
+        do_add_book_to_collection(&c1.id, "b1", &db).unwrap();
         assert_eq!(
             query_book_collections(&db, "b1").unwrap(),
             vec![c1.id.clone(), c2.id.clone()]
         );
 
-        do_remove_book_from_collection(&c1.id, "b1", &db, &sync).unwrap();
+        do_remove_book_from_collection(&c1.id, "b1", &db).unwrap();
         assert_eq!(query_book_collections(&db, "b1").unwrap(), vec![c2.id]);
         assert!(query_book_collections(&db, "b2").unwrap().is_empty());
     }
 
     #[test]
-    fn add_books_to_collection_matches_per_book_sync_events() {
-        let (_dir1, db_batch, sync_batch) = setup();
-        seed_book(&db_batch, "b1");
-        seed_book(&db_batch, "b2");
-        let c_batch = do_create_collection("Batch", &db_batch, &sync_batch).unwrap();
-        sync_batch.set_should_queue(true);
+    fn add_books_to_collection_deduplicates_and_matches_single_adds() {
+        let (_dir, db) = setup();
+        seed_book(&db, "b1");
+        seed_book(&db, "b2");
+        let c = do_create_collection("Batch", &db).unwrap();
 
-        do_add_books_to_collection(
-            &c_batch.id,
-            &["b1".into(), "b2".into(), "b1".into()],
-            &db_batch,
-            &sync_batch,
-        )
-        .unwrap();
+        do_add_books_to_collection(&c.id, &["b1".into(), "b2".into(), "b1".into()], &db).unwrap();
 
-        let (_dir2, db_single, sync_single) = setup();
-        seed_book(&db_single, "b1");
-        seed_book(&db_single, "b2");
-        let c_single = do_create_collection("Single", &db_single, &sync_single).unwrap();
-        sync_single.set_should_queue(true);
-
-        do_add_book_to_collection(&c_single.id, "b1", &db_single, &sync_single).unwrap();
-        do_add_book_to_collection(&c_single.id, "b2", &db_single, &sync_single).unwrap();
-
-        assert_eq!(
-            query_book_collections(&db_batch, "b1").unwrap(),
-            vec![c_batch.id.clone()]
-        );
-        assert_eq!(
-            query_book_collections(&db_batch, "b2").unwrap(),
-            vec![c_batch.id.clone()]
-        );
-
-        let read_outbox = |db: &Db| -> Vec<serde_json::Value> {
-            let conn = db.conn.lock().unwrap();
-            let mut stmt = conn
-                .prepare("SELECT body_json FROM _pending_publish ORDER BY rowid")
-                .unwrap();
-            stmt.query_map([], |row| {
-                let s: String = row.get(0)?;
-                Ok(serde_json::from_str::<serde_json::Value>(&s).unwrap())
-            })
-            .unwrap()
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap()
-        };
-
-        let batch_events = read_outbox(&db_batch);
-        let single_events = read_outbox(&db_single);
-        assert_eq!(batch_events.len(), 2);
-        assert_eq!(single_events.len(), 2);
-        for (b, s) in batch_events.iter().zip(single_events.iter()) {
-            assert_eq!(b["type"], s["type"]);
-            assert_eq!(b["payload"]["book"], s["payload"]["book"]);
-            assert_eq!(b["payload"]["collection"], c_batch.id);
-        }
+        assert_eq!(query_book_collections(&db, "b1").unwrap(), vec![c.id.clone()]);
+        assert_eq!(query_book_collections(&db, "b2").unwrap(), vec![c.id.clone()]);
+        let collections = query_collections(&db).unwrap();
+        assert_eq!(collections[0].book_count, 2);
     }
 }

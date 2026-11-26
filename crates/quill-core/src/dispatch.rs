@@ -398,12 +398,6 @@ struct McpSetWriteAccessArgs {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct SyncRemovePeerArgs {
-    device_uuid: String,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
 struct CheckOllamaStatusArgs {
     #[serde(default)]
     base_url: Option<String>,
@@ -540,14 +534,6 @@ command_table! {
             run_blocking(core, move |c| {
                 commands::books::update_book_pages(c, a.id, a.pages)
             })
-        },
-        "check_book_available" => |core, args| {
-            let a: IdArgs = parse_args(args)?;
-            run_blocking(core, move |c| commands::books::check_book_available(c, a.id))
-        },
-        "check_book_readable" => |core, args| {
-            let a: IdArgs = parse_args(args)?;
-            run_blocking(core, move |c| commands::books::check_book_readable(c, a.id))
         },
         "update_book_metadata" => |core, args| {
             let a: UpdateBookMetadataArgs = parse_args(args)?;
@@ -879,26 +865,6 @@ command_table! {
                 commands::mcp::mcp_set_write_access(c, a.enabled)
             })
         },
-
-        // Sync (synchronous commands)
-        "sync_enable" => |core, _args| {
-            run_blocking(core, commands::sync::sync_enable)
-        },
-        "sync_now" => |core, _args| {
-            run_blocking(core, commands::sync::sync_now)
-        },
-        "sync_cancel" => |core, _args| {
-            run_blocking(core, commands::sync::sync_cancel)
-        },
-        "sync_compact" => |core, _args| {
-            run_blocking(core, commands::sync::sync_compact)
-        },
-        "sync_remove_peer" => |core, args| {
-            let a: SyncRemovePeerArgs = parse_args(args)?;
-            run_blocking(core, move |c| {
-                commands::sync::sync_remove_peer(c, a.device_uuid)
-            })
-        },
     }
     async {
         // AI
@@ -1029,29 +995,6 @@ command_table! {
                 )
                 .await
                 .and_then(to_json)
-            }
-        },
-
-        // Sync (async commands)
-        "sync_status" => |core, _args| {
-            async move {
-                commands::sync::sync_status(&core)
-                    .await
-                    .and_then(to_json)
-            }
-        },
-        "sync_disable" => |core, _args| {
-            async move {
-                commands::sync::sync_disable(&core)
-                    .await
-                    .and_then(to_json)
-            }
-        },
-        "sync_rebuild" => |core, _args| {
-            async move {
-                commands::sync::sync_rebuild(&core)
-                    .await
-                    .and_then(to_json)
             }
         },
     }
@@ -1741,7 +1684,7 @@ mod tests {
             }
         });
 
-        // Simulate an interrupted write / failed secret clear / synced settings change:
+        // Simulate an interrupted write / failed secret clear / external settings change:
         // `quill.db` points at the local server while `secrets.db` still holds the old
         // key bound to `https://api.openai.com`.
         {
@@ -2008,7 +1951,7 @@ mod tests {
             CORE_COMMAND_NAMES.len(),
             "duplicate entries in CORE_COMMAND_NAMES"
         );
-        assert_eq!(CORE_COMMAND_NAMES.len(), 88);
+        assert_eq!(CORE_COMMAND_NAMES.len(), 78);
 
         let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()

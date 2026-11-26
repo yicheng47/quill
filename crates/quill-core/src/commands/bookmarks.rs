@@ -7,7 +7,6 @@ use crate::commands::books::cover_blob_to_data_uri;
 use crate::db::Db;
 use crate::error::AppResult;
 use crate::host::Core;
-use crate::sync::events::{BookmarkPayload, EventBody, HighlightPayload};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Bookmark {
@@ -72,17 +71,11 @@ pub fn add_bookmark(
         updated_at: now,
     };
 
-    core.sync_writer.with_tx(&core.db, now, |tx, events| {
+    core.db.with_tx(|tx| {
         tx.execute(
             "INSERT INTO bookmarks (id, book_id, cfi, label, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
             params![id, book_id, cfi, label, now],
         )?;
-        events.push(EventBody::BookmarkAdd(BookmarkPayload {
-            id: id.clone(),
-            book_id: book_id.clone(),
-            cfi: cfi.clone(),
-            label: label.clone(),
-        }));
         Ok(())
     })?;
 
@@ -90,10 +83,8 @@ pub fn add_bookmark(
 }
 
 pub fn remove_bookmark(core: &Core, id: String) -> AppResult<()> {
-    let now = chrono::Utc::now().timestamp_millis();
-    core.sync_writer.with_tx(&core.db, now, |tx, events| {
+    core.db.with_tx(|tx| {
         tx.execute("DELETE FROM bookmarks WHERE id = ?1", params![id])?;
-        events.push(EventBody::BookmarkDelete { id: id.clone() });
         Ok(())
     })
 }
@@ -152,21 +143,12 @@ pub fn add_highlight(
         book_author: None,
     };
 
-    let device = core.sync_writer.self_device().to_string();
-    core.sync_writer.with_tx(&core.db, now, |tx, events| {
+    core.db.with_tx(|tx| {
         tx.execute(
-            "INSERT INTO highlights (id, book_id, cfi_range, color, note, text_content, created_at, updated_at, updated_by_device)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7, ?8)",
-            params![id, book_id, cfi_range, color, note, text_content, now, device],
+            "INSERT INTO highlights (id, book_id, cfi_range, color, note, text_content, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
+            params![id, book_id, cfi_range, color, note, text_content, now],
         )?;
-        events.push(EventBody::HighlightAdd(HighlightPayload {
-            id: id.clone(),
-            book_id: book_id.clone(),
-            cfi_range: cfi_range.clone(),
-            color: color.clone(),
-            note: note.clone(),
-            text_content: text_content.clone(),
-        }));
         Ok(())
     })?;
 
@@ -174,10 +156,8 @@ pub fn add_highlight(
 }
 
 pub fn remove_highlight(core: &Core, id: String) -> AppResult<()> {
-    let now = chrono::Utc::now().timestamp_millis();
-    core.sync_writer.with_tx(&core.db, now, |tx, events| {
+    core.db.with_tx(|tx| {
         tx.execute("DELETE FROM highlights WHERE id = ?1", params![id])?;
-        events.push(EventBody::HighlightDelete { id: id.clone() });
         Ok(())
     })
 }
@@ -357,32 +337,22 @@ pub fn get_highlight_counts(core: &Core) -> AppResult<HighlightCounts> {
 
 pub fn update_highlight_note(core: &Core, id: String, note: String) -> AppResult<()> {
     let now = chrono::Utc::now().timestamp_millis();
-    let device = core.sync_writer.self_device().to_string();
-    core.sync_writer.with_tx(&core.db, now, |tx, events| {
+    core.db.with_tx(|tx| {
         tx.execute(
-            "UPDATE highlights SET note = ?1, updated_at = ?2, updated_by_device = ?3 WHERE id = ?4",
-            params![note, now, device, id],
+            "UPDATE highlights SET note = ?1, updated_at = ?2 WHERE id = ?3",
+            params![note, now, id],
         )?;
-        events.push(EventBody::HighlightNoteSet {
-            id: id.clone(),
-            note: Some(note.clone()),
-        });
         Ok(())
     })
 }
 
 pub fn update_highlight_color(core: &Core, id: String, color: String) -> AppResult<()> {
     let now = chrono::Utc::now().timestamp_millis();
-    let device = core.sync_writer.self_device().to_string();
-    core.sync_writer.with_tx(&core.db, now, |tx, events| {
+    core.db.with_tx(|tx| {
         tx.execute(
-            "UPDATE highlights SET color = ?1, updated_at = ?2, updated_by_device = ?3 WHERE id = ?4",
-            params![color, now, device, id],
+            "UPDATE highlights SET color = ?1, updated_at = ?2 WHERE id = ?3",
+            params![color, now, id],
         )?;
-        events.push(EventBody::HighlightColorSet {
-            id: id.clone(),
-            color: color.clone(),
-        });
         Ok(())
     })
 }

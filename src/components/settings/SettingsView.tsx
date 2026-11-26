@@ -7,7 +7,6 @@ import {
   normalizeAppTheme,
   seedCommittedAppTheme,
 } from "../../lib/theme";
-import { isMacOS } from "../../lib/platformEnv";
 import type { ConnectionKind } from "../../lib/aiConnections";
 import Toast from "../ui/Toast";
 import SettingsNav from "./SettingsNav";
@@ -17,7 +16,6 @@ import ReadingSettings from "./ReadingSettings";
 import DictionarySettings from "./DictionarySettings";
 import AiSettings from "./AiSettings";
 import ToolsSettings from "./ToolsSettings";
-import LibrarySyncSettings from "./LibrarySyncSettings";
 import McpSettings from "./McpSettings";
 import UpdatesSettings from "./UpdatesSettings";
 import AboutSettings from "./AboutSettings";
@@ -29,7 +27,6 @@ interface SettingsViewProps {
   initialAiConnection?: ConnectionKind;
   onSelectSection: (section: SettingsSection) => void;
   onClose: () => void;
-  onBlockingChange?: (blocking: boolean) => void;
   suppressEscape?: boolean;
 }
 
@@ -58,10 +55,6 @@ const SECTION_META: Record<SettingsSection, { titleKey: string; subtitleKey: str
     titleKey: "settings.ai.shortTitle",
     subtitleKey: "settings.ai.subtitle",
   },
-  librarySync: {
-    titleKey: "settings.librarySync.title",
-    subtitleKey: "settings.librarySync.subtitle",
-  },
   mcp: {
     titleKey: "settings.mcp.title",
     subtitleKey: "settings.mcp.subtitle",
@@ -82,15 +75,12 @@ export default function SettingsView({
   initialAiConnection,
   onSelectSection,
   onClose,
-  onBlockingChange,
   suppressEscape = false,
 }: SettingsViewProps) {
   const { t } = useTranslation();
-  const isMac = isMacOS();
-  const activeSection = normalizeSettingsSection(section, isMac);
+  const activeSection = normalizeSettingsSection(section);
   const { settings, loading, save, saveBulk } = useSettings();
   const [appVersion, setAppVersion] = useState("");
-  const [blockingSync, setBlockingSync] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const toastTimerRef = useRef<number | null>(null);
   const paneRef = useRef<HTMLDivElement>(null);
@@ -123,28 +113,16 @@ export default function SettingsView({
     }
   }, [activeSection]);
 
-  const handleBlockingChange = useCallback(
-    (blocking: boolean) => {
-      setBlockingSync(blocking);
-      onBlockingChange?.(blocking);
-    },
-    [onBlockingChange],
-  );
-
-  useEffect(() => {
-    return () => onBlockingChange?.(false);
-  }, [onBlockingChange]);
-
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
-      if (e.defaultPrevented || blockingSync || suppressEscape) return;
+      if (e.defaultPrevented || suppressEscape) return;
       e.preventDefault();
       onClose();
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [blockingSync, suppressEscape, onClose]);
+  }, [suppressEscape, onClose]);
 
   const showSavedToast = useCallback(
     (msg?: string) => {
@@ -161,8 +139,7 @@ export default function SettingsView({
   );
 
   const handleSelectSection = (next: SettingsSection) => {
-    if (blockingSync) return;
-    onSelectSection(normalizeSettingsSection(next, isMac));
+    onSelectSection(normalizeSettingsSection(next));
   };
 
   const sectionMeta = SECTION_META[activeSection];
@@ -186,7 +163,6 @@ export default function SettingsView({
         <SettingsNav
           activeSection={activeSection}
           onSelectSection={handleSelectSection}
-          isMac={isMac}
           appVersion={appVersion}
         />
 
@@ -214,12 +190,6 @@ export default function SettingsView({
                 {...sectionProps}
                 refreshNonce={visitSeq}
                 initialConnection={initialAiConnection}
-              />
-            )}
-            {activeSection === "librarySync" && (
-              <LibrarySyncSettings
-                {...sectionProps}
-                onBlockingChange={handleBlockingChange}
               />
             )}
             {activeSection === "mcp" && <McpSettings />}

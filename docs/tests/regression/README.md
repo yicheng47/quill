@@ -10,9 +10,9 @@ Quill's maintained list of live regression cases: actions in the running app and
 
 ## Environments
 
-- **dev** — the Electron development app, `make dev`, with development data under `com.wycstudios.quill-dev`. Live testing here is standing-authorized under Test Scope. **iCloud sync stays off.** Only one development app runs at a time.
+- **dev** — the Electron development app, `make dev`, with development data under `com.wycstudios.quill-dev`. Live testing here is standing-authorized under Test Scope. Only one development app runs at a time.
 - **signed** — an installed, signed build. It uses the production identity and data directory, so it runs only in a separate macOS user account or VM that Jason prepares, never in his own account.
-- **jason** — needs Jason's setup or hands, such as iCloud sync between two devices or accounts.
+- **jason** — needs Jason's setup or hands, such as multi-device environments or signed account flows.
 
 Platforms are macOS (`mac`) and Windows (`win`). A `win` instance runs on Jason's Windows machine.
 
@@ -120,14 +120,14 @@ The integration toggles write the same `quill` entry into `~/.claude.json` and `
 
 ### Sync
 
-These cases need Jason's environment and never run in the development app.
+Legacy iCloud sync cases are retired ahead of Quill Cloud (#370). New sync cases will take the next unused `SYN-` IDs when Quill Cloud lands.
 
 | ID | Tier | Platforms | Env | Check |
 |---|---|---|---|---|
-| SYN-01 | full | mac | jason | Turn sync on: the copy-to-iCloud progress runs to completion, and the library is intact afterwards. |
-| SYN-02 | full | mac | jason | A change on device A (import, highlight, progress, collection) appears on device B, covers included. Sync now and the status line work. |
-| SYN-03 | full | mac | jason | Turn sync off, rebuild from iCloud, and remove a peer device. Each completes, and the library is intact. |
-| SYN-04 | full | mac | jason | A book evicted from local iCloud storage downloads when opened. |
+| SYN-01 | full | mac | jason | Retired (#370 M1): iCloud sync removed ahead of Quill Cloud (#370). |
+| SYN-02 | full | mac | jason | Retired (#370 M1): iCloud sync removed ahead of Quill Cloud (#370). |
+| SYN-03 | full | mac | jason | Retired (#370 M1): iCloud sync removed ahead of Quill Cloud (#370). |
+| SYN-04 | full | mac | jason | Retired (#370 M1): iCloud sync removed ahead of Quill Cloud (#370). |
 
 ### Measurements
 

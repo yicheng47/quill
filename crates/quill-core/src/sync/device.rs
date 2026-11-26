@@ -1,6 +1,6 @@
 //! Stable device identifier — persisted once per install in the local app
-//! data dir. The UUID is the per-device log filename (`logs/<uuid>.jsonl`)
-//! and the `device` field on every emitted event.
+//! data dir (`device.json`). Retained across the #370 sync transition so
+//! Quill Cloud can identify this installation consistently.
 
 use std::fs;
 use std::path::{Path, PathBuf};

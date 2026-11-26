@@ -57,9 +57,6 @@ const invokeMock = vi.fn<(cmd: string, args?: unknown) => Promise<unknown>>(asyn
       };
     case "list_codex_models":
       return { models: [] };
-    case "get_sync_status":
-    case "get_sync_diagnostics":
-      return null;
     case "open_book_dialog":
     case "import_book":
     case "import_files":

@@ -30,7 +30,6 @@ import { SegmentedControl } from "../components/ui/Segment";
 import { useBooks, importBookDialog, type Book } from "../hooks/useBooks";
 import { useCollections, type Collection } from "../hooks/useCollections";
 import { invoke, listen, listenCurrentWindow, onDragDrop } from "../platform";
-import { isMacOS } from "../lib/platformEnv";
 
 interface BookCounts {
   all: number;
@@ -98,7 +97,6 @@ export default function Home() {
   const [initialAiConnection, setInitialAiConnection] = useState<ConnectionKind | undefined>(
     undefined,
   );
-  const [settingsBlocking, setSettingsBlocking] = useState(false);
   const [settingsVisitSeq, setSettingsVisitSeq] = useState(0);
   const [aiSetupState, setAiSetupState] = useState<{ open: boolean; isMigration: boolean }>({
     open: false,
@@ -153,7 +151,7 @@ export default function Home() {
   const statusArg = statusFilter === "all" ? undefined : statusFilter;
   const activeCollectionId = collectionFilter === "all" ? undefined : collectionFilter;
 
-  const { books, loading, loadingMore, hasMore, loadMore, refreshSilently, patchBook } =
+  const { books, loading, loadingMore, hasMore, loadMore, refreshSilently } =
     useBooks(statusArg, undefined, activeCollectionId);
 
   const fetchCounts = useCallback(async (colId?: string) => {
@@ -296,14 +294,12 @@ export default function Home() {
   collectionsRefreshRef.current = refreshCollections;
 
   const closeSettings = useCallback(() => {
-    if (settingsBlocking) return;
     setSettingsOpen(false);
     setInitialAiConnection(undefined);
-  }, [settingsBlocking]);
+  }, []);
 
   const openSettings = useCallback(
     (section?: SettingsSection) => {
-      if (settingsBlocking) return;
       setCollectionsOpen(false);
       setInitialAiConnection(undefined);
       if (section === undefined) {
@@ -315,11 +311,11 @@ export default function Home() {
         });
         return;
       }
-      setSettingsSection(normalizeSettingsSection(section, isMacOS()));
+      setSettingsSection(normalizeSettingsSection(section));
       setSettingsOpen(true);
       setSettingsVisitSeq((n) => n + 1);
     },
-    [settingsBlocking],
+    [],
   );
 
   const handleSetupUseApi = useCallback(() => {
@@ -352,7 +348,6 @@ export default function Home() {
 
   const handleNavigate = useCallback(
     (route: MainRoute, options?: MainNavigateOptions) => {
-      if (settingsBlocking) return;
       setCollectionsOpen(false);
       setSettingsOpen(false);
       setActiveRoute(route);
@@ -388,21 +383,21 @@ export default function Home() {
         }
       }
     },
-    [settingsBlocking],
+    [],
   );
 
   // Settings view listeners
   useEffect(() => {
     const domHandler = (e: Event) => {
       const section = (e as CustomEvent<{ section?: string }>).detail?.section;
-      openSettings(normalizeSettingsSection(section, isMacOS()));
+      openSettings(normalizeSettingsSection(section));
     };
     window.addEventListener("open-settings", domHandler);
 
     const disposeIpc = subscribeAsync((isActive) =>
       listenCurrentWindow<string>("open-settings", (e) => {
         if (!isActive()) return;
-        openSettings(normalizeSettingsSection(e.payload, isMacOS()));
+        openSettings(normalizeSettingsSection(e.payload));
       }),
     );
 
@@ -442,8 +437,6 @@ export default function Home() {
     };
   }, [handleNavigate]);
 
-  const settingsBlockingRef = useRef(settingsBlocking);
-  settingsBlockingRef.current = settingsBlocking;
   const aiSetupVisible = aiSetupState.open && !settingsOpen;
   const aiSetupVisibleRef = useRef(aiSetupVisible);
   aiSetupVisibleRef.current = aiSetupVisible;
@@ -451,7 +444,7 @@ export default function Home() {
   // Global keyboard shortcuts: Cmd+, Settings, Cmd+K Command Search, Cmd+O Import, Cmd+F View Filter / Books Search
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (settingsBlockingRef.current || aiSetupVisibleRef.current) return;
+      if (aiSetupVisibleRef.current) return;
       if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
       if (e.key === ",") {
         e.preventDefault();
@@ -507,30 +500,12 @@ export default function Home() {
     openSettings,
   ]);
 
-  // Mark synced iCloud books available as soon as hydration finishes
-  useEffect(() => {
-    return subscribeAsync((isActive) =>
-      listenCurrentWindow<string>("book-availability-changed", (e) => {
-        if (!isActive()) return;
-        patchBook(e.payload, { available: true });
-      }),
-    );
-  }, [patchBook]);
-
-  // Refresh after initial sync / MCP changes / ingested covers / reader status changes
+  // Refresh after MCP changes or reader status changes
   useEffect(() => {
     let mcpDebounce: ReturnType<typeof setTimeout> | undefined;
-    let coversDebounce: ReturnType<typeof setTimeout> | undefined;
 
     const disposeBookStatus = subscribeAsync((isActive) =>
       listenCurrentWindow<string>("book-status-changed", () => {
-        if (!isActive()) return;
-        void refreshAllSilentlyRef.current();
-      }),
-    );
-
-    const disposeSync = subscribeAsync((isActive) =>
-      listen("sync-initial-tick-done", () => {
         if (!isActive()) return;
         void refreshAllSilentlyRef.current();
       }),
@@ -554,24 +529,11 @@ export default function Home() {
       }),
     );
 
-    const disposeCovers = subscribeAsync((isActive) =>
-      listen("sync-covers-ingested", () => {
-        if (!isActive()) return;
-        if (coversDebounce) clearTimeout(coversDebounce);
-        coversDebounce = setTimeout(() => {
-          if (isActive()) void silentRefreshRef.current();
-        }, 500);
-      }),
-    );
-
     return () => {
       disposeBookStatus();
-      disposeSync();
       disposeMcpBooks();
       disposeMcpCols();
-      disposeCovers();
       if (mcpDebounce) clearTimeout(mcpDebounce);
-      if (coversDebounce) clearTimeout(coversDebounce);
     };
   }, []);
 
@@ -663,7 +625,7 @@ export default function Home() {
   useEffect(() => {
     return subscribeAsync((isActive) =>
       onDragDrop((event) => {
-        if (!isActive() || settingsBlockingRef.current) return;
+        if (!isActive()) return;
         if (event.type === "enter" || event.type === "over") {
           setIsDragging(true);
         } else if (event.type === "drop") {
@@ -680,7 +642,7 @@ export default function Home() {
   useEffect(() => {
     return subscribeAsync((isActive) =>
       listen<string[]>("file-open", (event) => {
-        if (!isActive() || settingsBlockingRef.current) return;
+        if (!isActive()) return;
         void importFiles(event.payload, undefined);
       }),
     );
@@ -731,21 +693,19 @@ export default function Home() {
   return (
     <div
       className="h-screen dawn-atmosphere flex flex-col overflow-hidden text-text-primary"
-      inert={settingsBlocking || aiSetupVisible || undefined}
+      inert={aiSetupVisible || undefined}
     >
       <TopBar
         activeRoute={activeRoute}
         onRouteChange={(route) => handleNavigate(route)}
         searchOpen={searchOpen}
         onOpenSearch={() => {
-          if (settingsBlocking) return;
           setCollectionsOpen(false);
           setSearchScope("all");
           setSearchOpen(true);
         }}
         importing={importing}
         onImport={() => {
-          if (settingsBlocking) return;
           void handleImport(activeRoute === "library" ? activeCollectionId : undefined);
         }}
         settingsOpen={settingsOpen}
@@ -759,10 +719,9 @@ export default function Home() {
           initialAiConnection={initialAiConnection}
           onSelectSection={(next) => {
             setInitialAiConnection(undefined);
-            setSettingsSection(normalizeSettingsSection(next, isMacOS()));
+            setSettingsSection(normalizeSettingsSection(next));
           }}
           onClose={closeSettings}
-          onBlockingChange={setSettingsBlocking}
           suppressEscape={searchOpen || addBooksOpen || Boolean(deleteCollectionTarget) || aiSetupVisible}
         />
       ) : (
@@ -775,10 +734,8 @@ export default function Home() {
               collections={collectionList}
               onNavigate={handleNavigate}
               onImport={() => {
-                if (settingsBlocking) return;
                 void handleImport();
               }}
-              onOpenSettings={openSettings}
             />
           )}
 
@@ -989,7 +946,6 @@ export default function Home() {
               loadingMore={loadingMore}
               activeCollectionId={activeCollectionId}
               onBooksChanged={() => void refreshAllSilently()}
-              onBookAvailable={(bookId) => patchBook(bookId, { available: true })}
             />
           )}
         </main>

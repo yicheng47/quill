@@ -101,10 +101,9 @@ describe("Main Views (Home, Highlights, Words, Chats)", () => {
   });
 
   describe("HomeView", () => {
-    it("renders first-launch empty state with specimen cards and routes Import / iCloud Sync", async () => {
+    it("renders first-launch empty state with specimen cards, routes Import, and omits iCloud Sync CTA", async () => {
       mocks.invoke.mockResolvedValue([]);
       const onImport = vi.fn();
-      const onOpenSettings = vi.fn();
 
       await act(async () => {
         root.render(
@@ -115,7 +114,6 @@ describe("Main Views (Home, Highlights, Words, Chats)", () => {
             collections={[]}
             onNavigate={vi.fn()}
             onImport={onImport}
-            onOpenSettings={onOpenSettings}
           />,
         );
       });
@@ -124,6 +122,7 @@ describe("Main Views (Home, Highlights, Words, Chats)", () => {
       expect(container.textContent).toContain("Trace your thoughts as you read");
       expect(container.textContent).toContain("palimpsest");
       expect(container.textContent).toContain("Psychological time");
+      expect(container.textContent).not.toContain("iCloud");
 
       const importBtn = Array.from(container.querySelectorAll("button")).find((b) =>
         b.textContent?.includes("Import Your First Book"),
@@ -132,16 +131,6 @@ describe("Main Views (Home, Highlights, Words, Chats)", () => {
         importBtn?.click();
       });
       expect(onImport).toHaveBeenCalledTimes(1);
-
-      const icloudBtn = Array.from(container.querySelectorAll("button")).find((b) =>
-        b.textContent?.includes("Turn On iCloud Sync"),
-      );
-      if (icloudBtn) {
-        await act(async () => {
-          icloudBtn.click();
-        });
-        expect(onOpenSettings).toHaveBeenCalledWith("librarySync");
-      }
     });
 
     it("renders populated bento, estimates remaining reading time, and triggers Ask/word/chat/collection links", async () => {
@@ -221,7 +210,6 @@ describe("Main Views (Home, Highlights, Words, Chats)", () => {
             collections={collections}
             onNavigate={onNavigate}
             onImport={vi.fn()}
-            onOpenSettings={vi.fn()}
           />,
         );
       });
@@ -370,7 +358,6 @@ describe("Main Views (Home, Highlights, Words, Chats)", () => {
               collections={[]}
               onNavigate={vi.fn()}
               onImport={vi.fn()}
-              onOpenSettings={vi.fn()}
             />,
           );
         });
@@ -1948,7 +1935,6 @@ describe("Main Views (Home, Highlights, Words, Chats)", () => {
             collections={[]}
             onNavigate={vi.fn()}
             onImport={vi.fn()}
-            onOpenSettings={vi.fn()}
           />,
         );
       });
@@ -1963,7 +1949,6 @@ describe("Main Views (Home, Highlights, Words, Chats)", () => {
             collections={[]}
             onNavigate={vi.fn()}
             onImport={vi.fn()}
-            onOpenSettings={vi.fn()}
           />,
         );
       });
@@ -2032,7 +2017,6 @@ describe("Main Views (Home, Highlights, Words, Chats)", () => {
             collections={[]}
             onNavigate={vi.fn()}
             onImport={vi.fn()}
-            onOpenSettings={vi.fn()}
           />,
         );
       });

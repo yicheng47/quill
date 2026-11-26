@@ -296,27 +296,12 @@ describe("TopBar and UpdateIndicator states", () => {
     expect(onOpenSettings).toHaveBeenCalledWith("updates");
   });
 
-  it("omits traffic-light spacer on Windows and displays live sync progress chip", async () => {
+  it("omits traffic-light spacer on Windows and never renders a sync progress chip", async () => {
     setPlatform("Win32");
     await renderTopBar();
     const header = container.querySelector("header");
     expect(header?.hasAttribute("data-drag-region")).toBe(true);
     expect(container.querySelector(".w-\\[60px\\]")).toBeNull();
-
-    await act(async () => {
-      for (const cb of mocks.genericListeners.get("sync-progress") ?? []) {
-        cb({ payload: { applied: 21, total: 50 } });
-      }
-    });
-    const chip = container.querySelector('[data-testid="topbar-sync-chip"]');
-    expect(chip?.textContent).toContain("42%");
-    expect(chip?.className).not.toContain("no-drag");
-
-    await act(async () => {
-      for (const cb of mocks.genericListeners.get("sync-initial-tick-done") ?? []) {
-        cb({ payload: null });
-      }
-    });
     expect(container.querySelector('[data-testid="topbar-sync-chip"]')).toBeNull();
   });
 

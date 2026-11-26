@@ -10,10 +10,6 @@ Quill is an ebook reader with AI features. Your privacy is simple: your data sta
 
 Quill stores your library, highlights, bookmarks, annotations, vocabulary, and chat history locally on your device. No account is required and no personal data is sent to Quill's servers.
 
-## iCloud Sync
-
-If you enable iCloud Sync in Settings, your data is stored in your personal iCloud container managed by Apple. Apple handles encryption and access control under their own privacy policy. You can disable iCloud Sync at any time.
-
 ## AI Features
 
 AI features (word lookup, translation, passage explanation, chat) use the provider you configure — OpenAI, Anthropic, or another compatible service. When you use these features, the selected text or message is sent directly to that provider's API under their terms of service.

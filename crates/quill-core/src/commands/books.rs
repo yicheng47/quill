@@ -12,10 +12,7 @@ use crate::db::Db;
 use crate::epub;
 use crate::error::{AppError, AppResult};
 use crate::host::Core;
-use crate::icloud;
 use crate::pdfium;
-use crate::sync::events::{BookImportPayload, EventBody};
-use crate::sync::writer::SyncWriter;
 
 pub(crate) fn cover_blob_to_data_uri(bytes: &[u8]) -> String {
     let mime = if bytes.starts_with(b"\x89PNG") {
@@ -186,7 +183,7 @@ pub struct Book {
     pub current_cfi: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
-    /// Whether the book file is locally available (not an iCloud placeholder).
+    /// Whether the book file exists locally on disk.
     #[serde(default = "default_true")]
     pub available: bool,
     /// Base64-encoded cover image bytes. Rendered as data URI on the frontend.
@@ -199,21 +196,21 @@ fn default_true() -> bool {
 }
 
 /// Resolve relative paths in a Book to absolute using data_dir,
-/// and check whether the book file is locally available.
+/// and check whether the book file exists locally on disk.
 fn resolve_book_paths(book: &mut Book, db: &Db) {
     resolve_paths(book, db);
-    book.available = icloud::is_file_downloaded(std::path::Path::new(&book.file_path));
+    book.available = Path::new(&book.file_path).exists();
 }
 
 fn resolve_paths(book: &mut Book, db: &Db) {
-    if !std::path::Path::new(&book.file_path).is_absolute() {
+    if !Path::new(&book.file_path).is_absolute() {
         book.file_path = db
             .resolve_path(&book.file_path)
             .to_string_lossy()
             .to_string();
     }
     if let Some(ref cover) = book.cover_path {
-        if cover != "none" && !std::path::Path::new(cover).is_absolute() {
+        if cover != "none" && !Path::new(cover).is_absolute() {
             book.cover_path = Some(
                 db.resolve_path(cover)
                     .to_string_lossy()
@@ -223,20 +220,12 @@ fn resolve_paths(book: &mut Book, db: &Db) {
     }
 }
 
-pub(crate) fn do_import_epub(
-    file_path: &str,
-    db: &Db,
-    sync: &SyncWriter,
-) -> AppResult<Book> {
-    let data_dir = db
-        .data_dir
-        .lock()
-        .map_err(|e| AppError::Other(e.to_string()))?
-        .clone();
-    let books_dir = data_dir.join("books");
+pub(crate) fn do_import_epub(file_path: &str, db: &Db) -> AppResult<Book> {
+    let books_dir = db.data_dir.join("books");
+    fs::create_dir_all(&books_dir)?;
 
     let book_id = uuid::Uuid::new_v4().to_string();
-    let src = std::path::Path::new(file_path);
+    let src = Path::new(file_path);
 
     let metadata = epub::extract_metadata(src)
         .inspect_err(|e| log::error!("import_book: extract_metadata failed for {file_path}: {e}"))?;
@@ -272,7 +261,7 @@ pub(crate) fn do_import_epub(
 
     // Persist the raw metadata representation so reads project HTML -> plain text
     // exactly once (matching legacy rows and avoiding double-parsing literal tags/entities).
-    do_insert_book(&book, metadata.cover_data.as_deref(), db, sync, now)?;
+    do_insert_book(&book, metadata.cover_data.as_deref(), db)?;
     book.description = book
         .description
         .as_deref()
@@ -282,17 +271,8 @@ pub(crate) fn do_import_epub(
     Ok(book)
 }
 
-pub(crate) fn do_import_pdf(
-    file_path: &str,
-    db: &Db,
-    sync: &SyncWriter,
-) -> AppResult<Book> {
-    let data_dir = db
-        .data_dir
-        .lock()
-        .map_err(|e| AppError::Other(e.to_string()))?
-        .clone();
-    let books_dir = data_dir.join("books");
+pub(crate) fn do_import_pdf(file_path: &str, db: &Db) -> AppResult<Book> {
+    let books_dir = db.data_dir.join("books");
     fs::create_dir_all(&books_dir)?;
 
     let book_id = uuid::Uuid::new_v4().to_string();
@@ -340,7 +320,7 @@ pub(crate) fn do_import_pdf(
         cover_data: cover_data_b64,
     };
 
-    do_insert_book(&book, extracted.cover.as_deref(), db, sync, now)?;
+    do_insert_book(&book, extracted.cover.as_deref(), db)?;
     book.description = book
         .description
         .as_deref()
@@ -357,12 +337,11 @@ pub(crate) fn do_import_pdf(
     Ok(book)
 }
 
-fn do_insert_book(book: &Book, cover_bytes: Option<&[u8]>, db: &Db, sync: &SyncWriter, now: i64) -> AppResult<()> {
-    let device = sync.self_device().to_string();
-    sync.with_tx(db, now, |tx, events| {
+fn do_insert_book(book: &Book, cover_bytes: Option<&[u8]>, db: &Db) -> AppResult<()> {
+    db.with_tx(|tx| {
         tx.execute(
-            "INSERT INTO books (id, title, author, description, cover_path, file_path, format, genre, pages, status, progress, current_cfi, created_at, updated_at, updated_by_device, cover_data)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+            "INSERT INTO books (id, title, author, description, cover_path, file_path, format, genre, pages, status, progress, current_cfi, created_at, updated_at, cover_data)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
             params![
                 book.id,
                 book.title,
@@ -378,27 +357,11 @@ fn do_insert_book(book: &Book, cover_bytes: Option<&[u8]>, db: &Db, sync: &SyncW
                 book.current_cfi,
                 book.created_at,
                 book.updated_at,
-                device,
                 cover_bytes,
             ],
         )?;
-        events.push(EventBody::BookImport(BookImportPayload {
-            id: book.id.clone(),
-            title: book.title.clone(),
-            author: book.author.clone(),
-            description: book.description.clone(),
-            cover_path: book.cover_path.clone(),
-            file_path: book.file_path.clone(),
-            format: book.format.clone(),
-            genre: book.genre.clone(),
-            pages: book.pages,
-        }));
         Ok(())
-    })?;
-    if let Some(bytes) = cover_bytes {
-        sync.queue_cover_write(db, &book.id, bytes);
-    }
-    Ok(())
+    })
 }
 
 pub fn import_book(core: &Core, file_path: String) -> AppResult<Book> {
@@ -409,8 +372,8 @@ pub fn import_book(core: &Core, file_path: String) -> AppResult<Book> {
         .to_lowercase();
     log::info!("import_book: start file={file_path} format={ext}");
     let mut book = match ext.as_str() {
-        "pdf" => do_import_pdf(&file_path, &core.db, &core.sync_writer)?,
-        _ => do_import_epub(&file_path, &core.db, &core.sync_writer)?,
+        "pdf" => do_import_pdf(&file_path, &core.db)?,
+        _ => do_import_epub(&file_path, &core.db)?,
     };
     resolve_book_paths(&mut book, &core.db);
     Ok(book)
@@ -774,58 +737,13 @@ pub fn get_book(core: &Core, id: String) -> AppResult<Book> {
     Ok(book)
 }
 
-/// Check if a book's file is locally available and trigger iCloud download if not.
-pub fn check_book_available(core: &Core, id: String) -> AppResult<bool> {
-    let conn = core.db.reader();
-    let file_path: String = conn.query_row(
-        "SELECT file_path FROM books WHERE id = ?1",
-        params![id],
-        |row| row.get(0),
-    )?;
-
-    let abs_path = core.db.resolve_path(&file_path);
-    let available = icloud::is_file_downloaded(&abs_path);
-
-    if !available {
-        icloud::trigger_download_file(&abs_path);
-    }
-
-    Ok(available)
-}
-
-/// Probe whether a book's file contents can actually be read. Used by
-/// the reader after a load failure to distinguish a broken book from
-/// broken iCloud sync; nudges iCloud to re-download when unreadable.
-pub fn check_book_readable(core: &Core, id: String) -> AppResult<bool> {
-    let conn = core.db.reader();
-    let file_path: String = conn.query_row(
-        "SELECT file_path FROM books WHERE id = ?1",
-        params![id],
-        |row| row.get(0),
-    )?;
-
-    let abs_path = core.db.resolve_path(&file_path);
-    let readable = icloud::is_file_readable(&abs_path);
-
-    if !readable {
-        icloud::trigger_download_file(&abs_path);
-    }
-
-    Ok(readable)
-}
-
-pub(crate) fn do_delete_book(id: &str, db: &Db, sync: &SyncWriter) -> AppResult<()> {
-    let file_path: String = {
-        let conn = db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
-        conn.query_row(
+pub(crate) fn do_delete_book(id: &str, db: &Db) -> AppResult<()> {
+    let file_path: String = db.with_tx(|tx| {
+        let file_path: String = tx.query_row(
             "SELECT file_path FROM books WHERE id = ?1",
             params![id],
             |row| row.get(0),
-        )?
-    };
-
-    let now = chrono::Utc::now().timestamp_millis();
-    sync.with_tx(db, now, |tx, events| {
+        )?;
         tx.execute(
             "DELETE FROM chat_messages WHERE chat_id IN (SELECT id FROM chats WHERE book_id = ?1)",
             params![id],
@@ -837,10 +755,7 @@ pub(crate) fn do_delete_book(id: &str, db: &Db, sync: &SyncWriter) -> AppResult<
         tx.execute("DELETE FROM vocab_words WHERE book_id = ?1", params![id])?;
         tx.execute("DELETE FROM book_settings WHERE book_id = ?1", params![id])?;
         tx.execute("DELETE FROM books WHERE id = ?1", params![id])?;
-        events.push(EventBody::BookDelete {
-            id: id.to_string(),
-        });
-        Ok(())
+        Ok(file_path)
     })?;
 
     let abs_file = db.resolve_path(&file_path);
@@ -852,7 +767,7 @@ pub(crate) fn do_delete_book(id: &str, db: &Db, sync: &SyncWriter) -> AppResult<
 }
 
 pub fn delete_book(core: &Core, id: String) -> AppResult<()> {
-    do_delete_book(&id, &core.db, &core.sync_writer)
+    do_delete_book(&id, &core.db)
 }
 
 pub fn update_reading_progress(
@@ -862,32 +777,16 @@ pub fn update_reading_progress(
     cfi: Option<String>,
 ) -> AppResult<()> {
     let now = chrono::Utc::now().timestamp_millis();
-    let device = core.sync_writer.self_device().to_string();
-    // Page-turn rate is dominated by this command; gate the event push on
-    // the per-book throttle so a reading session doesn't balloon the log.
-    // The SQL write always lands so the local UI stays current — only the
-    // event publication is coalesced. Semantic transitions like
-    // `mark_finished` deliberately do NOT consult the throttle.
-    let emit = core.sync_writer.should_emit_progress(&id);
-    core.sync_writer.with_tx(&core.db, now, |tx, events| {
+    core.db.with_tx(|tx| {
         tx.execute(
-            "UPDATE books SET progress = ?1, current_cfi = ?2, updated_at = ?3, updated_by_device = ?4 WHERE id = ?5",
-            params![progress, cfi, now, device, id],
+            "UPDATE books SET progress = ?1, current_cfi = ?2, updated_at = ?3 WHERE id = ?4",
+            params![progress, cfi, now, id],
         )?;
-        if emit {
-            events.push(EventBody::BookProgressSet {
-                book: id.clone(),
-                progress,
-                cfi: cfi.clone(),
-            });
-        }
         Ok(())
     })
 }
 
 pub fn update_book_pages(core: &Core, id: String, pages: i32) -> AppResult<()> {
-    // Local-only — `pages` is derived from the book file on this device and
-    // not part of the sync contract. Plain DB write, no SyncWriter.
     let conn = core.db.conn.lock().map_err(|e| AppError::Other(e.to_string()))?;
     conn.execute(
         "UPDATE books SET pages = ?1 WHERE id = ?2",
@@ -898,39 +797,11 @@ pub fn update_book_pages(core: &Core, id: String, pages: i32) -> AppResult<()> {
 
 pub fn mark_finished(core: &Core, id: String) -> AppResult<()> {
     let now = chrono::Utc::now().timestamp_millis();
-    let device = core.sync_writer.self_device().to_string();
-    core.sync_writer.with_tx(&core.db, now, |tx, events| {
-        // Read the current cfi BEFORE the UPDATE so the synthesized
-        // `book.progress.set` carries the resume position the local row
-        // keeps. Local SQL doesn't touch `current_cfi` here, so emitting
-        // `cfi: None` would silently null the column on every peer while
-        // this device still has it — a snapshot-equivalence violation.
-        let current_cfi: Option<String> = tx
-            .query_row(
-                "SELECT current_cfi FROM books WHERE id = ?1",
-                params![id],
-                |r| r.get(0),
-            )
-            .ok()
-            .flatten();
+    core.db.with_tx(|tx| {
         tx.execute(
-            "UPDATE books SET status = 'finished', progress = 100, updated_at = ?1, updated_by_device = ?2 WHERE id = ?3",
-            params![now, device, id],
+            "UPDATE books SET status = 'finished', progress = 100, updated_at = ?1 WHERE id = ?2",
+            params![now, id],
         )?;
-        // Mark-finished is two LWW columns moving in lockstep; the merge
-        // engine has no `book.finished` event, so we publish the same pair
-        // of events the user could have produced manually. The progress
-        // event is published unconditionally — the throttle is for noisy
-        // page-turn updates only, never for semantic transitions.
-        events.push(EventBody::BookStatusSet {
-            book: id.clone(),
-            status: "finished".into(),
-        });
-        events.push(EventBody::BookProgressSet {
-            book: id.clone(),
-            progress: 100,
-            cfi: current_cfi,
-        });
         Ok(())
     })
 }
@@ -942,53 +813,32 @@ pub(crate) fn do_update_book(
     genre: Option<&str>,
     status: Option<&str>,
     db: &Db,
-    sync: &SyncWriter,
 ) -> AppResult<Book> {
     let now = chrono::Utc::now().timestamp_millis();
-    let device = sync.self_device().to_string();
-    sync.with_tx(db, now, |tx, events| {
+    db.with_tx(|tx| {
         if let Some(t) = title {
             tx.execute(
-                "UPDATE books SET title = ?1, updated_at = ?2, updated_by_device = ?3 WHERE id = ?4",
-                params![t, now, device, id],
+                "UPDATE books SET title = ?1, updated_at = ?2 WHERE id = ?3",
+                params![t, now, id],
             )?;
-            events.push(EventBody::BookMetadataSet {
-                book: id.to_string(),
-                field: "title".into(),
-                value: serde_json::Value::String(t.to_string()),
-            });
         }
         if let Some(a) = author {
             tx.execute(
-                "UPDATE books SET author = ?1, updated_at = ?2, updated_by_device = ?3 WHERE id = ?4",
-                params![a, now, device, id],
+                "UPDATE books SET author = ?1, updated_at = ?2 WHERE id = ?3",
+                params![a, now, id],
             )?;
-            events.push(EventBody::BookMetadataSet {
-                book: id.to_string(),
-                field: "author".into(),
-                value: serde_json::Value::String(a.to_string()),
-            });
         }
         if let Some(g) = genre {
             tx.execute(
-                "UPDATE books SET genre = ?1, updated_at = ?2, updated_by_device = ?3 WHERE id = ?4",
-                params![g, now, device, id],
+                "UPDATE books SET genre = ?1, updated_at = ?2 WHERE id = ?3",
+                params![g, now, id],
             )?;
-            events.push(EventBody::BookMetadataSet {
-                book: id.to_string(),
-                field: "genre".into(),
-                value: serde_json::Value::String(g.to_string()),
-            });
         }
         if let Some(s) = status {
             tx.execute(
-                "UPDATE books SET status = ?1, updated_at = ?2, updated_by_device = ?3 WHERE id = ?4",
-                params![s, now, device, id],
+                "UPDATE books SET status = ?1, updated_at = ?2 WHERE id = ?3",
+                params![s, now, id],
             )?;
-            events.push(EventBody::BookStatusSet {
-                book: id.to_string(),
-                status: s.to_string(),
-            });
         }
         Ok(())
     })?;
@@ -996,7 +846,7 @@ pub(crate) fn do_update_book(
 }
 
 pub fn update_book_status(core: &Core, id: String, status: String) -> AppResult<()> {
-    do_update_book(&id, None, None, None, Some(&status), &core.db, &core.sync_writer)?;
+    do_update_book(&id, None, None, None, Some(&status), &core.db)?;
     Ok(())
 }
 
@@ -1006,15 +856,7 @@ pub fn update_book_metadata(
     title: String,
     author: String,
 ) -> AppResult<()> {
-    do_update_book(
-        &id,
-        Some(&title),
-        Some(&author),
-        None,
-        None,
-        &core.db,
-        &core.sync_writer,
-    )?;
+    do_update_book(&id, Some(&title), Some(&author), None, None, &core.db)?;
     Ok(())
 }
 
@@ -1575,8 +1417,7 @@ mod tests {
         let pdf = dir.path().join("fixture.pdf");
         write_fixture_pdf(&pdf);
 
-        let sync = SyncWriter::new("dev-A".into());
-        let book = do_import_pdf(pdf.to_str().unwrap(), &db, &sync).unwrap();
+        let book = do_import_pdf(pdf.to_str().unwrap(), &db).unwrap();
         assert_eq!(book.format, "pdf");
         assert!(book.cover_data.is_some(), "cover_data should be populated");
 
@@ -1800,8 +1641,7 @@ mod tests {
             "&lt;p&gt;Learn &amp;lt;script&amp;gt; safely &amp;amp;copy;. The rest of the summary.&lt;/p&gt;",
         );
 
-        let sync = SyncWriter::new("dev-A".into());
-        let imported = do_import_epub(epub_path.to_str().unwrap(), &db, &sync).unwrap();
+        let imported = do_import_epub(epub_path.to_str().unwrap(), &db).unwrap();
         let expected = Some("Learn <script> safely &copy;. The rest of the summary.");
 
         assert_eq!(imported.description.as_deref(), expected);
@@ -1840,8 +1680,7 @@ mod tests {
             "<p>Guide to &lt;script&gt; &amp;copy; and <strong>HTML</strong> &mdash; notes.</p>";
         write_fixture_pdf_with_subject(&pdf_path, Some(raw_subject));
 
-        let sync = SyncWriter::new("dev-A".into());
-        let imported = do_import_pdf(pdf_path.to_str().unwrap(), &db, &sync).unwrap();
+        let imported = do_import_pdf(pdf_path.to_str().unwrap(), &db).unwrap();
         let expected = Some("Guide to <script> &copy; and HTML \u{2014} notes.");
 
         assert_eq!(imported.description.as_deref(), expected);
@@ -1854,5 +1693,20 @@ mod tests {
 
         let lite = query_books_lite(&db, None, None, 10).unwrap();
         assert_eq!(lite[0].description.as_deref(), expected);
+    }
+
+    #[test]
+    fn resolve_book_paths_sets_available_from_local_file_existence() {
+        let (dir, db) = setup();
+        insert_book(&db, "b1", "epub");
+
+        let mut missing = query_book(&db, "b1").unwrap();
+        resolve_book_paths(&mut missing, &db);
+        assert!(!missing.available);
+
+        fs::write(dir.path().join("books/test.epub"), b"epub").unwrap();
+        let mut present = query_book(&db, "b1").unwrap();
+        resolve_book_paths(&mut present, &db);
+        assert!(present.available);
     }
 }

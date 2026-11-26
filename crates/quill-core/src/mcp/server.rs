@@ -146,7 +146,7 @@ mod tests {
                 params![now],
             ).unwrap();
         }
-        (dir, McpState::new(db, None, None))
+        (dir, McpState::new(db, false, None))
     }
 
     fn text_of(result: rmcp::model::CallToolResult) -> String {
@@ -305,5 +305,69 @@ mod tests {
         let arr: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert_eq!(arr[0]["title"], serde_json::json!("First chat"));
         assert_eq!(arr[0]["messages"][0]["content"], serde_json::json!("hello"));
+    }
+
+    #[tokio::test]
+    async fn write_tools_enforce_startup_flag_and_live_revocation() {
+        // 1) Startup write_enabled=false rejects writes cleanly.
+        let (_ro_dir, ro_state) = seeded();
+        let ro_handler = QuillMcpHandler::new(ro_state);
+        let err = ro_handler
+            .create_collection(Parameters(
+                crate::mcp::tools::collections::CreateCollectionArgs {
+                    name: "Denied".to_string(),
+                },
+            ))
+            .await
+            .expect_err("read-only MCP session must reject write");
+        assert!(err.message.contains("Write access was not enabled"));
+
+        // 2) Startup write_enabled=true + setting="true" allows writes and touches .mcp-notify.
+        let (rw_dir, base_state) = seeded();
+        {
+            let conn = base_state.db.conn.lock().unwrap();
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES ('mcp_write_enabled', 'true')",
+                [],
+            )
+            .unwrap();
+        }
+        let rw_state = McpState::new(base_state.db.clone(), true, Some(rw_dir.path()));
+        let rw_handler = QuillMcpHandler::new(rw_state);
+
+        let created = text_of(
+            rw_handler
+                .create_collection(Parameters(
+                    crate::mcp::tools::collections::CreateCollectionArgs {
+                        name: "Allowed".to_string(),
+                    },
+                ))
+                .await
+                .unwrap(),
+        );
+        let parsed: serde_json::Value = serde_json::from_str(&created).unwrap();
+        assert_eq!(parsed["name"], serde_json::json!("Allowed"));
+        assert!(rw_dir.path().join(".mcp-notify").exists());
+
+        // 3) Toggling mcp_write_enabled off in SQLite revokes writes immediately.
+        {
+            let conn = base_state.db.conn.lock().unwrap();
+            conn.execute(
+                "UPDATE settings SET value = 'false' WHERE key = 'mcp_write_enabled'",
+                [],
+            )
+            .unwrap();
+        }
+        let revoked = rw_handler
+            .update_book(Parameters(crate::mcp::tools::library::UpdateBookArgs {
+                book_id: "b1".to_string(),
+                title: Some("Should Fail".to_string()),
+                author: None,
+                genre: None,
+                status: None,
+            }))
+            .await
+            .expect_err("revoked MCP session must reject write");
+        assert!(revoked.message.contains("Write access was revoked"));
     }
 }

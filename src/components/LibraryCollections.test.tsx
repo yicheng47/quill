@@ -556,64 +556,29 @@ describe("M2 CommandSearch, Collections, BookList, and BookContextMenu", () => {
     }
   });
 
-  it("BookList polls asynchronous iCloud hydration until available and does not open reader on child button Enter/Space", async () => {
-    const cloudBook = makeBook("b-cloud", {
-      title: "Cloud Novel",
-      available: false,
+  it("BookList renders local book progress and opens reader on click or keyboard activation", async () => {
+    const book = makeBook("b-local", {
+      title: "Local Novel",
+      available: true,
       progress: 40,
       status: "reading",
     });
-    const onBookAvailable = vi.fn();
-    let checks = 0;
-    mocks.invoke.mockImplementation(async (cmd: string) => {
-      if (cmd === "check_book_available") {
-        checks += 1;
-        return checks >= 3;
-      }
-      return null;
-    });
 
     await act(async () => {
-      root.render(
-        <BookList books={[cloudBook]} onBookAvailable={onBookAvailable} />,
-      );
+      root.render(<BookList books={[book]} />);
     });
 
-    const downloadBtn = Array.from(container.querySelectorAll("button")).find((b) =>
-      b.textContent?.includes("Download from iCloud"),
-    );
-    expect(downloadBtn).toBeDefined();
+    expect(container.textContent).toContain("Local Novel");
+    expect(container.textContent).toContain("40% complete");
+    expect(container.textContent).not.toContain("iCloud");
 
-    // R8: keyboard Enter/Space on nested button must NOT open reader
-    await act(async () => {
-      downloadBtn?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-      downloadBtn?.dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true }));
-    });
-    expect(mocks.openReaderWindow).not.toHaveBeenCalled();
-
-    // R5: click starts polling false -> false -> true across intervals, then calls onBookAvailable
-    await act(async () => {
-      downloadBtn?.click();
-      await Promise.resolve();
-    });
-    expect(checks).toBe(1);
-    expect(downloadBtn?.textContent).toContain("Downloading");
-    expect(onBookAvailable).not.toHaveBeenCalled();
+    const row = container.querySelector<HTMLElement>('[role="button"]');
+    expect(row).not.toBeNull();
 
     await act(async () => {
-      vi.advanceTimersByTime(2000);
-      await Promise.resolve();
+      row?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
     });
-    expect(checks).toBe(2);
-    expect(downloadBtn?.textContent).toContain("Downloading");
-    expect(onBookAvailable).not.toHaveBeenCalled();
-
-    await act(async () => {
-      vi.advanceTimersByTime(2000);
-      await Promise.resolve();
-    });
-    expect(checks).toBe(3);
-    expect(onBookAvailable).toHaveBeenCalledWith("b-cloud");
+    expect(mocks.openReaderWindow).toHaveBeenCalledWith("b-local");
   });
 
   it("BookContextMenu displays multi-collection checkmarks, toggles membership, and creates+adds a collection", async () => {

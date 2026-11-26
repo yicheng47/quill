@@ -1,4 +1,4 @@
-import { Check, CloudDownload } from "lucide-react";
+import { Check } from "lucide-react";
 
 export function PercentBadge({ percent, className = "" }: { percent: number; className?: string }) {
   return (
@@ -16,24 +16,6 @@ export function DoneBadge({ className = "" }: { className?: string }) {
       className={`inline-flex items-center justify-center size-[22px] rounded-full bg-surface-chip border border-surface-glass-border backdrop-blur-[10px] text-success ${className}`}
     >
       <Check size={12} strokeWidth={2.5} />
-    </span>
-  );
-}
-
-export function CloudDownloadBadge({
-  size = "md",
-  className = "",
-}: {
-  size?: "sm" | "md";
-  className?: string;
-}) {
-  return (
-    <span
-      className={`rounded-full bg-cover-overlay flex items-center justify-center text-text-on-accent ${
-        size === "sm" ? "size-[30px]" : "size-8"
-      } ${className}`}
-    >
-      <CloudDownload size={size === "sm" ? 15 : 16} />
     </span>
   );
 }

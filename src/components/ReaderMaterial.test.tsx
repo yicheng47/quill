@@ -32,7 +32,7 @@ vi.mock("../platform", () => ({
 import ReaderBottomPills from "./ReaderBottomPills";
 import ReaderSettings from "./ReaderSettings";
 import HighlightToolbar from "./HighlightToolbar";
-import ReaderCloudState from "./ReaderCloudState";
+import TableOfContents from "./TableOfContents";
 import ReaderContextMenu from "./ReaderContextMenu";
 import LookupPopover from "./LookupPopover";
 import ExplainPopover from "./ExplainPopover";
@@ -198,17 +198,12 @@ describe("Reader page-theme materials", () => {
             onDelete={vi.fn()}
             onClose={vi.fn()}
           />
-          <ReaderCloudState
-            book={{
-              title: "Dune",
-              author: "Frank Herbert",
-              cover_data: null,
-              cover_path: null,
-              progress: 12,
-            }}
-            state="downloading"
-            onDownloadRetry={vi.fn()}
-            onBackToLibrary={vi.fn()}
+          <TableOfContents
+            open
+            chapters={[{ title: "Chapter 1", page: 1, depth: 0 }]}
+            currentPage={1}
+            onNavigate={vi.fn()}
+            onClose={vi.fn()}
           />
           <ReaderContextMenu
             x={20}

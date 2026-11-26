@@ -8,7 +8,7 @@ use serde::Deserialize;
 
 use crate::commands::collections;
 use crate::mcp::server::QuillMcpHandler;
-use crate::mcp::tools::library::require_sync;
+use crate::mcp::tools::library::require_write_access;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct CreateCollectionArgs {
@@ -45,8 +45,8 @@ impl QuillMcpHandler {
         &self,
         Parameters(CreateCollectionArgs { name }): Parameters<CreateCollectionArgs>,
     ) -> Result<CallToolResult, ErrorData> {
-        let sync = require_sync(self)?;
-        let collection = collections::do_create_collection(&name, &self.state.db, sync)
+        require_write_access(self)?;
+        let collection = collections::do_create_collection(&name, &self.state.db)
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
         self.state.notify("collections", "created", &collection.id);
         Ok(CallToolResult::success(vec![Content::json(&collection)?]))
@@ -57,8 +57,8 @@ impl QuillMcpHandler {
         &self,
         Parameters(RenameCollectionArgs { id, name }): Parameters<RenameCollectionArgs>,
     ) -> Result<CallToolResult, ErrorData> {
-        let sync = require_sync(self)?;
-        collections::do_rename_collection(&id, &name, &self.state.db, sync)
+        require_write_access(self)?;
+        collections::do_rename_collection(&id, &name, &self.state.db)
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
         self.state.notify("collections", "updated", &id);
         Ok(CallToolResult::success(vec![Content::text(format!(
@@ -73,8 +73,8 @@ impl QuillMcpHandler {
         &self,
         Parameters(DeleteCollectionArgs { id }): Parameters<DeleteCollectionArgs>,
     ) -> Result<CallToolResult, ErrorData> {
-        let sync = require_sync(self)?;
-        collections::do_delete_collection(&id, &self.state.db, sync)
+        require_write_access(self)?;
+        collections::do_delete_collection(&id, &self.state.db)
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
         self.state.notify("collections", "deleted", &id);
         Ok(CallToolResult::success(vec![Content::text(format!(
@@ -90,8 +90,8 @@ impl QuillMcpHandler {
             book_id,
         }): Parameters<CollectionBookArgs>,
     ) -> Result<CallToolResult, ErrorData> {
-        let sync = require_sync(self)?;
-        collections::do_add_book_to_collection(&collection_id, &book_id, &self.state.db, sync)
+        require_write_access(self)?;
+        collections::do_add_book_to_collection(&collection_id, &book_id, &self.state.db)
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
         self.state.notify("collections", "updated", &collection_id);
         Ok(CallToolResult::success(vec![Content::text(format!(
@@ -107,14 +107,9 @@ impl QuillMcpHandler {
             book_id,
         }): Parameters<CollectionBookArgs>,
     ) -> Result<CallToolResult, ErrorData> {
-        let sync = require_sync(self)?;
-        collections::do_remove_book_from_collection(
-            &collection_id,
-            &book_id,
-            &self.state.db,
-            sync,
-        )
-        .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+        require_write_access(self)?;
+        collections::do_remove_book_from_collection(&collection_id, &book_id, &self.state.db)
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
         self.state.notify("collections", "updated", &collection_id);
         Ok(CallToolResult::success(vec![Content::text(format!(
             "Book {book_id} removed from collection {collection_id}."

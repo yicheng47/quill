@@ -4,7 +4,6 @@ import {
   ArrowUpRight,
   BookOpen,
   Check,
-  Cloud,
   Languages,
   MessageSquare,
   Plus,
@@ -18,12 +17,11 @@ import type { Highlight } from "../hooks/useBookmarks";
 import type { DictionaryWord } from "../hooks/useDictionary";
 import type { ChatSummary } from "../hooks/useChats";
 import type { MainNavigateOptions, MainRoute } from "./TopBar";
-import type { SettingsSection } from "./settings/types";
 import { invoke } from "../platform";
 import { openReaderWindow } from "../utils/openReaderWindow";
 import { getHighlightColorMeta } from "../utils/highlightColors";
 import { shouldSuppressSelectionClick } from "../utils/selection";
-import { isMacOS, shortcutModSymbol } from "../lib/platformEnv";
+import { shortcutModSymbol } from "../lib/platformEnv";
 import QuillLogo from "./QuillLogo";
 import BookCover from "./ui/BookCover";
 import Chip from "./ui/Chip";
@@ -41,7 +39,6 @@ interface HomeViewProps {
   collections: Collection[];
   onNavigate: (route: MainRoute, options?: MainNavigateOptions) => void;
   onImport: () => void;
-  onOpenSettings: (section?: SettingsSection) => void;
 }
 
 const SHELF_BASE_COUNT = 5;
@@ -75,11 +72,9 @@ export default function HomeView({
   collections,
   onNavigate,
   onImport,
-  onOpenSettings,
 }: HomeViewProps) {
   const { t } = useTranslation();
   const mod = shortcutModSymbol();
-  const isMac = isMacOS();
 
   const [latestHighlight, setLatestHighlight] = useState<Highlight | null>(null);
   const [recentWords, setRecentWords] = useState<DictionaryWord[]>([]);
@@ -219,16 +214,6 @@ export default function HomeView({
                 <Plus size={15} strokeWidth={2.2} />
                 <span>{t("home.empty.importFirst")}</span>
               </button>
-              {isMac && (
-                <button
-                  type="button"
-                  onClick={() => onOpenSettings("librarySync")}
-                  className="h-10 px-5 rounded-control bg-surface-chip border border-border-default hover:bg-surface-solid text-text-primary text-[13.5px] font-medium inline-flex items-center gap-2 cursor-pointer transition-colors"
-                >
-                  <Cloud size={15} className="text-text-secondary" />
-                  <span>{t("home.empty.turnOnICloud")}</span>
-                </button>
-              )}
             </div>
 
             <div className="px-3.5 py-1.5 rounded-full bg-surface-inset border border-border-subtle inline-flex items-center gap-2 text-[12.5px] text-text-tertiary">

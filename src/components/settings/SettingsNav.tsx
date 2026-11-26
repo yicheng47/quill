@@ -5,7 +5,6 @@ import {
   BookOpen,
   BookA,
   Bot,
-  Cloud,
   Terminal,
   RefreshCw,
   Info,
@@ -18,7 +17,6 @@ import type { SettingsSection } from "./types";
 interface SettingsNavProps {
   activeSection: SettingsSection;
   onSelectSection: (section: SettingsSection) => void;
-  isMac: boolean;
   appVersion: string;
 }
 
@@ -26,7 +24,6 @@ interface NavItemDef {
   id: SettingsSection;
   labelKey: string;
   icon: ComponentType<{ size?: number; className?: string }>;
-  macOnly?: boolean;
 }
 
 interface NavGroupDef {
@@ -58,7 +55,6 @@ const NAV_GROUPS: NavGroupDef[] = [
     titleKey: "settings.groups.integrations",
     items: [
       { id: "ai", labelKey: "settings.ai.shortTitle", icon: Bot },
-      { id: "librarySync", labelKey: "settings.librarySync.title", icon: Cloud, macOnly: true },
       { id: "mcp", labelKey: "settings.mcp.title", icon: Terminal },
     ],
   },
@@ -75,7 +71,6 @@ const NAV_GROUPS: NavGroupDef[] = [
 export default function SettingsNav({
   activeSection,
   onSelectSection,
-  isMac,
   appVersion,
 }: SettingsNavProps) {
   const { t } = useTranslation();
@@ -85,43 +80,39 @@ export default function SettingsNav({
       aria-label={t("settings.title")}
       className="w-[260px] shrink-0 h-full dawn-glass rounded-surface p-3 flex flex-col gap-4 overflow-y-auto"
     >
-      {NAV_GROUPS.map((group) => {
-        const items = group.items.filter((item) => !item.macOnly || isMac);
-        if (items.length === 0) return null;
-        return (
-          <div key={group.id} className="flex flex-col gap-0.5">
-            <div className="px-3 pt-0.5 pb-1">
-              <span className="text-[11px] font-semibold uppercase tracking-[0.9px] text-text-tertiary">
-                {t(group.titleKey)}
-              </span>
-            </div>
-            {items.map((item) => {
-              const Icon = item.icon;
-              const isActive = activeSection === item.id;
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  data-settings-tab={item.id}
-                  aria-current={isActive ? "page" : undefined}
-                  onClick={() => onSelectSection(item.id)}
-                  className={`w-full px-3 py-[9px] rounded-[6px] flex items-center gap-3 text-left text-[14px] cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-focus-ring ${
-                    isActive
-                      ? "bg-accent-tint text-accent-on-tint font-semibold"
-                      : "text-text-primary font-normal hover:bg-surface-hover"
-                  }`}
-                >
-                  <Icon
-                    size={16}
-                    className={`shrink-0 ${isActive ? "text-accent-on-tint" : "text-text-secondary"}`}
-                  />
-                  <span className="truncate">{t(item.labelKey)}</span>
-                </button>
-              );
-            })}
+      {NAV_GROUPS.map((group) => (
+        <div key={group.id} className="flex flex-col gap-0.5">
+          <div className="px-3 pt-0.5 pb-1">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.9px] text-text-tertiary">
+              {t(group.titleKey)}
+            </span>
           </div>
-        );
-      })}
+          {group.items.map((item) => {
+            const Icon = item.icon;
+            const isActive = activeSection === item.id;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                data-settings-tab={item.id}
+                aria-current={isActive ? "page" : undefined}
+                onClick={() => onSelectSection(item.id)}
+                className={`w-full px-3 py-[9px] rounded-[6px] flex items-center gap-3 text-left text-[14px] cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-focus-ring ${
+                  isActive
+                    ? "bg-accent-tint text-accent-on-tint font-semibold"
+                    : "text-text-primary font-normal hover:bg-surface-hover"
+                }`}
+              >
+                <Icon
+                  size={16}
+                  className={`shrink-0 ${isActive ? "text-accent-on-tint" : "text-text-secondary"}`}
+                />
+                <span className="truncate">{t(item.labelKey)}</span>
+              </button>
+            );
+          })}
+        </div>
+      ))}
 
       <div className="flex-1" />
 

@@ -15,12 +15,13 @@ const testState = vi.hoisted(() => ({
   windowLabel: "reader-book-1",
   setWindowBackgroundColor: vi.fn<(color: string) => Promise<void>>(() => Promise.resolve()),
   emitTo: vi.fn<(windowLabel: string, event: string, payload?: unknown) => Promise<void>>(() => Promise.resolve()),
+  focusWindow: vi.fn<(label: string) => Promise<boolean>>(() => Promise.resolve(true)),
   getBook: vi.fn(),
   updateBookStatus: vi.fn<(id: string, status: "reading" | "finished" | "unread") => Promise<void>>(() => Promise.resolve()),
   getAllSettings: vi.fn(),
   viewGoTo: vi.fn<(target: string) => Promise<void>>(() => Promise.resolve()),
   viewInit: vi.fn(() => Promise.resolve()),
-  viewOpen: vi.fn(() => Promise.resolve()),
+  viewOpen: vi.fn<(file?: unknown) => Promise<void>>(() => Promise.resolve()),
   minimizeWindow: vi.fn<() => Promise<void>>(() => Promise.resolve()),
   toggleMaximizeWindow: vi.fn<() => Promise<void>>(() => Promise.resolve()),
   closeWindow: vi.fn<() => Promise<void>>(() => Promise.resolve()),
@@ -36,7 +37,7 @@ const testState = vi.hoisted(() => ({
 vi.mock("../platform", () => ({
   convertFileSrc: (p: string) => `quill-file://local/${p}`,
   emitTo: (windowLabel: string, event: string, payload?: unknown) => testState.emitTo(windowLabel, event, payload),
-  focusWindow: () => Promise.resolve(true),
+  focusWindow: (label: string) => testState.focusWindow(label),
   getCurrentWindowLabel: () => testState.windowLabel,
   getInitialReaderTheme: () => testState.initialReaderTheme,
   invoke: (cmd: string, args?: unknown) => testState.invoke(cmd, args),
@@ -71,8 +72,6 @@ vi.mock("../hooks/useBooks", () => ({
   getBook: (...args: unknown[]) => testState.getBook(...args),
   updateBookStatus: (id: string, status: "reading" | "finished" | "unread") => testState.updateBookStatus(id, status),
   updateReadingProgress: () => Promise.resolve(),
-  checkBookAvailable: () => Promise.resolve(true),
-  checkBookReadable: () => Promise.resolve(true),
 }));
 
 vi.mock("../hooks/useSettings", () => ({
@@ -124,11 +123,13 @@ import { getThemeStyles } from "../components/ReaderSettings";
 
 class MockFoliateView extends HTMLElement {
   book = { toc: [], sections: [] as Array<Record<string, unknown>> };
-  renderer = {
-    setAttribute: vi.fn(),
-    setStyles: vi.fn(),
-    getContents: (): Array<{ index?: number }> => [],
-  };
+  renderer:
+    | {
+        setAttribute: ReturnType<typeof vi.fn>;
+        setStyles: ReturnType<typeof vi.fn>;
+        getContents: () => Array<{ index?: number }>;
+      }
+    | undefined = undefined;
   history = Object.assign(new EventTarget(), {
     canGoBack: false,
     canGoForward: false,
@@ -136,12 +137,31 @@ class MockFoliateView extends HTMLElement {
     forward: vi.fn(),
   });
   lastLocation = null;
-  open = testState.viewOpen;
+  open = async (file?: unknown) => {
+    await testState.viewOpen(file);
+    this.renderer = {
+      setAttribute: vi.fn(),
+      setStyles: vi.fn(),
+      getContents: () => [],
+    };
+  };
   init = testState.viewInit;
   goTo = testState.viewGoTo;
-  prev = vi.fn(() => Promise.resolve());
-  next = vi.fn(() => Promise.resolve());
-  close = vi.fn();
+  prev = vi.fn(() => {
+    if (!this.renderer) {
+      throw new TypeError("Cannot read properties of undefined (reading 'prev')");
+    }
+    return Promise.resolve();
+  });
+  next = vi.fn(() => {
+    if (!this.renderer) {
+      throw new TypeError("Cannot read properties of undefined (reading 'next')");
+    }
+    return Promise.resolve();
+  });
+  close = vi.fn(() => {
+    this.renderer = undefined;
+  });
   getCFI = vi.fn<(index: number, _range?: Range) => string>(
     (index: number) => `epubcfi(/6/${(index + 1) * 2}!/4/2/1:0)`,
   );
@@ -149,7 +169,10 @@ class MockFoliateView extends HTMLElement {
   getLocationOf = vi.fn(() => null);
   addAnnotation = vi.fn(() => Promise.resolve());
   deleteAnnotation = vi.fn(() => Promise.resolve());
-  deselect = vi.fn();
+  deselect = vi.fn(() => {
+    // Mirror real foliate-js view.deselect(), which dereferences this.renderer.getContents().
+    this.renderer!.getContents();
+  });
 }
 
 if (!customElements.get("foliate-view")) {
@@ -264,6 +287,7 @@ describe("Reader shell themes, cascade, and startup navigation", () => {
     testState.windowLabel = "reader-book-1";
     testState.setWindowBackgroundColor.mockClear();
     testState.emitTo.mockReset().mockResolvedValue(undefined);
+    testState.focusWindow.mockReset().mockResolvedValue(true);
     testState.getBook.mockReset();
     testState.updateBookStatus.mockReset().mockResolvedValue(undefined);
     testState.getAllSettings.mockReset();
@@ -858,7 +882,7 @@ describe("Reader shell themes, cascade, and startup navigation", () => {
         await flushAsync();
 
         const view = container.querySelector("foliate-view") as MockFoliateView | null;
-        const calls = view?.renderer.setStyles.mock.calls ?? [];
+        const calls = view?.renderer?.setStyles.mock.calls ?? [];
         const css = calls[calls.length - 1]?.[0] as string;
         expect(css).toContain("color-scheme: dark;");
         expect(css).toContain("::-webkit-scrollbar { width: 8px; height: 8px; }");
@@ -997,7 +1021,7 @@ describe("Reader shell themes, cascade, and startup navigation", () => {
     await flushAsync();
 
     const paginatedView = container.querySelector("foliate-view") as MockFoliateView | null;
-    paginatedView!.renderer.getContents = () => [{ index: 49 }, { index: 50 }];
+    paginatedView!.renderer!.getContents = () => [{ index: 49 }, { index: 50 }];
     await act(async () => {
       paginatedView!.dispatchEvent(
         new CustomEvent("relocate", {
@@ -1039,7 +1063,7 @@ describe("Reader shell themes, cascade, and startup navigation", () => {
     const viewEl = container.querySelector("foliate-view") as MockFoliateView | null;
     expect(viewEl).not.toBeNull();
     viewEl!.book.sections = Array.from({ length: 100 }, () => ({}));
-    viewEl!.renderer.getContents = () => [{ index: 49 }, { index: 50 }];
+    viewEl!.renderer!.getContents = () => [{ index: 49 }, { index: 50 }];
 
     // Active section is index 49 (page 50) in a 50–51 spread
     await act(async () => {
@@ -1299,6 +1323,248 @@ describe("Reader shell themes, cascade, and startup navigation", () => {
       (b) => b.textContent?.includes("Look Up"),
     );
     expect(lookUpBtnAfterError).toBeTruthy();
+  });
+
+  it("shows generic open-failed error screen when local book file is missing or unreadable and allows safe interaction and return to Library", async () => {
+    const windowCloseSpy = vi.spyOn(window, "close").mockImplementation(() => {});
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      testState.getBook.mockResolvedValue({
+        id: "book-missing",
+        title: "Missing Book",
+        author: "Author",
+        format: "epub",
+        file_path: "/tmp/missing.epub",
+        progress: 0,
+        available: false,
+      });
+      testState.getAllSettings.mockResolvedValue({ reader_theme: "original" });
+
+      await renderReader("/reader/book-missing");
+      await flushAsync();
+
+      expect(container.textContent).toContain("Couldn't open this book");
+      expect(container.textContent).toContain("Back to Library");
+      expect(container.textContent).not.toContain("iCloud");
+      expect(testState.viewOpen).not.toHaveBeenCalled();
+      expect(container.querySelector("foliate-view")).toBeNull();
+
+      // Unmount and verify a fetch failure (HTTP 404) never mounts a partial foliate-view
+      await act(async () => {
+        root.unmount();
+      });
+      root = createRoot(container);
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => ({ ok: false, status: 404, blob: async () => new Blob([]) })),
+      );
+      testState.getBook.mockResolvedValue({
+        id: "book-404",
+        title: "Missing File",
+        author: "Author",
+        format: "epub",
+        file_path: "/tmp/gone.epub",
+        progress: 0,
+        available: true,
+      });
+
+      await renderReader("/reader/book-404");
+      await flushAsync();
+
+      expect(container.textContent).toContain("Couldn't open this book");
+      expect(container.querySelector("foliate-view")).toBeNull();
+
+      // Unmount and verify a view.open() parse failure disposes the partial view so
+      // clicking the overlay, pressing arrow keys, and clicking Back to Library do not throw
+      await act(async () => {
+        root.unmount();
+      });
+      root = createRoot(container);
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => ({ ok: true, status: 200, blob: async () => new Blob(["corrupt"]) })),
+      );
+      testState.getBook.mockResolvedValue({
+        id: "book-corrupt",
+        title: "Corrupt Book",
+        author: "Author",
+        format: "epub",
+        file_path: "/tmp/corrupt.epub",
+        progress: 0,
+        available: true,
+      });
+      testState.viewOpen.mockRejectedValueOnce(new Error("corrupt archive"));
+
+      await renderReader("/reader/book-corrupt");
+      await flushAsync();
+
+      expect(container.textContent).toContain("Couldn't open this book");
+      expect(container.textContent).toContain("Back to Library");
+      expect(container.textContent).not.toContain("iCloud");
+      expect(container.querySelector("foliate-view")).toBeNull();
+
+      // Arrow keys and clicking the error surface must not throw on an uninitialized view
+      await act(async () => {
+        document.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true }));
+        document.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+        container.querySelector("main")?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+
+      const backBtn = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+        (b) => b.textContent?.includes("Back to Library"),
+      );
+      expect(backBtn).toBeTruthy();
+      await act(async () => {
+        backBtn!.click();
+      });
+      await flushAsync();
+
+      expect(testState.focusWindow).toHaveBeenCalledWith("main");
+      expect(windowCloseSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      windowCloseSpy.mockRestore();
+      consoleErrorSpy.mockRestore();
+    }
+  });
+
+  it("ignores late rejection and closes late-resolved obsolete PDF loads without disturbing the replacement view", async () => {
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const pdfBook = {
+      id: "pdf-race",
+      title: "Race PDF",
+      author: "Author",
+      format: "pdf",
+      file_path: "/tmp/race.pdf",
+      pages: 10,
+      progress: 0,
+      status: "reading",
+      current_cfi: null,
+      available: true,
+    };
+
+    try {
+      // Case 1: obsolete load A is still inside fetch() when reading mode switches to scrolling
+      // and load B mounts; A's late fetch rejection must not close or remove B.
+      let resolveSettings1!: (v: Record<string, string>) => void;
+      testState.getBook.mockResolvedValue(pdfBook);
+      testState.getAllSettings.mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveSettings1 = resolve;
+        }),
+      );
+
+      let rejectFetchA!: (err: Error) => void;
+      let fetchCalls = 0;
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(() => {
+          fetchCalls += 1;
+          if (fetchCalls === 1) {
+            return new Promise((_resolve, reject) => {
+              rejectFetchA = reject;
+            });
+          }
+          return Promise.resolve({ ok: true, status: 200, blob: async () => new Blob(["pdf"]) });
+        }),
+      );
+
+      await renderReader("/reader/pdf-race");
+      await flushAsync();
+      expect(fetchCalls).toBe(1);
+      expect(container.querySelector("foliate-view")).toBeNull();
+
+      // Switch reading mode from default scrolling -> paginated so load B mounts and becomes ready
+      await act(async () => {
+        resolveSettings1({ reading_mode: "paginated" });
+      });
+      await flushAsync();
+
+      const replacementB1 = container.querySelector("foliate-view") as MockFoliateView | null;
+      expect(replacementB1).not.toBeNull();
+      expect(replacementB1!.renderer).toBeDefined();
+
+      // Obsolete load A now rejects its fetch
+      await act(async () => {
+        rejectFetchA(new Error("stale fetch failed"));
+      });
+      await flushAsync();
+
+      expect(container.querySelector("foliate-view")).toBe(replacementB1);
+      expect(replacementB1!.close).not.toHaveBeenCalled();
+      expect(container.textContent).not.toContain("Couldn't open this book");
+      await act(async () => {
+        document.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+        container.querySelector("main")?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+      expect(replacementB1!.next).toHaveBeenCalledTimes(1);
+      expect(replacementB1!.deselect).toHaveBeenCalledTimes(1);
+
+      // Case 2: obsolete load A is inside view.open() when load B replaces it; when A's open()
+      // resolves late (allocating renderer/worker after cleanup), A is closed again while B stays usable.
+      await act(async () => {
+        root.unmount();
+      });
+      localStorage.clear();
+      root = createRoot(container);
+
+      let resolveSettings2!: (v: Record<string, string>) => void;
+      testState.getAllSettings.mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveSettings2 = resolve;
+        }),
+      );
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => ({ ok: true, status: 200, blob: async () => new Blob(["pdf"]) })),
+      );
+      let resolveOpenA!: () => void;
+      testState.viewOpen.mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveOpenA = resolve;
+          }),
+      );
+
+      await renderReader("/reader/pdf-race");
+      await flushAsync();
+
+      const obsoleteViewA = container.querySelector("foliate-view") as MockFoliateView | null;
+      expect(obsoleteViewA).not.toBeNull();
+      expect(obsoleteViewA!.renderer).toBeUndefined();
+
+      // Switch mode so A is cleaned up and B mounts and opens
+      await act(async () => {
+        resolveSettings2({ reading_mode: "paginated" });
+      });
+      await flushAsync();
+
+      const replacementB2 = container.querySelector("foliate-view") as MockFoliateView | null;
+      expect(replacementB2).not.toBeNull();
+      expect(replacementB2).not.toBe(obsoleteViewA);
+      expect(obsoleteViewA!.close).toHaveBeenCalledTimes(1);
+      expect(replacementB2!.renderer).toBeDefined();
+
+      // Late resolution of obsoleteViewA.open() populates renderer and must immediately close it
+      await act(async () => {
+        resolveOpenA();
+      });
+      await flushAsync();
+
+      expect(obsoleteViewA!.close).toHaveBeenCalledTimes(2);
+      expect(obsoleteViewA!.renderer).toBeUndefined();
+      expect(container.querySelector("foliate-view")).toBe(replacementB2);
+      expect(replacementB2!.close).not.toHaveBeenCalled();
+      expect(replacementB2!.renderer).toBeDefined();
+      expect(container.textContent).not.toContain("Couldn't open this book");
+      await act(async () => {
+        document.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+        container.querySelector("main")?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+      expect(replacementB2!.next).toHaveBeenCalledTimes(1);
+      expect(replacementB2!.deselect).toHaveBeenCalledTimes(1);
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
   });
 });
 

@@ -2,7 +2,7 @@ import { memo, useState } from "react";
 import type { Book } from "../hooks/useBooks";
 import { openReaderWindow } from "../utils/openReaderWindow";
 import BookCover from "./ui/BookCover";
-import { CloudDownloadBadge, DoneBadge, PercentBadge } from "./ui/Badge";
+import { DoneBadge, PercentBadge } from "./ui/Badge";
 import {
   BookActionsOverlay,
   LoadMoreSentinel,
@@ -51,23 +51,15 @@ function BookGrid({
               author={book.author}
               coverData={book.cover_data}
               coverPath={book.cover_path}
-              className={`w-full aspect-[3/4] transition-shadow duration-200 group-hover:shadow-[var(--shadow-cover-hover)] group-focus-visible:ring-[3px] group-focus-visible:ring-focus-ring ${
-                book.available === false ? "opacity-75" : ""
-              }`}
+              className="w-full aspect-[3/4] transition-shadow duration-200 group-hover:shadow-[var(--shadow-cover-hover)] group-focus-visible:ring-[3px] group-focus-visible:ring-focus-ring"
             >
-              {book.available === false ? (
-                <div className="absolute inset-0 flex items-center justify-center">
-                  <CloudDownloadBadge />
-                </div>
-              ) : (
-                <div className="absolute inset-0 p-2.5 flex items-end justify-end pointer-events-none">
-                  {book.status === "finished" ? (
-                    <DoneBadge />
-                  ) : book.status === "reading" ? (
-                    <PercentBadge percent={book.progress} />
-                  ) : null}
-                </div>
-              )}
+              <div className="absolute inset-0 p-2.5 flex items-end justify-end pointer-events-none">
+                {book.status === "finished" ? (
+                  <DoneBadge />
+                ) : book.status === "reading" ? (
+                  <PercentBadge percent={book.progress} />
+                ) : null}
+              </div>
             </BookCover>
 
             <div className="flex flex-col gap-0.5 min-w-0">

@@ -124,12 +124,11 @@ jobs:
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          PROVISIONING_PROFILE: ${{ secrets.PROVISIONING_PROFILE }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          for var in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD PROVISIONING_PROFILE APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+          for var in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
             test -n "${!var}" || { echo "error: missing required secret $var" >&2; exit 1; }
           done
 
@@ -157,17 +156,13 @@ jobs:
       - name: Build Electron and renderer bundles
         run: npm run build
 
-      - name: Prepare Apple certificate and provisioning profile
+      - name: Prepare Apple certificate
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          PROVISIONING_PROFILE: ${{ secrets.PROVISIONING_PROFILE }}
         run: |
           cert_path="$RUNNER_TEMP/apple-cert.p12"
           printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$cert_path"
           test -s "$cert_path"
-          mkdir -p build
-          printf '%s' "$PROVISIONING_PROFILE" | base64 --decode > build/embedded.provisionprofile
-          test -s build/embedded.provisionprofile
           echo "CSC_CERT_PATH=$cert_path" >> "$GITHUB_ENV"
 
       - name: Download production offline dictionary
@@ -214,15 +209,19 @@ jobs:
             test "$team" = "$APPLE_TEAM_ID" || { echo "error: unexpected TeamIdentifier ($team) on $bin" >&2; exit 1; }
           done
 
+          test ! -e "$app/Contents/embedded.provisionprofile"
+
           app_ent=$(codesign -d --entitlements :- "$app")
-          printf '%s\n' "$app_ent" | grep -Fq 'com.apple.developer.icloud-container-identifiers'
-          printf '%s\n' "$app_ent" | grep -Fq 'com.apple.application-identifier'
+          if printf '%s\n' "$app_ent" | grep -Eq 'com\.apple\.developer\.(icloud|ubiquity)|com\.apple\.application-identifier'; then
+            echo "error: app $app must not carry iCloud, ubiquity, or application-identifier entitlements" >&2
+            exit 1
+          fi
 
           for helper in "$app"/Contents/Frameworks/Quill\ Helper*.app; do
             test -d "$helper" || continue
             helper_ent=$(codesign -d --entitlements :- "$helper")
-            if printf '%s\n' "$helper_ent" | grep -Eq 'com\.apple\.developer\.icloud-container-identifiers|com\.apple\.application-identifier'; then
-              echo "error: helper $helper must not carry iCloud or application-identifier entitlements" >&2
+            if printf '%s\n' "$helper_ent" | grep -Eq 'com\.apple\.developer\.(icloud|ubiquity)|com\.apple\.application-identifier'; then
+              echo "error: helper $helper must not carry iCloud, ubiquity, or application-identifier entitlements" >&2
               exit 1
             fi
           done
@@ -238,7 +237,7 @@ jobs:
 
       - name: Clean up signing secrets from runner workspace
         if: always()
-        run: rm -f "$RUNNER_TEMP/apple-cert.p12" build/embedded.provisionprofile
+        run: rm -f "$RUNNER_TEMP/apple-cert.p12"
 
       - name: Upload macOS nightly artifacts (${{ matrix.arch }})
         uses: actions/upload-artifact@v4
@@ -460,7 +459,7 @@ jobs:
           Rolling nightly builds of Quill (`com.wycstudios.quill`) from `main`. All platforms share this rolling prerelease; single-platform dispatches keep the other platform's files in place. Nightly installs check this `nightly` feed automatically; install a stable release by hand to switch back to production.
 
           ### macOS
-          Download **Quill-…-arm64.dmg** (Apple Silicon) or **Quill-…-x64.dmg** (Intel), then drag **Quill.app** into Applications. The app is Developer ID signed, hardened, and notarized, with iCloud library sync enabled.
+          Download **Quill-…-arm64.dmg** (Apple Silicon) or **Quill-…-x64.dmg** (Intel), then drag **Quill.app** into Applications. The app is Developer ID signed, hardened, and notarized.
 
           ### Windows
           Download **Quill-Setup-…-x64.exe** (unsigned NSIS installer for x64; SmartScreen may warn on first launch).
