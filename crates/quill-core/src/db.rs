@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 
 const MIGRATIONS: &[(i64, &str)] = &[
     (1, include_str!("../migrations/001_init.sql")),
@@ -22,24 +22,23 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (14, include_str!("../migrations/014_chats_pagination_index.sql")),
 ];
 
-/// SQLite handle for the local materialized view.
+/// SQLite handle for the local library database.
 ///
 /// Two connections: `conn` (write) and `read_conn` (read). SQLite WAL
-/// mode allows concurrent readers alongside a single writer, but
+/// mode allows concurrent readers alongside a single writer, and
 /// `rusqlite::Connection` isn't `Sync` so each needs its own mutex.
-/// Separating them means the sync engine's 500-event replay never
-/// blocks a frontend `list_books` — the two mutexes are independent.
+/// Separating them keeps read queries independent from write locks.
 ///
-/// Both fields live behind `Arc<Mutex<…>>` so `Db` is cheaply
-/// `Clone`-able. Cloning shares the underlying mutexes; the sync
-/// watcher holds one clone in its dedicated thread while Tauri's
-/// command dispatcher holds another in app state.
+/// Both connections live behind `Arc<Mutex<…>>` so `Db` is cheaply
+/// `Clone`-able (for example, between the main command dispatcher and
+/// background tasks like cover backfill).
 pub struct Db {
-    /// Write connection — used by sync engine, import, delete, etc.
+    /// Write connection — used by import, delete, and mutating commands.
     pub conn: Arc<Mutex<Connection>>,
-    /// Read-only connection — used by frontend query commands.
+    /// Read-only connection — used by query commands.
     pub read_conn: Arc<Mutex<Connection>>,
-    pub data_dir: Arc<Mutex<PathBuf>>,
+    /// Local app-data directory containing `quill.db`, `books/`, and `covers/`.
+    pub data_dir: PathBuf,
 }
 
 impl Clone for Db {
@@ -47,44 +46,49 @@ impl Clone for Db {
         Self {
             conn: Arc::clone(&self.conn),
             read_conn: Arc::clone(&self.read_conn),
-            data_dir: Arc::clone(&self.data_dir),
+            data_dir: self.data_dir.clone(),
         }
     }
 }
 
 impl Db {
-    /// Lock the read-only connection. Frontend query commands should
-    /// call this instead of `conn.lock()` so they never contend with
-    /// sync engine writes.
+    /// Lock the read-only connection so query commands do not contend
+    /// with write transactions.
     pub fn reader(&self) -> std::sync::MutexGuard<'_, Connection> {
         self.read_conn.lock().expect("read_conn mutex")
     }
 
-    /// Override the data_dir after construction. Used by `mcp_stdio_main`
-    /// to point at the iCloud ubiquity container when the user has
-    /// migrated, so blob paths (books/, covers/) resolve correctly.
-    pub fn set_data_dir(&mut self, dir: &Path) {
-        *self.data_dir.lock().expect("data_dir mutex") = dir.to_path_buf();
+    /// Run a closure inside a `BEGIN IMMEDIATE` SQLite transaction on the write
+    /// connection so the write lock is acquired before any reads (avoiding
+    /// `SQLITE_BUSY_SNAPSHOT` upgrades under concurrent WAL connections).
+    /// Commits on `Ok` and rolls back automatically if the closure returns
+    /// an error or panics.
+    pub fn with_tx<T>(
+        &self,
+        f: impl FnOnce(&rusqlite::Transaction<'_>) -> AppResult<T>,
+    ) -> AppResult<T> {
+        let mut conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Other(format!("db conn mutex: {e}")))?;
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let out = f(&tx)?;
+        tx.commit()?;
+        Ok(out)
     }
 
-    /// Open the DB with both the SQLite file and the binaries dir at
-    /// `app_data_dir`. Used by tests, fresh installs, and any caller
-    /// where the materialized view and the binary blobs live together.
+    /// Open the DB with both the SQLite file and the blob directories
+    /// (`books/`, `covers/`) under `app_data_dir`.
     pub fn init(app_data_dir: &Path) -> AppResult<Self> {
-        let (db, _needs_backfill) = Self::init_split(app_data_dir, app_data_dir)?;
+        let (db, _needs_backfill) = Self::init_with_backfill(app_data_dir)?;
         Ok(db)
     }
 
     /// Open the SQLite file read-only without running migrations. Used
-    /// by the `quill mcp` stdio subcommand — it's a second process
-    /// reading the DB the Tauri app already owns; we must NOT attempt
-    /// to write or migrate. WAL mode (set by `init_split`) lets this
-    /// reader coexist with the writer in the main app.
-    ///
-    /// `data_dir` is set to the DB file's parent because the query
-    /// helpers used by MCP tools don't touch it (only the Tauri
-    /// command wrappers do, via `resolve_book_paths`). If a future
-    /// tool needs binary blob resolution, this needs revisiting.
+    /// by the `quill-mcp` stdio subprocess — it's a second process
+    /// reading the DB the desktop app owns; we must NOT attempt to write
+    /// or migrate. WAL mode lets this reader coexist with the writer in
+    /// the main app.
     pub fn open_readonly(db_path: &Path) -> AppResult<Self> {
         use rusqlite::OpenFlags;
         let conn = Connection::open_with_flags(
@@ -93,7 +97,7 @@ impl Db {
                 | OpenFlags::SQLITE_OPEN_NO_MUTEX
                 | OpenFlags::SQLITE_OPEN_URI,
         )?;
-        let dummy_data_dir = db_path
+        let data_dir = db_path
             .parent()
             .unwrap_or_else(|| Path::new(""))
             .to_path_buf();
@@ -101,14 +105,14 @@ impl Db {
         Ok(Self {
             read_conn: conn.clone(),
             conn,
-            data_dir: Arc::new(Mutex::new(dummy_data_dir)),
+            data_dir,
         })
     }
 
     /// Open the DB read-write without running migrations. Used by the
-    /// `quill mcp` subprocess when write tools are enabled. Like
-    /// `open_readonly`, the Tauri app owns schema evolution — this
-    /// constructor just opens the existing file with write permission.
+    /// `quill-mcp` subprocess when write tools are enabled. Like
+    /// `open_readonly`, the desktop app owns schema evolution — this
+    /// constructor opens the existing file with write permission.
     pub fn open_readwrite(db_path: &Path) -> AppResult<Self> {
         use rusqlite::OpenFlags;
         let conn = Connection::open_with_flags(
@@ -126,44 +130,31 @@ impl Db {
         Ok(Self {
             read_conn: conn.clone(),
             conn,
-            data_dir: Arc::new(Mutex::new(data_dir)),
+            data_dir,
         })
     }
 
-    /// Open the DB with the SQLite file at `db_dir/quill.db` and binary
-    /// blobs (`books/`, `covers/`) under `data_dir`.
+    /// Open the DB at `app_data_dir/quill.db` and ensure `books/` and
+    /// `covers/` directories exist under `app_data_dir`.
     ///
-    /// Sync-migrated callers pass `db_dir = local_app_data` and
-    /// `data_dir = ubiquity_dir` — the materialized view is local-only
-    /// (per spec, never synced as a file) but the actual book and cover
-    /// files stay in iCloud where the file-sync user originally put them.
-    /// Resolving `books/<id>.epub` then walks into the iCloud folder
-    /// instead of an empty local one. Without this split, the reader
-    /// silently breaks for every existing iCloud user post-migration.
     /// Returns `(db, needs_cover_backfill)`. The caller should run
     /// `backfill_cover_data` on a background thread when the flag is true.
-    pub fn init_split(db_dir: &Path, data_dir: &Path) -> AppResult<(Self, bool)> {
-        fs::create_dir_all(db_dir)?;
-        fs::create_dir_all(data_dir)?;
-        fs::create_dir_all(data_dir.join("books"))?;
-        fs::create_dir_all(data_dir.join("covers"))?;
+    pub fn init_with_backfill(app_data_dir: &Path) -> AppResult<(Self, bool)> {
+        fs::create_dir_all(app_data_dir)?;
+        fs::create_dir_all(app_data_dir.join("books"))?;
+        fs::create_dir_all(app_data_dir.join("covers"))?;
 
-        let db_path = db_dir.join("quill.db");
+        let db_path = app_data_dir.join("quill.db");
         let conn = Connection::open(&db_path)?;
 
-        // WAL is safe here because quill.db lives in the OS app-data dir
-        // (local-only), not iCloud. Pre-Chunk-6 we ran DELETE so iCloud
-        // file-sync wouldn't see torn `-wal`/`-shm` companion files.
-        // Post-Chunk-6 the only iCloud-resident state is binary blobs +
-        // event logs; the SQLite file is fully local, so WAL is the
-        // right default — it gives the stdio MCP subprocess concurrent
-        // read access without blocking the Tauri app's writes.
+        // WAL mode lets concurrent readers (read_conn and the stdio MCP
+        // subprocess) coexist with the single writer without blocking.
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=OFF;")?;
 
         Self::run_migrations(&conn)?;
 
         // One-time migration: convert absolute paths to relative
-        Self::migrate_to_relative_paths(&conn, data_dir)?;
+        Self::migrate_to_relative_paths(&conn, app_data_dir)?;
 
         let needs_cover_backfill: bool = conn
             .query_row(
@@ -173,10 +164,6 @@ impl Db {
             )
             .unwrap_or(false);
 
-        // Separate read connection so frontend queries never contend
-        // with sync engine writes. WAL mode allows concurrent readers
-        // alongside one writer at the SQLite level; the two Rust
-        // mutexes are independent.
         let read_conn = Connection::open_with_flags(
             &db_path,
             rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
@@ -184,11 +171,14 @@ impl Db {
                 | rusqlite::OpenFlags::SQLITE_OPEN_URI,
         )?;
 
-        Ok((Self {
-            conn: Arc::new(Mutex::new(conn)),
-            read_conn: Arc::new(Mutex::new(read_conn)),
-            data_dir: Arc::new(Mutex::new(data_dir.to_path_buf())),
-        }, needs_cover_backfill))
+        Ok((
+            Self {
+                conn: Arc::new(Mutex::new(conn)),
+                read_conn: Arc::new(Mutex::new(read_conn)),
+                data_dir: app_data_dir.to_path_buf(),
+            },
+            needs_cover_backfill,
+        ))
     }
 
     fn run_migrations(conn: &Connection) -> AppResult<()> {
@@ -250,14 +240,11 @@ impl Db {
         if path.is_absolute() {
             path.to_path_buf()
         } else {
-            self.data_dir.lock().unwrap().join(relative)
+            self.data_dir.join(relative)
         }
     }
 
-    /// Run migrations on an already-open connection. Public so the sync
-    /// snapshot module can spin up an in-memory DB to materialize state
-    /// without going through `Db::init` (which assumes a real on-disk
-    /// data dir layout).
+    /// Run migrations on an already-open connection.
     pub fn run_migrations_on(conn: &Connection) -> AppResult<()> {
         Self::run_migrations(conn)
     }
@@ -305,10 +292,7 @@ impl Db {
     /// 2. Read files from disk (no lock held)
     /// 3. Brief write-conn lock to store each cover
     pub fn backfill_cover_data(&self) {
-        let data_dir = match self.data_dir.lock() {
-            Ok(d) => d.clone(),
-            Err(_) => return,
-        };
+        let data_dir = self.data_dir.clone();
 
         // Phase 1: find candidates via read conn
         let rows: Vec<(String, String)> = {
@@ -403,29 +387,116 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
-    /// Regression for PR #192 review finding #1: `init_split` opens the
-    /// SQLite file at `db_dir` but resolves binary blobs against
-    /// `data_dir`. Migrated iCloud users have `db_dir = local` and
-    /// `data_dir = ubiquity`, so a relative `books/foo.epub` walks into
-    /// the iCloud folder where the file actually lives — not into an
-    /// empty local mirror.
     #[test]
-    fn init_split_opens_db_in_db_dir_resolves_blobs_in_data_dir() {
-        let db_dir = TempDir::new().unwrap();
-        let data_dir = TempDir::new().unwrap();
-        let (db, _) = Db::init_split(db_dir.path(), data_dir.path()).unwrap();
+    fn init_creates_db_and_blob_dirs_in_app_data_dir() {
+        let dir = TempDir::new().unwrap();
+        let (db, needs_backfill) = Db::init_with_backfill(dir.path()).unwrap();
 
-        // SQLite file landed in db_dir (NOT data_dir).
-        assert!(db_dir.path().join("quill.db").exists());
-        assert!(!data_dir.path().join("quill.db").exists());
+        assert!(!needs_backfill);
+        assert!(dir.path().join("quill.db").exists());
+        assert!(dir.path().join("books").exists());
+        assert!(dir.path().join("covers").exists());
 
-        // books/ subdir was created in data_dir (NOT db_dir).
-        assert!(data_dir.path().join("books").exists());
-        assert!(!db_dir.path().join("books").exists());
-
-        // resolve_path uses data_dir as the base.
         let resolved = db.resolve_path("books/foo.epub");
-        assert_eq!(resolved, data_dir.path().join("books/foo.epub"));
+        assert_eq!(resolved, dir.path().join("books/foo.epub"));
+    }
+
+    #[test]
+    fn with_tx_commits_and_rolls_back_on_error() {
+        let (_dir, db) = setup();
+        db.with_tx(|tx| {
+            tx.execute(
+                "INSERT INTO settings (key, value) VALUES ('k1', 'v1')",
+                [],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+
+        let err: AppResult<()> = db.with_tx(|tx| {
+            tx.execute(
+                "INSERT INTO settings (key, value) VALUES ('k2', 'v2')",
+                [],
+            )?;
+            Err(AppError::Other("abort".into()))
+        });
+        assert!(err.is_err());
+
+        let conn = db.reader();
+        let v1: String = conn
+            .query_row("SELECT value FROM settings WHERE key = 'k1'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(v1, "v1");
+        let k2_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM settings WHERE key = 'k2'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(k2_count, 0);
+    }
+
+    #[test]
+    fn with_tx_immediate_prevents_busy_snapshot_across_connections() {
+        let (dir, db1) = setup();
+        let db2 = Db::open_readwrite(&dir.path().join("quill.db")).unwrap();
+
+        let now = chrono::Utc::now().timestamp_millis();
+        db1.with_tx(|tx| {
+            tx.execute(
+                "INSERT INTO books (id, title, author, file_path, format, status, progress, created_at, updated_at)
+                 VALUES ('b1', 'Book', 'Author', 'books/b1.epub', 'epub', 'unread', 0, ?1, ?1)",
+                params![now],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+
+        let (read_done_tx, read_done_rx) = std::sync::mpsc::channel();
+        let writer2 = std::thread::spawn(move || {
+            read_done_rx.recv().unwrap();
+            db2.with_tx(|tx| {
+                tx.execute(
+                    "INSERT INTO settings (key, value) VALUES ('concurrent_writer', 'ok')",
+                    [],
+                )?;
+                Ok(())
+            })
+        });
+
+        let deleted_path: String = db1
+            .with_tx(|tx| {
+                let path: String = tx.query_row(
+                    "SELECT file_path FROM books WHERE id = 'b1'",
+                    [],
+                    |r| r.get(0),
+                )?;
+                read_done_tx.send(()).unwrap();
+                // Hold the transaction across the read-to-write transition so a
+                // DEFERRED transaction would allow writer2 to commit first and
+                // fail the subsequent DELETE with SQLITE_BUSY_SNAPSHOT.
+                std::thread::sleep(std::time::Duration::from_millis(60));
+                tx.execute("DELETE FROM books WHERE id = 'b1'", [])?;
+                Ok(path)
+            })
+            .expect("IMMEDIATE write transaction must not fail with SQLITE_BUSY_SNAPSHOT");
+
+        writer2
+            .join()
+            .unwrap()
+            .expect("second independent connection should complete after first commits");
+
+        assert_eq!(deleted_path, "books/b1.epub");
+        let conn = db1.reader();
+        let books_left: i64 = conn
+            .query_row("SELECT COUNT(*) FROM books WHERE id = 'b1'", [], |r| r.get(0))
+            .unwrap();
+        let concurrent_val: String = conn
+            .query_row(
+                "SELECT value FROM settings WHERE key = 'concurrent_writer'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(books_left, 0);
+        assert_eq!(concurrent_val, "ok");
     }
 
     fn setup() -> (TempDir, Db) {

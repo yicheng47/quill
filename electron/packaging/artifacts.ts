@@ -4,8 +4,6 @@ import type { AfterPackContext } from "electron-builder";
 import { Arch } from "electron-builder";
 import { assertBinaryArch, type BinaryArch } from "../../scripts/binary-arch.mjs";
 
-export const PROVISIONING_PROFILE_PATH = "build/embedded.provisionprofile";
-
 export interface PackagingTargetSpec {
   platform: "darwin" | "win32";
   arch: "arm64" | "x64";

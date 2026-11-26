@@ -6,7 +6,7 @@ use std::sync::Mutex;
 use crate::db::Db;
 use crate::error::{AppError, AppResult};
 
-/// Local-only secrets store. Lives at the local app_data_dir and never syncs to iCloud.
+/// Local-only secrets store. Lives at the local app_data_dir and never syncs.
 /// Stores API keys and other sensitive data.
 pub struct Secrets {
     pub conn: Mutex<Connection>,

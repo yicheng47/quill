@@ -5,7 +5,6 @@ export type SettingsSection =
   | "dictionary"
   | "tools"
   | "ai"
-  | "librarySync"
   | "mcp"
   | "updates"
   | "about";
@@ -18,12 +17,9 @@ export interface SettingsProps {
   showSavedToast: (msg?: string) => void;
 }
 
-export function normalizeSettingsSection(section?: string, isMac = true): SettingsSection {
+export function normalizeSettingsSection(section?: string): SettingsSection {
   if (section === "lookup" || section === "translation" || section === "tools") {
     return "tools";
-  }
-  if (section === "librarySync" && !isMac) {
-    return "general";
   }
   if (
     section === "general" ||
@@ -32,7 +28,6 @@ export function normalizeSettingsSection(section?: string, isMac = true): Settin
     section === "dictionary" ||
     section === "tools" ||
     section === "ai" ||
-    section === "librarySync" ||
     section === "mcp" ||
     section === "updates" ||
     section === "about"

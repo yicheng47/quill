@@ -1,10 +1,10 @@
 # Quill — Architecture
 
-> The architecture doc defines *how* Quill works — the runtime picture, domain model, sync protocol, AI integration, and the design decisions behind each. For feature specs and roadmap, see [`../features/`](../features/) and [`../roadmap/`](../roadmap/).
+> The architecture doc defines *how* Quill works — the runtime picture, domain model, storage layout, AI integration, and the design decisions behind each. For feature specs and roadmap, see [`../features/`](../features/) and [`../roadmap/`](../roadmap/).
 
 ## 1. Overview
 
-Quill is a local-first AI-powered ebook reader. It reads EPUBs and PDFs, provides AI-assisted lookup/chat/translation, and syncs across devices via iCloud. The desktop app pairs an Electron 45 shell (main/preload/renderer) with a shared Rust core loaded through the `quill-node` N-API addon (`crates/quill-core` + `crates/quill-node`), React 19 + TypeScript UI, SQLite (WAL mode) for persistent state, and a per-device JSONL event log for sync.
+Quill is a local-first AI-powered ebook reader. It reads EPUBs and PDFs, provides AI-assisted lookup/chat/translation, and stores all library data locally in SQLite and on-disk book files. The desktop app pairs an Electron 45 shell (main/preload/renderer) with a shared Rust core loaded through the `quill-node` N-API addon (`crates/quill-core` + `crates/quill-node`), React 19 + TypeScript UI, and SQLite (WAL mode) for persistent state.
 
 ### 1.1 Runtime picture
 
@@ -17,7 +17,7 @@ Quill is a local-first AI-powered ebook reader. It reads EPUBs and PDFs, provide
 │  │                                                                       │   │
 │  │  Home ── BookGrid / BookList (cursor-paginated)                       │   │
 │  │  Reader ── Foliate.js (EPUB) / PDF.js (PDF)                           │   │
-│  │  Settings Modal (8 tabs)                                              │   │
+│  │  Settings View (9 tabs)                                               │   │
 │  │  Popovers: LookupPopover, TranslationPopover, HighlightToolbar        │   │
 │  │  Side panels: AI chat, bookmarks, highlights, vocab                   │   │
 │  └────────────────────────────────┬──────────────────────────────────────┘   │
@@ -28,28 +28,24 @@ Quill is a local-first AI-powered ebook reader. It reads EPUBs and PDFs, provide
 │  │                                                                       │   │
 │  │  QuillUpdaterService (electron-updater)  |  protocols (quill-app/file)│   │
 │  │                                                                       │   │
-│  │  ┌──────────────────┐  ┌───────────────┐  ┌────────────────────────┐  │   │
-│  │  │ commands/        │  │ ai/           │  │ sync/                  │  │   │
-│  │  │  books,bookmarks,│  │  anthropic    │  │  writer   (chokepoint) │  │   │
-│  │  │  collections,    │  │  openai_compat│  │  log      (JSONL)      │  │   │
-│  │  │  chats,vocab,    │  │  oauth        │  │  replay   (LWW merge)  │  │   │
-│  │  │  translation,    │  └───────┬───────┘  │  watcher  (notify)     │  │   │
-│  │  │  settings,ai,    │          │          │  snapshot, merge,      │  │   │
-│  │  │  sync,oauth,mcp  │          │          │  peers, device         │  │   │
-│  │  └────────┬─────────┘          │          └───────────┬────────────┘  │   │
-│  └───────────┼────────────────────┼──────────────────────┼───────────────┘   │
-│              │                    │                      │                   │
-│              ▼                    ▼                      ▼                   │
-│     ┌─────────────────┐  ┌──────────────────┐  ┌────────────────────────┐    │
-│     │ quill.db        │  │ AI provider API  │  │ iCloud ubiquity        │    │
-│     │ (SQLite WAL,    │  │ (OpenAI,         │  │ container              │    │
-│     │  dual-conn)     │  │  Anthropic,      │  │                        │    │
-│     ├─────────────────┤  │  Ollama, custom) │  │ books/   (EPUB/PDF)    │    │
-│     │ secrets.db      │  └──────────────────┘  │ covers/  (.img blobs)  │    │
-│     │ (credentials,   │                        │ logs/    (per-device   │    │
-│     │  never synced)  │                        │           JSONL)       │    │
-│     └─────────────────┘                        │ snapshots/             │    │
-│                                                └────────────────────────┘    │
+│  │  ┌──────────────────────────────┐  ┌───────────────────────────────┐  │   │
+│  │  │ commands/                    │  │ ai/                           │  │   │
+│  │  │  books, bookmarks, chats,    │  │  anthropic, openai_compat,    │  │   │
+│  │  │  collections, vocab,         │  │  codex                        │  │   │
+│  │  │  translation, settings,      │  └──────────────┬────────────────┘  │   │
+│  │  │  dictionary, ai, mcp, app    │                 │                   │   │
+│  │  └──────────────┬───────────────┘                 │                   │   │
+│  └─────────────────┼─────────────────────────────────┼───────────────────┘   │
+│                    │                                 │                       │
+│                    ▼                                 ▼                       │
+│     ┌─────────────────────────────┐      ┌──────────────────────────┐        │
+│     │ Local app_data_dir          │      │ AI provider API / Codex  │        │
+│     │  quill.db (SQLite WAL)      │      │  (OpenAI, Anthropic,     │        │
+│     │  secrets.db (credentials)   │      │   Ollama, custom, Codex) │        │
+│     │  device.json                │      └──────────────────────────┘        │
+│     │  books/ (EPUB/PDF)          │                                          │
+│     │  covers/ (legacy covers)    │                                          │
+│     └─────────────────────────────┘                                          │
 └──────────────────────────────────────────────────────────────────────────────┘
 
 Separate process (standalone binary in Contents/Resources/quill-mcp):
@@ -60,11 +56,9 @@ Separate process (standalone binary in Contents/Resources/quill-mcp):
 └──────────────────────────┘
 ```
 
-**Three distinct subsystems.** The commands layer (`quill-core::dispatch`) handles typed command dispatch from Electron main — each command reads/writes SQLite and returns. The AI layer streams LLM responses over per-request IPC event channels forwarded through `ShellHost` callbacks. The sync layer is the interesting one: it sits alongside the commands as a mutation observer, capturing every write as an event and replaying peer events on the other end.
+**Two primary runtime subsystems.** The commands layer (`quill-core::dispatch`) handles typed command dispatch from Electron main — each command runs plain SQLite queries or transactions (`Db::with_tx`) and returns. The AI layer streams LLM responses over per-request IPC event channels forwarded through `ShellHost` callbacks.
 
-**What's not in the picture.** The renderer knows nothing about sync. Through `src/platform/`, it calls commands such as `"import_book"` or `"save_bookmark"` like any local app. The SyncWriter intercepts those mutations at the Rust layer, transparently enqueuing events. The frontend never constructs, reads, or acknowledges sync events directly.
-
-**The invariant this picture encodes.** `quill.db` is the single source of truth for the running app. The JSONL event logs are a replication transport, not a primary store. If you deleted every `.jsonl` file and every peer snapshot, the app would still work — it just wouldn't sync. This is the opposite of Runner's architecture (where the NDJSON *is* the primary store). The difference is intentional: a reading app needs fast indexed queries over 300+ books; an event log is the wrong shape for that.
+**The invariant this picture encodes.** `quill.db` is the single source of truth for the running app. Everything reads and writes directly against the local SQLite database and local `books/` directory under `app_data_dir`.
 
 ## 2. Tech stack
 
@@ -72,23 +66,22 @@ Separate process (standalone binary in Contents/Resources/quill-mcp):
 |---|---|---|
 | Desktop shell | **Electron 45** (`electron-vite`, `electron-builder`) | Cross-platform desktop shell; ships signed/notarized macOS `.dmg` + `.zip` (`arm64`/`x64`) and Windows `x64` NSIS installer. |
 | Native bridge | **`quill-node`** (`napi` 3) | In-process N-API `.node` addon exposing async command dispatch, media root authorization, and event streaming from Rust into Electron main. |
-| Backend | **Rust** (`quill-core`, `quill-mcp`) | Owns SQLite, sync engine, AI streaming, MCP server, EPUB/PDF metadata extraction, and PDFium cover rendering. |
+| Backend | **Rust** (`quill-core`, `quill-mcp`) | Owns SQLite, AI streaming, MCP server, offline dictionaries, EPUB/PDF metadata extraction, and PDFium cover rendering. |
 | Frontend | **React 19 + TypeScript** | Fast SPA bundled cleanly inside Electron's renderer (`quill-app://`). |
 | Styling | **Tailwind CSS 4** | Utility-first; theme tokens via CSS variables. |
 | EPUB rendering | **Foliate.js** (git submodule) | Best open-source EPUB renderer. Handles CFI positions, pagination, search, annotations. |
 | PDF rendering | **PDF.js** + **`pdfium-render`** | PDF.js renders reader pages in the iframe; PDFium renders cover thumbnails in `quill-core`. |
-| Persistence | **SQLite via `rusqlite`** (WAL mode, dual connections) | All app state — library, highlights, chats, settings, sync metadata. WAL gives concurrent readers + one writer without blocking. |
-| Secrets | **Separate SQLite** (`secrets.db`) | API keys, OAuth tokens. Never synced, never exposed through bulk settings queries. |
-| Sync transport | **Append-only JSONL per device** | Peer-to-peer via iCloud file sync. Each device writes its own log; peers replay each other's. |
-| File watching | **`notify` crate** | Watches iCloud directory for peer log changes + `.mcp-notify` sentinel. |
-| AI providers | **reqwest + streaming** | Direct HTTP to OpenAI, Anthropic, Ollama, or any OpenAI-compatible endpoint. Provider-agnostic. |
+| Persistence | **SQLite via `rusqlite`** (WAL mode, dual connections) | All app state — library, highlights, chats, vocab, settings. WAL gives concurrent readers + one writer without blocking. |
+| Secrets | **Separate SQLite** (`secrets.db`) | API keys, kept local and never exposed through bulk settings queries without endpoint-binding checks. |
+| File watching | **`notify` crate** | Watches the local `.mcp-notify` sentinel for external MCP write-back. |
+| AI providers | **reqwest + streaming / Codex** | Direct HTTP to OpenAI, Anthropic, Ollama, or any OpenAI-compatible endpoint, plus local Codex CLI integration. |
 | MCP | **`rmcp` crate** | Model Context Protocol server for AI coding assistants (`quill-mcp` stdio binary). |
 | i18n | **i18next + react-i18next** | English + 简体中文. All UI strings externalized. |
 | Icons | **lucide-react** | Consistent icon set across all UI surfaces. |
 | Logging | **`fern` + `log`** (`quill-core`) + panic hook | Rotated file logs (`quill.log`, 10 MB × 3). Panic hook captures backtraces before logger teardown. |
 | Auto-update | **`electron-updater`** | GitHub Releases (`latest-mac.yml` / `latest.yml`) with channel routing (`releases/latest`, prerelease `-rc.`, and `nightly`). |
 
-**Platform targets.** macOS (Apple Silicon + x64) primary. Windows (x64, NSIS installer) secondary. iCloud sync is macOS-only; on other platforms the app works fully but without cross-device sync.
+**Platform targets.** macOS (Apple Silicon + x64) primary. Windows (x64, NSIS installer) secondary. Both platforms share the same local-first storage and settings tabs.
 
 ## 3. Domain model
 
@@ -99,48 +92,46 @@ Quill's domain is a personal reading library. The objects are simpler than Runne
 ```
 ┌─ Library ──────────────────────────────────────────────────────────────────┐
 │                                                                            │
-│   Book ──────────────── file (EPUB or PDF, stored in data_dir/books/)     │
-│    │                     cover_data (BLOB in SQLite + .img in iCloud)     │
+│   Book ──────────────── file (EPUB or PDF, stored in data_dir/books/)      │
+│    │                     cover_data (BLOB in SQLite)                       │
 │    │                                                                       │
-│    ├── Bookmarks[]       (CFI position + label)                           │
-│    ├── Highlights[]      (CFI range + color + note + text_content)        │
-│    ├── Chats[]           (per-book AI conversation threads)               │
-│    │    └── ChatMessages[]  (role + content, persisted)                   │
-│    └── progress / status / current_cfi  (reading state)                   │
+│    ├── Bookmarks[]       (CFI position + label)                            │
+│    ├── Highlights[]      (CFI range + color + note + text_content)         │
+│    ├── Chats[]           (per-book AI conversation threads)                │
+│    │    └── ChatMessages[]  (role + content, persisted)                    │
+│    └── progress / status / current_cfi  (reading state)                    │
 │                                                                            │
-│   Collection ─── CollectionBooks (M:N junction) ─── Book                  │
+│   Collection ─── CollectionBooks (M:N junction) ─── Book                   │
 │    (named group with sort_order)                                           │
 │                                                                            │
-│   VocabWord              (word + definition + context + mastery_level,    │
-│    (optionally linked     spaced-repetition tracking)                     │
+│   VocabWord              (word + definition + context + mastery_level,     │
+│    (optionally linked     spaced-repetition tracking)                      │
 │     to a book)                                                             │
 │                                                                            │
-│   Settings               (key-value pairs: theme, language, AI config,    │
-│                            per-book reader prefs via `book:{id}:{key}`)   │
+│   Settings               (key-value pairs: theme, language, AI config;     │
+│                            Reader prefs stored per-book in localStorage)   │
 │                                                                            │
 └────────────────────────────────────────────────────────────────────────────┘
 
-┌─ Sync metadata (internal, prefixed with underscore) ───────────────────────┐
-│                                                                             │
-│   _pending_publish       outbox: events awaiting flush to device log       │
-│   _replay_state          per-peer watermarks (last replayed ULID)          │
-│   _tombstones            deletion markers (entity_id + entity_type)        │
-│   DeviceIdentity         UUID + name, persisted at .device-identity file   │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
+┌─ Device & inert legacy schema tables ──────────────────────────────────────┐
+│                                                                            │
+│   DeviceIdentity         UUID persisted at `device.json` (kept for #370)   │
+│   _pending_publish       inert legacy table from migration 011             │
+│   _replay_state          inert legacy table from migration 010             │
+│   _tombstones            inert legacy table from migration 010             │
+│                                                                            │
+└────────────────────────────────────────────────────────────────────────────┘
 ```
 
 **Book is the central entity.** Almost everything hangs off a book — bookmarks, highlights, and chats. The exceptions are vocab words (which may reference a book but exist independently) and collections (which group books without owning them).
 
 ### 3.2 Book — *one imported ebook*
 
-An EPUB or PDF file imported into the library. Carries metadata (title, author, description, pages, genre), reading state (status, progress percentage, current CFI position), and a cover image stored as a BLOB in SQLite.
+An EPUB or PDF file imported into the library. Carries metadata (title, author, description, pages, genre), reading state (status, progress percentage, current CFI position), and a cover image stored as a BLOB in SQLite (`cover_data`, served to the frontend as a `data:image/…;base64,…` URI).
 
 Two identifying fields:
-- **`id`** — UUID, assigned at import. Stable across sync.
-- **`file_path`** — relative path under `data_dir/books/`. The file may be evicted by iCloud (replaced with a `.icloud` placeholder); `available` is computed at query time.
-
-Cover storage is dual: `cover_data` BLOB in SQLite for fast rendering (the frontend receives a `data:image/…;base64,…` URI), plus a `covers/{book_id}.img` file in iCloud for sync transport. The BLOB is authoritative; the `.img` file is a transport artifact.
+- **`id`** — UUID, assigned at import.
+- **`file_path`** — relative path under `data_dir/books/`, resolved to an absolute path when returned to the desktop frontend. `available` is computed at query time via `abs_path.exists()`.
 
 ### 3.3 Collection — *a named group of books*
 
@@ -152,162 +143,48 @@ Multiple chats per book. Each chat has a title and a list of messages (role: use
 
 ### 3.5 Settings — *key-value configuration store*
 
-All settings live in a single `settings` table (`key TEXT PRIMARY KEY, value TEXT`). App-wide settings use bare keys (`theme`, `language`, `ai_provider`). Per-book settings use the convention `book:{id}:{key}` (e.g., `book:abc-123:font_size`).
+App-wide settings live in a single `settings` table (`key TEXT PRIMARY KEY, value TEXT`). Reader persists per-book typography, theme, and PDF zoom preferences in browser `localStorage` (`reader-settings-<bookId>`, `reader-zoom-<bookId>`); the `book_settings` SQLite table remains in the schema for compatibility.
 
-Sensitive settings (API keys, OAuth tokens) live in `secrets.db`, not the main settings table. The `get_all_settings` command never returns secret values.
+Sensitive settings (API keys) live in `secrets.db`, not the main settings table. `get_all_settings` only returns `ai_api_key` when its persisted endpoint binding matches the configured provider and base URL.
 
-## 4. Storage — *two databases, two directories*
+## 4. Storage — *two databases, one local directory*
 
 ### 4.1 Directory layout
 
 ```
-~/.app-data/com.wycstudios.quill/       (local_dir — always local, never synced)
-├── quill.db                             materialized view of all app state
-├── quill.db-wal                         WAL journal
-├── secrets.db                           API keys, OAuth tokens
-├── .device-identity                     this device's UUID + name
-├── .icloud_setting                      marker: sync is enabled (contains data_dir path)
-└── .mcp-notify                          sentinel JSON for MCP write-back
-
-When sync is DISABLED, blobs also live here:
-├── books/                               EPUB/PDF files
-└── covers/                              cover images
-
-When sync is ENABLED, blobs move to iCloud:
-~/Library/Mobile Documents/iCloud~com~wycstudios~quill/Documents/   (data_dir)
-├── books/                               EPUB/PDF files (iCloud-synced)
-├── covers/                              cover .img files (iCloud-synced)
-├── logs/                                per-device JSONL event logs
-│   ├── {device-a-uuid}.jsonl
-│   └── {device-b-uuid}.jsonl
-├── snapshots/                           compacted state snapshots
-└── manifest.jsonl                       peer metadata (name, platform, version)
+<app_data_base_dir>/com.wycstudios.quill/   (local_dir — always local)
+├── quill.db                                SQLite database (WAL mode)
+├── quill.db-wal                            WAL journal
+├── secrets.db                              API keys (local-only)
+├── device.json                             Stable device UUID (retained for #370)
+├── .mcp-notify                             Sentinel JSON for MCP write-back
+├── books/                                  EPUB/PDF files
+├── covers/                                 Legacy on-disk covers (backfilled into cover_data)
+├── dictionaries/                           Imported offline dictionaries
+└── codex-workspace/                        Local Codex runtime workspace
 ```
-
-**Why two directories.** `quill.db` must never be synced via iCloud file sync — SQLite and file-level sync are incompatible (WAL corruption, partial writes, lock conflicts). The solution: keep the database local, sync the event logs, and let each device build its own materialized view from the shared logs.
 
 ### 4.2 Dual-connection SQLite
 
-`Db` holds two connections to the same database file:
-- **Write connection** — used by all mutation commands. One at a time (SQLite's built-in serialization).
-- **Read-only connection** — used by queries that don't need the latest write. WAL mode lets reads proceed concurrently with writes without blocking.
+`Db` holds two connections to `local_dir/quill.db`:
+- **Write connection** — used by mutation commands (transactional mutations via `Db::with_tx`, which uses `BEGIN IMMEDIATE`, plus direct write-connection statements for single-statement updates). One writer at a time (SQLite's built-in serialization).
+- **Read-only connection** — used by query commands (`Db::reader()`). WAL mode lets concurrent readers proceed alongside the writer without blocking.
 
-The `Db::init_split(local_dir, data_dir)` constructor separates the database location (always `local_dir/quill.db`) from the blob storage location (`data_dir`, which may be iCloud). This split is the key architectural decision that makes sync possible.
+`Db::init_with_backfill(app_data_dir)` creates `books/` and `covers/`, opens `quill.db` in WAL mode, applies shipped migrations `001`–`014`, migrates legacy absolute paths to relative paths, and reports whether `cover_data` backfill is needed.
 
 ### 4.3 Secrets store
 
-`secrets.db` is a separate SQLite file with a single `secrets` table. It exists because:
-- Secrets must never appear in sync logs (event payloads would expose them to iCloud).
-- The `get_all_settings` bulk query must not accidentally return API keys.
-- Legacy migration: early versions stored secrets in the main settings table; on first launch, the app moves them to `secrets.db` and deletes the originals.
+`secrets.db` is a separate SQLite file with a single `secrets` table. Keeping secrets separate ensures credentials stay isolated from general library data and prevents accidental exposure through bulk queries or future sync. Early versions stored API keys in the main `settings` table; on startup, `Secrets::migrate_from_settings` moves them into `secrets.db` and deletes the originals.
 
-## 5. Sync architecture — *event-sourced, peer-to-peer*
+## 5. Sync status — *clean slate ahead of Quill Cloud (#370)*
 
-Quill syncs across devices without a server. Each device writes its mutations to a local JSONL event log in the iCloud ubiquity container; iCloud syncs those files to other devices; each device replays peer logs into its local database.
+The legacy iCloud Drive event-log engine (per-device JSONL logs, snapshots, LWW replay, iCloud file coordination, dual `data_dir` splitting, macOS iCloud entitlements, and iCloud Sync settings UI) was removed in `#370` M1 to prepare for Quill Cloud's server-ordered entity-sync protocol.
 
-### 5.1 The sync loop
+**Upgrade note for iCloud-synced Macs.** In older Mac builds with iCloud Sync in Settings (such as `v1.3.4` and pre-`#370` M1 nightlies), enabling sync relocated `books/` and `covers/` out of local app data into the iCloud container, whereas local-only desktop builds from `#370` M1 onward open only `local_dir` and intentionally have no automatic copy-back path. Before installing a local-only desktop build on a Mac where iCloud Sync is enabled, turn off sync in the older sync-capable version, wait for the local copy to finish, and verify that a book opens.
 
-```
-Device A                              iCloud                              Device B
-─────────                             ──────                              ─────────
-
-User imports a book
-  → commands::books::import_book()
-    → SyncWriter.with_tx(|conn| {
-        INSERT INTO books ...;        // DB mutation
-        INSERT INTO _pending_publish  // enqueue event
-      })
-    → SyncWriter.flush()
-      → APPEND logs/device-a.jsonl    ──── iCloud file sync ────→  logs/device-a.jsonl
-                                                                   │
-                                                                   ▼
-                                                          notify watcher fires
-                                                            → ReplayEngine.tick()
-                                                              → read device-a.jsonl
-                                                                from watermark
-                                                              → for each event:
-                                                                LWW merge into DB
-                                                              → update watermark
-```
-
-**SyncWriter is the single chokepoint.** Every mutation in the app — import, delete, bookmark, highlight, progress update, settings change — goes through `SyncWriter.with_tx()`. This method takes a closure, runs it in a SQLite transaction, and simultaneously enqueues the corresponding sync event in `_pending_publish`. The transaction ensures the DB write and the event enqueue are atomic.
-
-**Why not write directly to the JSONL?** Two reasons: (1) iCloud may be temporarily unreachable, so the outbox (`_pending_publish`) buffers events until flush succeeds; (2) the two-phase approach lets us batch multiple events into a single JSONL append for efficiency.
-
-### 5.2 Event schema
-
-Each event in the JSONL log is one line:
-
-```jsonc
-{
-  "id":          "01HG3K...",              // ULID, monotonic per device
-  "device_uuid": "abc-123",
-  "device_name": "Jason's MacBook Pro",
-  "ts_ms":       1716825600000,            // millisecond timestamp
-  "body": {
-    "BookImport": {                        // discriminant tag
-      "id": "book-uuid",
-      "title": "...",
-      "author": "...",
-      // ... full book metadata
-    }
-  }
-}
-```
-
-The `body` field is a Rust enum (`EventBody`) serialized as an externally-tagged JSON object. Event types include: `BookImport`, `BookUpdate`, `BookDelete`, `BookmarkAdd`, `BookmarkRemove`, `HighlightAdd`, `HighlightRemove`, `HighlightUpdate`, `CollectionCreate`, `CollectionRename`, `CollectionDelete`, `CollectionAddBook`, `CollectionRemoveBook`, `VocabAdd`, `VocabRemove`, `SettingsUpdate`.
-
-### 5.3 LWW merge — *last-write-wins conflict resolution*
-
-When replaying a peer event, the merge logic compares timestamps:
-
-1. Look up the entity in the local DB.
-2. If the local `updated_at` is newer than the event's `ts_ms`, skip (local wins).
-3. If the event's `ts_ms` is newer, apply the change (peer wins).
-4. Tie-break: if timestamps are equal, the lexicographically greater `device_uuid` wins. Deterministic, no coordination needed.
-
-**Why LWW.** For a personal reading app, last-write-wins is the right tradeoff. Conflicts are rare (one user, multiple devices, usually not editing the same book simultaneously). When they happen, the most recent action is almost always the intended one. More sophisticated CRDTs would add complexity without meaningful benefit.
-
-**Progress throttling.** Page turns fire rapidly. Without throttling, a single reading session would generate hundreds of events. SyncWriter coalesces progress updates: at most one progress event per book per 2-second window. Semantic transitions (`mark_finished`, `mark_reading`) bypass the throttle because they carry intent, not just a percentage.
-
-### 5.4 Cover sync — *dual storage*
-
-Covers posed a unique challenge: they're binary blobs (10KB–500KB each) that don't fit well in JSONL event payloads. The solution is dual storage:
-
-- **`cover_data` BLOB in SQLite** — the authoritative copy. Used for rendering (converted to `data:image/…;base64,…` URIs). Fast to query, no file I/O.
-- **`covers/{book_id}.img` in iCloud** — the transport copy. A dedicated cover-writer background thread writes these files asynchronously when sync is enabled.
-
-On the receiving end, `ingest_peer_covers()` reads `.img` files from the iCloud covers directory and writes them into the local database as BLOBs. The three-phase pattern prevents lock contention: (1) read-only query for candidates, (2) file I/O with no DB lock held, (3) brief write lock per cover.
-
-Snapshots exclude `cover_data` to keep them small (metadata only). Covers sync exclusively via `.img` files.
-
-### 5.5 Snapshots and log compaction
-
-Over time, per-device logs grow. Snapshots provide a checkpoint:
-
-1. **`sync_compact`** dumps the current DB state as a snapshot (all books, collections, highlights, etc. minus cover BLOBs).
-2. The snapshot replaces the device's JSONL log — peers can bootstrap from the snapshot instead of replaying the full history.
-3. Old log entries before the snapshot watermark can be pruned.
-
-### 5.6 SyncWriter modes
-
-SyncWriter has three modes, reflecting the app's lifecycle:
-
-| Mode | Behavior | When |
-|---|---|---|
-| **Disabled** | Mutations hit SQLite only. No events enqueued. | Sync not enabled. |
-| **Queue-only** | Events enqueued in `_pending_publish` but not flushed to JSONL. | Sync enabled, but engine still booting (background thread). |
-| **Enabled** | Events enqueued and flushed to the device's JSONL log. | Sync fully booted. |
-
-The queue-only mode prevents the app from blocking on iCloud I/O during launch. The user can interact immediately; events buffer locally and flush once the sync engine finishes its initial tick.
-
-### 5.7 Watcher and replay
-
-`sync::watcher::spawn()` uses the `notify` crate to watch the iCloud `logs/` directory. When a peer's JSONL file changes, it triggers `ReplayEngine::tick()`, which reads new events from that peer (using the stored watermark in `_replay_state`) and applies them via LWW merge.
-
-The watcher also handles:
-- **iCloud placeholders** — `.icloud` files that indicate the real file is evicted. The watcher calls `trigger_download_file` to request iCloud download and skips to the next tick.
-- **Peer discovery** — new `.jsonl` files in the logs directory mean a new device has joined.
+Two compatibility pieces remain intentionally untouched:
+- **`DeviceIdentity`** (`crates/quill-core/src/sync/device.rs`, stored at `device.json`) continues to load or initialize on boot so installs preserve a stable device UUID across the transition.
+- **Shipped migrations `001`–`014`** remain unmodified so existing local `quill.db` files stay valid; the legacy `_replay_state`, `_tombstones`, `_pending_publish` tables and `updated_by_device` columns remain inert until superseded.
 
 ## 6. Boot sequence
 
@@ -321,27 +198,16 @@ electron/main/index.ts
      a. Install panic hook + init `fern` rotating logger (`<log_dir>/quill.log`)
      b. Configure PDFium path (`pdfium::set_configured_path`) if resolved
      c. Resolve local_dir (`<app_data_base_dir>/com.wycstudios.quill[-dev]/`)
-     d. Self-heal: if `quill.db` missing but `.icloud_setting` exists, clear stale marker
-     e. Resolve ubiquity_dir (iCloud container) if sync enabled
-     f. Load or create DeviceIdentity
-     g. Resolve data_dir (iCloud if sync, else local)
-     h. `Db::init_split(local_dir, data_dir)` → runs migrations, returns `needs_cover_backfill`
-     i. Init `Secrets` store, migrate legacy secrets
-     j. Create `SyncWriter`, spawn `.mcp-notify` watcher
-     k. If `!is_dev` (packaged boot): repair legacy packaged MCP entries in `~/.claude.json` and `~/.codex/config.toml`
-     l. If sync enabled + iCloud reachable:
-          spawn `sync-boot` background thread → `boot_sync_engine()`
-            → open EventLog, create ReplayEngine, spawn watcher
-            → initial tick + chained backfill (cover files → BLOBs → .img files)
-        else if non-sync + `needs_cover_backfill`:
-          spawn `cover-backfill` thread → `db.backfill_cover_data()`
+     d. Load or create DeviceIdentity (`device.json`)
+     e. `Db::init_with_backfill(&local_dir)` → runs migrations 001–014, returns `needs_cover_backfill`
+     f. If `needs_cover_backfill`: spawn `cover-backfill` thread → `db.backfill_cover_data()`
+     g. Init `Secrets` store, migrate legacy secrets, run AI startup migration
+     h. Spawn `.mcp-notify` watcher
+     i. If `!is_dev` (packaged boot): repair legacy packaged MCP entries in `~/.claude.json` and `~/.codex/config.toml`
+     j. Initialize `Codex` runtime and `DictionaryManager`
   5. Wire `QuillUpdaterService`, register protocols + IPC handlers, install menu, create main window
   6. Frontend mounts → calls `app_ready` → replays queued `file-open` paths and shows window
 ```
-
-**Why async boot.** The sync engine touches iCloud — network I/O that can take seconds. If this ran on the main thread during startup, the user would see a blank window. Instead, `host::boot()` initializes SQLite and spawns `sync-boot` in the background so the main window renders immediately from local SQLite while sync catches up.
-
-**Self-healing.** The stale-marker check (step 4d) handles the edge case where a user deletes `quill.db` via Finder but leaves `.icloud_setting` intact. Without this, the app would try to boot sync without a database.
 
 ## 7. MCP server — *AI coding assistant integration*
 
@@ -465,13 +331,11 @@ When `!app.isPackaged` (`make dev`), `bootQuillCore` passes `isDev = true` to `q
 | `pdfium-render` 0.9 | PDF cover thumbnail rendering (dynamic `libpdfium` bundled into app resources) |
 | `lopdf` 0.40 | PDF test fixtures (`dev-dependencies`) |
 | `fern` 0.7 / `log` 0.4 | Rotating file logs (10 MB × 3) |
-| `notify` 6 | Filesystem watcher (iCloud logs + `.mcp-notify` sentinel) |
-| `serde` / `serde_json` | Serialization for events, IPC, settings |
+| `notify` 6 | Filesystem watcher (`.mcp-notify` sentinel) |
+| `serde` / `serde_json` | Serialization for IPC, settings, and AI payloads |
 | `chrono` | Timestamps (with serde support) |
-| `uuid` / `ulid` | Book IDs (UUID v4), event IDs (ULID for time-ordering) |
+| `uuid` / `ulid` | Entity IDs (UUID v4) and unique temporary probe paths (`ai/codex/discovery.rs`, ULID) |
 | `sha2` / `base64` | Content hashing, cover encoding |
-| `objc2` / `objc2-foundation` | macOS-only: `NSFileCoordinator` / `NSFileManager` for iCloud APIs |
-| `gethostname` | Device name for sync peer metadata |
 | `toml_edit` | Round-trip TOML editing (MCP config in `~/.codex/config.toml`) |
 
 ### Desktop & Frontend (`package.json`)

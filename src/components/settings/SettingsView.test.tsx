@@ -240,19 +240,6 @@ describe("SettingsView and redesigned sections", () => {
       if (cmd === "check_ollama_status") {
         return { running: false, models: null };
       }
-      if (cmd === "sync_status") {
-        return {
-          enabled: false,
-          available: false,
-          sync_enabled: false,
-          shared_dir: null,
-          device_uuid: "d1",
-          device_name: "Test Mac",
-          peers: [],
-          pending_events: 0,
-          last_replay_at: null,
-        };
-      }
       return null;
     });
 
@@ -268,23 +255,23 @@ describe("SettingsView and redesigned sections", () => {
     container.remove();
   });
 
-  it("shows all 10 tabs in 4 groups on macOS, hides iCloud Sync on Windows, and omits Reset All Data", async () => {
+  it("shows all 9 tabs in 4 groups on macOS and Windows, falls back legacy librarySync to general, and omits Reset All Data", async () => {
     await renderView();
-    const macTabs = Array.from(container.querySelectorAll("button[data-settings-tab]")).map((b) =>
-      b.getAttribute("data-settings-tab"),
-    );
-    expect(macTabs).toEqual([
+    const expectedTabs = [
       "general",
       "appearance",
       "reading",
       "dictionary",
       "tools",
       "ai",
-      "librarySync",
       "mcp",
       "updates",
       "about",
-    ]);
+    ];
+    const macTabs = Array.from(container.querySelectorAll("button[data-settings-tab]")).map((b) =>
+      b.getAttribute("data-settings-tab"),
+    );
+    expect(macTabs).toEqual(expectedTabs);
     const navText = container.querySelector("aside")?.textContent ?? "";
     expect(navText).toContain("App");
     expect(navText).toContain("Tools");
@@ -292,29 +279,27 @@ describe("SettingsView and redesigned sections", () => {
     expect(navText).toContain("System");
     expect(navText).toContain("Dictionary");
     expect(navText).toContain("Look Up & Translate");
+    expect(navText).not.toContain("iCloud Sync");
     expect(container.textContent).not.toContain("Reset All Local Data");
     expect(container.textContent).toContain("Quill 2.0.0");
 
     await act(async () => {
       root.unmount();
     });
+    root = createRoot(container);
+    await renderView("librarySync" as SettingsSection);
+    expect(container.querySelector("h2")?.textContent).toBe("General");
+
+    await act(async () => {
+      root.unmount();
+    });
     setOs("win");
     root = createRoot(container);
-    await renderView("librarySync");
+    await renderView("librarySync" as SettingsSection);
     const winTabs = Array.from(container.querySelectorAll("button[data-settings-tab]")).map((b) =>
       b.getAttribute("data-settings-tab"),
     );
-    expect(winTabs).toEqual([
-      "general",
-      "appearance",
-      "reading",
-      "dictionary",
-      "tools",
-      "ai",
-      "mcp",
-      "updates",
-      "about",
-    ]);
+    expect(winTabs).toEqual(expectedTabs);
     expect(container.querySelector("h2")?.textContent).toBe("General");
   });
 
@@ -847,51 +832,6 @@ describe("SettingsView and redesigned sections", () => {
       ghBtn?.click();
     });
     expect(mocks.openUrl).toHaveBeenCalledWith("https://github.com/yicheng47/quill");
-  });
-
-  it("portals iCloud Sync confirmation outside the dawn-glass pane and leaves sync off on Cancel", async () => {
-    mocks.invoke.mockImplementation(async (cmd) => {
-      if (cmd === "get_all_settings") return { ...mocks.settingsMap };
-      if (cmd === "sync_status") {
-        return {
-          enabled: false,
-          available: true,
-          sync_enabled: false,
-          shared_dir: null,
-          device_uuid: "d1",
-          device_name: "Test Mac",
-          peers: [],
-          pending_events: 0,
-          last_replay_at: null,
-        };
-      }
-      return null;
-    });
-
-    await renderView("librarySync");
-
-    const toggle = container.querySelector<HTMLButtonElement>(
-      'button[role="switch"][aria-label="Sync with iCloud"]',
-    );
-    await act(async () => {
-      toggle?.click();
-    });
-
-    const settingsView = container.querySelector('[data-testid="settings-view"]')!;
-    const dialog = document.querySelector('[role="dialog"]');
-    expect(dialog).not.toBeNull();
-    expect(settingsView.contains(dialog)).toBe(false);
-    expect(dialog?.parentElement?.parentElement).toBe(document.body);
-    expect(dialog?.textContent).toContain("Turn on iCloud Sync?");
-
-    const cancelBtn = Array.from(dialog!.querySelectorAll("button")).find(
-      (b) => b.textContent === "Cancel",
-    );
-    await act(async () => {
-      cancelBtn?.click();
-    });
-    expect(document.querySelector('[role="dialog"]')).toBeNull();
-    expect(mocks.invoke).not.toHaveBeenCalledWith("sync_enable");
   });
 
   it("clears the saved API key on AI-pane unmount cross-origin Base URL edit and never passes cached key on remount", async () => {

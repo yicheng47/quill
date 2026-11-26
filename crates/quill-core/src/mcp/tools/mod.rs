@@ -14,9 +14,9 @@
 //! - `secrets.db` — API keys stay local to the desktop host.
 //! - Secrets store — separate `Mutex<Connection>`; never add a
 //!   `Secrets` clone to `McpState`.
-//! - Sync infra tables — `_replay_state`, `_tombstones`,
+//! - Inert legacy sync tables — `_replay_state`, `_tombstones`,
 //!   `_pending_publish` (migrations 010/011).
-//! - Device identity, sync logs.
+//! - Device identity (`device.json`).
 //!
 //! Every new tool MUST be added to `QuillMcpHandler::tool_router()`'s
 //! merge list AND its router method named in this audit comment when

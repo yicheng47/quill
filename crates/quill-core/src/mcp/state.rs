@@ -1,43 +1,38 @@
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use crate::db::Db;
-use crate::sync::writer::SyncWriter;
 
 /// Shared state handed to every MCP request handler.
 ///
-/// `Db` is already cheaply `Clone` (its inner `Connection` and
-/// `data_dir` live behind `Arc<Mutex<…>>`), so we do NOT wrap it in
-/// another `Arc`. See `db.rs:31-43`.
+/// `Db` is already cheaply `Clone` (its inner `Connection` handles live
+/// behind `Arc<Mutex<…>>`), so we do NOT wrap it in another `Arc`.
 ///
-/// `sync` is `Some` when write tools are enabled (`mcp_write_enabled`
-/// setting). Write tool handlers check this and return a clear error
-/// when `None`. `SyncWriter` is behind `Arc` so `McpState` stays
-/// `Clone` (the writer is shared across all tool invocations).
+/// `write_enabled` reflects whether write tools were enabled when this
+/// MCP session started (`mcp_write_enabled` setting). Write tool handlers
+/// also re-check SQLite on every call so revoking write access takes
+/// effect immediately.
 #[derive(Clone)]
 pub struct McpState {
     pub db: Db,
-    pub sync: Option<Arc<SyncWriter>>,
+    pub write_enabled: bool,
     notify_path: Option<PathBuf>,
 }
 
 impl McpState {
-    /// `notify_dir` is the **local** app-data directory — NOT the iCloud
-    /// blob dir. The Tauri app watches `notify_dir/.mcp-notify`; if the
-    /// sentinel were placed under the iCloud dir (which `db.data_dir`
-    /// points to after migration), the watcher would never fire.
-    pub fn new(db: Db, sync: Option<SyncWriter>, notify_dir: Option<&Path>) -> Self {
-        let notify_path = sync
-            .as_ref()
-            .and_then(|_| notify_dir.map(|d| d.join(".mcp-notify")));
+    /// `notify_dir` is the local app-data directory containing `.mcp-notify`,
+    /// watched by the desktop app to refresh its UI after MCP writes.
+    pub fn new(db: Db, write_enabled: bool, notify_dir: Option<&Path>) -> Self {
+        let notify_path = write_enabled
+            .then(|| notify_dir.map(|d| d.join(".mcp-notify")))
+            .flatten();
         Self {
             db,
-            sync: sync.map(Arc::new),
+            write_enabled,
             notify_path,
         }
     }
 
-    /// Write a sentinel file so the running Tauri app can detect MCP
+    /// Write a sentinel file so the running desktop app can detect MCP
     /// writes and refresh its UI. Overwrites (never appends) — the file
     /// stays ~80 bytes regardless of how many writes occur.
     pub fn notify(&self, domain: &str, action: &str, id: &str) {

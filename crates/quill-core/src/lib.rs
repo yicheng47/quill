@@ -7,7 +7,6 @@ pub mod epub;
 pub mod error;
 pub(crate) mod html;
 pub mod host;
-pub mod icloud;
 pub mod logging;
 pub mod mcp;
 pub mod panic_hook;

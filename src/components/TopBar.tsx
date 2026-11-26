@@ -4,7 +4,6 @@ import {
   Search,
   Plus,
   Settings,
-  RefreshCw,
   CircleArrowDown,
   RotateCw,
   TriangleAlert,
@@ -16,7 +15,7 @@ import QuillLogo from "./QuillLogo";
 import IconButton from "./ui/IconButton";
 import WindowControls from "./WindowControls";
 import { useUpdate } from "../contexts/UpdateContext";
-import { getOpenReaderCount, listen, listenCurrentWindow, openUrl } from "../platform";
+import { getOpenReaderCount, listenCurrentWindow, openUrl } from "../platform";
 import type { UpdateStatus } from "../hooks/useUpdateChecker";
 import {
   isMacOS,
@@ -379,39 +378,13 @@ export default function TopBar({
 }: TopBarProps) {
   const { t } = useTranslation();
   const { status: updateStatus, manualCheck, upToDateSeq } = useUpdate();
-  const [syncProgress, setSyncProgress] = useState<{ percent: number | null } | null>(null);
   const showUpToDate = useManualUpToDate(updateStatus, upToDateSeq);
   const hasCompactBadge =
-    Boolean(syncProgress) ||
     (updateStatus === "checking" && manualCheck) ||
     (updateStatus === "idle" && showUpToDate);
   const isMac = isMacOS();
   const isWin = isWindows();
   const mod = shortcutModSymbol();
-
-  useEffect(() => {
-    let maxPercent = 0;
-    const unlistenTick = listen("sync-initial-tick-done", () => {
-      maxPercent = 0;
-      setSyncProgress(null);
-    });
-    const unlistenProgress = listen<{ applied: number; total: number }>("sync-progress", (e) => {
-      const { applied, total } = e.payload;
-      if (applied === 0) {
-        maxPercent = 0;
-      }
-      if (total > 0) {
-        maxPercent = Math.max(maxPercent, Math.min(100, Math.floor((applied / total) * 100)));
-        setSyncProgress({ percent: maxPercent });
-      } else {
-        setSyncProgress((prev) => prev ?? { percent: null });
-      }
-    });
-    return () => {
-      void unlistenTick.then((fn) => fn()).catch(() => {});
-      void unlistenProgress.then((fn) => fn()).catch(() => {});
-    };
-  }, []);
 
   const routes: Array<{ id: MainRoute; label: string }> = [
     { id: "home", label: t("nav.home") },
@@ -476,21 +449,6 @@ export default function TopBar({
           </span>
           <UpdateIndicator onOpenSettings={onOpenSettings} showUpToDateOverride={showUpToDate} />
         </div>
-
-        {syncProgress && (
-          <span
-            data-testid="topbar-sync-chip"
-            title={t("topBar.syncing")}
-            className="inline-flex items-center gap-1.5 px-2 lg:px-2.5 py-1 rounded-full bg-accent-tint text-accent-on-tint shrink-0"
-          >
-            <RefreshCw size={12} className="animate-spin shrink-0" />
-            {syncProgress.percent != null && (
-              <span className="font-mono text-[11px] font-semibold leading-none">
-                {syncProgress.percent}%
-              </span>
-            )}
-          </span>
-        )}
       </div>
 
       {isWin ? (

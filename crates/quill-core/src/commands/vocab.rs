@@ -4,7 +4,6 @@ use serde::{Deserialize, Serialize};
 use crate::db::Db;
 use crate::error::AppResult;
 use crate::host::Core;
-use crate::sync::events::{EventBody, VocabPayload};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct VocabWord {
@@ -92,7 +91,6 @@ pub fn add_vocab_word(
 ) -> AppResult<VocabWord> {
     let id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().timestamp_millis();
-    let device = core.sync_writer.self_device().to_string();
 
     let word = word.trim().to_string();
     let word_lower = word.to_lowercase();
@@ -101,11 +99,11 @@ pub fn add_vocab_word(
 
     log::debug!("vocab: add_vocab_word book_id={book_id} word={word:?}");
 
-    // Dedup happens inside the sync transaction by (book_id, lemma, cfi) —
+    // Dedup happens inside the transaction by (book_id, lemma, cfi) —
     // falling back to (book_id, lemma, context_sentence) when incoming cfi is
     // absent (matching rows with or without stored cfi) — using Unicode
     // case-folding matching JS trim().toLowerCase().
-    let vocab = core.sync_writer.with_tx(&core.db, now, |tx, events| {
+    let vocab = core.db.with_tx(|tx| {
         let candidates: Vec<VocabWord> = if let Some(cfi_val) = cfi.as_deref() {
             let mut stmt = tx.prepare(&format!(
                 "SELECT {} FROM vocab_words WHERE book_id = ?1 AND TRIM(cfi) = ?2",
@@ -138,29 +136,14 @@ pub fn add_vocab_word(
             .into_iter()
             .find(|row| row.word.trim().to_lowercase() == word_lower);
         if let Some(existing) = existing {
-            // Existing match → no SQL write, no event published. The
-            // closure still returns the row so the frontend gets the
-            // canonical record.
             return Ok(existing);
         }
 
         tx.execute(
-            "INSERT INTO vocab_words (id, book_id, word, definition, context_sentence, context_explanation, cfi, mastery, review_count, next_review_at, created_at, updated_at, updated_by_device)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'new', 0, NULL, ?8, ?8, ?9)",
-            params![id, book_id, word, definition, context_sentence, context_explanation, cfi, now, device],
+            "INSERT INTO vocab_words (id, book_id, word, definition, context_sentence, context_explanation, cfi, mastery, review_count, next_review_at, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'new', 0, NULL, ?8, ?8)",
+            params![id, book_id, word, definition, context_sentence, context_explanation, cfi, now],
         )?;
-        events.push(EventBody::VocabAdd(VocabPayload {
-            id: id.clone(),
-            book_id: book_id.clone(),
-            word: word.clone(),
-            definition: definition.clone(),
-            context_sentence: context_sentence.clone(),
-            context_explanation: context_explanation.clone(),
-            cfi: cfi.clone(),
-            mastery: "new".to_string(),
-            review_count: 0,
-            next_review_at: None,
-        }));
         Ok(VocabWord {
             id: id.clone(),
             book_id: book_id.clone(),
@@ -182,10 +165,8 @@ pub fn add_vocab_word(
 }
 
 pub fn remove_vocab_word(core: &Core, id: String) -> AppResult<()> {
-    let now = chrono::Utc::now().timestamp_millis();
-    core.sync_writer.with_tx(&core.db, now, |tx, events| {
+    core.db.with_tx(|tx| {
         tx.execute("DELETE FROM vocab_words WHERE id = ?1", params![id])?;
-        events.push(EventBody::VocabDelete { id: id.clone() });
         Ok(())
     })
 }
@@ -293,8 +274,7 @@ pub fn remove_vocab_lemma(core: &Core, word: String) -> AppResult<usize> {
     if target_lower.is_empty() {
         return Ok(0);
     }
-    let now = chrono::Utc::now().timestamp_millis();
-    core.sync_writer.with_tx(&core.db, now, |tx, events| {
+    core.db.with_tx(|tx| {
         let ids: Vec<String> = {
             let mut stmt = tx.prepare("SELECT id, word FROM vocab_words")?;
             let rows = stmt
@@ -309,7 +289,6 @@ pub fn remove_vocab_lemma(core: &Core, word: String) -> AppResult<usize> {
         };
         for id in &ids {
             tx.execute("DELETE FROM vocab_words WHERE id = ?1", params![id])?;
-            events.push(EventBody::VocabDelete { id: id.clone() });
         }
         Ok(ids.len())
     })
@@ -333,28 +312,11 @@ pub fn update_vocab_mastery(
     next_review_at: Option<i64>,
 ) -> AppResult<()> {
     let now = chrono::Utc::now().timestamp_millis();
-    let device = core.sync_writer.self_device().to_string();
-    core.sync_writer.with_tx(&core.db, now, |tx, events| {
+    core.db.with_tx(|tx| {
         tx.execute(
-            "UPDATE vocab_words SET mastery = ?1, next_review_at = ?2, review_count = review_count + 1, updated_at = ?3, updated_by_device = ?4 WHERE id = ?5",
-            params![mastery, next_review_at, now, device, id],
+            "UPDATE vocab_words SET mastery = ?1, next_review_at = ?2, review_count = review_count + 1, updated_at = ?3 WHERE id = ?4",
+            params![mastery, next_review_at, now, id],
         )?;
-        // Read the post-increment review_count so the event carries an
-        // absolute value (replay needs that to stay idempotent — see the
-        // VocabMasterySet docstring in events.rs).
-        let review_count: i64 = tx
-            .query_row(
-                "SELECT review_count FROM vocab_words WHERE id = ?1",
-                params![id],
-                |r| r.get(0),
-            )
-            .unwrap_or(0);
-        events.push(EventBody::VocabMasterySet {
-            id: id.clone(),
-            mastery: mastery.clone(),
-            next_review_at,
-            review_count,
-        });
         Ok(())
     })
 }

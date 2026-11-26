@@ -1,0 +1,49 @@
+# #370 M1 iCloud sync removal — macOS live QA
+
+## 2026-11-26 · Initial run, paused
+
+**Verdict: Incomplete.** Jason paused the run while reconsidering live-test scope. The checks below preserve the results against the original handoff. No product failure was confirmed in the exercised steps.
+
+**Candidate and method.** Quill, branch `refactor/remove-icloud-sync`, reviewed candidate `46e61e3bf67242d91b7d33e4237ad93736a7d067`, tree `18804771a89947867add2091e0a0c3e99fca1f5d`, and base `7c6a588491eb1e489dea06cc9cccc67e484a184c`. The worktree was clean and the empty diff hashed to `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`. Ran the approved neon trio candidate via `make dev` on macOS 26.6.2 (25G83), arm64, Quill 2.0.0, Electron 45.3.3, Node 24.19.0, npm 11.17.0, Rust/Cargo 1.97.1, Runner 0.20.4 and Codex CLI 0.172.0. PID 15577 used the worktree Electron executable and loaded its `crates/quill-node/index.node`. The renderer was served by that worktree on localhost:1430. Verified native input by dismissing onboarding and observing Home. The Frankenstein fixture had SHA-256 `2809c5ba9434a4973735e160aa3d4fa2ff360297a796e3a0f4b1b8d1c1d8693f`, matching the earlier #331 QA run and differing from the regression index. Its EPUB archive passed its integrity check.
+
+**Evidence.** The plan, environment and binary hashes, logs, cleanup and screenshot/accessibility pairs are under `/private/tmp/quill-370-qa.UG1wWY/`. Filenames in the table are relative to `evidence/`.
+
+| Check | Result | Observation |
+| --- | --- | --- |
+| APP-01 · startup and removed controls | Passed | Boot log identifies Quill 2.0.0 and schema 14 at the fresh development data directory, with no sync or iCloud errors. Empty Home offers a local import without an iCloud CTA or sync chip. Home populated after import. `01-empty-home.jpg`, `13-library-populated.jpg`. |
+| SET-04 · Settings navigation and persistence | Blocked | Paused before all interactions. All nine tabs opened. Library Sync is absent. English → 简体中文 → English switched cleanly. Verified Light, Dark and System, Reading margin selection, and toggles in Dictionary and Look Up & Translate. Selected a chat model in AI Assistant. About showed version and platform. Updates and MCP preference changes and About links remain unverified. `02-settings-nine-tabs.jpg` through `10-settings-about.jpg`. |
+| LIB-01 · native EPUB import | Passed | Selected the public-domain EPUB in the native picker. Library showed the cover, Frankenstein, and Mary Shelley. `14-library-imported-card.jpg`. |
+| LIB-06 · status filters and menu | Blocked | Paused after verifying Unread, Finished and Reading transitions and the All count. The menu exposed Open Book, which still needs execution. `15-finished-filter.jpg` through `17-reading-filter.jpg`. |
+| LIB-07 · collections | Blocked | Created an empty QA Reading collection. Pause came before rename, reorder, membership changes and deletion. `18-collection-created.jpg`. |
+| LIB-08 · metadata across restart | Blocked | Paused before the edit and restart. |
+| LIB-09 · deletion across restart | Blocked | Paused before deletion and restart. |
+| RDR-01 · EPUB navigation | Blocked | Paused before opening the reader. |
+| RDR-06 · EPUB and PDF annotations and PDF mode | Blocked | Paused before opening the reader. |
+| RDR-07 · bookmarks | Blocked | Paused before opening the reader. |
+| Local file error | Blocked | Paused before moving the disposable EPUB blob. |
+| VOC-01 · saved vocabulary | Blocked | Paused before vocabulary actions. |
+| AI-04 · reader chat | Blocked | A configured provider was visible. Paused before submitting a prompt or verifying persistence. |
+| MCP-02 · write gate and live refresh | Blocked | Observed Allow write access off in Settings. Paused before opening MCP sessions. |
+
+**Cleanup.** Quit the Quill candidate from its native menu and terminated the bare Electron process that computer use relaunched during exit verification. The candidate, its helpers and Codex child exited, and port 1430 was clear. The original development data, Chromium profile and logs were restored by rename and their device and inode numbers matched. The disposable profiles and logs remain in the private scratch directory. No installed Quill data, MCP client registration or account settings were changed. QA created no extra Runner mission, role or chat.
+
+## 2026-11-26 · Resumed focused macOS QA
+
+**Verdict: Passed for the operator-approved scope.** Jason approved resuming on the same candidate with EPUB reading and annotations, the missing-file error, metadata and deletion across restarts, and MCP write gating and refresh. Startup, tab visibility, the language round trip and EPUB import carry forward from the initial run. The broader paused checks were outside the resumed scope.
+
+**Candidate and method.** Same reviewed `46e61e3bf67242d91b7d33e4237ad93736a7d067` and environment as above. The only untracked file was this QA record. The tracked diff hash stayed empty. Ran `make dev` against the preserved disposable profile. The launches at PIDs 30218, 45424 and 49604 loaded the worktree native addon. Electron, addon, MCP, main and preload hashes matched the initial run at each restart. See `build-identity-resume.txt`, `build-identity-restart-1.txt` and `build-identity-restart-2.txt` in the same private evidence directory. Interactions used native computer use. The MCP cases used the candidate's public JSON-RPC stdio interface. No direct database reads or writes were used.
+
+| Check | Result | Observation |
+| --- | --- | --- |
+| RDR-01 · EPUB navigation and resume | Passed | Opened Frankenstein, advanced pages, closed the native reader window and reopened from the main window. Letter II resumed at Chapter 9 of 39, 7%, with the same first visible line and passage. `44-progress-before-native-close.jpg`, `45-progress-native-reopened.jpg`. |
+| RDR-06 · EPUB highlight CRUD | Passed | Selected text in Letter II, created a yellow highlight from its context menu, saw it in Highlights, and changed it to green in the inline toolbar. A second green annotation of the same passage rendered in green and appeared in the list after a native window close and reopen. Deleted it and saw the count return to zero. `30-highlight-letter-ii-selection.jpg` through `32-highlight-recolored.jpg`, `40-green-before-native-close.jpg` through `43-highlight-native-reopen-deleted.jpg`. |
+| RDR-07 · bookmark CRUD | Passed | Saved a bookmark in Letter I. Advanced to Letter II at 7%, jumped from the bookmark list back to Letter I at 6%, then deleted the bookmark and observed zero entries. `22-bookmark-added.jpg` through `25-bookmark-deleted.jpg`. |
+| Local file error and recovery | Passed | Moved only the hash-verified disposable EPUB blob aside. A fresh reader window displayed “Couldn't open this book.” Left and Right arrows and a neutral click left the overlay usable. The overlay's Back to Library button returned to the main window. Restored the original blob, verified its hash, and opened Letter II again. `37-missing-file-error.jpg` through `39-restored-file-opens.jpg`, `missing-file-fixture.txt`. |
+| LIB-08 · edited metadata survives restart | Passed | Saved the title Frankenstein QA Edited and author QA Test Author in Edit Info. Quit and relaunched the app. The library card displayed both changes. `46-metadata-before-restart.jpg`, `47-metadata-after-restart.jpg`. |
+| LIB-09 · deletion survives restart | Passed | Confirmed Delete Book for the disposable Frankenstein fixture in the library. Its card disappeared and the count dropped from two to one. After quitting and relaunching, the single remaining card was The Waste Land. `53-delete-owned-fixture-confirmation.jpg` through `55-deletion-persists-after-restart.jpg`. |
+| MCP-02 · denied write and live refresh | Passed | The debug binary reported Quill 2.0.0 and listed the edited fixture. With the dev write switch off, `add_book` returned JSON-RPC error `-32600` and the fixture list stayed at one. Enabled the switch, returned to Library and started a fresh stdio session. It imported The Waste Land, created a `.mcp-notify` marker with the matching book ID, and the already-open Library showed two cards without any navigation, manual refresh or restart. Returned the switch to off. `48-mcp-write-off.jpg` through `52-mcp-write-restored-off.jpg`, `mcp-denied-retry.jsonl`, `mcp-allowed.jsonl`, `mcp-notify.txt`. |
+| Paused scope beyond the checks above | Skipped | The approved resume omitted remaining Settings, status and collections coverage, PDF annotations and mode switching, vocabulary, and chat. The initial rows above preserve their original partial results. |
+
+**Retries.** The first missing-file attempt focused an existing reader that already had the book loaded. Closed that native window and verified the expected error on a fresh reader. Used the native close for the final position and highlight persistence evidence as well. The first MCP probe captured the expected refusal, then failed a probe assertion that assumed the write tool would be absent from the catalog. The documented check requires refusal. The corrected probe repeated the request and verified the refusal and unchanged library. The first transcript remains in `mcp-denied.jsonl`. No product failure was confirmed.
+
+**Cleanup.** The candidate exited after each native Quit. Verified that tracked Electron, Vite, app-server and MCP processes were gone and port 1430 was clear. Restored the original dev data, Chromium and log directories by rename and confirmed their device and inode numbers. The disposable settings, fixtures, scratch probe and evidence remain in the private scratch directory. No installed Quill data, MCP client registration or account settings were changed. See `restored-paths-resume.txt` and `process-teardown-resume.txt`.

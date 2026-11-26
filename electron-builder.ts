@@ -2,14 +2,10 @@ import fs from "node:fs";
 import path from "node:path";
 import type { Configuration } from "electron-builder";
 import {
-  PROVISIONING_PROFILE_PATH,
   resolveMacBundleVersion,
   stageNativeResourcesIntoPack,
 } from "./electron/packaging/artifacts";
 
-const hasProvisioningProfile = fs.existsSync(
-  path.resolve(process.cwd(), PROVISIONING_PROFILE_PATH),
-);
 const pkgJson = JSON.parse(
   fs.readFileSync(path.resolve(process.cwd(), "package.json"), "utf8"),
 ) as { version: string };
@@ -67,7 +63,6 @@ const config: Configuration = {
     strictVerify: true,
     entitlements: "build/entitlements.mac.plist",
     entitlementsInherit: "build/entitlements.mac.inherit.plist",
-    ...(hasProvisioningProfile ? { provisioningProfile: PROVISIONING_PROFILE_PATH } : {}),
     binaries: [
       "Contents/Resources/quill-mcp",
       "Contents/Resources/libpdfium.dylib",

@@ -4,7 +4,7 @@ This file is the repo-wide guide for any coding assistant working on Quill. Keep
 
 ## Product Context
 
-Quill is an AI-powered desktop ebook reader. It focuses on reading EPUB/PDF books, preserving a local library, and augmenting reading with AI lookup, explanations, translation, vocabulary, bookmarks, highlights, collections, and cross-device sync.
+Quill is an AI-powered desktop ebook reader. It focuses on reading EPUB/PDF books, preserving a local library, and augmenting reading with AI lookup, explanations, translation, vocabulary, bookmarks, highlights, and collections.
 
 For owner-specific product context, see `~/repos/yicheng47/memory/projects/quill/MEMORY.md` when the memory checkout is available.
 
@@ -12,8 +12,8 @@ Core vocabulary:
 
 - **Book**: a library item backed by an EPUB or PDF file.
 - **Reader**: the reading surface for a book, including progress, layout, highlights, bookmarks, and AI panels.
-- **Library**: the local SQLite materialized view plus book/cover blobs under the active data directory.
-- **Sync**: iCloud-backed event-log sync for library state and shared book/cover files.
+- **Library**: the local SQLite database plus book/cover files under the active data directory.
+- **Sync**: legacy iCloud sync has been removed ahead of Quill Cloud (#370); `DeviceIdentity` (`device.json`) and migrations `001`–`014` remain intact.
 - **MCP**: Quill's local MCP server/client integration surface for AI tools to inspect or modify the library.
 
 ## Stack
@@ -21,8 +21,7 @@ Core vocabulary:
 - Frontend: React 19, TypeScript, Tailwind CSS 4, Vite, React Router; icons from `lucide-react`; i18n through i18next and react-i18next.
 - Desktop/backend: Electron 45 (`electron-vite`, `electron-builder`, `electron-updater`), Rust workspace (`crates/quill-core`, `crates/quill-node` N-API addon, `crates/quill-mcp` stdio MCP server), SQLite via `rusqlite` in WAL mode.
 - Reader engine: `foliate-js`, a git submodule at `public/foliate-js`.
-- Sync: iCloud container files, append-only event logs, snapshots, and watcher-driven replay.
-- AI: OpenAI, Anthropic and Ollama over HTTP, plus ChatGPT-login OAuth for OpenAI. Each request streams over a per-request Electron IPC channel.
+- AI: OpenAI, Anthropic and Ollama over HTTP, plus Codex CLI integration. Each request streams over a per-request Electron IPC channel.
 - CI: `.github/workflows/ci.yaml` checks pull requests; `release.yml` builds tagged releases (`v*`) into drafts; `nightly-on-merge.yml` and `nightly.yml` publish rolling `nightly` builds from `main`.
 
 ## Project Map
@@ -38,7 +37,7 @@ Core vocabulary:
 - `electron/main/`: Electron main process, `QuillCore` host bridge, IPC handlers, custom protocols, windows, menus, and `electron-updater` service.
 - `electron/preload/`: `contextBridge` API exposed to the renderer.
 - `electron/packaging/`: Native artifact staging and macOS/Windows packaging helpers (`electron-builder.ts`, `scripts/`).
-- `crates/quill-core/`: Rust engine — commands (`src/commands/`), sync engine (`src/sync/`), MCP server (`src/mcp/`), AI providers (`src/ai/`), PDFium integration, and versioned SQLite schema (`migrations/`).
+- `crates/quill-core/`: Rust engine — commands (`src/commands/`), device identity (`src/sync/device.rs`), MCP server (`src/mcp/`), AI providers (`src/ai/`), PDFium integration, and versioned SQLite schema (`migrations/`).
 - `crates/quill-node/`: N-API native addon bridging `quill-core` into Electron main (`index.node`).
 - `crates/quill-mcp/`: Standalone stdio MCP binary (`quill-mcp`).
 - `build/`: App icons and macOS entitlements (`entitlements.mac.plist`, `entitlements.mac.inherit.plist`).
@@ -54,7 +53,7 @@ Core vocabulary:
 ## Development Commands
 
 - Install dependencies: `npm install`. A fresh checkout or worktree also needs `git submodule update --init` for `public/foliate-js`.
-- Start the desktop app against development data: `make dev` (builds debug `quill-node` and `quill-mcp`, then runs `electron-vite dev`). A dev run (`!app.isPackaged`) keeps its database, secrets and logs under `com.wycstudios.quill-dev`, apart from the installed Quill; it still shares the iCloud container (see [Test Scope](#test-scope)). Dev Vite listens on port 1430 (`ELECTRON_RENDERER_URL=http://localhost:1430`), so only one development app runs at a time on a machine.
+- Start the desktop app against development data: `make dev` (builds debug `quill-node` and `quill-mcp`, then runs `electron-vite dev`). A dev run (`!app.isPackaged`) keeps its database, secrets, books, and logs under `com.wycstudios.quill-dev`, apart from the installed Quill. Dev Vite listens on port 1430 (`ELECTRON_RENDERER_URL=http://localhost:1430`), so only one development app runs at a time on a machine.
 - Frontend only, in a browser: `make dev-web`.
 - Typecheck: `make typecheck` (`tsc --noEmit` and `tsc -p tsconfig.electron.json --noEmit`). Lint: `make lint`. Tests: `npm test`. Build: `make build` (release native builds + `npm run build`), or `npm run electron:build` for Electron/renderer JS bundles only.
 - Rust, from the repository root: `cargo check --workspace`, `cargo test --workspace`, `cargo clippy --workspace -- -D warnings`.
@@ -68,7 +67,7 @@ Feature validation covers the behavior changed by the diff and regressions direc
 
 Broaden coverage for major changes, such as a sync or storage rewrite, a schema migration or a refactor affecting behavior across the app, or when Jason explicitly requests broader testing. State why the change needs that coverage. CI and the automated checks still apply. An unavailable prerequisite blocks an in-scope check; an unrelated check is outside scope, not a feature blocker. A feature pass means every selected required check passed, and must not be described as a full regression pass. Preserve failures and record any later scope change explicitly. Record feature and bug-fix QA runs per issue in `docs/tests/runs/<issue>-<slug>-<platform>.md` (matching the spec/brief slug and using `mac`, `win` or `both`), appending retries to that issue's file. Full regression and release runs use dated files; existing records keep their names.
 
-The development app is a separate test environment: a debug build from `make dev` keeps its library, settings, secrets and logs under `com.wycstudios.quill-dev`, apart from the installed Quill, so live testing in it is authorized standing and needs no per-mission ask. Whoever runs the selected live checks, usually the `qa` slot of a trio or the `qa` role added to a mission after its code review, may launch the development app, import small test books, and make bounded AI calls on an inexpensive model with tiny prompts. **iCloud sync is the exception.** The development app uses the same iCloud container as the installed Quill (`iCloud~com~wycstudios~quill`), so turning sync on in it would write into the real library on every device. Live tests keep sync off; a check that needs sync waits for Jason to approve and set up the environment. Never touch the installed Quill or its data.
+The development app is a separate test environment: a debug build from `make dev` keeps its library, settings, secrets and logs under `com.wycstudios.quill-dev`, apart from the installed Quill, so live testing in it is authorized standing and needs no per-mission ask. Whoever runs the selected live checks, usually the `qa` slot of a trio or the `qa` role added to a mission after its code review, may launch the development app, import small test books, and make bounded AI calls on an inexpensive model with tiny prompts. Never touch the installed Quill or its data.
 
 Coders and reviewers do not run the app. The reviewer only reviews code, and decides from the diff whether live checks are needed unless the brief settles it: they are required when the change alters what a person sees or operates in the running app, and not for documentation, refactors the tests cover, or logic the Rust and frontend tests exercise; its clean review names the checks, or says why none are needed. A change expected to need live checks runs in a trio, the neon trio unless Jason asks for another, whose `qa` slot takes the reviewed candidate from the coder and runs the checks the clean review names. When a duo's clean review names live checks, the mission's operator, usually the chat that started it, adds the codex `qa` role once Runner reports the mission settled: `runner mission add-role <mission> qa --task-file -`, with a task naming the checks and the candidate commit. Approving the mission approves this step, so the operator does not ask again. qa runs the checks on that candidate through computer use, and its verdict says which checks ran. A failure goes back to the coder, and the fixed candidate is reviewed again before qa reruns the affected checks.
 
@@ -110,7 +109,7 @@ Work stays inside its own worktree. When several are live at once, treat the oth
 - Settings are key-value rows in the SQLite `settings` table: `useSettings` on the frontend, `crates/quill-core/src/commands/settings.rs` on the backend. Settings modal sections follow the row pattern in `GeneralSettings.tsx`: 73px rows, `flex justify-between`, 1px `black/10` dividers.
 - Sensitive data such as API keys and OAuth tokens goes in `secrets.db`, which stays local and never syncs, not in `quill.db`.
 - AI streaming uses a per-request Electron IPC event channel forwarded from `quill-core`'s host event emitter.
-- Treat sync and file-copy changes as data-safety sensitive. Preserve the invariant that the app must not repoint storage or disable sync until required local files are actually reachable.
+- Treat storage, migration, and sync changes as data-safety sensitive. Never alter shipped SQLite migrations (`001`–`014`) or risk losing local library data when resolving or relocating files.
 - Do not add repo conventions only to an agent-specific file. Update this file and leave tool-specific files as pointers if needed.
 
 ## Commit And PR Conventions

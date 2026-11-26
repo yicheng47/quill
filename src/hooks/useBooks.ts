@@ -144,11 +144,3 @@ export async function updateBookMetadata(
 ): Promise<void> {
   return invoke("update_book_metadata", { id, title, author });
 }
-
-export async function checkBookAvailable(id: string): Promise<boolean> {
-  return invoke<boolean>("check_book_available", { id });
-}
-
-export async function checkBookReadable(id: string): Promise<boolean> {
-  return invoke<boolean>("check_book_readable", { id });
-}

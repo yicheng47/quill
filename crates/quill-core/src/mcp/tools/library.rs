@@ -5,8 +5,9 @@
 //! paths returned stay relative (no `resolve_book_paths`) so the
 //! response doesn't leak the user's home directory layout.
 //!
-//! Write tools are gated behind `McpState.sync` — they return a clear
-//! error when write access is disabled.
+//! Write tools are gated behind `McpState.write_enabled` (and a live
+//! re-check of `settings.mcp_write_enabled`) — they return a clear error
+//! when write access is disabled.
 
 use rmcp::ErrorData;
 use rmcp::handler::server::wrapper::Parameters;
@@ -38,11 +39,9 @@ pub struct GetBookArgs {
     pub book_id: String,
 }
 
-/// MCP-facing projection of `books::Book`. Drops `available` (the
-/// stdio subprocess can't compute iCloud eviction state) and
-/// `cover_data` (multi-hundred-KB base64 BLOBs are too large for
-/// MCP JSON responses — MCP clients that need covers should fetch
-/// them via a dedicated tool in the future).
+/// MCP-facing projection of `books::Book`. Drops `available` (MCP keeps
+/// relative paths without touching the filesystem) and `cover_data`
+/// (multi-hundred-KB base64 BLOBs are too large for MCP JSON responses).
 #[derive(Debug, Serialize)]
 struct McpBook {
     id: String,
@@ -152,22 +151,15 @@ pub struct DeleteBookArgs {
     pub book_id: String,
 }
 
-pub(crate) fn require_sync(
-    handler: &QuillMcpHandler,
-) -> Result<&crate::sync::writer::SyncWriter, ErrorData> {
-    let sync = handler
-        .state
-        .sync
-        .as_ref()
-        .map(|arc| arc.as_ref())
-        .ok_or_else(|| {
-            ErrorData::invalid_request(
-                "Write access was not enabled when this MCP session started. \
-                 Enable it in Quill → Settings → MCP → Allow write access, \
-                 then restart the MCP client so a new session picks up the change.",
-                None,
-            )
-        })?;
+pub(crate) fn require_write_access(handler: &QuillMcpHandler) -> Result<(), ErrorData> {
+    if !handler.state.write_enabled {
+        return Err(ErrorData::invalid_request(
+            "Write access was not enabled when this MCP session started. \
+             Enable it in Quill → Settings → MCP → Allow write access, \
+             then restart the MCP client so a new session picks up the change.",
+            None,
+        ));
+    }
 
     // Re-check the setting from SQLite so toggling write access off in
     // the Quill UI takes effect immediately, without restarting the
@@ -196,7 +188,7 @@ pub(crate) fn require_sync(
         ));
     }
 
-    Ok(sync)
+    Ok(())
 }
 
 #[tool_router(router = library_write_router, vis = "pub(crate)")]
@@ -208,15 +200,15 @@ impl QuillMcpHandler {
         &self,
         Parameters(AddBookArgs { file_path }): Parameters<AddBookArgs>,
     ) -> Result<CallToolResult, ErrorData> {
-        let sync = require_sync(self)?;
+        require_write_access(self)?;
         let ext = file_path
             .rsplit('.')
             .next()
             .unwrap_or("")
             .to_lowercase();
         let book = match ext.as_str() {
-            "epub" => books::do_import_epub(&file_path, &self.state.db, sync),
-            "pdf" => books::do_import_pdf(&file_path, &self.state.db, sync),
+            "epub" => books::do_import_epub(&file_path, &self.state.db),
+            "pdf" => books::do_import_pdf(&file_path, &self.state.db),
             _ => {
                 return Err(ErrorData::invalid_params(
                     format!("Unsupported format '.{ext}'. Only .epub and .pdf are supported."),
@@ -243,7 +235,7 @@ impl QuillMcpHandler {
             status,
         }): Parameters<UpdateBookArgs>,
     ) -> Result<CallToolResult, ErrorData> {
-        let sync = require_sync(self)?;
+        require_write_access(self)?;
         let book = books::do_update_book(
             &book_id,
             title.as_deref(),
@@ -251,7 +243,6 @@ impl QuillMcpHandler {
             genre.as_deref(),
             status.as_deref(),
             &self.state.db,
-            sync,
         )
         .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
         self.state.notify("books", "updated", &book_id);
@@ -266,8 +257,8 @@ impl QuillMcpHandler {
         &self,
         Parameters(DeleteBookArgs { book_id }): Parameters<DeleteBookArgs>,
     ) -> Result<CallToolResult, ErrorData> {
-        let sync = require_sync(self)?;
-        books::do_delete_book(&book_id, &self.state.db, sync)
+        require_write_access(self)?;
+        books::do_delete_book(&book_id, &self.state.db)
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
         self.state.notify("books", "deleted", &book_id);
         Ok(CallToolResult::success(vec![Content::text(format!(
